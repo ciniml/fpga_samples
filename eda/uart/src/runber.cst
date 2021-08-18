@@ -1,0 +1,9 @@
+IO_LOC "clock" 4;
+IO_PORT "clock" IO_TYPE=LVCMOS33;
+IO_LOC "resetn" 58;
+IO_PORT "resetn" IO_TYPE=LVCMOS33;
+
+IO_LOC "rx" 135;
+IO_PORT "rx" IO_TYPE=LVCMOS33;
+IO_LOC "tx" 134;
+IO_PORT "tx" IO_TYPE=LVCMOS33;
