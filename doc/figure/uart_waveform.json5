@@ -1,0 +1,9 @@
+{
+    "config": {
+        "skin": "default"
+    },
+    "signal": [
+
+        { "name": "uart_rx", "wave": "1.2.2.2.2.2.2.2.2.2.2.1.", data: ["START",0,1,2,3,4,5,6,7,"STOP"]}
+    ]
+}
