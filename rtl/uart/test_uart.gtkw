@@ -1,0 +1,76 @@
+[*]
+[*] GTKWave Analyzer v3.3.103 (w)1999-2019 BSI
+[*] Thu Aug 19 16:50:00 2021
+[*]
+[dumpfile] "/home/kenta/repos/gowin_runber/rtl/uart/test_uart.vcd"
+[dumpfile_mtime] "Thu Aug 19 16:49:37 2021"
+[dumpfile_size] 747319
+[savefile] "/home/kenta/repos/gowin_runber/rtl/uart/test_uart.gtkw"
+[timestart] 0
+[size] 3440 1376
+[pos] -1 -1
+*-23.000000 845000 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[treeopen] test_uart.
+[sst_width] 251
+[signals_width] 255
+[sst_expanded] 1
+[sst_vpaned_height] 413
+@28
+test_uart.clock
+@420
+test_uart.i
+@28
+test_uart.overrun
+test_uart.reset
+test_uart.rx
+@23
+test_uart.rx_data_bits[7:0]
+@28
+test_uart.rx_data_ready
+test_uart.rx_data_valid
+test_uart.tx
+@22
+test_uart.tx_data_bits[7:0]
+@28
+test_uart.tx_data_ready
+test_uart.tx_data_valid
+@200
+-
+@28
+test_uart.uart_rx_inst.rate_counter[2:0]
+test_uart.uart_rx_inst.bit_counter[2:0]
+@22
+test_uart.uart_rx_inst.rx_regs[4:0]
+test_uart.uart_rx_inst.bits[7:0]
+@28
+test_uart.uart_rx_inst.clock
+@22
+test_uart.uart_rx_inst.data_bits[7:0]
+@28
+test_uart.uart_rx_inst.data_ready
+test_uart.uart_rx_inst.data_valid
+@22
+test_uart.uart_rx_inst.next_bits[7:0]
+@28
+test_uart.uart_rx_inst.overrun
+test_uart.uart_rx_inst.reset
+test_uart.uart_rx_inst.running
+test_uart.uart_rx_inst.rx
+@200
+-
+@28
+test_uart.uart_tx_inst.rate_counter[1:0]
+@22
+test_uart.uart_tx_inst.bit_counter[3:0]
+test_uart.uart_tx_inst.bits[9:0]
+@28
+test_uart.uart_tx_inst.clock
+@22
+test_uart.uart_tx_inst.data_bits[7:0]
+@28
+test_uart.uart_tx_inst.data_ready
+test_uart.uart_tx_inst.data_valid
+test_uart.uart_tx_inst.reset
+test_uart.uart_tx_inst.tx
+[pattern_trace] 1
+[pattern_trace] 0

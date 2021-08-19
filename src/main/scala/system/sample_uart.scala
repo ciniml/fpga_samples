@@ -28,7 +28,7 @@ class UartSystem() extends RawModule {
 object Elaborate extends App {
   Driver.execute(Array(
     "-tn=uartsystem",
-    "-td=rtl/uart",
+    "-td=rtl/chisel/uart",
     // "--full-stacktrace",
   ),
   () => new UartSystem)

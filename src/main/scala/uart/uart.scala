@@ -87,4 +87,5 @@ class UartRx(numberOfBits: Int, baudDivider: Int, rxSyncStages: Int) extends Mod
             rateCounter := rateCounter - 1.U
         }
     }
+
 }
