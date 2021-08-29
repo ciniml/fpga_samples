@@ -57,16 +57,21 @@ generate
         // Debounce filter
         localparam int FILTER_COUNTER_BITS = $clog2(FILTER_COUNTER_MAX+1);
         logic [FILTER_COUNTER_BITS-1:0] filter_counter = 0;
-        assign sync_out[i] = filter_counter == FILTER_COUNTER_MAX;
+        logic last_out = 0;
+        assign sync_out[i] = last_out;
         always_ff @(posedge clock) begin
             if( reset ) begin
                 filter_counter <= 0;
             end
             else begin
                 if( divider_counter == 0 ) begin    // Divided clock is active.
-                    if( synchronize_reg[0] ) begin  // If the input is high, increment the counter by 1.
+                    if( last_out != synchronize_reg[0] ) begin  // If the input is the opposite value of the last output, increment the counter by 1.
                         if( filter_counter < FILTER_COUNTER_MAX ) begin
                             filter_counter <= filter_counter + 1;
+                        end
+                        else begin
+                            last_out <= !last_out;  // Flip the output if the counter is reached to the maximum value.
+                            filter_counter <= 0;    // Clear the counter.
                         end
                     end
                     else begin
