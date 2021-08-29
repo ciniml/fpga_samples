@@ -1,0 +1,15 @@
+<?xml version="1" encoding="UTF-8"?>
+<!DOCTYPE gowin-fpga-project>
+<Project>
+    <Template>FPGA</Template>
+    <Version>5</Version>
+    <Device name="GW1N-4B" pn="GW1N-LV4LQ144C6/I5">gw1n4b-011</Device>
+    <FileList>
+        <File path="src/top.sv" type="file.verilog" enable="1"/>
+        <File path="../../rtl/switch_input/bounce_detector.sv" type="file.verilog" enable="1"/>
+        <File path="../../rtl/switch_input/debounce.sv" type="file.verilog" enable="1"/>
+        <File path="src/runber.cst" type="file.cst" enable="1"/>
+        <File path="src/runber.sdc" type="file.sdc" enable="1"/>
+        <File path="src/switch_input.rao" type="file.gao" enable="1"/>
+    </FileList>
+</Project>
