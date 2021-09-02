@@ -19,12 +19,15 @@ module timer_counter #(
     input logic [COUNTER_BITS-1:0] top_value,
     input logic [COUNTER_BITS-1:0] compare_value,
 
+    output logic [COUNTER_BITS-1:0] counter_value,
+
     output logic overflow,
     output logic compare_match
 );
 
 logic [COUNTER_BITS-1:0] counter = 0;
 assign compare_match = counter == compare_value;
+assign counter_value = counter;
 
 always_ff @(posedge clock) begin
     if( reset ) begin
