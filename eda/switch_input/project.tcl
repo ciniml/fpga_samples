@@ -6,7 +6,10 @@ set_option -vhdl_std vhd2008
 set_option -print_all_synthesis_warning 1
 
 add_file -type verilog [file normalize ../../rtl/switch_input/debounce.sv]
+add_file -type verilog [file normalize ../../rtl/switch_input/bounce_detector.sv]
+add_file -type verilog [file normalize ../../rtl/util/timer_counter.sv]
 add_file -type verilog [file normalize src/top.sv]
 add_file -type cst [file normalize src/runber.cst]
+add_file -type sdc [file normalize src/runber.sdc]
 
 run all

@@ -28,18 +28,12 @@
                 <Signal>bounce_detector_inst/count_at_last_edge[1]</Signal>
                 <Signal>bounce_detector_inst/count_at_last_edge[0]</Signal>
             </Bus>
-            <Signal>bounce_detector_filtered/bounce_detected</Signal>
-            <Bus name="debounce_0/debounce_filter[0].filter_counter[1:0]">
-                <Signal>debounce_0/debounce_filter[0].filter_counter[1]</Signal>
-                <Signal>debounce_0/debounce_filter[0].filter_counter[0]</Signal>
-            </Bus>
         </SignalList>
         <Triggers>
             <Trigger index="0">
                 <SignalList>
                     <Signal>bounce_detector_inst/bounce_detected</Signal>
                     <Signal>bounce_detector_inst/running</Signal>
-                    <Signal>bounce_detector_filtered/bounce_detected</Signal>
                 </SignalList>
             </Trigger>
             <Trigger index="1"/>
@@ -59,7 +53,7 @@
             <Trigger index="15"/>
         </Triggers>
         <MatchUnits>
-            <MatchUnit index="0" enabled="1" match_type="1" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="1F0" value1="000" trigger="0"/>
+            <MatchUnit index="0" enabled="1" match_type="1" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="1F" value1="00" trigger="0"/>
             <MatchUnit index="1" enabled="0" match_type="3" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="R" value1="0" trigger="1"/>
             <MatchUnit index="2" enabled="0" match_type="1" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="F" value1="0" trigger="2"/>
             <MatchUnit index="3" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
@@ -80,5 +74,5 @@
             <Expression>M0</Expression>
         </Expressions>
     </AoCore>
-    <GAO_ID>0111001110101001</GAO_ID>
+    <GAO_ID>1001111001110111</GAO_ID>
 </GAO_CONFIG>

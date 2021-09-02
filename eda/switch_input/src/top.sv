@@ -31,44 +31,36 @@ always_ff @(posedge clock) begin
     sync_reg <= {!key_8, sync_reg[1]}; 
 end
 
-// Bounce detector to measure bouncing period of the switch.
-bounce_detector #(
-    .CLOCK_HZ(CLOCK_HZ),
-    .INPUT_RATE_HZ(30)
-) bounce_detector_inst (
+// Timer counter for generate sampling timing.
+logic sampling_trigger;
+timer_counter #(
+    .MAX_COUNTER_VALUE(CLOCK_HZ/10000)
+) timer_counter_inst (
     .clock(clock),
     .reset(1'b0),
 
-    .async_in(!key_8),           // KEY_8
-    .bounce_detected(),
-    .cycles_to_stabilize()
+    .enable(1'b1),
+    .top_value(CLOCK_HZ/10000),
+    .compare_value(1'b0),
+
+    .overflow(sampling_trigger),
+    .compare_match()
 );
+
 
 // The instance of debouncing filter.
 logic debounce_out;
 debounce #(
-    .CLOCK_HZ(CLOCK_HZ),
-    .FILTER_HZ(10000),
     .FILTER_COUNTER_MAX(3)
 ) debounce_0 (
     .clock(clock),
     .reset(1'b0),
 
+    .sampling_trigger(sampling_trigger),
     .async_in(!key_8),           // KEY_8
     .sync_out(debounce_out)
 );
 
-// Check the filtered output with bounce detector.
-bounce_detector #(
-    .CLOCK_HZ(CLOCK_HZ)
-) bounce_detector_filtered (
-    .clock(clock),
-    .reset(1'b0),
-
-    .async_in(debounce_out),     // KEY_8
-    .bounce_detected(),
-    .cycles_to_stabilize()
-);
 
 logic [7:0] led_out_reg = 0;
 assign led_out = {sw_1, led_out_reg[6:0]};
@@ -77,7 +69,19 @@ logic key_in;
 logic key_in_prev = 0;
 
 assign key_in = sw_1 ? sync_reg[0] : debounce_out;
-//assign key_in = debounce_out;
+
+// Bounce detector to measure bouncing period of the switch.
+bounce_detector #(
+    .CLOCK_HZ(CLOCK_HZ),
+    .INPUT_RATE_HZ(60)
+) bounce_detector_inst (
+    .clock(clock),
+    .reset(1'b0),
+
+    .async_in(key_in),           // KEY_8
+    .bounce_detected(),
+    .cycles_to_stabilize()
+);
 
 always_ff @(posedge clock) begin
     key_in_prev <= key_in;
