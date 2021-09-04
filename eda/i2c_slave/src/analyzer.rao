@@ -1,0 +1,120 @@
+<?xml version="1" encoding="UTF-8"?>
+<GAO_CONFIG>
+    <Version>3.0</Version>
+    <Mode>Standard</Mode>
+    <AoCore index="0" sample_clock="clock" trig_type="0" storage_depth="1024" window_num="1" capture_amount="1024" trigger_pos="16">
+        <SignalList>
+            <Signal>i2c_slave_inst/scl_i</Signal>
+            <Signal>i2c_slave_inst/sda_i</Signal>
+            <Bus name="i2c_reg_address[7:0]">
+                <Signal>i2c_reg_address[7]</Signal>
+                <Signal>i2c_reg_address[6]</Signal>
+                <Signal>i2c_reg_address[5]</Signal>
+                <Signal>i2c_reg_address[4]</Signal>
+                <Signal>i2c_reg_address[3]</Signal>
+                <Signal>i2c_reg_address[2]</Signal>
+                <Signal>i2c_reg_address[1]</Signal>
+                <Signal>i2c_reg_address[0]</Signal>
+            </Bus>
+            <Bus name="i2c_reg_read_data[7:0]">
+                <Signal>i2c_reg_read_data[7]</Signal>
+                <Signal>i2c_reg_read_data[6]</Signal>
+                <Signal>i2c_reg_read_data[5]</Signal>
+                <Signal>i2c_reg_read_data[4]</Signal>
+                <Signal>i2c_reg_read_data[3]</Signal>
+                <Signal>i2c_reg_read_data[2]</Signal>
+                <Signal>i2c_reg_read_data[1]</Signal>
+                <Signal>i2c_reg_read_data[0]</Signal>
+            </Bus>
+            <Bus name="i2c_reg_write_data[7:0]">
+                <Signal>i2c_reg_write_data[7]</Signal>
+                <Signal>i2c_reg_write_data[6]</Signal>
+                <Signal>i2c_reg_write_data[5]</Signal>
+                <Signal>i2c_reg_write_data[4]</Signal>
+                <Signal>i2c_reg_write_data[3]</Signal>
+                <Signal>i2c_reg_write_data[2]</Signal>
+                <Signal>i2c_reg_write_data[1]</Signal>
+                <Signal>i2c_reg_write_data[0]</Signal>
+            </Bus>
+            <Signal>i2c_reg_is_write</Signal>
+            <Signal>i2c_reg_request</Signal>
+            <Signal>i2c_reg_response</Signal>
+            <Signal>i2c_reg_read_response</Signal>
+            <Bus name="i2c_slave_inst/input_bits[7:0]">
+                <Signal>i2c_slave_inst/input_bits[7]</Signal>
+                <Signal>i2c_slave_inst/input_bits[6]</Signal>
+                <Signal>i2c_slave_inst/input_bits[5]</Signal>
+                <Signal>i2c_slave_inst/input_bits[4]</Signal>
+                <Signal>i2c_slave_inst/input_bits[3]</Signal>
+                <Signal>i2c_slave_inst/input_bits[2]</Signal>
+                <Signal>i2c_slave_inst/input_bits[1]</Signal>
+                <Signal>i2c_slave_inst/input_bits[0]</Signal>
+            </Bus>
+            <Bus name="i2c_slave_inst/output_bits[7:0]">
+                <Signal>i2c_slave_inst/output_bits[7]</Signal>
+                <Signal>i2c_slave_inst/output_bits[6]</Signal>
+                <Signal>i2c_slave_inst/output_bits[5]</Signal>
+                <Signal>i2c_slave_inst/output_bits[4]</Signal>
+                <Signal>i2c_slave_inst/output_bits[3]</Signal>
+                <Signal>i2c_slave_inst/output_bits[2]</Signal>
+                <Signal>i2c_slave_inst/output_bits[1]</Signal>
+                <Signal>i2c_slave_inst/output_bits[0]</Signal>
+            </Bus>
+            <Bus name="i2c_slave_inst/i2c_state[2:0]">
+                <Signal>i2c_slave_inst/i2c_state[2]</Signal>
+                <Signal>i2c_slave_inst/i2c_state[1]</Signal>
+                <Signal>i2c_slave_inst/i2c_state[0]</Signal>
+            </Bus>
+        </SignalList>
+        <Triggers>
+            <Trigger index="0">
+                <SignalList>
+                    <Signal>i2c_slave_inst/scl_i</Signal>
+                    <Signal>i2c_slave_inst/sda_i</Signal>
+                </SignalList>
+            </Trigger>
+            <Trigger index="1">
+                <SignalList>
+                    <Signal>i2c_reg_request</Signal>
+                    <Signal>i2c_reg_is_write</Signal>
+                </SignalList>
+            </Trigger>
+            <Trigger index="2"/>
+            <Trigger index="3"/>
+            <Trigger index="4"/>
+            <Trigger index="5"/>
+            <Trigger index="6"/>
+            <Trigger index="7"/>
+            <Trigger index="8"/>
+            <Trigger index="9"/>
+            <Trigger index="10"/>
+            <Trigger index="11"/>
+            <Trigger index="12"/>
+            <Trigger index="13"/>
+            <Trigger index="14"/>
+            <Trigger index="15"/>
+        </Triggers>
+        <MatchUnits>
+            <MatchUnit index="0" enabled="1" match_type="1" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="1F" value1="00" trigger="0"/>
+            <MatchUnit index="1" enabled="1" match_type="1" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="10" value1="00" trigger="1"/>
+            <MatchUnit index="2" enabled="0" match_type="1" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="F" value1="0" trigger="2"/>
+            <MatchUnit index="3" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="4" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="5" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="6" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="7" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="8" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="9" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="10" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="11" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="12" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="13" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="14" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="15" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+        </MatchUnits>
+        <Expressions type="Static">
+            <Expression>M0</Expression>
+        </Expressions>
+    </AoCore>
+    <GAO_ID>1010000100111110</GAO_ID>
+</GAO_CONFIG>

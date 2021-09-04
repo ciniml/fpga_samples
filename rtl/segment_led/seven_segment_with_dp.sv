@@ -18,7 +18,7 @@ module seven_segment_with_dp #(
 
     input  logic next_segment,
 
-    input  logic [5-1:0] digits [0:NUMBER_OF_DIGITS-1],
+    input  logic [6-1:0] digits [0:NUMBER_OF_DIGITS-1],
 
     output logic [NUMBER_OF_SEGMENTS-1:0] segment_out,
     output logic [NUMBER_OF_DIGITS-1:0] digit_selector_out
@@ -58,7 +58,7 @@ for(genvar digit = 0; digit < NUMBER_OF_DIGITS; digit++) begin: gen_segment_patt
             4'hf: digit_wo_dp = 7'b1110001;
             default: digit_wo_dp = 0;
         endcase
-        digits_inner[digit] = {digits[digit][4], digit_wo_dp};
+        digits_inner[digit] = digits[digit][5] ? {digits[digit][4], digit_wo_dp} : 0;
     end
 end
 
