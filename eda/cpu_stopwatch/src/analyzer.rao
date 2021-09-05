@@ -1,0 +1,226 @@
+<?xml version="1" encoding="UTF-8"?>
+<GAO_CONFIG>
+    <Version>3.0</Version>
+    <Mode>Standard</Mode>
+    <AoCore index="0" sample_clock="clock" trig_type="0" storage_depth="1024" window_num="1" capture_amount="1024" trigger_pos="16">
+        <SignalList>
+            <Bus name="mem_addr[31:0]">
+                <Signal>mem_addr[31]</Signal>
+                <Signal>mem_addr[30]</Signal>
+                <Signal>mem_addr[29]</Signal>
+                <Signal>mem_addr[28]</Signal>
+                <Signal>mem_addr[27]</Signal>
+                <Signal>mem_addr[26]</Signal>
+                <Signal>mem_addr[25]</Signal>
+                <Signal>mem_addr[24]</Signal>
+                <Signal>mem_addr[23]</Signal>
+                <Signal>mem_addr[22]</Signal>
+                <Signal>mem_addr[21]</Signal>
+                <Signal>mem_addr[20]</Signal>
+                <Signal>mem_addr[19]</Signal>
+                <Signal>mem_addr[18]</Signal>
+                <Signal>mem_addr[17]</Signal>
+                <Signal>mem_addr[16]</Signal>
+                <Signal>mem_addr[15]</Signal>
+                <Signal>mem_addr[14]</Signal>
+                <Signal>mem_addr[13]</Signal>
+                <Signal>mem_addr[12]</Signal>
+                <Signal>mem_addr[11]</Signal>
+                <Signal>mem_addr[10]</Signal>
+                <Signal>mem_addr[9]</Signal>
+                <Signal>mem_addr[8]</Signal>
+                <Signal>mem_addr[7]</Signal>
+                <Signal>mem_addr[6]</Signal>
+                <Signal>mem_addr[5]</Signal>
+                <Signal>mem_addr[4]</Signal>
+                <Signal>mem_addr[3]</Signal>
+                <Signal>mem_addr[2]</Signal>
+                <Signal>mem_addr[1]</Signal>
+                <Signal>mem_addr[0]</Signal>
+            </Bus>
+            <Bus name="mem_wdata[31:0]">
+                <Signal>mem_wdata[31]</Signal>
+                <Signal>mem_wdata[30]</Signal>
+                <Signal>mem_wdata[29]</Signal>
+                <Signal>mem_wdata[28]</Signal>
+                <Signal>mem_wdata[27]</Signal>
+                <Signal>mem_wdata[26]</Signal>
+                <Signal>mem_wdata[25]</Signal>
+                <Signal>mem_wdata[24]</Signal>
+                <Signal>mem_wdata[23]</Signal>
+                <Signal>mem_wdata[22]</Signal>
+                <Signal>mem_wdata[21]</Signal>
+                <Signal>mem_wdata[20]</Signal>
+                <Signal>mem_wdata[19]</Signal>
+                <Signal>mem_wdata[18]</Signal>
+                <Signal>mem_wdata[17]</Signal>
+                <Signal>mem_wdata[16]</Signal>
+                <Signal>mem_wdata[15]</Signal>
+                <Signal>mem_wdata[14]</Signal>
+                <Signal>mem_wdata[13]</Signal>
+                <Signal>mem_wdata[12]</Signal>
+                <Signal>mem_wdata[11]</Signal>
+                <Signal>mem_wdata[10]</Signal>
+                <Signal>mem_wdata[9]</Signal>
+                <Signal>mem_wdata[8]</Signal>
+                <Signal>mem_wdata[7]</Signal>
+                <Signal>mem_wdata[6]</Signal>
+                <Signal>mem_wdata[5]</Signal>
+                <Signal>mem_wdata[4]</Signal>
+                <Signal>mem_wdata[3]</Signal>
+                <Signal>mem_wdata[2]</Signal>
+                <Signal>mem_wdata[1]</Signal>
+                <Signal>mem_wdata[0]</Signal>
+            </Bus>
+            <Bus name="mem_wstrb[3:0]">
+                <Signal>mem_wstrb[3]</Signal>
+                <Signal>mem_wstrb[2]</Signal>
+                <Signal>mem_wstrb[1]</Signal>
+                <Signal>mem_wstrb[0]</Signal>
+            </Bus>
+            <Bus name="mem_rdata[31:0]">
+                <Signal>mem_rdata[31]</Signal>
+                <Signal>mem_rdata[30]</Signal>
+                <Signal>mem_rdata[29]</Signal>
+                <Signal>mem_rdata[28]</Signal>
+                <Signal>mem_rdata[27]</Signal>
+                <Signal>mem_rdata[26]</Signal>
+                <Signal>mem_rdata[25]</Signal>
+                <Signal>mem_rdata[24]</Signal>
+                <Signal>mem_rdata[23]</Signal>
+                <Signal>mem_rdata[22]</Signal>
+                <Signal>mem_rdata[21]</Signal>
+                <Signal>mem_rdata[20]</Signal>
+                <Signal>mem_rdata[19]</Signal>
+                <Signal>mem_rdata[18]</Signal>
+                <Signal>mem_rdata[17]</Signal>
+                <Signal>mem_rdata[16]</Signal>
+                <Signal>mem_rdata[15]</Signal>
+                <Signal>mem_rdata[14]</Signal>
+                <Signal>mem_rdata[13]</Signal>
+                <Signal>mem_rdata[12]</Signal>
+                <Signal>mem_rdata[11]</Signal>
+                <Signal>mem_rdata[10]</Signal>
+                <Signal>mem_rdata[9]</Signal>
+                <Signal>mem_rdata[8]</Signal>
+                <Signal>mem_rdata[7]</Signal>
+                <Signal>mem_rdata[6]</Signal>
+                <Signal>mem_rdata[5]</Signal>
+                <Signal>mem_rdata[4]</Signal>
+                <Signal>mem_rdata[3]</Signal>
+                <Signal>mem_rdata[2]</Signal>
+                <Signal>mem_rdata[1]</Signal>
+                <Signal>mem_rdata[0]</Signal>
+            </Bus>
+            <Signal>mem_valid</Signal>
+            <Signal>mem_instr</Signal>
+            <Signal>mem_ready</Signal>
+            <Signal>mem_read</Signal>
+            <Bus name="led_out[7:0]">
+                <Signal>led_out[7]</Signal>
+                <Signal>led_out[6]</Signal>
+                <Signal>led_out[5]</Signal>
+                <Signal>led_out[4]</Signal>
+                <Signal>led_out[3]</Signal>
+                <Signal>led_out[2]</Signal>
+                <Signal>led_out[1]</Signal>
+                <Signal>led_out[0]</Signal>
+            </Bus>
+        </SignalList>
+        <Triggers>
+            <Trigger index="0">
+                <SignalList>
+                    <Signal>reset</Signal>
+                    <Signal>mem_valid</Signal>
+                </SignalList>
+            </Trigger>
+            <Trigger index="1">
+                <SignalList>
+                    <Bus restorename="led_out[7:0]">
+                        <Signal>led_out[7]</Signal>
+                        <Signal>led_out[6]</Signal>
+                        <Signal>led_out[5]</Signal>
+                        <Signal>led_out[4]</Signal>
+                        <Signal>led_out[3]</Signal>
+                        <Signal>led_out[2]</Signal>
+                        <Signal>led_out[1]</Signal>
+                        <Signal>led_out[0]</Signal>
+                    </Bus>
+                </SignalList>
+            </Trigger>
+            <Trigger index="2">
+                <SignalList>
+                    <Bus restorename="mem_addr[31:0]">
+                        <Signal>mem_addr[31]</Signal>
+                        <Signal>mem_addr[30]</Signal>
+                        <Signal>mem_addr[29]</Signal>
+                        <Signal>mem_addr[28]</Signal>
+                        <Signal>mem_addr[27]</Signal>
+                        <Signal>mem_addr[26]</Signal>
+                        <Signal>mem_addr[25]</Signal>
+                        <Signal>mem_addr[24]</Signal>
+                        <Signal>mem_addr[23]</Signal>
+                        <Signal>mem_addr[22]</Signal>
+                        <Signal>mem_addr[21]</Signal>
+                        <Signal>mem_addr[20]</Signal>
+                        <Signal>mem_addr[19]</Signal>
+                        <Signal>mem_addr[18]</Signal>
+                        <Signal>mem_addr[17]</Signal>
+                        <Signal>mem_addr[16]</Signal>
+                        <Signal>mem_addr[15]</Signal>
+                        <Signal>mem_addr[14]</Signal>
+                        <Signal>mem_addr[13]</Signal>
+                        <Signal>mem_addr[12]</Signal>
+                        <Signal>mem_addr[11]</Signal>
+                        <Signal>mem_addr[10]</Signal>
+                        <Signal>mem_addr[9]</Signal>
+                        <Signal>mem_addr[8]</Signal>
+                        <Signal>mem_addr[7]</Signal>
+                        <Signal>mem_addr[6]</Signal>
+                        <Signal>mem_addr[5]</Signal>
+                        <Signal>mem_addr[4]</Signal>
+                        <Signal>mem_addr[3]</Signal>
+                        <Signal>mem_addr[2]</Signal>
+                        <Signal>mem_addr[1]</Signal>
+                        <Signal>mem_addr[0]</Signal>
+                    </Bus>
+                </SignalList>
+            </Trigger>
+            <Trigger index="3"/>
+            <Trigger index="4"/>
+            <Trigger index="5"/>
+            <Trigger index="6"/>
+            <Trigger index="7"/>
+            <Trigger index="8"/>
+            <Trigger index="9"/>
+            <Trigger index="10"/>
+            <Trigger index="11"/>
+            <Trigger index="12"/>
+            <Trigger index="13"/>
+            <Trigger index="14"/>
+            <Trigger index="15"/>
+        </Triggers>
+        <MatchUnits>
+            <MatchUnit index="0" enabled="1" match_type="1" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="0R" value1="00" trigger="0"/>
+            <MatchUnit index="1" enabled="1" match_type="2" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="3" value0="11111111" value1="00000000" trigger="1"/>
+            <MatchUnit index="2" enabled="1" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX" value1="00000000000000000000000000000000" trigger="2"/>
+            <MatchUnit index="3" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="4" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="5" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="6" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="7" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="8" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="9" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="10" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="11" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="12" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="13" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="14" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="15" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+        </MatchUnits>
+        <Expressions type="Static">
+            <Expression>(M0|M1)&amp;M2</Expression>
+        </Expressions>
+    </AoCore>
+    <GAO_ID>0000011101110110</GAO_ID>
+</GAO_CONFIG>
