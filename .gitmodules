@@ -1,0 +1,3 @@
+[submodule "external/serv"]
+	path = external/serv
+	url = https://github.com/olofk/serv.git

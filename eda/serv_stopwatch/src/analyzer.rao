@@ -1,0 +1,209 @@
+<?xml version="1" encoding="UTF-8"?>
+<GAO_CONFIG>
+    <Version>3.0</Version>
+    <Mode>Standard</Mode>
+    <AoCore index="0" sample_clock="clock" trig_type="0" storage_depth="1024" window_num="1" capture_amount="1024" trigger_pos="16">
+        <SignalList>
+            <Bus name="serv_system_inst/ibus_imem_if.adr[31:0]">
+                <Signal>serv_system_inst/ibus_imem_if.adr[31]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[30]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[29]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[28]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[27]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[26]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[25]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[24]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[23]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[22]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[21]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[20]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[19]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[18]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[17]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[16]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[15]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[14]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[13]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[12]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[11]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[10]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[9]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[8]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[7]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[6]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[5]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[4]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[3]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[2]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[1]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.adr[0]</Signal>
+            </Bus>
+            <Bus name="serv_system_inst/ibus_imem_if.dat_i[31:0]">
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[31]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[30]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[29]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[28]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[27]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[26]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[25]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[24]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[23]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[22]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[21]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[20]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[19]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[18]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[17]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[16]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[15]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[14]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[13]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[12]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[11]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[10]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[9]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[8]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[7]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[6]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[5]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[4]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[3]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[2]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[1]</Signal>
+                <Signal>serv_system_inst/ibus_imem_if.dat_i[0]</Signal>
+            </Bus>
+            <Signal>serv_system_inst/ibus_imem_if.stb</Signal>
+            <Signal>serv_system_inst/ibus_imem_if.ack</Signal>
+            <Bus name="serv_system_inst/dbus_if.adr[31:0]">
+                <Signal>serv_system_inst/dbus_if.adr[31]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[30]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[29]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[28]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[27]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[26]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[25]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[24]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[23]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[22]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[21]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[20]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[19]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[18]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[17]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[16]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[15]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[14]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[13]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[12]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[11]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[10]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[9]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[8]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[7]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[6]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[5]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[4]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[3]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[2]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[1]</Signal>
+                <Signal>serv_system_inst/dbus_if.adr[0]</Signal>
+            </Bus>
+            <Bus name="serv_system_inst/dbus_if.sel[3:0]">
+                <Signal>serv_system_inst/dbus_if.sel[3]</Signal>
+                <Signal>serv_system_inst/dbus_if.sel[2]</Signal>
+                <Signal>serv_system_inst/dbus_if.sel[1]</Signal>
+                <Signal>serv_system_inst/dbus_if.sel[0]</Signal>
+            </Bus>
+            <Signal>serv_system_inst/dbus_if.cyc</Signal>
+            <Signal>serv_system_inst/dbus_if.stb</Signal>
+            <Signal>serv_system_inst/dbus_if.we</Signal>
+            <Signal>serv_system_inst/dbus_if.ack</Signal>
+        </SignalList>
+        <Triggers>
+            <Trigger index="0">
+                <SignalList>
+                    <Signal>reset</Signal>
+                    <Signal>serv_system_inst/dbus_if.cyc</Signal>
+                    <Signal>serv_system_inst/dbus_if.stb</Signal>
+                    <Signal>serv_system_inst/dbus_if.we</Signal>
+                    <Signal>serv_system_inst/dbus_if.ack</Signal>
+                    <Signal>serv_system_inst/ibus_imem_if.cyc</Signal>
+                </SignalList>
+            </Trigger>
+            <Trigger index="1">
+                <SignalList>
+                    <Bus restorename="serv_system_inst/ibus_imem_if.adr[31:0]">
+                        <Signal>serv_system_inst/ibus_imem_if.adr[31]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[30]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[29]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[28]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[27]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[26]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[25]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[24]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[23]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[22]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[21]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[20]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[19]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[18]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[17]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[16]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[15]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[14]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[13]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[12]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[11]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[10]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[9]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[8]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[7]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[6]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[5]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[4]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[3]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[2]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[1]</Signal>
+                        <Signal>serv_system_inst/ibus_imem_if.adr[0]</Signal>
+                    </Bus>
+                </SignalList>
+            </Trigger>
+            <Trigger index="2"/>
+            <Trigger index="3"/>
+            <Trigger index="4"/>
+            <Trigger index="5"/>
+            <Trigger index="6"/>
+            <Trigger index="7"/>
+            <Trigger index="8"/>
+            <Trigger index="9"/>
+            <Trigger index="10"/>
+            <Trigger index="11"/>
+            <Trigger index="12"/>
+            <Trigger index="13"/>
+            <Trigger index="14"/>
+            <Trigger index="15"/>
+        </Triggers>
+        <MatchUnits>
+            <MatchUnit index="0" enabled="1" match_type="1" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="0XXXXR" value1="000000" trigger="0"/>
+            <MatchUnit index="1" enabled="1" match_type="2" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="3" value0="00001000000000000000000000000000" value1="00000000000000000000000000000000" trigger="1"/>
+            <MatchUnit index="2" enabled="0" match_type="1" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="F" value1="0" trigger="2"/>
+            <MatchUnit index="3" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="4" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="5" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="6" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="7" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="8" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="9" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="10" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="11" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="12" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="13" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="14" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+            <MatchUnit index="15" enabled="0" match_type="0" counter_enable="0" counter_width="2" counter="2" countinuous="0" func="0" value0="" value1=""/>
+        </MatchUnits>
+        <Expressions type="Static">
+            <Expression>M0&amp;M1</Expression>
+        </Expressions>
+    </AoCore>
+    <GAO_ID>0010010001010101</GAO_ID>
+</GAO_CONFIG>

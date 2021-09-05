@@ -1,0 +1,6 @@
+*.user
+*.gprj
+*.dump
+*.elf
+*.bin
+*.o
