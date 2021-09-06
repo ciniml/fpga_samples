@@ -8,27 +8,27 @@
 //          http://www.boost.org/LICENSE_1_0.txt)
 `default_nettype wire
 module top (
-    input logic clock,
+    input wire clock,
 
     // push switches
-    input logic key_1,
-    input logic key_2,
-    input logic key_3,
-    input logic key_4,
-    input logic key_5,
-    input logic key_6,
-    input logic key_7,
-    input logic key_8,
+    input wire key_1,
+    input wire key_2,
+    input wire key_3,
+    input wire key_4,
+    input wire key_5,
+    input wire key_6,
+    input wire key_7,
+    input wire key_8,
 
     // DIP switches
-    input logic sw_1,
-    input logic sw_2,
-    input logic sw_3,
-    input logic sw_4,
-    input logic sw_5,
-    input logic sw_6,
-    input logic sw_7,
-    input logic sw_8,
+    input wire sw_1,
+    input wire sw_2,
+    input wire sw_3,
+    input wire sw_4,
+    input wire sw_5,
+    input wire sw_6,
+    input wire sw_7,
+    input wire sw_8,
     
     // 4 digit 7 segment with DP LEDs
     output logic seg_a,
@@ -59,12 +59,17 @@ module top (
     output logic r_led3,
     output logic g_led4,
     output logic b_led4,
-    output logic r_led4
+    output logic r_led4,
+
+    // UART
+    output logic uart_tx,
+    input  wire  uart_rx
 );
 
 localparam int CLOCK_HZ = 12_000_000;
-localparam int IMEM_SIZE_BYTES = 512;
-localparam int DMEM_SIZE_BYTES = 64;
+localparam int IMEM_SIZE_BYTES = 2048;  // BSRAM = 9x2k[bit] = 2048[bytes] wo ECC
+localparam int DMEM_SIZE_BYTES = 2048;
+localparam int UART_BAUD_RATE = 115200;
 localparam int UPDATE_FREQ_HZ = 1000;
 localparam int DEBOUNCE_SAMPLING_HZ = 200;
 
@@ -179,6 +184,53 @@ always_comb begin
     b_led4 = ~color_leds[3][2];
 end
 
+// UART instance
+logic       uart_tx_data_valid = 0;
+logic       uart_tx_data_ready;
+logic [7:0] uart_tx_data_bits = 0;
+logic       fifo_uart_tx_data_valid = 0;
+logic       fifo_uart_tx_data_ready;
+logic [7:0] fifo_uart_tx_data_bits = 0;
+uart_tx #(.BAUD_DIVIDER(CLOCK_HZ/UART_BAUD_RATE)) uart_tx_inst(
+    .data_valid(fifo_uart_tx_data_valid),
+    .data_ready(fifo_uart_tx_data_ready),
+    .data_bits (fifo_uart_tx_data_bits),
+    .tx(uart_tx),
+    .*
+);
+simple_fifo uart_tx_fifo_inst (
+    .saxis_tdata (uart_tx_data_bits),
+    .saxis_tvalid(uart_tx_data_valid),
+    .saxis_tready(uart_tx_data_ready),
+    .maxis_tdata (fifo_uart_tx_data_bits),
+    .maxis_tvalid(fifo_uart_tx_data_valid),
+    .maxis_tready(fifo_uart_tx_data_ready),
+    .*
+);
+logic       uart_rx_data_valid;
+logic       uart_rx_data_ready = 0;
+logic [7:0] uart_rx_data_bits;
+logic       fifo_uart_rx_data_valid;
+logic       fifo_uart_rx_data_ready = 0;
+logic [7:0] fifo_uart_rx_data_bits;
+uart_rx #(.BAUD_DIVIDER(CLOCK_HZ/UART_BAUD_RATE)) uart_rx_inst(
+    .data_valid(fifo_uart_rx_data_valid),
+    .data_ready(fifo_uart_rx_data_ready),
+    .data_bits (fifo_uart_rx_data_bits),
+    .rx(uart_rx),
+    .overrun(),
+    .*
+);
+simple_fifo uart_rx_fifo_inst (
+    .saxis_tdata (fifo_uart_rx_data_bits),
+    .saxis_tvalid(fifo_uart_rx_data_valid),
+    .saxis_tready(fifo_uart_rx_data_ready),
+    .maxis_tdata (uart_rx_data_bits),
+    .maxis_tvalid(uart_rx_data_valid),
+    .maxis_tready(uart_rx_data_ready),
+    .*
+);
+
 // picorv32
 logic        mem_valid;
 logic        mem_instr;
@@ -254,6 +306,8 @@ localparam bit[5:0] REG_SEG_LED_2   = 8'h0a;
 localparam bit[5:0] REG_SEG_LED_3   = 8'h0b;
 localparam bit[5:0] REG_COUNTER     = 8'h0c;
 localparam bit[5:0] REG_CLOCK_HZ    = 8'h0d;
+localparam bit[5:0] REG_UART_STATUS = 8'h0e;
+localparam bit[5:0] REG_UART_DATA   = 8'h0f;
 
 localparam bit[31:0] REG_ID_VALUE = 32'h01234567;
 
@@ -262,14 +316,27 @@ localparam int DMEM_ADDR_BITS = $clog2(DMEM_SIZE_BYTES);
 logic [31:0] imem [0:IMEM_SIZE_BYTES/4-1];
 logic [31:0] dmem [0:DMEM_SIZE_BYTES/4-1];
 logic mem_read;
+logic mem_partial_write = 0;
+logic [31:0] mem_write_buffer = 0;
 assign mem_read = ~|mem_wstrb;
+
+always_comb begin
+    uart_rx_data_ready = !reset && mem_valid && mem_read && mem_addr[31:28] == DBUS_REG_SPACE && mem_addr[7:2] == REG_UART_DATA;    
+end
+
 always_ff @(posedge clock) begin
     if( reset ) begin
         mem_ready <= 0;
+        mem_partial_write <= 0;
+        uart_tx_data_valid <= 0;
     end
     else begin
         mem_ready <= 0;
-        if( mem_valid ) begin
+        if( uart_tx_data_valid && uart_tx_data_ready ) begin
+            uart_tx_data_valid <= 0;
+        end
+
+        if( mem_valid && !mem_ready) begin
             mem_ready <= 1;
             if( mem_read ) begin
                 if( mem_instr ) begin
@@ -292,6 +359,10 @@ always_ff @(posedge clock) begin
                             REG_SEG_LED_3:   mem_rdata <= {26'b0, digits[0]};
                             REG_COUNTER:     mem_rdata <= free_running_counter;
                             REG_CLOCK_HZ:    mem_rdata <= CLOCK_HZ;
+                            REG_UART_STATUS: mem_rdata <= {30'b0, uart_rx_data_valid, (!uart_tx_data_valid || uart_tx_data_ready)};
+                            REG_UART_DATA:   begin
+                                mem_rdata <= uart_rx_data_valid ? uart_rx_data_bits : 0;
+                            end
                             default:         mem_rdata <= 0;
                         endcase
                     end
@@ -312,13 +383,40 @@ always_ff @(posedge clock) begin
                         REG_SEG_LED_1: digits[1] <= mem_wdata[5:0];
                         REG_SEG_LED_2: digits[2] <= mem_wdata[5:0];
                         REG_SEG_LED_3: digits[3] <= mem_wdata[5:0];
+                        REG_UART_DATA: begin
+                            if( !uart_tx_data_valid || uart_tx_data_ready ) begin
+                                uart_tx_data_valid <= 1;
+                                uart_tx_data_bits <= mem_wdata[7:0];
+                            end
+                        end
                     endcase
                 end
                 else begin
-                    if( mem_wstrb[0] ) dmem[mem_addr[DMEM_ADDR_BITS-1:2]][ 7: 0] <= mem_wdata[ 7: 0];
-                    if( mem_wstrb[1] ) dmem[mem_addr[DMEM_ADDR_BITS-1:2]][15: 8] <= mem_wdata[15: 8];
-                    if( mem_wstrb[2] ) dmem[mem_addr[DMEM_ADDR_BITS-1:2]][23:16] <= mem_wdata[23:16];
-                    if( mem_wstrb[3] ) dmem[mem_addr[DMEM_ADDR_BITS-1:2]][31:24] <= mem_wdata[31:24];
+                    if( ~&mem_wstrb ) begin
+                        if( mem_partial_write ) begin
+                            logic [31:0] buffer;
+                            buffer = mem_write_buffer;
+                            if( mem_wstrb[0] ) buffer[ 7: 0] = mem_wdata[ 7: 0];
+                            if( mem_wstrb[1] ) buffer[15: 8] = mem_wdata[15: 8];
+                            if( mem_wstrb[2] ) buffer[23:16] = mem_wdata[23:16];
+                            if( mem_wstrb[3] ) buffer[31:24] = mem_wdata[31:24];
+
+                            mem_partial_write <= 0;
+                            dmem[mem_addr[DMEM_ADDR_BITS-1:2]] <= buffer;
+                        end
+                        else begin
+                            mem_ready <= 0;
+                            mem_partial_write <= 1;
+                            mem_write_buffer <= dmem[mem_addr[DMEM_ADDR_BITS-1:2]];
+                        end
+                    end
+                    else begin
+                        dmem[mem_addr[DMEM_ADDR_BITS-1:2]] <= mem_wdata;
+                    end
+                    // if( mem_wstrb[0] ) dmem[mem_addr[DMEM_ADDR_BITS-1:2]][ 7: 0] <= mem_wdata[ 7: 0];
+                    // if( mem_wstrb[1] ) dmem[mem_addr[DMEM_ADDR_BITS-1:2]][15: 8] <= mem_wdata[15: 8];
+                    // if( mem_wstrb[2] ) dmem[mem_addr[DMEM_ADDR_BITS-1:2]][23:16] <= mem_wdata[23:16];
+                    // if( mem_wstrb[3] ) dmem[mem_addr[DMEM_ADDR_BITS-1:2]][31:24] <= mem_wdata[31:24];
                 end
             end
         end

@@ -9,7 +9,10 @@
         <File path="../../rtl/segment_led/segment_led.sv" type="file.verilog" enable="1"/>
         <File path="../../rtl/segment_led/seven_segment_with_dp.sv" type="file.verilog" enable="1"/>
         <File path="../../rtl/switch_input/debounce.sv" type="file.verilog" enable="1"/>
+        <File path="../../rtl/uart/uart_tx.sv" type="file.verilog" enable="1"/>
+        <File path="../../rtl/uart/uart_rx.sv" type="file.verilog" enable="1"/>
         <File path="../../rtl/util/timer_counter.sv" type="file.verilog" enable="1"/>
+        <File path="../../rtl/util/simple_fifo.sv" type="file.verilog" enable="1"/>
         <File path="../../external/picorv32/picorv32.v" type="file.verilog" enable="1"/>
         <File path="src/runber.cst" type="file.cst" enable="1"/>
         <File path="src/runber.sdc" type="file.sdc" enable="1"/>

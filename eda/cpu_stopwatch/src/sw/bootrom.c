@@ -28,6 +28,19 @@ static volatile uint32_t* const REG_SEG_LED_2    = (volatile uint32_t*)(0x300000
 static volatile uint32_t* const REG_SEG_LED_3    = (volatile uint32_t*)(0x30000000 + 0x0b*4);
 static volatile uint32_t* const REG_COUNTER      = (volatile uint32_t*)(0x30000000 + 0x0c*4);
 static volatile uint32_t* const REG_CLOCK_HZ     = (volatile uint32_t*)(0x30000000 + 0x0d*4);
+static volatile uint32_t* const REG_UART_STATUS  = (volatile uint32_t*)(0x30000000 + 0x0e*4);
+static volatile uint32_t* const REG_UART_DATA    = (volatile uint32_t*)(0x30000000 + 0x0f*4);
+
+static void uart_tx(uint8_t value) 
+{
+    while((*REG_UART_STATUS & 0b01) == 0);
+    *REG_UART_DATA = value;
+}
+static uint8_t uart_rx() 
+{
+    while((*REG_UART_STATUS & 0b10) == 0);
+    return *REG_UART_DATA;
+}
 
 void __attribute__((noreturn)) main(void)
 {
@@ -44,6 +57,13 @@ void __attribute__((noreturn)) main(void)
             *REG_SEG_LED_1 = 0x20 | ((start >> 24) & 0x0f);
             *REG_SEG_LED_0 = 0x20 | ((start >> 28) & 0x0f);
         }
-        //for(volatile int n = 0; n < 1000000; n++);
+        
+        if( *REG_KEY & (1u << 6) ) {    // If KEY_6 is pressed
+            while(1) {  // Enter to UART loopback mode.
+                uint8_t data = uart_rx();
+                if( data == '!' ) break;
+                uart_tx(data);
+            }
+        }
     }
 }
