@@ -7,17 +7,18 @@
 //    (See accompanying file LICENSE_1_0.txt or copy at
 //          http://www.boost.org/LICENSE_1_0.txt)
 
+`default_nettype none
 module top (
-    input logic clock,
+    input wire   clock,
 
-    input logic key_1,
-    input logic key_2,
-    input logic key_3,
-    input logic key_4,
-    input logic key_5,
-    input logic key_6,
-    input logic key_7,
-    input logic key_8,
+    input wire   key_1,
+    input wire   key_2,
+    input wire   key_3,
+    input wire   key_4,
+    input wire   key_5,
+    input wire   key_6,
+    input wire   key_7,
+    input wire   key_8,
 
     output logic seg_a,
     output logic seg_b,
@@ -222,3 +223,4 @@ seven_segment_with_dp segment_led_inst (
 );
 
 endmodule
+`default_nettype wire

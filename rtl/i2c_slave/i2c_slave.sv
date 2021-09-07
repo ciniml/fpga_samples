@@ -7,7 +7,7 @@
 //    (See accompanying file LICENSE_1_0.txt or copy at
 //          http://www.boost.org/LICENSE_1_0.txt)
 
-
+`default_nettype none
 module i2c_slave #(
     parameter [6:0] I2C_ADDRESS = 7'h48,
     parameter int   I2C_REG_ADDRESS_WIDTH = 8,
@@ -19,12 +19,12 @@ module i2c_slave #(
     inout wire sda,
     inout wire scl,
     
-    output reg [I2C_REG_ADDRESS_WIDTH-1:0] reg_address,
-    output reg reg_is_write,
-    output reg reg_request,
-    input wire reg_response,
-    input wire [7:0] reg_read_data,
-    output reg [7:0] reg_write_data
+    output logic [I2C_REG_ADDRESS_WIDTH-1:0] reg_address,
+    output logic reg_is_write,
+    output logic reg_request,
+    input wire   reg_response,
+    input wire   [7:0] reg_read_data,
+    output logic [7:0] reg_write_data
 );
 
 
@@ -35,13 +35,13 @@ logic sda_i_raw;
 logic scl_o;
 logic scl_i_raw;
 
+// IOBUFプリミティブを直接使用
 IOBUF sda_io_buf (
     .O(sda_i_raw),
     .I(1'b0),
     .IO(sda),
     .OEN(sda_o)
 );
-
 IOBUF scl_io_buf (
     .O(scl_i_raw),
     .I(1'b0),
@@ -263,4 +263,4 @@ end
 
 
 endmodule
-    
+`default_nettype wire

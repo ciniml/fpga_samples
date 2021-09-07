@@ -7,7 +7,7 @@
 //    (See accompanying file LICENSE_1_0.txt or copy at
 //          http://www.boost.org/LICENSE_1_0.txt)
 
-
+`default_nettype none
 module bounce_detector #(
     parameter longint CLOCK_HZ = 12_000_000,
     parameter int INPUT_RATE_HZ = 100,
@@ -15,10 +15,10 @@ module bounce_detector #(
     localparam int MAX_COUNTER_VALUE = CLOCK_HZ/INPUT_RATE_HZ - 1,
     localparam int COUNTER_BITS = $clog2(MAX_COUNTER_VALUE + 1)
 ) (
-    input logic clock,
-    input logic reset,
+    input wire  clock,
+    input wire  reset,
 
-    input logic async_in,
+    input wire  async_in,
     output logic bounce_detected,
 
     output logic [COUNTER_BITS-1:0] cycles_to_stabilize
@@ -75,3 +75,4 @@ always_ff @(posedge clock) begin
 end
 
 endmodule
+`default_nettype wire

@@ -6,20 +6,20 @@
 // Distributed under the Boost Software License, Version 1.0.
 //    (See accompanying file LICENSE_1_0.txt or copy at
 //          http://www.boost.org/LICENSE_1_0.txt)
-
+`default_nettype none
 module top (
-    input logic clock,
+    input wire  clock,
 
-    input logic key_1,
-    input logic key_2,
-    input logic key_3,
-    input logic key_4,
-    input logic key_5,
-    input logic key_6,
-    input logic key_7,
-    input logic key_8,
+    input wire  key_1,
+    input wire  key_2,
+    input wire  key_3,
+    input wire  key_4,
+    input wire  key_5,
+    input wire  key_6,
+    input wire  key_7,
+    input wire  key_8,
 
-    input logic sw_1,   // DIP SW to select filter is enabled or not.
+    input wire sw_1,   // DIP SW to select filter is enabled or not.
 
     output logic [7:0] led_out
 );
@@ -92,3 +92,4 @@ always_ff @(posedge clock) begin
 end
 
 endmodule
+`default_nettype wire

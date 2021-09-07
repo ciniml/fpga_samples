@@ -1,16 +1,17 @@
+`default_nettype none
 module uart_rx #(
     parameter int NUMBER_OF_BITS = 8,
     parameter int BAUD_DIVIDER = 4,
     parameter int RX_SYNC_STAGES = 3
 ) (
-    input logic clock,
-    input logic reset,
+    input wire  clock,
+    input wire  reset,
 
     output logic                       data_valid,
-    input  logic                       data_ready,
+    input  wire                        data_ready,
     output logic [NUMBER_OF_BITS-1:0] data_bits,
 
-    input logic rx,
+    input wire  rx,
     output logic overrun
 );
 
@@ -72,3 +73,4 @@ always_ff @(posedge clock) begin
 end
 
 endmodule
+`default_nettype wire
