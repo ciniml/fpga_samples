@@ -7,22 +7,22 @@
 //    (See accompanying file LICENSE_1_0.txt or copy at
 //          http://www.boost.org/LICENSE_1_0.txt)
 
-
+`default_nettype wire
 module ws2812b #(
     parameter longint CLOCK_HZ = 12_000_000,
     parameter NUMBER_OF_LEDS = 16
 ) (
-    input  logic clock,
-    input  logic reset,
+    input  wire  clock,
+    input  wire  reset,
 
     output logic serial_out,
 
     // LED pixel buffer interface
     output logic [$clog2(NUMBER_OF_LEDS*3)-1:0] pixel_address,
     output logic                                pixel_request,
-    input  logic                                pixel_ready,
-    input  logic                                pixel_valid,
-    input  logic [7:0]                          pixel_data
+    input  wire                                 pixel_ready,
+    input  wire                                 pixel_valid,
+    input  wire  [7:0]                          pixel_data
 );
 
 localparam longint LONG_PERIOD  = (580*CLOCK_HZ + 1000_000_000-1)/1000_000_000;
@@ -201,4 +201,4 @@ always_ff @(posedge clock) begin
 end
 
 endmodule
-    
+`default_nettype wire

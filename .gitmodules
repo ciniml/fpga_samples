@@ -1,0 +1,3 @@
+[submodule "external/picorv32"]
+	path = external/picorv32
+	url = https://github.com/cliffordwolf/picorv32

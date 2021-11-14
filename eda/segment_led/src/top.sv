@@ -6,18 +6,18 @@
 // Distributed under the Boost Software License, Version 1.0.
 //    (See accompanying file LICENSE_1_0.txt or copy at
 //          http://www.boost.org/LICENSE_1_0.txt)
-
+`default_nettype none
 module top (
-    input logic clock,
+    input wire  clock,
 
-    input logic key_1,
-    input logic key_2,
-    input logic key_3,
-    input logic key_4,
-    input logic key_5,
-    input logic key_6,
-    input logic key_7,
-    input logic key_8,
+    input wire  key_1,
+    input wire  key_2,
+    input wire  key_3,
+    input wire  key_4,
+    input wire  key_5,
+    input wire  key_6,
+    input wire  key_7,
+    input wire  key_8,
 
     output logic seg_a,
     output logic seg_b,
@@ -49,7 +49,7 @@ timer_counter #(
     .reset(1'b0),
 
     .enable(1'b1),
-    .top_value(CLOCK_HZ/UPDATE_FREQ_HZ),
+    .top_value(CLOCK_HZ/UPDATE_FREQ_HZ - 1),
     .compare_value(1'b0),
 
     .overflow(reflesh_trigger),
@@ -57,15 +57,15 @@ timer_counter #(
 );
 
 // Segment LED driver
-logic [4:0] digits [0:3];
+logic [5:0] digits [0:3];
 logic [7:0] segment_out;
 logic [3:0] digit_selector_out;
 
 always_comb begin
-    digits[0] = 5'h0a;
-    digits[1] = 5'h1b;
-    digits[2] = 5'h00;
-    digits[3] = 5'h19;
+    digits[0] = 6'h2c;
+    digits[1] = 6'h29;
+    digits[2] = 6'h2c;
+    digits[3] = 6'h29;
     
     seg_a  = segment_out[0];
     seg_b  = segment_out[1];
@@ -88,3 +88,4 @@ seven_segment_with_dp segment_led_inst (
 );
 
 endmodule
+`default_nettype wire

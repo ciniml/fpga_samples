@@ -1,13 +1,14 @@
+`default_nettype none
 module uart_tx #(
     parameter int NUMBER_OF_BITS = 8,
     parameter int BAUD_DIVIDER = 4
 ) (
-    input logic clock,
-    input logic reset,
+    input wire   clock,
+    input wire   reset,
 
-    input  logic                      data_valid,
+    input  wire                       data_valid,
     output logic                      data_ready,
-    input  logic [NUMBER_OF_BITS-1:0] data_bits,
+    input  wire  [NUMBER_OF_BITS-1:0] data_bits,
 
     output logic tx
 );
@@ -47,3 +48,4 @@ always_ff @(posedge clock) begin
 end
 
 endmodule
+`default_nettype wire

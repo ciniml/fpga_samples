@@ -7,18 +7,18 @@
 //    (See accompanying file LICENSE_1_0.txt or copy at
 //          http://www.boost.org/LICENSE_1_0.txt)
 
-
+`default_nettype none
 module seven_segment_with_dp #(
     parameter int NUMBER_OF_DIGITS = 4,
     parameter bit CATHODE_COMMON = 1'b1,
     localparam int NUMBER_OF_SEGMENTS = 8
 ) (
-    input  logic clock,
-    input  logic reset,
+    input  wire  clock,
+    input  wire  reset,
 
-    input  logic next_segment,
+    input  wire  next_segment,
 
-    input  logic [6-1:0] digits [0:NUMBER_OF_DIGITS-1],
+    input  wire  [6-1:0] digits [0:NUMBER_OF_DIGITS-1],
 
     output logic [NUMBER_OF_SEGMENTS-1:0] segment_out,
     output logic [NUMBER_OF_DIGITS-1:0] digit_selector_out
@@ -63,4 +63,4 @@ for(genvar digit = 0; digit < NUMBER_OF_DIGITS; digit++) begin: gen_segment_patt
 end
 
 endmodule
-    
+`default_nettype wire

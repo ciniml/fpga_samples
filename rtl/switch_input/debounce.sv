@@ -7,16 +7,16 @@
 //    (See accompanying file LICENSE_1_0.txt or copy at
 //          http://www.boost.org/LICENSE_1_0.txt)
 
-
+`default_nettype none
 module debounce #(
     parameter int FILTER_COUNTER_MAX = 3, 
     parameter int SYNCHRONIZE_FF_DEPTH = 2
 ) (
-    input logic clock,
-    input logic reset,
+    input wire  clock,
+    input wire  reset,
 
-    input logic  sampling_trigger,
-    input logic  async_in,
+    input wire   sampling_trigger,
+    input wire   async_in,
     output logic sync_out
 );
 
@@ -59,3 +59,4 @@ always_ff @(posedge clock) begin
 end
 
 endmodule
+`default_nettype wire
