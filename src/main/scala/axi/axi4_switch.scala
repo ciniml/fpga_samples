@@ -128,8 +128,7 @@ class AXI4Demux(axi4Params: AXI4Params, numberOfMasters: Int) extends Module {
             switch(state) {
                 is(sIdle) {
                     when(in.aw.get.valid && in.aw.get.ready) { // Current selected channel is ready.
-                        printf(p"[DEMUX] Select index=${inputIndex} addr=${Hexadecimal(in.aw.get.bits.addr)} len=${Hexadecimal(in.aw.get.bits.len.get)}
-")
+                        printf(p"[DEMUX] Select index=${inputIndex} addr=${Hexadecimal(in.aw.get.bits.addr)} len=${Hexadecimal(in.aw.get.bits.len.get)}")
                         awValid := true.B
                         awAddr := in.aw.get.bits.addr
                         awLen := in.aw.get.bits.len.get

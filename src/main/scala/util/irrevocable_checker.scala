@@ -25,8 +25,7 @@ class IrrevocableChecker[T <: Data](gen: T) extends Module {
     val prevReady = RegNext(io.in.ready)
 
     when(prevValid && !prevReady && !io.in.valid ) {
-        printf(p"Irrevocable violation detected!
-")
+        printf(p"Irrevocable violation detected!")
         error := true.B
     }
 }
