@@ -1,5 +1,5 @@
 BITSTREAM := impl/pnr/stop_watch.fs
-SRCS := $(wildcard src/*.cst) $(wildcard src/*.sdc) project.tcl
+SRCS := $(wildcard src/*.cst) $(wildcard src/*.sdc) $(wildcard src/*.sv) $(wildcard ../../rtl/segment_led/*.sv) $(wildcard ../../rtl/switch_input/*.sv) project.tcl
 DEVICE ?= GW1N-4B
 
 include ../build_gowin.mk

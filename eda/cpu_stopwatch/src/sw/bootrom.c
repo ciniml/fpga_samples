@@ -26,10 +26,38 @@ static volatile uint32_t* const REG_SEG_LED_0    = (volatile uint32_t*)(0x300000
 static volatile uint32_t* const REG_SEG_LED_1    = (volatile uint32_t*)(0x30000000 + 0x09*4);
 static volatile uint32_t* const REG_SEG_LED_2    = (volatile uint32_t*)(0x30000000 + 0x0a*4);
 static volatile uint32_t* const REG_SEG_LED_3    = (volatile uint32_t*)(0x30000000 + 0x0b*4);
-static volatile uint32_t* const REG_COUNTER      = (volatile uint32_t*)(0x30000000 + 0x0c*4);
-static volatile uint32_t* const REG_CLOCK_HZ     = (volatile uint32_t*)(0x30000000 + 0x0d*4);
-static volatile uint32_t* const REG_UART_STATUS  = (volatile uint32_t*)(0x30000000 + 0x0e*4);
-static volatile uint32_t* const REG_UART_DATA    = (volatile uint32_t*)(0x30000000 + 0x0f*4);
+static volatile uint32_t* const REG_CLOCK_HZ     = (volatile uint32_t*)(0x30000000 + 0x0c*4);
+static volatile uint32_t* const REG_UART_STATUS  = (volatile uint32_t*)(0x30000000 + 0x0d*4);
+static volatile uint32_t* const REG_UART_DATA    = (volatile uint32_t*)(0x30000000 + 0x0e*4);
+
+static const uint32_t BIT_KEY_1 = (1u << 0);
+static const uint32_t BIT_KEY_2 = (1u << 0);
+static const uint32_t BIT_KEY_3 = (1u << 0);
+static const uint32_t BIT_KEY_4 = (1u << 0);
+static const uint32_t BIT_KEY_5 = (1u << 0);
+static const uint32_t BIT_KEY_6 = (1u << 0);
+static const uint32_t BIT_KEY_7 = (1u << 0);
+static const uint32_t BIT_KEY_8 = (1u << 0);
+
+static const uint32_t BIT_SW_1 = (1u << 0);
+static const uint32_t BIT_SW_2 = (1u << 0);
+static const uint32_t BIT_SW_3 = (1u << 0);
+static const uint32_t BIT_SW_4 = (1u << 0);
+static const uint32_t BIT_SW_5 = (1u << 0);
+static const uint32_t BIT_SW_6 = (1u << 0);
+static const uint32_t BIT_SW_7 = (1u << 0);
+static const uint32_t BIT_SW_8 = (1u << 0);
+
+static uint64_t read_cycle(void)
+{
+    uint32_t l, h, hv;
+    do {
+        asm volatile ("rdcycleh %0" : "=r" (h));
+        asm volatile ("rdcycle  %0" : "=r" (l));
+        asm volatile ("rdcycleh %0" : "=r" (hv));
+    } while(h != hv);
+    return ((uint64_t)h << 32) | l;
+} 
 
 static void uart_tx(uint8_t value) 
 {
@@ -49,8 +77,8 @@ void __attribute__((noreturn)) main(void)
     while(1) {
         *REG_LED = led_out;
         led_out = (led_out << 1) | ((led_out >> 7) & 1);
-        uint32_t start = *REG_COUNTER;
-        while(*REG_COUNTER - start < clock_hz) {
+        uint64_t start = read_cycle();
+        while(read_cycle() - start < clock_hz) {
             *REG_COLOR_LED_0 = (*REG_KEY & 0x7);
             *REG_SEG_LED_3 = 0x20 | ((start >> 16) & 0x0f);
             *REG_SEG_LED_2 = 0x20 | ((start >> 20) & 0x0f);
@@ -58,7 +86,7 @@ void __attribute__((noreturn)) main(void)
             *REG_SEG_LED_0 = 0x20 | ((start >> 28) & 0x0f);
         }
         
-        if( *REG_KEY & (1u << 6) ) {    // If KEY_6 is pressed
+        if( *REG_KEY & BIT_KEY_1 ) {    // If KEY_1 is pressed
             while(1) {  // Enter to UART loopback mode.
                 uint8_t data = uart_rx();
                 if( data == '!' ) break;

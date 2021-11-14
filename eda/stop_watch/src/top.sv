@@ -45,13 +45,13 @@ localparam int DEBOUNCE_SAMPLING_HZ = 200;
 // Timer counter for generate sampling timing.
 logic debounce_sampling_trigger;
 timer_counter #(
-    .MAX_COUNTER_VALUE(CLOCK_HZ/DEBOUNCE_SAMPLING_HZ)
+    .MAX_COUNTER_VALUE(CLOCK_HZ/DEBOUNCE_SAMPLING_HZ - 1)
 ) debounce_timer_inst (
     .clock(clock),
     .reset(1'b0),
 
     .enable(1'b1),
-    .top_value(CLOCK_HZ/DEBOUNCE_SAMPLING_HZ),
+    .top_value(CLOCK_HZ/DEBOUNCE_SAMPLING_HZ - 1),
     .compare_value(1'b0),
 
     .counter_value(),
@@ -89,13 +89,13 @@ logic counter_reset = 0;
 logic counter_enable;
 logic subsec_trigger;
 timer_counter #(
-    .MAX_COUNTER_VALUE(CLOCK_HZ/10)
+    .MAX_COUNTER_VALUE(CLOCK_HZ/10 - 1)
 ) subsec_timer_inst (
     .clock(clock),
     .reset(counter_reset),
 
     .enable(counter_enable),
-    .top_value(CLOCK_HZ/10),
+    .top_value(CLOCK_HZ/10 - 1),
     .compare_value(1'b0),
 
     .counter_value(),
@@ -176,13 +176,13 @@ end
 // Timer counter for generate digit selection timing.
 logic reflesh_trigger;
 timer_counter #(
-    .MAX_COUNTER_VALUE(CLOCK_HZ/UPDATE_FREQ_HZ)
+    .MAX_COUNTER_VALUE(CLOCK_HZ/UPDATE_FREQ_HZ - 1)
 ) digit_refresh_timer_inst (
     .clock(clock),
     .reset(1'b0),
 
     .enable(1'b1),
-    .top_value(CLOCK_HZ/UPDATE_FREQ_HZ),
+    .top_value(CLOCK_HZ/UPDATE_FREQ_HZ - 1),
     .compare_value(1'b0),
 
     .counter_value(),
@@ -192,15 +192,15 @@ timer_counter #(
 );
 
 // Segment LED driver
-logic [4:0] digits [0:3];
+logic [5:0] digits [0:3];
 logic [7:0] segment_out;
 logic [3:0] digit_selector_out;
 
 always_comb begin
-    digits[0] = {1'b1, min_counter};
-    digits[1] = {1'b0, ten_sec_counter};
-    digits[2] = {1'b1, sec_counter};
-    digits[3] = {1'b0, subsec_counter};
+    digits[0] = {1'b1, 1'b1, min_counter};
+    digits[1] = {1'b1, 1'b0, ten_sec_counter};
+    digits[2] = {1'b1, 1'b1, sec_counter};
+    digits[3] = {1'b1, 1'b0, subsec_counter};
     
     seg_a  = segment_out[0];
     seg_b  = segment_out[1];

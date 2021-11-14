@@ -6,9 +6,9 @@ module uart_tx #(
     input wire   clock,
     input wire   reset,
 
-    input  logic                      data_valid,
+    input  wire                       data_valid,
     output logic                      data_ready,
-    input  logic [NUMBER_OF_BITS-1:0] data_bits,
+    input  wire  [NUMBER_OF_BITS-1:0] data_bits,
 
     output logic tx
 );

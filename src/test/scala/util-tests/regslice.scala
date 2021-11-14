@@ -4,7 +4,7 @@
 //    (See accompanying file LICENSE_1_0.txt or copy at
 //          https://www.boost.org/LICENSE_1_0.txt)
 
-package uart
+package util
 
 import org.scalatest._
 import chiseltest._
@@ -13,26 +13,12 @@ import chisel3._
 import scala.util.control.Breaks
 import scala.util.Random
 
-class TestUartSystem() extends Module {
-  val io = IO(new Bundle{
-    val in = Flipped(Decoupled(UInt(8.W)))
-    val out = Decoupled(UInt(8.W))
-  })
-  
-  val uartRx = Module(new UartRx(8, 4, 3))
-  val uartTx = Module(new UartTx(8, 4))
 
-  uartRx.io.rx <> uartTx.io.tx
-  io.in <> uartTx.io.in
-  io.out <> uartRx.io.out
-}
-
-
-class UartSystemTester extends FlatSpec with ChiselScalatestTester with Matchers {
-    val dutName = "UartSystem"
+class RegSliceTester extends FlatSpec with ChiselScalatestTester with Matchers {
+    val dutName = "IrrevocableRegSlice"
     behavior of dutName
 
-    def checkResult(c: TestUartSystem) {
+    def checkResult(c: IrrevocableRegSlice[UInt]) {
         c.io.in.initSource().setSourceClock(c.clock)
         c.io.out.initSink().setSinkClock(c.clock)
         val random = new Random
@@ -55,7 +41,7 @@ class UartSystemTester extends FlatSpec with ChiselScalatestTester with Matchers
         } .join
     }
 
-    it should "simple" in {
-        test(new TestUartSystem) { c => checkResult(c) }
+    it should "8bit" in {
+        test(new IrrevocableRegSlice(UInt(8.W))) { c => checkResult(c) }
     }
 }

@@ -304,10 +304,9 @@ localparam bit[5:0] REG_SEG_LED_0   = 8'h08;
 localparam bit[5:0] REG_SEG_LED_1   = 8'h09;
 localparam bit[5:0] REG_SEG_LED_2   = 8'h0a;
 localparam bit[5:0] REG_SEG_LED_3   = 8'h0b;
-localparam bit[5:0] REG_COUNTER     = 8'h0c;
-localparam bit[5:0] REG_CLOCK_HZ    = 8'h0d;
-localparam bit[5:0] REG_UART_STATUS = 8'h0e;
-localparam bit[5:0] REG_UART_DATA   = 8'h0f;
+localparam bit[5:0] REG_CLOCK_HZ    = 8'h0c;
+localparam bit[5:0] REG_UART_STATUS = 8'h0d;
+localparam bit[5:0] REG_UART_DATA   = 8'h0e;
 
 localparam bit[31:0] REG_ID_VALUE = 32'h01234567;
 
@@ -357,7 +356,6 @@ always_ff @(posedge clock) begin
                             REG_SEG_LED_1:   mem_rdata <= {26'b0, digits[0]};
                             REG_SEG_LED_2:   mem_rdata <= {26'b0, digits[0]};
                             REG_SEG_LED_3:   mem_rdata <= {26'b0, digits[0]};
-                            REG_COUNTER:     mem_rdata <= free_running_counter;
                             REG_CLOCK_HZ:    mem_rdata <= CLOCK_HZ;
                             REG_UART_STATUS: mem_rdata <= {30'b0, uart_rx_data_valid, (!uart_tx_data_valid || uart_tx_data_ready)};
                             REG_UART_DATA:   begin

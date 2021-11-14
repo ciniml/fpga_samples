@@ -5,7 +5,7 @@ set_option -verilog_std sysv2017
 set_option -vhdl_std vhd2008
 set_option -print_all_synthesis_warning 1
 
-add_file -type verilog [file normalize ../../rtl/blink/blink_all.sv]
+add_file -type verilog [file normalize src/top.sv]
 add_file -type cst [file normalize src/runber.cst]
 
 run all
