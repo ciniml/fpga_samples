@@ -130,8 +130,7 @@ class VideoSignalGenerator(defaultVideoParams: VideoParams, maxVideoParams: Vide
         videoConfig := nextVideoConfig
         totalCountsHMinus1 := nextVideoConfig.totalCountsH() - 1.U
         totalCountsVMinus1 := nextVideoConfig.totalCountsV() - 1.U
-        printf(p"[VideoSignalGenerator] Update Video Config nextVideoConfig: ${nextVideoConfig}
-")
+        printf(p"[VideoSignalGenerator] Update Video Config nextVideoConfig: ${nextVideoConfig}")
         activeHLower := (nextVideoConfig.pulseWidthH + 0.U(maxVideoParams.countHBits.W)) + nextVideoConfig.backPorchH
         activeVLower := (nextVideoConfig.pulseWidthV + 0.U(maxVideoParams.countVBits.W)) + nextVideoConfig.backPorchV
         activeHUpper := (nextVideoConfig.pulseWidthH + 0.U(maxVideoParams.countHBits.W)) + nextVideoConfig.backPorchH + nextVideoConfig.pixelsH
@@ -161,8 +160,7 @@ class VideoSignalGenerator(defaultVideoParams: VideoParams, maxVideoParams: Vide
         }
         when( counterH === activeHLower && counterV === activeVLower && (!io.data.valid || !io.data.bits.startOfFrame) ) {
             // If current data does not have SOF flag at the top-left point, the data stream is not in sync.
-            printf(p"[VideoSignalGenerator] Lost sync. counterH=${counterH}, activeHLower=${activeHLower}, counterV=${counterV}, activeVLower=${activeVLower}
-")
+            printf(p"[VideoSignalGenerator] Lost sync. counterH=${counterH}, activeHLower=${activeHLower}, counterV=${counterV}, activeVLower=${activeVLower}")
             dataInSync := false.B
         }
         data := Mux(io.data.valid, io.data.bits.pixelData, 0.U)
