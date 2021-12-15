@@ -1,5 +1,5 @@
 /**
- * @file stmemu.sv
+ * @file stp_emu.sv
  * @brief linear move stepper motor actuator emulator.
  */
 // Copyright 2021 Kenta IDA
