@@ -10,22 +10,22 @@
 
 module stp_emu #(
     parameter longint CLOCK_HZ = 24_000_000,
-    parameter int FULL_STROKE_PULSES = 1000,
-    parameter int LIMIT_SW_NEAR_PULSES = 20,
-    parameter int LIMIT_SW_FAR_PULSES = 20,
-    localparam int COUNTER_LIMIT = LIMIT_SW_NEAR_PULSES + FULL_STROKE_PULSES + LIMIT_SW_FAR_PULSES,
+    parameter int FULL_STROKE_PULSES = 1000,    // Number of pulses to move full stroke (near limit to far limit)
+    parameter int LIMIT_SW_NEAR_PULSES = 20,    // Number of pulses from hard limit to near end limit switch.
+    parameter int LIMIT_SW_FAR_PULSES = 20,     // Number of pulses from far end limit switch to hard limit.
+    localparam int COUNTER_LIMIT = LIMIT_SW_NEAR_PULSES + FULL_STROKE_PULSES + LIMIT_SW_FAR_PULSES, // Max counter value.
     localparam int COUNTER_BITS = $clog2(COUNTER_LIMIT)
 ) (
     input  wire  clock,
     
-    input  wire  stp_en_in,
-    input  wire  stp_pa_in,
-    input  wire  stp_pb_in,
+    input  wire  stp_en_in,         // Stepper motor drive enable signal asynchronous input.  Must be slow enough to be sampled by clock.
+    input  wire  stp_pa_in,         // Stepper motor drive phase A signal asynchronous input. Must be slow enough to be sampled by clock. 
+    input  wire  stp_pb_in,         // Stepper motor drive phase B signal asynchronous input. Must be slow enough to be sampled by clock.
     
-    output logic limit_sw_near_out,
-    output logic limit_sw_far_out,
+    output logic limit_sw_near_out, // Near end limit switch output. (ACTIVE HIGH)
+    output logic limit_sw_far_out,  // Far end limit switch output. (ACTIVE HIGH)
 
-    output logic [COUNTER_BITS-1:0] counter_out
+    output logic [COUNTER_BITS-1:0] counter_out // Current position counter output.
 );
 
 logic [COUNTER_BITS-1:0] counter = 0;
