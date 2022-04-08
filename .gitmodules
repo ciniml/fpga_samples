@@ -1,3 +1,6 @@
 [submodule "external/picorv32"]
 	path = external/picorv32
 	url = https://github.com/cliffordwolf/picorv32
+[submodule "external/gcem"]
+	path = external/gcem
+	url = https://github.com/kthohr/gcem.git
