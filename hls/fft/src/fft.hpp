@@ -8,8 +8,18 @@
 #include <cstdint>
 #include <cmath>
 #include <array>
+#ifdef __SYNTHESIS__
+#include <ap_int.h>
+#endif
 
 namespace hls::fft {
+
+/**
+ * @brief An alternative of std::complex, which is difficult to use due to its constructor initializes the value to zero. 
+ *        The initialization causes extra WRITE operation, which requires additional port for RAM interface.
+ * 
+ * @tparam T A type to represent components of complex number. 
+ */
 template <typename T>
 struct complex
 {
@@ -104,6 +114,7 @@ struct complex
 } // hls::fft
 
 namespace std {
+    // Some std function overloads for hls::fft::complex.
     template<typename T>
     constexpr static T real(const hls::fft::complex<T>& c) { return c.real; }
     template<typename T>
@@ -211,8 +222,10 @@ static constexpr std::size_t clog2(std::size_t n)
 template <std::size_t N>
 struct BitReverse
 {
+	static constexpr const std::size_t NUMBER_OF_BITS = clog2(N);
+#ifndef __SYNTHESIS__
     static constexpr std::size_t bit_reverse(std::size_t i) {
-        auto number_of_bits = static_cast<std::size_t>(clog2(N));
+        auto number_of_bits = NUMBER_OF_BITS;
         std::size_t forward_mask = 1;
         std::size_t reverse_mask = 1 << (number_of_bits - 1);
         for(std::size_t bit_index = 0; bit_index < number_of_bits/2; bit_index++, forward_mask <<= 1, reverse_mask >>= 1) {
@@ -244,6 +257,13 @@ struct BitReverse
     std::size_t operator[](std::size_t i) const {
         return this->table[i];
     }
+#else
+    // Use bit reverse operation of ap_uint instead when synthesize.
+    std::size_t operator[](std::size_t i) const {
+    	auto bits = ap_uint<NUMBER_OF_BITS>(i);
+    	return bits.range(0, NUMBER_OF_BITS-1);
+    }
+#endif
 };
 
 /**
@@ -293,10 +313,9 @@ struct cooley_tukey_fft {
 	{
 		InterleavedArray<complex<T>, N, 1> stage_in[STAGES];
 #pragma HLS ARRAY_PARTITION dim=1 type=block variable=stage_in factor=STAGES
+#pragma HLS BIND_STORAGE variable=stage_in type=ram_s2p impl=uram
 #pragma HLS STABLE variable=w
 #pragma HLS BIND_STORAGE variable=w.table type=rom_np
-#pragma HLS STABLE variable=bitrev
-#pragma HLS BIND_STORAGE variable=bitrev.table type=rom_1p
 
 		for(std::size_t i = 0; i < N; i++ ) {
 			stage_in[0][i] = input[bitrev[i]];
