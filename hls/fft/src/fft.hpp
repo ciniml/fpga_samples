@@ -15,7 +15,7 @@
 namespace hls::fft {
 
 /**
- * @brief An alternative of std::complex, which is difficult to use due to its constructor initializes the value to zero. 
+ * @brief An alternative of std::complex, which is difficult to use because its constructor initializes the value to zero. 
  *        The initialization causes extra WRITE operation, which requires additional port for RAM interface.
  * 
  * @tparam T A type to represent components of complex number. 
@@ -23,6 +23,7 @@ namespace hls::fft {
 template <typename T>
 struct complex
 {
+    typedef T value_type;
     typedef complex<T> Self;
     T real;
     T imag;
@@ -128,6 +129,38 @@ namespace std {
 }
 
 namespace hls::fft {
+    
+/**
+ * @brief Calculate ceiling of logarithm of 2. (same as $clog2 in Verilog)
+ * 
+ * @param n A number to calculate its ceiling of logarithm of 2.
+ * @return constexpr std::size_t 
+ */
+static constexpr std::size_t clog2(std::size_t n)
+{
+    std::size_t count = 0;
+    while((n >>= 1) != 0) {
+        count++;
+    }
+    return count;
+}
+/**
+ * @brief Calculate number of trailing zeros.
+ * 
+ * @param n A number to calculate its number of trailing zeros.
+ * @return constexpr std::size_t 
+ */
+static constexpr std::uint64_t ntz(std::uint64_t n)
+{
+    for(std::size_t count = 0; count < 64; count++) {
+        if( (n&1) != 0 ) {
+            return count;
+        }
+        n >>= 1;
+    }
+    return 64;
+}
+
 /**
  * @brief W-way interleaving array.
  * 
@@ -141,7 +174,14 @@ struct InterleavedArray
     static constexpr const std::size_t WAY_SIZE = N/W;
     T ways[W][WAY_SIZE];
 
-    InterleavedArray() {}
+    InterleavedArray() = default;
+    InterleavedArray(const T array[]) {
+        for(std::size_t i = 0; i < WAY_SIZE; i++) {
+            for(std::size_t w = 0; w < W; w++) {
+                this->ways[w][i] = array[i*W + w];
+            }
+        }
+    }
     T& operator[](std::size_t i) { 
         return this->ways[i%W][i/W]; 
     }
@@ -157,6 +197,7 @@ struct InterleavedArray
 template <typename T>
 static constexpr T pi() { return T(M_PI); }
 
+
 /**
  * @brief Radix-2 FFT twiddle factor table.
  * 
@@ -164,28 +205,26 @@ static constexpr T pi() { return T(M_PI); }
  * @tparam N Number of elements in this table.
  */
 template <typename T, std::size_t N>
-struct TwiddleFactor
+struct FFTTwiddleFactor
 {
-    typedef complex<T> complex_type;
-    
-    static complex_type twiddle_factor(std::size_t i) {
-        auto t = 2*pi<T>()*i/N;
-        T cos = std::cos(t);
-        T sin = std::sin(t);
-        return complex_type(cos, sin);
+    static T twiddle_factor(std::size_t i) {
+        auto t = 2*pi<typename T::value_type>()*i/N;
+        auto cos = std::cos(t);
+        auto sin = std::sin(t);
+        return T(cos, sin);
     }
     static auto make_table()
     {
-        std::array<complex_type, N/4 + 1> table;
+        std::array<T, N/4 + 1> table;
         for(std::size_t i = 0; i < N/4 + 1; i++ ) {
             table[i] = twiddle_factor(i);
         }
         return table;
     }
 
-    std::array<complex_type, N/4 + 1> table = make_table();
+    std::array<T, N/4 + 1> table = make_table();
     
-    complex_type operator[](std::size_t i) const {
+    T operator[](std::size_t i) const {
         auto i_mod_N = i % N;
         if( i_mod_N < N*1/4 ) {
             return this->table[i];
@@ -200,19 +239,181 @@ struct TwiddleFactor
 };
 
 /**
- * @brief Calculated ceiling of logarithm of 2. (same as $clog2 in Verilog)
+ * @brief A value of Galois Field GF(P) 
  * 
- * @param n A number to calculate its ceiling of logarithm of 2.
- * @return constexpr std::size_t 
+ * @tparam T Base type to represent GF(P) value.
+ * @tparam P Prime number to construct galois field.
  */
-static constexpr std::size_t clog2(std::size_t n)
+template <typename T, std::uint64_t P = T(998244353)>
+struct gf_value
 {
-    std::size_t count = 0;
-    while((n >>= 1) != 0) {
-        count++;
+    typedef gf_value<T, P> Self;
+    T value;
+    constexpr gf_value() {}   // DO NOT initialize anything not to generate extra WRITE operation in HLS synthesis.
+    constexpr gf_value(const T& value) : value(value % P) {}
+    
+    constexpr Self reciprocal() const {
+        // Calculate the receiprocal with extended euclidean algorithm.
+        if( this->value == 1 ) return Self(1);
+        T x = this->value;
+        T y = P;
+        T x_0 = 1;
+        T y_0 = 0;
+        while( y != 0 ) {
+            auto q = x / y;
+            auto r = x % y;
+            auto next_x = y;
+            auto next_y = r;
+            x = next_x;
+            y = next_y;
+
+            auto next_x_0 = y_0;
+            auto qq = T(q * y_0) % P;
+            auto next_y_0 = x_0 < qq ? T((x_0 + P) - qq) : T(x_0 - qq);
+            x_0 = next_x_0;
+            y_0 = next_y_0;
+        }
+        return x == 1 ? Self(x_0) : Self(0);
     }
-    return count;
-}
+
+    // unary operators
+    constexpr Self operator+() const { return *this; }
+    constexpr Self operator-() const { return Self(P - this->value); }
+    constexpr Self operator++() { return *this += Self(T(1)); }
+    constexpr Self operator++(int) { auto result = *this; *this += Self(T(1)); return result; }
+    constexpr Self operator--() { return *this -= Self(T(1)); }
+    constexpr Self operator--(int) { auto result = *this; *this -= Self(T(1)); return result; }
+
+    // assigning operators
+    constexpr Self& operator+=(const Self& rhs) { 
+        T new_value = this->value + rhs.value;
+        this->value = new_value >= P ? T(new_value - P) : new_value;
+        return *this;
+    }
+    constexpr Self& operator-=(const Self& rhs) { 
+        this->value = this->value >= rhs.value ? T(this->value - rhs.value) : T(this->value + P - rhs.value);
+        return *this;
+    }
+    constexpr Self& operator*=(const Self& rhs) { 
+        this->value = (this->value * rhs.value) % P;
+        return *this;
+    }
+    constexpr Self& operator/=(const Self& rhs) {
+        auto reciprocal = rhs.reciprocal();
+        *this *= reciprocal;
+        return *this;
+    }
+
+    // binary operators
+    constexpr Self operator+(const Self& rhs) const {
+        Self new_value(*this);
+        new_value += rhs;
+        return new_value;
+    }
+    constexpr Self operator-(const Self& rhs) const {
+        Self new_value(*this);
+        new_value -= rhs;
+        return new_value;
+    }
+    constexpr Self operator*(const Self& rhs) const {
+        Self new_value(*this);
+        new_value *= rhs;
+        return new_value;
+    }
+    constexpr Self operator/(const Self& rhs) const {
+        Self new_value(*this);
+        new_value /= rhs;
+        return new_value;
+    }
+    constexpr bool operator==(const Self& rhs) const { return this->value == rhs.value; }
+    constexpr bool operator!=(const Self& rhs) const { return !(*this == rhs); }
+
+    constexpr Self pow(const T& n) const {
+        Self pow(1);
+        Self value(this->value);
+        T v(n);
+        while( v > 0 ) {
+            if( (v & 1) != 0 ) {
+                pow *= value;
+            }
+            value *= value;
+            v >>= 1;
+        }
+        return pow;
+    }
+    constexpr Self pow(const Self& n) const { return this->pow(n.value); }
+
+    /**
+     * @brief Calculate square root of this value by the Tonelli's algorithm.
+     * 
+     * @return Self 
+     */
+    constexpr Self sqrt() const {
+        if( this->value == T(0) ) return Self(T(0));
+        if( this->value == T(1) ) return Self(T(1));
+
+        // First, find m and a where 2^m * a + 1 = P
+        // m is the number of trailing zeros of (P - 1)
+        auto m = ntz(P - 1);
+        auto m_2 = (1u << m);   // 2^m
+        auto a = Self(P - 1) / Self(m_2);
+
+        // Find non-squared number
+        Self b(1);
+        while( b.pow( (P - 1) / 2 ) != Self(P - 1) ) {
+            ++b;
+        }
+        auto c = b.pow(a);
+        auto inv = this->reciprocal();
+        auto r = this->pow((a.value + 1)/2);
+
+        m_2 >>= 2;
+        for( T i = 1; i < m; i++, m_2 >>= 1 ) {
+            auto d = (r * r * inv).pow(m_2);
+            if( d.value != 1 ) {
+                r *= c;
+            }
+            c *= c;
+        }
+        return r;
+    }
+};
+
+/**
+ * @brief Twiddle factor for number theorem transform (NTT) on GF(P)
+ * 
+ * @tparam T Type to represent GF(P) value. Usually it is gf_value<T>
+ * @tparam N Number of FFT points.
+ * @tparam P A prime number
+ * @tparam G The base root of the prime root.
+ * @tparam A The power factor of the prime root. G^A is used as the prime root of this twiddle factor.
+ */
+
+template <typename T, std::size_t N, std::size_t M = (1<<23), std::uint64_t P = 998244353, std::uint64_t G = 15311432>
+struct NTTTwiddleFactor
+{
+    static auto make_table()
+    {
+        std::array<T, N> table;
+        auto log2_N = clog2(N);
+        auto log2_M = clog2(M);
+        auto g = T(G);
+        for(std::size_t i = 0; i < log2_N - log2_M; i++) {
+            g *= g;
+        }
+        table[0] = T(1);
+        for(std::size_t i = 1; i < N; i++ ) {
+            table[i] = table[i-1] * g;
+        }
+        return table;
+    }
+
+    std::array<T, N> table = make_table();
+    
+    T operator[](std::size_t i) const {
+        return this->table[i];
+    }
+};
 
 /**
  * @brief Bit reversal table.
@@ -276,8 +477,8 @@ struct BitReverse
  * @param output Output data of this stage.
  * @param w Twiddle factor table.
  */
-template <typename T, std::size_t N>
-static void cooley_tukey_fft_stage(const std::size_t stage, const InterleavedArray<complex<T>, N, 1>& input, InterleavedArray<complex<T>, N, 1>& output, const TwiddleFactor<T, N>& w)
+template <typename T, std::size_t N, typename TTwiddleFactor = FFTTwiddleFactor<T, N>>
+static void cooley_tukey_fft_stage(const std::size_t stage, const InterleavedArray<T, N, 1>& input, InterleavedArray<T, N, 1>& output, const TTwiddleFactor& w)
 {
     const std::size_t block_size = 1<<(stage+1);
     for(std::size_t block = 0; block < N / block_size; block++ ) {
@@ -303,15 +504,15 @@ static void cooley_tukey_fft_stage(const std::size_t stage, const InterleavedArr
  * @param input Input data.
  * @param output Output data.
  */
-template <typename T, std::size_t N = 16>
+template <typename T, std::size_t N = 16, typename TTwiddleFactor = FFTTwiddleFactor<T, N>>
 struct cooley_tukey_fft {
 	static constexpr const std::size_t STAGES = clog2(N);
-	TwiddleFactor<T, N> w;
+	TTwiddleFactor w;
 	BitReverse<N> bitrev;
 
-	void run(const InterleavedArray<complex<T>, N, 1>& input, InterleavedArray<complex<T>, N, 1>& output)
+	void run(const InterleavedArray<T, N, 1>& input, InterleavedArray<T, N, 1>& output)
 	{
-		InterleavedArray<complex<T>, N, 1> stage_in[STAGES];
+		InterleavedArray<T, N, 1> stage_in[STAGES];
 #pragma HLS ARRAY_PARTITION dim=1 type=block variable=stage_in factor=STAGES
 #pragma HLS BIND_STORAGE variable=stage_in type=ram_s2p impl=uram
 #pragma HLS STABLE variable=w
@@ -338,6 +539,11 @@ namespace std  {
 template <typename T>
 static std::ostream& operator<<(std::ostream& self, const hls::fft::complex<T>& c) {
     return self << "(" << c.real << "," << c.imag << ")";
+}
+
+template <typename T, T P>
+static std::ostream& operator<<(std::ostream& self, const hls::fft::gf_value<T, P>& c) {
+    return self << c.value;
 }
 
 } // std

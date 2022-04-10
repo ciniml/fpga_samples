@@ -24,16 +24,17 @@ static void convert_from_complex_to_real(const InterleavedArray<complex<FFTEleme
     }
 }
 
-static InterleavedArray<complex<FFTElement>, NumberOfFFTPoints> input_complex;
-static InterleavedArray<complex<FFTElement>, NumberOfFFTPoints> output_complex;
-static cooley_tukey_fft<FFTElement, NumberOfFFTPoints> fft;
 void run_fft(const FFTElement input[NumberOfFFTPoints], FFTElement output[NumberOfFFTPoints])
 {
 #pragma HLS INTERFACE mode=m_axi port=input
 #pragma HLS INTERFACE mode=m_axi port=output
 #pragma HLS INTERFACE mode=ap_ctrl_chain port=return
 #pragma HLS DATAFLOW
-    convert_from_real_to_complex(input, input_complex);
+	InterleavedArray<complex<FFTElement>, NumberOfFFTPoints> input_complex;
+	InterleavedArray<complex<FFTElement>, NumberOfFFTPoints> output_complex;
+	cooley_tukey_fft<complex<FFTElement>, NumberOfFFTPoints> fft;
+
+	convert_from_real_to_complex(input, input_complex);
     fft.run(input_complex, output_complex);
     convert_from_complex_to_real(output_complex, output);
 }

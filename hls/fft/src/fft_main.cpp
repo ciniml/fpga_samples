@@ -42,7 +42,7 @@ int main(int argc, char* argv[])
         cout << test_input[i] << " : " << input[i] << endl;
     }
 
-    cooley_tukey_fft<float, N> fft;
+    cooley_tukey_fft<hls::fft::complex<float>, N> fft;
     fft.run(input, output);
     output_test = dj::fft1d(test_input, dj::fft_dir::DIR_FWD);
 
