@@ -392,7 +392,7 @@ struct gf_value
 template <typename T, std::size_t N, std::size_t M = (1<<23), std::uint64_t P = 998244353, std::uint64_t G = 15311432>
 struct NTTTwiddleFactor
 {
-    static auto make_table()
+    static constexpr auto make_table()
     {
         std::array<T, N> table;
         auto log2_N = clog2(N);
@@ -401,9 +401,9 @@ struct NTTTwiddleFactor
         for(std::size_t i = 0; i < log2_N - log2_M; i++) {
             g *= g;
         }
-        table[0] = T(1);
-        for(std::size_t i = 1; i < N; i++ ) {
-            table[i] = table[i-1] * g;
+        auto g_i = T(1);
+        for(std::size_t i = 0; i < N; i++, g_i *= g ) {
+            table[i] = g_i;
         }
         return table;
     }

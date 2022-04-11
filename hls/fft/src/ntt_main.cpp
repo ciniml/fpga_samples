@@ -21,7 +21,6 @@ static constexpr const std::size_t N = 8;
 static constexpr const std::size_t M = 8;
 typedef gf_value<std::uint64_t, P> Element;
 typedef NTTTwiddleFactor<Element, N, M, P, G> TwiddleFactor;
-typedef NTTPolynomialRingFactor<Element, N, P> PolynomialRingFactor;
 
 int main(int argc, char* argv[])
 {
@@ -72,7 +71,7 @@ int main(int argc, char* argv[])
     // }
     // cout << endl;
 
-    multiply_polynomial<Element, N, M, P, G, TwiddleFactor, PolynomialRingFactor> mp;
+    multiply_polynomial<Element, N, M, P, G, TwiddleFactor> mp;
     mp.run(input_a, input_b, output);
     for(std::size_t i = 0; i < N; i++) {
         cout << output[i].value << ", ";

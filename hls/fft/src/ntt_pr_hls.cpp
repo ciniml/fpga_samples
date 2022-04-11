@@ -36,11 +36,11 @@ void run_multiply_polynomial(const FFTElement input_a[NumberOfFFTPoints], const 
 #pragma HLS INTERFACE mode=m_axi port=input_b bundle=input_b
 #pragma HLS INTERFACE mode=m_axi port=output bundle=output
 #pragma HLS INTERFACE mode=ap_ctrl_chain port=return
-#pragma HLS DATAFLOW
+//#pragma HLS DATAFLOW
     InterleavedArray<FFTElement, NumberOfFFTPoints, 1> input_a_buffer;
     InterleavedArray<FFTElement, NumberOfFFTPoints, 1> input_b_buffer;
     InterleavedArray<FFTElement, NumberOfFFTPoints, 1> output_buffer;
-    multiply_polynomial<FFTElement, NumberOfFFTPoints, M, P, G> mp;
+    static multiply_polynomial<FFTElement, NumberOfFFTPoints, M, P, G> mp;
 
     read_memory(input_a, input_a_buffer);
     read_memory(input_b, input_b_buffer);

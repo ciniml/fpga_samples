@@ -27,27 +27,25 @@ namespace hls::ntt_pr {
  * @tparam A The power factor of the prime root. G^A is used as the prime root of this twiddle factor.
  */
 
-template <typename T, std::size_t N, std::uint64_t P>
+template <typename T, std::size_t N, std::uint64_t P, std::uint64_t G, bool INVERSE>
 struct NTTPolynomialRingFactor
 {
-    static auto make_table(std::size_t g, bool inverse)
+    static constexpr auto make_table()
     {
         std::array<T, N> table;
-        auto phi = T(g).sqrt();
-        if( inverse ) {
+        auto phi = T(G).sqrt();
+        if( INVERSE ) {
             phi = phi.reciprocal();
         }
-        table[0] = T(1);
-        for(std::size_t i = 1; i < N; i++ ) {
-            table[i] = table[i-1] * phi;
+        T phi_i = T(1);
+        for(std::size_t i = 0; i < N; i++, phi_i *= phi ) {
+            table[i] = phi_i;
         }
         return table;
     }
 
     std::array<T, N> table = make_table();
     
-    NTTPolynomialRingFactor(std::size_t g, bool inverse) : table(make_table(g, inverse)) {}
-
     T operator[](std::size_t i) const {
         return this->table[i];
     }
@@ -61,13 +59,13 @@ struct NTTPolynomialRingFactor
  * @param input Input data.
  * @param output Output data.
  */
-template <typename T, std::size_t N = 16, std::size_t M = (1<<23), std::size_t P = 998244353, std::uint64_t G = 15311432, typename TTwiddleFactor = hls::fft::NTTTwiddleFactor<T, N, M, P, G>, typename TPolynomialRingFactor = NTTPolynomialRingFactor<T, N, P> >
+template <typename T, std::size_t N = 16, std::size_t M = (1<<23), std::size_t P = 998244353, std::uint64_t G = 15311432, typename TTwiddleFactor = hls::fft::NTTTwiddleFactor<T, N, M, P, G> >
 struct multiply_polynomial {
 	static constexpr const std::size_t STAGES = hls::fft::clog2(N);
     typedef hls::fft::InterleavedArray<T, N, 1> ArrayType;
 	TTwiddleFactor w;
-    TPolynomialRingFactor phi = TPolynomialRingFactor(G, false);
-    TPolynomialRingFactor phi_inv = TPolynomialRingFactor(G, true);
+    NTTPolynomialRingFactor<T, N, P, G, false> phi;
+    NTTPolynomialRingFactor<T, N, P, G, true> phi_inv;
     hls::fft::cooley_tukey_fft<T, N, TTwiddleFactor> fft_a;
     hls::fft::cooley_tukey_fft<T, N, TTwiddleFactor> fft_b;
     hls::fft::cooley_tukey_fft<T, N, TTwiddleFactor> ifft;
@@ -79,7 +77,11 @@ struct multiply_polynomial {
 		ArrayType multiplied;
 		ArrayType convoluted;
 #pragma HLS STABLE variable=w
+#pragma HLS BIND_STORAGE variable=w.table type=rom_np
 #pragma HLS STABLE variable=phi
+#pragma HLS BIND_STORAGE variable=phi.table type=rom_np
+#pragma HLS STABLE variable=phi_inv
+#pragma HLS BIND_STORAGE variable=phi_inv.table type=rom_np
 
         // preprocess
         for(std::size_t i = 0; i < N; i++) {
