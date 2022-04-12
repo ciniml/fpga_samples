@@ -33,10 +33,7 @@ struct NTTPolynomialRingFactor
     static constexpr auto make_table()
     {
         std::array<T, N> table;
-        auto phi = T(G).sqrt();
-        if( INVERSE ) {
-            phi = phi.reciprocal();
-        }
+        constexpr auto phi = T(hls::fft::ensure_constexpr<typename T::value_type, INVERSE ? T(G).sqrt().reciprocal().value : T(G).sqrt().value>::value);
         T phi_i = T(1);
         for(std::size_t i = 0; i < N; i++, phi_i *= phi ) {
             table[i] = phi_i;
@@ -62,7 +59,6 @@ struct NTTPolynomialRingFactor
 template <typename T, std::size_t N = 16, std::size_t M = (1<<23), std::size_t P = 998244353, std::uint64_t G = 15311432, typename TTwiddleFactor = hls::fft::NTTTwiddleFactor<T, N, M, P, G> >
 struct multiply_polynomial {
 	static constexpr const std::size_t STAGES = hls::fft::clog2(N);
-    static constexpr const auto POINTS_INVERSE = T(N).pow(N - 2);
 
     typedef hls::fft::InterleavedArray<T, N, 1> ArrayType;
     TTwiddleFactor w;
@@ -117,6 +113,8 @@ struct multiply_polynomial {
         }
         std::cout << std::endl;
 #endif
+
+        constexpr const auto POINTS_INVERSE = hls::fft::ensure_constexpr<typename T::value_type, T(N).pow(N - 2).value>::value;
 #ifndef __SYNTHESIS__
         std::cout << convoluted[0] * POINTS_INVERSE << ", ";
         for(std::size_t i = 1; i < N; i++) {

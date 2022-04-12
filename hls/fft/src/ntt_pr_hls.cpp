@@ -7,7 +7,7 @@
 #include "ntt_pr.hpp"
 #include <ap_int.h>
 
-constexpr const std::size_t NumberOfFFTPoints = 128;
+constexpr const std::size_t NumberOfFFTPoints = 16384;
 constexpr const std::size_t P = 998244353;
 constexpr const std::size_t G = 15311432;
 constexpr const std::size_t M = (1<<23);

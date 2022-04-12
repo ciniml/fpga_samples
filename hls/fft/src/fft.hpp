@@ -197,6 +197,8 @@ struct InterleavedArray
 template <typename T>
 static constexpr T pi() { return T(M_PI); }
 
+template <typename T, T VALUE> 
+struct ensure_constexpr{ static constexpr const T value = VALUE; };
 
 /**
  * @brief Radix-2 FFT twiddle factor table.
@@ -247,6 +249,7 @@ struct FFTTwiddleFactor
 template <typename T, std::uint64_t P = T(998244353)>
 struct gf_value
 {
+    typedef T value_type;
     typedef gf_value<T, P> Self;
     T value;
     constexpr gf_value() {}   // DO NOT initialize anything not to generate extra WRITE operation in HLS synthesis.
@@ -395,12 +398,9 @@ struct NTTTwiddleFactor
     static constexpr auto make_table()
     {
         std::array<T, N> table;
-        auto log2_N = clog2(N);
-        auto log2_M = clog2(M);
-        auto g = T(G);
-        for(std::size_t i = 0; i < log2_M - log2_N; i++) {
-            g *= g;
-        }
+        constexpr auto log2_N = ensure_constexpr<std::size_t, clog2(N)>::value;
+        constexpr auto log2_M = ensure_constexpr<std::size_t, clog2(M)>::value;
+        constexpr auto g = T(ensure_constexpr<typename T::value_type, T(G).pow(log2_M - log2_N).value>::value);
         auto g_i = T(1);
         for(std::size_t i = 0; i < N; i++, g_i *= g ) {
             table[i] = g_i;
