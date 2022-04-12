@@ -398,7 +398,7 @@ struct NTTTwiddleFactor
         auto log2_N = clog2(N);
         auto log2_M = clog2(M);
         auto g = T(G);
-        for(std::size_t i = 0; i < log2_N - log2_M; i++) {
+        for(std::size_t i = 0; i < log2_M - log2_N; i++) {
             g *= g;
         }
         auto g_i = T(1);

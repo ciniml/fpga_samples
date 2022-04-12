@@ -62,14 +62,16 @@ struct NTTPolynomialRingFactor
 template <typename T, std::size_t N = 16, std::size_t M = (1<<23), std::size_t P = 998244353, std::uint64_t G = 15311432, typename TTwiddleFactor = hls::fft::NTTTwiddleFactor<T, N, M, P, G> >
 struct multiply_polynomial {
 	static constexpr const std::size_t STAGES = hls::fft::clog2(N);
+    static constexpr const auto POINTS_INVERSE = T(N).pow(N - 2);
+
     typedef hls::fft::InterleavedArray<T, N, 1> ArrayType;
-	TTwiddleFactor w;
+    TTwiddleFactor w;
     NTTPolynomialRingFactor<T, N, P, G, false> phi;
     NTTPolynomialRingFactor<T, N, P, G, true> phi_inv;
     hls::fft::cooley_tukey_fft<T, N, TTwiddleFactor> fft_a;
     hls::fft::cooley_tukey_fft<T, N, TTwiddleFactor> fft_b;
     hls::fft::cooley_tukey_fft<T, N, TTwiddleFactor> ifft;
-
+    
 	void run(const ArrayType& input_a, const ArrayType& input_b, ArrayType& output)
 	{
 		ArrayType input_conv_a, input_conv_b;
@@ -115,7 +117,6 @@ struct multiply_polynomial {
         }
         std::cout << std::endl;
 #endif
-        const auto POINTS_INVERSE = T(N).pow(N - 2);
 #ifndef __SYNTHESIS__
         std::cout << convoluted[0] * POINTS_INVERSE << ", ";
         for(std::size_t i = 1; i < N; i++) {
