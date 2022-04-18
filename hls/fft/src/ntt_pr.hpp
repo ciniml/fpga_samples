@@ -61,72 +61,95 @@ struct multiply_polynomial {
 	static constexpr const std::size_t STAGES = hls::fft::clog2(N);
 
     typedef hls::fft::InterleavedArray<T, N, 1> ArrayType;
-    TTwiddleFactor w;
     NTTPolynomialRingFactor<T, N, P, G, false> phi;
     NTTPolynomialRingFactor<T, N, P, G, true> phi_inv;
     hls::fft::cooley_tukey_fft<T, N, TTwiddleFactor> fft_a;
     hls::fft::cooley_tukey_fft<T, N, TTwiddleFactor> fft_b;
     hls::fft::cooley_tukey_fft<T, N, TTwiddleFactor> ifft;
     
+    void preprocess(const ArrayType& input, ArrayType& output)
+    {
+        for(std::size_t i = 0; i < N; i++) {
+            output[i] = input[i] * phi[i];
+        }
+    }
+
+    void multiply(const ArrayType& fft_a, const ArrayType& fft_b, ArrayType multiplied)
+    {
+        for(std::size_t i = 0; i < N; i++) {
+            multiplied[i] = fft_a[i] * fft_b[i];
+        }
+    }
+    void postprocess(const ArrayType& convoluted, ArrayType& output)
+    {
+        constexpr const auto POINTS_INVERSE = hls::fft::ensure_constexpr<typename T::value_type, T(N).pow(N - 2).value>::value;
+        output[0] = (convoluted[0] * POINTS_INVERSE) * phi_inv[0];
+        for(std::size_t i = 1; i < N; i++) {
+            output[i] = (convoluted[N - (i - 1) - 1] * POINTS_INVERSE) * phi_inv[i];
+        }
+    }
+
 	void run(const ArrayType& input_a, const ArrayType& input_b, ArrayType& output)
 	{
 		ArrayType input_conv_a, input_conv_b;
 		ArrayType fft_a, fft_b;
 		ArrayType multiplied;
 		ArrayType convoluted;
-#pragma HLS STABLE variable=w
-#pragma HLS BIND_STORAGE variable=w.table type=rom_np
+#pragma HLS ARRAY_PARTITION dim=1 type=block variable=input_conv_a factor=N
+#pragma HLS ARRAY_PARTITION dim=1 type=block variable=input_conv_b factor=N
+#pragma HLS ARRAY_PARTITION dim=1 type=block variable=multiplied factor=N
+#pragma HLS ARRAY_PARTITION dim=1 type=block variable=convoluted factor=N
 #pragma HLS STABLE variable=phi
 #pragma HLS BIND_STORAGE variable=phi.table type=rom_np
 #pragma HLS STABLE variable=phi_inv
 #pragma HLS BIND_STORAGE variable=phi_inv.table type=rom_np
-
+#pragma HLS DATAFLOW
         // preprocess
-        for(std::size_t i = 0; i < N; i++) {
-            input_conv_a[i] = input_a[i] * phi[i];
-            input_conv_b[i] = input_b[i] * phi[i];
-        }
+        this->preprocess(input_a, input_conv_a);
+        this->preprocess(input_b, input_conv_b);
+
         // FFT
         this->fft_a.run(input_conv_a, fft_a);
-        this->fft_a.run(input_conv_b, fft_b);
-// #ifndef __SYNTHESIS__
-//         for(std::size_t i = 0; i < N; i++) {
-//             std::cout << fft_b[i] << ", ";
-//         }
-//         std::cout << std::endl;
-// #endif
+        this->fft_b.run(input_conv_b, fft_b);
+
         // multiply
-        for(std::size_t i = 0; i < N; i++) {
-            multiplied[i] = fft_a[i] * fft_b[i];
-        }
-#ifndef __SYNTHESIS__
-        for(std::size_t i = 0; i < N; i++) {
-            std::cout << multiplied[i] << ", ";
-        }
-        std::cout << std::endl;
-#endif
+        this->multiply(fft_a, fft_b, multiplied);
+
         // IFFT
         this->ifft.run(multiplied, convoluted);
-#ifndef __SYNTHESIS__
-        for(std::size_t i = 0; i < N; i++) {
-            std::cout << convoluted[i] << ", ";
-        }
-        std::cout << std::endl;
-#endif
 
-        constexpr const auto POINTS_INVERSE = hls::fft::ensure_constexpr<typename T::value_type, T(N).pow(N - 2).value>::value;
-#ifndef __SYNTHESIS__
-        std::cout << convoluted[0] * POINTS_INVERSE << ", ";
-        for(std::size_t i = 1; i < N; i++) {
-            std::cout <<  (convoluted[N - (i - 1) - 1] * POINTS_INVERSE) << ", ";
-        }
-        std::cout << std::endl;
-#endif
         // postprocess
-        output[0] = (convoluted[0] * POINTS_INVERSE) * phi_inv[0];
-        for(std::size_t i = 1; i < N; i++) {
-            output[i] = (convoluted[N - (i - 1) - 1] * POINTS_INVERSE) * phi_inv[i];
-        }
+        this->postprocess(convoluted, output);
+	}
+
+	void run_pretransformed(const ArrayType& fft_a, const ArrayType& input_b, ArrayType& output)
+	{
+		ArrayType input_conv_b;
+		ArrayType fft_b;
+		ArrayType multiplied;
+		ArrayType convoluted;
+#pragma HLS ARRAY_PARTITION dim=1 type=block variable=input_conv_b factor=N
+#pragma HLS ARRAY_PARTITION dim=1 type=block variable=multiplied factor=N
+#pragma HLS ARRAY_PARTITION dim=1 type=block variable=convoluted factor=N
+#pragma HLS STABLE variable=phi
+#pragma HLS BIND_STORAGE variable=phi.table type=rom_np
+#pragma HLS STABLE variable=phi_inv
+#pragma HLS BIND_STORAGE variable=phi_inv.table type=rom_np
+#pragma HLS DATAFLOW
+        // preprocess
+        this->preprocess(input_b, input_conv_b);
+
+        // FFT
+        this->fft_b.run(input_conv_b, fft_b);
+
+        // multiply
+        this->multiply(fft_a, fft_b, multiplied);
+
+        // IFFT
+        this->ifft.run(multiplied, convoluted);
+
+        // postprocess
+        this->postprocess(convoluted, output);
 	}
 };
 

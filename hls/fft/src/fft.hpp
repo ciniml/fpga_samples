@@ -446,7 +446,7 @@ struct BitReverse
     }
     static constexpr auto make_table()
     {
-        std::array<std::size_t, N> table;
+        std::array<std::size_t, N> table = {0,};
         for(std::size_t i = 0; i < N; i++ ) {
             table[i] = bit_reverse(i);
         }
@@ -478,11 +478,16 @@ struct BitReverse
  * @param w Twiddle factor table.
  */
 template <typename T, std::size_t N, typename TTwiddleFactor = FFTTwiddleFactor<T, N>>
-static void cooley_tukey_fft_stage(const std::size_t stage, const InterleavedArray<T, N, 1>& input, InterleavedArray<T, N, 1>& output, const TTwiddleFactor& w)
+static void cooley_tukey_fft_stage(const std::size_t stage, const InterleavedArray<T, N, 1>& input, InterleavedArray<T, N, 1>& output)
 {
+    TTwiddleFactor w;
+#pragma HLS STABLE variable=w
+#pragma HLS BIND_STORAGE variable=w.table type=rom_np
     const std::size_t block_size = 1<<(stage+1);
     for(std::size_t block = 0; block < N / block_size; block++ ) {
-        for(std::size_t i = 0; i < block_size / 2; i++) {
+#pragma HLS LOOP_TRIPCOUNT min=N/block_size avg=N/block_size max=N/block_size
+    	for(std::size_t i = 0; i < block_size / 2; i++) {
+#pragma HLS LOOP_TRIPCOUNT min=block_size/2 avg=block_size/2 max=block_size/2
 #pragma HLS PIPELINE II=2
             auto block_offset = block_size*block;
             auto index_0 = block_offset + i;
@@ -506,8 +511,7 @@ static void cooley_tukey_fft_stage(const std::size_t stage, const InterleavedArr
  */
 template <typename T, std::size_t N = 16, typename TTwiddleFactor = FFTTwiddleFactor<T, N>>
 struct cooley_tukey_fft {
-	static constexpr const std::size_t STAGES = clog2(N);
-	TTwiddleFactor w;
+	static constexpr const std::size_t STAGES = ensure_constexpr<std::size_t, clog2(N)>::value;
 	BitReverse<N> bitrev;
 
 	void run(const InterleavedArray<T, N, 1>& input, InterleavedArray<T, N, 1>& output)
@@ -515,17 +519,15 @@ struct cooley_tukey_fft {
 		InterleavedArray<T, N, 1> stage_in[STAGES];
 #pragma HLS ARRAY_PARTITION dim=1 type=block variable=stage_in factor=STAGES
 #pragma HLS BIND_STORAGE variable=stage_in type=ram_s2p impl=uram
-#pragma HLS STABLE variable=w
-#pragma HLS BIND_STORAGE variable=w.table type=rom_np
-
+#pragma HLS DATAFLOW
 		for(std::size_t i = 0; i < N; i++ ) {
 			stage_in[0][i] = input[bitrev[i]];
 		}
 		for( std::size_t stage = 0; stage < STAGES - 1; stage++) {
-#pragma HLS UNROLL factor=N
-			cooley_tukey_fft_stage<T, N>(stage, stage_in[stage], stage_in[stage + 1], w);
+#pragma HLS UNROLL factor=STAGES
+			cooley_tukey_fft_stage<T, N, TTwiddleFactor>(stage, stage_in[stage], stage_in[stage + 1]);
 		}
-		cooley_tukey_fft_stage<T, N>(STAGES-1, stage_in[STAGES-1], output, w);
+		cooley_tukey_fft_stage<T, N, TTwiddleFactor>(STAGES-1, stage_in[STAGES-1], output);
 	}
 };
 

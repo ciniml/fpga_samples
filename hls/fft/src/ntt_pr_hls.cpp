@@ -4,18 +4,11 @@
 //    (See accompanying file LICENSE_1_0.txt or copy at
 //          https://www.boost.org/LICENSE_1_0.txt)
 
-#include "ntt_pr.hpp"
+#include "ntt_pr_hls.hpp"
 #include <ap_int.h>
-
-constexpr const std::size_t NumberOfFFTPoints = 16384;
-constexpr const std::size_t P = 998244353;
-constexpr const std::size_t G = 15311432;
-constexpr const std::size_t M = (1<<23);
 
 using namespace hls::fft;
 using namespace hls::ntt_pr;
-
-typedef gf_value<std::uint64_t, P> FFTElement;
 
 static void read_memory(const FFTElement input[NumberOfFFTPoints], InterleavedArray<FFTElement, NumberOfFFTPoints>& output)
 {
@@ -48,3 +41,22 @@ void run_multiply_polynomial(const FFTElement input_a[NumberOfFFTPoints], const 
     mp.run(input_a_buffer, input_b_buffer, output_buffer);
     write_memory(output_buffer, output);
 }
+
+
+void run_multiply_polynomial_pretransformed(const FFTElement input_a[NumberOfFFTPoints], const FFTElement input_b[NumberOfFFTPoints], FFTElement output[NumberOfFFTPoints])
+{
+#pragma HLS INTERFACE mode=m_axi port=input_a bundle=input_a
+#pragma HLS INTERFACE mode=m_axi port=input_b bundle=input_b
+#pragma HLS INTERFACE mode=m_axi port=output bundle=output
+#pragma HLS INTERFACE mode=ap_ctrl_chain port=return
+#pragma HLS DATAFLOW
+    InterleavedArray<FFTElement, NumberOfFFTPoints, 1> input_a_buffer;
+    InterleavedArray<FFTElement, NumberOfFFTPoints, 1> input_b_buffer;
+    InterleavedArray<FFTElement, NumberOfFFTPoints, 1> output_buffer;
+    
+    read_memory(input_a, input_a_buffer);
+    read_memory(input_b, input_b_buffer);
+    mp.run_pretransformed(input_a_buffer, input_b_buffer, output_buffer);
+    write_memory(output_buffer, output);
+}
+
