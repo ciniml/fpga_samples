@@ -400,7 +400,7 @@ struct NTTTwiddleFactor
         std::array<T, N> table;
         constexpr auto log2_N = ensure_constexpr<std::size_t, clog2(N)>::value;
         constexpr auto log2_M = ensure_constexpr<std::size_t, clog2(M)>::value;
-        constexpr auto g = T(ensure_constexpr<typename T::value_type, T(G).pow(log2_M - log2_N).value>::value);
+        constexpr auto g = T(ensure_constexpr<typename T::value_type, T(G).pow(log2_M - log2_N + 1).value>::value);
         auto g_i = T(1);
         for(std::size_t i = 0; i < N; i++, g_i *= g ) {
             table[i] = g_i;
