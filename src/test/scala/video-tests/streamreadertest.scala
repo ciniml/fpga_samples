@@ -148,8 +148,7 @@ class StreamReaderTestSystem() extends Module {
   when( !commandValid || commandReady ) {
     when(commandIndex < commandSequence.length.U ) {
       command := commandSequence(commandIndex)
-      printf(p"ISSUE COMMAND index:${commandIndex}
-")
+      printf(p"ISSUE COMMAND index:${commandIndex}")
 
       commandValid := true.B
       commandIndex := commandIndex + 1.U
@@ -168,8 +167,7 @@ class StreamReaderTestSystem() extends Module {
     is(State.sCheck) {
       when( dataValid && dataReady ) {
         val result = resultSequence(resultIndex)
-        printf(p"CHECK index:${resultIndex} expected:${Hexadecimal(result)} actual ${Hexadecimal(dataBits)} ... MATCHED: ${dataBits === result}
-")
+        printf(p"CHECK index:${resultIndex} expected:${Hexadecimal(result)} actual ${Hexadecimal(dataBits)} ... MATCHED: ${dataBits === result}")
         when( dataBits =/= result ) {
           state := State.sFail
         }
