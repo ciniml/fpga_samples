@@ -86,7 +86,8 @@ class StreamReaderTestSystem() extends Module {
     commandType.Lit(_.addressOffset -> 0x0000.U, _.startX -> 1.U, _.endXInclusive -> 6.U, _.startY -> 2.U, _.endYInclusive -> 2.U), // 6x1 pixel, unaligned(1)
     commandType.Lit(_.addressOffset -> 0x0000.U, _.startX -> 2.U, _.endXInclusive -> 7.U, _.startY -> 2.U, _.endYInclusive -> 2.U), // 6x1 pixel, unaligned(2)
     commandType.Lit(_.addressOffset -> 0x0000.U, _.startX -> 3.U, _.endXInclusive -> 7.U, _.startY -> 2.U, _.endYInclusive -> 2.U), // 5x1 pixel, unaligned(3)
-
+    // Reverse direction
+    commandType.Lit(_.addressOffset -> 0x0000.U, _.startX -> 2.U, _.endXInclusive -> 4.U, _.startY -> 2.U, _.endYInclusive -> 1.U), // 3x2 pixel, unaligned(2), reverse
   ))
   val resultSequence = VecInit(Seq(
     "x123456".U,  // cmd 0
@@ -126,6 +127,12 @@ class StreamReaderTestSystem() extends Module {
     "x121314".U,
     "x151617".U,
     "x000000".U,  // /
+    "x202122".U,  // cmd 10 (3x2) reversed cmd 4
+    "x232425".U,
+    "x262728".U,
+    "x101112".U,
+    "x131415".U,
+    "x161718".U,  // /
   ))
  
   val commandIndex = RegInit(0.U(log2Ceil(commandSequence.length+1).W))
@@ -148,8 +155,7 @@ class StreamReaderTestSystem() extends Module {
   when( !commandValid || commandReady ) {
     when(commandIndex < commandSequence.length.U ) {
       command := commandSequence(commandIndex)
-      printf(p"ISSUE COMMAND index:${commandIndex}
-")
+      printf(p"ISSUE COMMAND index:${commandIndex}\n")
 
       commandValid := true.B
       commandIndex := commandIndex + 1.U
@@ -168,8 +174,7 @@ class StreamReaderTestSystem() extends Module {
     is(State.sCheck) {
       when( dataValid && dataReady ) {
         val result = resultSequence(resultIndex)
-        printf(p"CHECK index:${resultIndex} expected:${Hexadecimal(result)} actual ${Hexadecimal(dataBits)} ... MATCHED: ${dataBits === result}
-")
+        printf(p"CHECK index:${resultIndex} expected:${Hexadecimal(result)} actual ${Hexadecimal(dataBits)} ... MATCHED: ${dataBits === result}\n")
         when( dataBits =/= result ) {
           state := State.sFail
         }
@@ -193,7 +198,7 @@ class StreamReaderTest
     test(new StreamReaderTestSystem) { c =>
       val width = c.videoParams.pixelsH
       val height = c.videoParams.pixelsV
-      c.clock.setTimeout(width * height * 3 + 10)
+      c.clock.setTimeout(width * height * 3 * 12)
       
       while( !c.io.finished.peek().litToBoolean ) {
         c.io.fail.expect(false.B, "Result check failed")

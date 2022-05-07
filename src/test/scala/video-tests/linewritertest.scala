@@ -105,8 +105,7 @@ class LineWriterTestSystem() extends Module {
   dut.io.data.bits := dataSequence(dataIndex)
   dataWait := false.B
   when(dut.io.data.valid && dut.io.data.ready) {
-    printf(p"DATA index: ${dataIndex} value: ${Hexadecimal(dataSequence(dataIndex).pixelData)}
-")
+    printf(p"DATA index: ${dataIndex} value: ${Hexadecimal(dataSequence(dataIndex).pixelData)}")
     dataIndex := dataIndex + 1.U
     dataWait := true.B
   }
@@ -140,8 +139,7 @@ class LineWriterTestSystem() extends Module {
       }
     }
     is(State.sCheck) {
-      printf(p"CHECK index:${resultIndex} expected:${Hexadecimal(memResult(resultIndex))} actual ${Hexadecimal(ramData)}
-")
+      printf(p"CHECK index:${resultIndex} expected:${Hexadecimal(memResult(resultIndex))} actual ${Hexadecimal(ramData)}")
       when( ramData =/= memResult(resultIndex) ) {
         state := State.sFail
       }

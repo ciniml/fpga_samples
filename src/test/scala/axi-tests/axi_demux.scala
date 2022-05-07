@@ -69,8 +69,7 @@ class AXITrafficSource(axiParams: AXI4Params, fromAddress: BigInt, toAddressIncl
 
             when( !inTransaction ) {
                 when((!awValid || awReady) && address <= toAddressInclusive.U) {
-                    printf(p"[${Hexadecimal(address)}] issue AW
-")
+                    printf(p"[${Hexadecimal(address)}] issue AW")
                     awValid := true.B
                     awAddr := address
                     address := address + burstBytes.U
@@ -79,8 +78,7 @@ class AXITrafficSource(axiParams: AXI4Params, fromAddress: BigInt, toAddressIncl
                 }
             } .otherwise {
                 when((!wValid || wReady) && bytesTransferred < bytesToTransfer.U && random.LFSR(4).xorR()) {
-                    printf(p"[${Hexadecimal(awAddr)}] issue W beat=${burstCount}
-")
+                    printf(p"[${Hexadecimal(awAddr)}] issue W beat=${burstCount}")
                     val isLast = burstCount === (burstLength - 1).U
                     wValid := true.B
                     wLast := isLast
@@ -94,8 +92,7 @@ class AXITrafficSource(axiParams: AXI4Params, fromAddress: BigInt, toAddressIncl
             done := bytesTransferred === bytesToTransfer.U
             val prevDone = RegNext(done, false.B)
             when(!prevDone && done) {
-                printf(p"DONE
-")
+                printf(p"DONE")
             }
         }
     }
@@ -136,8 +133,7 @@ class AXITrafficSink(axiParams: AXI4Params) extends Module {
                 is( sIdle ) {
                     awReady := random.LFSR(8).xorR()
                     when(awValid && awReady) {
-                        printf(p"[${Hexadecimal(address)}] AW addr=${Hexadecimal(aw.bits.addr)} len=${Hexadecimal(aw.bits.len.get)}
-")
+                        printf(p"[${Hexadecimal(address)}] AW addr=${Hexadecimal(aw.bits.addr)} len=${Hexadecimal(aw.bits.len.get)}")
 
                         address := aw.bits.addr
                         count := aw.bits.len.get
@@ -160,8 +156,7 @@ class AXITrafficSink(axiParams: AXI4Params) extends Module {
                         }
                         val wDataExpected = address / (axiParams.dataBits/8).U
                         when( w.bits.data =/= wDataExpected ) {
-                            printf(p"[${Hexadecimal(address)}] WDATA mismatch expected: ${Hexadecimal(wDataExpected)} actual: ${Hexadecimal(w.bits.data)}
-")
+                            printf(p"[${Hexadecimal(address)}] WDATA mismatch expected: ${Hexadecimal(wDataExpected)} actual: ${Hexadecimal(w.bits.data)}")
                             state := sError
                         }
                     }

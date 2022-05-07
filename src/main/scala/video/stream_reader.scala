@@ -142,13 +142,13 @@ class LineReader(videoParams: VideoParams, axiParams: AXI4Params, burstPixels: I
     switch(state) {
         is(State.sIdle) {
             when(commandValid && commandReady) {
-                printf(p"COMMAND address:${Hexadecimal(commandBits.startAddress)} count:${commandBits.count}")
+                printf(p"COMMAND address:${Hexadecimal(commandBits.startAddress)} count:${commandBits.count}\n")
                 command := commandBits
                 state := State.sDecode
             }
         }
         is(State.sDecode) {
-            printf(p"DECODE bytesToTransfer:${bytesToTransfer} wordsToTransfer:${wordsToTransfer}")
+            printf(p"DECODE bytesToTransfer:${bytesToTransfer} wordsToTransfer:${wordsToTransfer}\n")
             pixelsRemaining := command.count
             startOfFrame := command.startOfFrame
             val initialPointer = pixelPhaseToRealignIndex(addressToPixelPhase(command.startAddress))
@@ -178,7 +178,7 @@ class LineReader(videoParams: VideoParams, axiParams: AXI4Params, burstPixels: I
                 addressWordsRemaining := nextAddressWordsRemaining
                 nextAddress := nextNextAddress
 
-                printf(p"AR address=${Hexadecimal(nextAddress)} len=$nextLen addressWordsRemaining=$nextAddressWordsRemaining dataWordsRemaining=$nextDataWordsRemaining nextAddress=${Hexadecimal(nextNextAddress)}")
+                printf(p"AR address=${Hexadecimal(nextAddress)} len=$nextLen addressWordsRemaining=$nextAddressWordsRemaining dataWordsRemaining=$nextDataWordsRemaining nextAddress=${Hexadecimal(nextNextAddress)}\n")
             }
             // Set next output length if an address is already issued
             when(issuedDataWordsRemaining =/= 0.U && dataWordsRemaining === 0.U) {
@@ -189,7 +189,7 @@ class LineReader(videoParams: VideoParams, axiParams: AXI4Params, burstPixels: I
             val canInputData = !realignBufferFull && (dataWordsRemaining > 0.U || issuedDataWordsRemaining > 0.U)
             rReady := canInputData
             when( canInputData && rValid ) {
-                printf(p"R realignInputPointer=${realignInputPointer} dataWordsRemaining=${dataWordsRemaining} input=${Hexadecimal(rData)}")
+                printf(p"R realignInputPointer=${realignInputPointer} dataWordsRemaining=${dataWordsRemaining} input=${Hexadecimal(rData)}\n")
                 for( i <- 0 to realignInputBytes-1 ) {
                     realignBuffer(realignInputIndex + i.U) := rData(8*(i+1)-1, 8*i)
                 }
@@ -199,7 +199,7 @@ class LineReader(videoParams: VideoParams, axiParams: AXI4Params, burstPixels: I
             // Output data from the realignment buffer
             when( !realignBufferEmpty && pixelsRemaining > 0.U && (!dataValid || dataReady) ) {
                 val dataToOut = Cat((0 to realignOutputBytes - 1).map(i => realignBuffer(realignOutputIndex + i.U)).reverse)
-                printf(p"OUT realignOutputPointer=${realignOutputPointer} pixelsRemaining=${pixelsRemaining} dataToOut=${Hexadecimal(dataToOut)}")
+                printf(p"OUT realignOutputPointer=${realignOutputPointer} pixelsRemaining=${pixelsRemaining} dataToOut=${Hexadecimal(dataToOut)}\n")
                 dataValid := true.B
                 dataBits := dataToOut
                 endOfLine := pixelsRemaining === 1.U
@@ -275,6 +275,7 @@ class StreamReader(videoParams: VideoParams, axiParams: AXI4Params, burstPixels:
     val lineStartAddress = RegInit(0.U(axiParams.addressBits.W))
     val linesRemaining = RegInit(0.U(videoParams.countVBits.W))
     val lineReadBusyPrev = RegInit(false.B)
+    val isBackwardTransfer = RegInit(false.B)
 
     io.isBusy := state =/= State.sIdle
     commandReady := state === State.sIdle
@@ -282,17 +283,18 @@ class StreamReader(videoParams: VideoParams, axiParams: AXI4Params, burstPixels:
     switch(state) {
         is(State.sIdle) {
             when(commandValid && commandReady) {
-                printf(p"[STREAMREADER] COMMAND startX: ${commandBits.startX}, endXInclusive: ${commandBits.endXInclusive}, startY: ${commandBits.startY}, endYInclusive: ${commandBits.endYInclusive}}")
+                printf(p"[STREAMREADER] COMMAND startX: ${commandBits.startX}, endXInclusive: ${commandBits.endXInclusive}, startY: ${commandBits.startY}, endYInclusive: ${commandBits.endYInclusive}}\n")
                 command := commandBits
+                isBackwardTransfer := commandBits.startY > commandBits.endYInclusive
                 state := State.sDecode
             }
         }
         is(State.sDecode) {
             val calculatedLineStartAddress = command.addressOffset + command.startY * (videoParams.pixelsH*videoParams.pixelBytes).U + command.startX * videoParams.pixelBytes.U
-            printf(p"[STREAMREADER] DECODE lineStartAddress: ${Hexadecimal(calculatedLineStartAddress)}")
+            printf(p"[STREAMREADER] DECODE lineStartAddress: ${Hexadecimal(calculatedLineStartAddress)} isBackwardTransfer: ${isBackwardTransfer}\n")
             lineCommand.count := command.endXInclusive - command.startX + 1.U
             lineStartAddress := calculatedLineStartAddress
-            linesRemaining := command.endYInclusive - command.startY + 1.U
+            linesRemaining := Mux(isBackwardTransfer, command.startY - command.endYInclusive + 1.U, command.endYInclusive - command.startY + 1.U)
             state := State.sRunning
         }
         is(State.sRunning) {
@@ -305,7 +307,7 @@ class StreamReader(videoParams: VideoParams, axiParams: AXI4Params, burstPixels:
                     lineCommand.startAddress := lineStartAddress
                     lineCommandValid := true.B
                     linesRemaining := linesRemaining - 1.U
-                    lineStartAddress := lineStartAddress + lineBytes.U
+                    lineStartAddress := Mux(isBackwardTransfer, lineStartAddress - lineBytes.U, lineStartAddress + lineBytes.U)
                 }
             }
         }

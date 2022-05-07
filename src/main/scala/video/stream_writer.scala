@@ -146,13 +146,13 @@ class LineWriter(videoParams: VideoParams, axiParams: AXI4Params, writeBurstPixe
     switch(state) {
         is(State.sIdle) {
             when(commandValid && commandReady) {
-                printf(p"COMMAND address:${Hexadecimal(commandBits.startAddress)} count:${commandBits.count} doFill:${commandBits.doFill} color:${Hexadecimal(commandBits.color)}")
+                printf(p"COMMAND address:${Hexadecimal(commandBits.startAddress)} count:${commandBits.count} doFill:${commandBits.doFill} color:${Hexadecimal(commandBits.color)}\n")
                 command := commandBits
                 state := State.sDecode
             }
         }
         is(State.sDecode) {
-            printf(p"DECODE bytesToTransfer:${bytesToTransfer} wordsToTransfer:${wordsToTransfer} isLastPartialWrite:${isLastPartialWrite}")
+            printf(p"DECODE bytesToTransfer:${bytesToTransfer} wordsToTransfer:${wordsToTransfer} isLastPartialWrite:${isLastPartialWrite}\n")
             pixelsRemaining := command.count
             realignBufferValid := (0 to realignBufferBytes-1).map(i => false.B)
             realignInputPointer := pixelPhaseToRealignIndex(addressToPixelPhase(command.startAddress))
@@ -181,7 +181,7 @@ class LineWriter(videoParams: VideoParams, axiParams: AXI4Params, writeBurstPixe
                 addressWordsRemaining := nextAddressWordsRemaining
                 nextAddress := nextNextAddress
 
-                printf(p"AW address=${Hexadecimal(nextAddress)} len=$nextLen addressWordsRemaining=$nextAddressWordsRemaining dataWordsRemaining=$nextDataWordsRemaining nextAddress=${Hexadecimal(nextNextAddress)}")
+                printf(p"AW address=${Hexadecimal(nextAddress)} len=$nextLen addressWordsRemaining=$nextAddressWordsRemaining dataWordsRemaining=$nextDataWordsRemaining nextAddress=${Hexadecimal(nextNextAddress)}\n")
             }
             // Set next output length if an address is already issued
             when(issuedDataWordsRemaining =/= 0.U && dataWordsRemaining === 0.U) {
@@ -190,7 +190,7 @@ class LineWriter(videoParams: VideoParams, axiParams: AXI4Params, writeBurstPixe
             }
             // Output data from the realignment buffer
             when( (!wValid || wReady) && (!realignBufferEmpty || (addressWordsRemaining === 0.U && issuedDataWordsRemaining === 0.U && dataWordsRemaining === 1.U && isLastPartialWrite && realignBufferHasPartialData)) && dataWordsRemaining > 0.U) {
-                printf(p"W realignOutputPointer=${realignOutputPointer}")
+                printf(p"W realignOutputPointer=${realignOutputPointer}\n")
                 wData := Cat((0 to realignOutputBytes - 1).map(i => realignBuffer(realignOutputIndex + i.U)).reverse)
                 wValid := true.B
                 wStrb := Cat((0 to realignOutputBytes - 1).map(i => realignBufferValid(realignOutputIndex + i.U)).reverse)
@@ -203,7 +203,7 @@ class LineWriter(videoParams: VideoParams, axiParams: AXI4Params, writeBurstPixe
             }
             // Input data to the realignment buffer
             when( !realignBufferFull && pixelsRemaining > 0.U && (command.doFill || dataValid) ) {
-                printf(p"IN realignInputPointer=${realignInputPointer}")
+                printf(p"IN realignInputPointer=${realignInputPointer}\n")
                 dataReady := !command.doFill
                 for( i <- 0 to realignInputBytes-1 ) {
                     realignBuffer(realignInputIndex + i.U) := pixelData(8*(i+1)-1, 8*i)
@@ -283,6 +283,7 @@ class StreamWriter(videoParams: VideoParams, axiParams: AXI4Params, writeBurstPi
     val lineStartAddress = RegInit(0.U(axiParams.addressBits.W))
     val linesRemaining = RegInit(0.U(videoParams.countVBits.W))
     val lineWriteBusyPrev = RegInit(false.B)
+    val isBackwardTransfer = RegInit(false.B)
 
     io.isBusy := state =/= State.sIdle
     commandReady := state === State.sIdle
@@ -290,19 +291,20 @@ class StreamWriter(videoParams: VideoParams, axiParams: AXI4Params, writeBurstPi
     switch(state) {
         is(State.sIdle) {
             when(commandValid && commandReady) {
-                printf(p"[STREAM] COMMAND startX: ${commandBits.startX}, endXInclusive: ${commandBits.endXInclusive}, startY: ${commandBits.startY}, endYInclusive: ${commandBits.endYInclusive}, doFill: ${commandBits.doFill}, color: ${Hexadecimal(commandBits.color)}")
+                printf(p"[STREAM] COMMAND startX: ${commandBits.startX}, endXInclusive: ${commandBits.endXInclusive}, startY: ${commandBits.startY}, endYInclusive: ${commandBits.endYInclusive}, doFill: ${commandBits.doFill}, color: ${Hexadecimal(commandBits.color)}\n")
                 command := commandBits
+                isBackwardTransfer := commandBits.startY > commandBits.endYInclusive
                 state := State.sDecode
             }
         }
         is(State.sDecode) {
             val calculatedLineStartAddress = command.addressOffset + command.startY * (videoParams.pixelsH*videoParams.pixelBytes).U + command.startX * videoParams.pixelBytes.U
-            printf(p"[STREAM] DECODE lineStartAddress: ${Hexadecimal(calculatedLineStartAddress)}")
+            printf(p"[STREAM] DECODE lineStartAddress: ${Hexadecimal(calculatedLineStartAddress)} isBackwardTransfer: ${isBackwardTransfer}\n")
             lineCommand.doFill := command.doFill
             lineCommand.color := command.color
             lineCommand.count := command.endXInclusive - command.startX + 1.U
             lineStartAddress := calculatedLineStartAddress
-            linesRemaining := command.endYInclusive - command.startY + 1.U
+            linesRemaining := Mux(isBackwardTransfer, command.startY - command.endYInclusive + 1.U, command.endYInclusive - command.startY + 1.U)
             state := State.sRunning
         }
         is(State.sRunning) {
@@ -315,7 +317,7 @@ class StreamWriter(videoParams: VideoParams, axiParams: AXI4Params, writeBurstPi
                     lineCommand.startAddress := lineStartAddress
                     lineCommandValid := true.B
                     linesRemaining := linesRemaining - 1.U
-                    lineStartAddress := lineStartAddress + lineBytes.U
+                    lineStartAddress := Mux(isBackwardTransfer, lineStartAddress - lineBytes.U, lineStartAddress + lineBytes.U)
                 }
             }
         }
