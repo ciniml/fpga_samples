@@ -55,6 +55,7 @@ class StreamWriterTestSystem() extends Module {
     commandType.Lit(_.addressOffset -> 0x0000.U, _.startX -> 0.U, _.endXInclusive -> 0.U, _.startY -> 1.U, _.endYInclusive -> 1.U, _.doFill -> true.B, _.color -> "x654321".U), // 1 pixel, aligned
     commandType.Lit(_.addressOffset -> 0x0000.U, _.startX -> 1.U, _.endXInclusive -> 1.U, _.startY -> 1.U, _.endYInclusive -> 1.U, _.doFill -> true.B, _.color -> "xfedcba".U), // 1 pixel, unaligned(1)
     commandType.Lit(_.addressOffset -> 0x0000.U, _.startX -> 2.U, _.endXInclusive -> 4.U, _.startY -> 1.U, _.endYInclusive -> 2.U, _.doFill -> true.B, _.color -> "x101112".U), // 3x2 pixel, unaligned(2)
+    commandType.Lit(_.addressOffset -> 0x0000.U, _.startX -> 2.U, _.endXInclusive -> 3.U, _.startY -> 2.U, _.endYInclusive -> 1.U, _.doFill -> true.B, _.color -> "x202122".U), // 2x2 pixel, unaligned(2), reverse
     // Stream Tests
     commandType.Lit(_.addressOffset -> 0x0000.U, _.startX -> 5.U, _.endXInclusive -> 6.U, _.startY -> 2.U, _.endYInclusive -> 3.U, _.doFill -> false.B, _.color -> "xdeadbe".U), // 2x2 pixel, unaligned(2)
   ))
@@ -75,15 +76,15 @@ class StreamWriterTestSystem() extends Module {
     "x00000000".U,  // 014
 
     "xba654321".U,  // 018 : line1
-    "x1112fedc".U,  // 01c
-    "x10111210".U,  // 020
+    "x2122fedc".U,  // 01c
+    "x20212220".U,  // 020
     "x00101112".U,  // 024
     "x00000000".U,  // 028
     "x00000000".U,  // 02c
 
     "x00000000".U,  // 030 : line2
-    "x11120000".U,  // 034
-    "x10111210".U,  // 038
+    "x21220000".U,  // 034
+    "x20212220".U,  // 038
     "x14101112".U,  // 03c
     "x16171213".U,  // 040
     "x00000015".U,  // 044
@@ -115,7 +116,7 @@ class StreamWriterTestSystem() extends Module {
   dut.io.data.bits := dataSequence(dataIndex)
   dataWait := false.B
   when(dut.io.data.valid && dut.io.data.ready) {
-    printf(p"DATA index: ${dataIndex} value: ${Hexadecimal(dataSequence(dataIndex).pixelData)}")
+    printf(p"DATA index: ${dataIndex} value: ${Hexadecimal(dataSequence(dataIndex).pixelData)}\n")
     dataIndex := dataIndex + 1.U
     dataWait := true.B
   }
@@ -149,7 +150,7 @@ class StreamWriterTestSystem() extends Module {
       }
     }
     is(State.sCheck) {
-      printf(p"CHECK index:${resultIndex} expected:${Hexadecimal(memResult(resultIndex))} actual ${Hexadecimal(ramData)}")
+      printf(p"CHECK index:${resultIndex} expected:${Hexadecimal(memResult(resultIndex))} actual ${Hexadecimal(ramData)}\n")
       when( ramData =/= memResult(resultIndex) || protocolError ) {
         state := State.sFail
       }
@@ -173,7 +174,7 @@ class StreamWriterTest
     test(new StreamWriterTestSystem) { c =>
       val width = c.videoParams.pixelsH
       val height = c.videoParams.pixelsV
-      c.clock.setTimeout(width * height * 3 )
+      c.clock.setTimeout(width * height * 3 * 12 )
       
       while( !c.io.finished.peek().litToBoolean ) {
         c.io.fail.expect(false.B, "Result check failed")
