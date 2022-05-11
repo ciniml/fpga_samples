@@ -18,6 +18,7 @@ module top (
 
 localparam int CLOCK_HZ = 27_000_000;
 localparam int REFRESH_INTERVAL = CLOCK_HZ/1000;
+localparam int REFRESH_ROW_GUARD = CLOCK_HZ/50000;
 localparam int COLUMN_REFRESH_INTERVAL = CLOCK_HZ;
 
 assign led  = '0;
@@ -53,16 +54,25 @@ always_comb begin
   endcase
 end
 
-assign row = row_reg;
-assign seven_seg = 1;
+
+logic row_enable;
+assign row_enable = refresh_counter < REFRESH_INTERVAL - REFRESH_ROW_GUARD;
+assign row = row_enable ? row_reg : '0;
+assign seven_seg = 0;
 
 always_ff @(posedge clock) begin
-  if( refresh_counter < REFRESH_INTERVAL ) begin
+  if( refresh_counter < REFRESH_INTERVAL - REFRESH_ROW_GUARD ) begin
       refresh_counter <= refresh_counter + 1;
-  end 
-  else begin 
-      refresh_counter <= 0;
+  end
+  else if( refresh_counter == REFRESH_INTERVAL - REFRESH_ROW_GUARD/2 ) begin
+      refresh_counter <= refresh_counter + 1;
       row_reg <= {row_reg[6:0], row_reg[7]};
+  end
+  else if( refresh_counter < REFRESH_INTERVAL - 1 ) begin
+      refresh_counter <= refresh_counter + 1;
+  end
+  else if( refresh_counter == REFRESH_INTERVAL - 1) begin
+      refresh_counter <= 0;
   end
 end
 
