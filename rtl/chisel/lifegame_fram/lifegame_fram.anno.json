@@ -1,0 +1,43 @@
+[
+  {
+    "class":"logger.LogLevelAnnotation",
+    "globalLogLevel":{
+      
+    }
+  },
+  {
+    "class":"firrtl.stage.phases.DriverCompatibility$TopNameAnnotation",
+    "topName":"lifegame_fram"
+  },
+  {
+    "class":"firrtl.EmitCircuitAnnotation",
+    "emitter":"firrtl.VerilogEmitter"
+  },
+  {
+    "class":"chisel3.experimental.EnumAnnotations$EnumDefAnnotation",
+    "typeName":"system.LifeGameFram$State$1",
+    "definition":{
+      "ReadBoard":5,
+      "IssueRead":4,
+      "Error":2,
+      "ReadId":1,
+      "IssueWrite":10,
+      "WriteBoard":11,
+      "WriteEnable":9,
+      "UpdateBoard":7,
+      "Idle":3,
+      "InitializeBoard":6,
+      "CheckStall":8,
+      "Reset":0
+    }
+  },
+  {
+    "class":"chisel3.experimental.EnumAnnotations$EnumComponentAnnotation",
+    "target":"LifeGameFram.LifeGameFram.state",
+    "enumTypeName":"system.LifeGameFram$State$1"
+  },
+  {
+    "class":"firrtl.transforms.BlackBoxTargetDirAnno",
+    "targetDir":"rtl/chisel/lifegame_fram"
+  }
+]
