@@ -4,34 +4,32 @@
 //    (See accompanying file LICENSE_1_0.txt or copy at
 //          https://www.boost.org/LICENSE_1_0.txt)
 
-package command
+package spi
 
 import chisel3._
 import chisel3.util._
 import _root_.util._
 
-class SPIIO extends Bundle {
-    val miso = Input(Bool())
-    val mosi = Output(Bool())
-    val cs = Output(Bool())
-    val sck = Output(Bool())
-}
-
 class SPIData extends Bundle {
     val first = Bool()
     val data = UInt(8.W)
 }
+object SPIData {
+    def apply() : SPIData = {
+        new SPIData()
+    }
+}
 
 class SPISlave(idleSendData: Int = 0xff) extends Module {
     val io = IO(new Bundle(){
-        val spi = Flipped(new SPIIO())
-        val receive = Irrevocable(new SPIData())
+        val spi = Flipped(SPIIO())
+        val receive = Irrevocable(SPIData())
         val send = Flipped(Irrevocable(UInt(8.W)))
     })
 
     val spiReset = io.spi.cs.asAsyncReset()
     val spiClock = io.spi.sck.asClock()
-    val fifo = Module(new Queue(new SPIData(), 32))
+    val fifo = Module(new Queue(SPIData(), 32))
     
     io.receive <> WithIrrevocableRegSlice(UnsafeIrrevocable(fifo.io.deq))
 
