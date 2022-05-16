@@ -3,8 +3,9 @@ set RTL_DIR       [lindex $argv 1]
 set TARGET        [lindex $argv 2]
 set DEVICE_FAMILY [lindex $argv 3]
 set DEVICE_PART   [lindex $argv 4]
+set PROJECT_NAME  [lindex $argv 5]
 
-set_option -output_base_name matrix_led
+set_option -output_base_name ${PROJECT_NAME}
 set_device -name $DEVICE_FAMILY $DEVICE_PART
 
 set_option -verilog_std sysv2017

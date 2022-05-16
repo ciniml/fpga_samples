@@ -422,7 +422,7 @@ always_ff @(posedge clock) begin
 end
 
 initial begin
-    $readmemh("src/sw/bootrom.hex", imem);
+    $readmemh("../sw/bootrom.hex", imem);
 end
 
 endmodule
