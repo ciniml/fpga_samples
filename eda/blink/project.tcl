@@ -1,11 +1,19 @@
-set_option -output_base_name blink
-set_device -name GW1N-4B GW1N-LV4LQ144C6/I5
+set SRC_DIR       [lindex $argv 0]
+set RTL_DIR       [lindex $argv 1]
+set TARGET        [lindex $argv 2]
+set DEVICE_FAMILY [lindex $argv 3]
+set DEVICE_PART   [lindex $argv 4]
+set PROJECT_NAME  [lindex $argv 5]
+
+set_option -output_base_name ${PROJECT_NAME}
+set_device -name $DEVICE_FAMILY $DEVICE_PART
 
 set_option -verilog_std sysv2017
 set_option -vhdl_std vhd2008
 set_option -print_all_synthesis_warning 1
 
-add_file -type verilog [file normalize src/top.sv]
-add_file -type cst [file normalize src/runber.cst]
+add_file -type verilog [file normalize ${SRC_DIR}/top.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/blink/blink_all.sv]
+add_file -type cst [file normalize ${SRC_DIR}/pins.cst]
 
 run all

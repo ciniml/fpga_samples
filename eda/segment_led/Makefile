@@ -1,5 +1,4 @@
-BITSTREAM := impl/pnr/segled.fs
+PROJECT_NAME := segment_led
 SRCS := $(wildcard ../../rtl/blink/*.cst) $(wildcard src/*.cst) $(wildcard src/*.sv) project.tcl
-DEVICE ?= GW1N-4B
 
 include ../build_gowin.mk

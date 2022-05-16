@@ -1,5 +1,4 @@
-BITSTREAM := impl/pnr/blink.fs
-SRCS := $(wildcard ../../rtl/blink/*.cst) $(wildcard src/*.cst) $(wildcard src/*.sdc) project.tcl
-DEVICE ?= GW1N-4B
+PROJECT_NAME := blink
+SRCS := $(wildcard ../../rtl/blink/*.cst) $(wildcard src/$(TARGET)/*.cst) $(wildcard src/$(TARGET)/*.sdc) $(wildcard src/$(TARGET)/*.sv) project.tcl
 
 include ../build_gowin.mk

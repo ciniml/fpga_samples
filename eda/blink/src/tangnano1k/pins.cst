@@ -1,0 +1,9 @@
+IO_LOC "clock" 47;
+IO_PORT "clock" IO_TYPE=LVCMOS33;
+
+IO_LOC  "led_r" 9;
+IO_PORT "led_r" IO_TYPE=LVCMOS33;
+IO_LOC  "led_b" 10;
+IO_PORT "led_b" IO_TYPE=LVCMOS33;
+IO_LOC  "led_g" 11;
+IO_PORT "led_g" IO_TYPE=LVCMOS33;

@@ -1,6 +1,5 @@
-BITSTREAM := impl/pnr/cpu_stopwatch.fs
-SRCS := $(wildcard src/*.cst) $(wildcard src/*.sdc) $(wildcard src/*.sv) ../../external/picorv32/picorv32.v project.tcl src/sw/bootrom.hex
-DEVICE ?= GW1N-4B
+PROJECT_NAME := cpu_stopwatch
+SRCS := $(wildcard src/$(TARGET)/*.cst) $(wildcard src/$(TARGET)/*.sdc) $(wildcard src/$(TARGET)/*.sv) ../../external/picorv32/picorv32.v project.tcl src/sw/bootrom.hex
 
 include ../build_gowin.mk
 

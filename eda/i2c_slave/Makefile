@@ -1,5 +1,4 @@
-BITSTREAM := impl/pnr/i2c_slave.fs
-SRCS := $(wildcard src/*.cst) $(wildcard src/*.sdc) $(wildcard src/*.sv) ../../rtl/i2c_slave/i2c_slave.sv project.tcl
-DEVICE ?= GW1N-4B
+PROJECT_NAME := i2c_slave
+SRCS := $(wildcard ../../rtl/i2c_slave/*.sv) $(wildcard src/$(TARGET)/*.cst) $(wildcard src/$(TARGET)/*.sdc) $(wildcard src/$(TARGET)/*.sv) project.tcl
 
 include ../build_gowin.mk
