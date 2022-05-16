@@ -10,19 +10,7 @@
 `default_nettype none
 module top(
     input wire clock,
-    
-    input  wire key_1,
-    input  wire key_2,
-    input  wire key_3,
-    input  wire key_4,
-    input  wire key_5,
-    input  wire key_6,
-    input  wire key_7,
-    input  wire key_8,
-
-    output logic [7:0] led_out,
-    output logic uart_tx,
-    input  wire  uart_rx
+    output logic [5:0] led
 );
 
 // Reset sequencer.
@@ -39,8 +27,12 @@ logic resetn;
 assign resetn = !reset;
 
 // Assign GPIO output to LEDs.
-logic [7:0] gpio_out;
-assign led_out = gpio_out;
+logic [5:0] gpio_out;
+assign led = !gpio_out[5:0];
+
+logic uart_rx;
+assign uart_rx = 1;
+logic uart_tx;
 
 // RV core instance.
 logic io_exit;

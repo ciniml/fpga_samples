@@ -15,11 +15,12 @@ PROGRAMMER_CLI_DIR ?= $(dir $(shell which programmer_cli))
 PROGRAMMER_CABLE ?=
 USE_OPENFPGA_LOADER ?= 0
 OPENFPGA_LOADER ?= $(shell which openFPGALoader)
+PROJECT_ADDITIONAL_ARGS ?= 
 
 all: synthesis
 
 $(BITSTREAM): $(SRCS)
-	mkdir -p build/$(TARGET) && cd build/$(TARGET) && gw_sh ../../project.tcl $(SRC_DIR) $(RTL_DIR) $(TARGET) $(DEVICE_FAMILY) $(DEVICE_PART) $(PROJECT_NAME)
+	mkdir -p build/$(TARGET) && cd build/$(TARGET) && gw_sh ../../project.tcl $(SRC_DIR) $(RTL_DIR) $(TARGET) $(DEVICE_FAMILY) $(DEVICE_PART) $(PROJECT_NAME) $(PROJECT_ADDITIONAL_ARGS)
 
 synthesis: $(BITSTREAM)
 
