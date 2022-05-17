@@ -16,6 +16,7 @@ PROGRAMMER_CABLE ?=
 USE_OPENFPGA_LOADER ?= 0
 OPENFPGA_LOADER ?= $(shell which openFPGALoader)
 PROJECT_ADDITIONAL_ARGS ?= 
+PROJECT_ADDITIONAL_CLEAN ?=
 
 all: synthesis
 
@@ -47,4 +48,7 @@ else
 endif
 
 clean:
-	-@$(RM) -rf build/$(TARGET)
+	-$(RM) -r build/$(TARGET)
+ifneq ($(PROJECT_ADDITIONAL_CLEAN),)
+	-$(RM) $(PROJECT_ADDITIONAL_CLEAN)
+endif
