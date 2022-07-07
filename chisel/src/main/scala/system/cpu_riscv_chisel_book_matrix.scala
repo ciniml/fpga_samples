@@ -32,10 +32,10 @@ class Config(clockHz: Int) extends Module {
 class MatrixLedPeripheral(clockHz: Int) extends Module {
     val io = IO(new Bundle{
         val mem = new DmemPortIo
-        val row = Output(UInt(8.W))
+        val row = Output(UInt(9.W))
         val column = Output(UInt(8.W))
     })
-    val config = new MatrixLedConfig(8, 8, clockHz, clockHz/1000, clockHz/10000)
+    val config = new MatrixLedConfig(9, 8, clockHz, clockHz/1000, clockHz/10000)
     val matrixLed = Module(new MatrixLed(config))
     val matrix = RegInit(VecInit((0 to config.rows-1).map(_ => 0.U(config.columns.W))))
     io.row := matrixLed.io.row
@@ -45,16 +45,23 @@ class MatrixLedPeripheral(clockHz: Int) extends Module {
     io.mem.rdata := MuxLookup(io.mem.raddr(2, 2), "xDEADBEEF".U, Seq(
         0.U -> Cat((0 to 3).map(i => matrix(i)).reverse),
         1.U -> Cat((4 to 7).map(i => matrix(i)).reverse),
+        2.U -> Cat("x000000".U, Cat((8 to 8).map(i => matrix(i)).reverse)),
     ))
     io.mem.rvalid := true.B
     io.mem.wready := true.B
     when(io.mem.wen) {
-        switch(io.mem.waddr(2,2)) {
+        switch(io.mem.waddr(3,2)) {
+            // Upper half
             is(0.U) {
                 (0 to 3).foreach(i => { when( io.mem.wstrb(i) ) { matrix(i) := io.mem.wdata((i+1)*8-1, i*8) } })
             }
+            // Lower half
             is(1.U) {
                 (4 to 7).foreach(i => { when( io.mem.wstrb(i-4) ) { matrix(i) := io.mem.wdata((i-4+1)*8-1, (i-4)*8) } })
+            }
+            // 7 + dot seg LED
+            is(2.U) {
+                when( io.mem.wstrb(0) ) { matrix(8) := io.mem.wdata(7, 0) }
             }
         }
     }
@@ -81,9 +88,12 @@ class RiscV(clockHz: Int) extends Module {
   val startAddress = 0x08000000L
 
   val io = IO(new Bundle {
-    val gpio = Output(UInt(8.W))
+    val gpio_out = Output(UInt(32.W))
+    val gpio_in = Input(UInt(32.W))
+    val gpio_out_enable = Output(UInt(32.W))
+    val uart_rx = Input(Bool())
     val uart_tx = Output(Bool())
-    val row = Output(UInt(8.W))
+    val row = Output(UInt(9.W))
     val column = Output(UInt(8.W))
     val exit = Output(Bool())
     val imem = new MemoryReadPort(imemSizeInBytes/4, UInt(32.W))
@@ -135,8 +145,11 @@ class RiscV(clockHz: Int) extends Module {
   io.debugSignals.wstrb  := core.io.dmem.wstrb
 
   io.exit := core.io.exit
-  io.gpio <> gpio.io.gpio
+  io.gpio_out <> gpio.io.out
+  io.gpio_in <> gpio.io.in
+  io.gpio_out_enable <> gpio.io.out_enable
   io.uart_tx <> uart.io.tx
+  io.uart_rx <> uart.io.rx
   io.row <> matrix.io.row
   io.column <> matrix.io.column
 }

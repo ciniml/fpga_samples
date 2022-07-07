@@ -23,7 +23,7 @@ class MatrixLed(val config: MatrixLedConfig) extends Module {
     val rowEnable = WireDefault(true.B)
     
     io.row := Mux(rowEnable, rowReg, 0.U(config.columns.W))
-    io.column := MuxCase(0.U, (0 to config.columns - 1).map(i => ((rowReg === (1.U << i), io.matrix(i)))))
+    io.column := MuxCase(0.U, (0 to config.rows - 1).map(i => ((rowReg === (1.U << i), io.matrix(i)))))
 
     refreshCounter := refreshCounter + 1.U
     when( refreshCounter < (config.refreshInterval - config.refreshGuardInterval*2 - 1).U ) {
