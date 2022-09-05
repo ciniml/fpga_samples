@@ -8,6 +8,7 @@ package video
 
 import chisel3._
 import chisel3.util._
+import chisel3.stage.ChiselStage
 
 /**
  * 24bpp DVI signal generator.
@@ -123,3 +124,11 @@ class DviOut extends Module {
         }
     }
 }
+
+object ElaborateDviOut extends App {
+  (new ChiselStage).emitVerilog(new DviOut, Array(
+    "-o", "dviout_chisel.v",
+    "--target-dir", "rtl/dvi_out",
+  ))
+}
+
