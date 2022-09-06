@@ -8,6 +8,7 @@
  * @brief RGB to DVI signal encoder.
  */
 `default_nettype none
+
 module dvi_out (
     input wire clock,
     input wire reset,
@@ -25,6 +26,7 @@ module dvi_out (
 
 assign dvi_clock = 10'b00000_11111;
 
+// Video signal register type
 typedef struct packed {
     logic        de;
     logic        hsync;
