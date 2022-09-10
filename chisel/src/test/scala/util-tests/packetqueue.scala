@@ -12,9 +12,9 @@ import chisel3.util._
 import chisel3._
 import chisel3.experimental.BundleLiterals._
 import scala.util.control.Breaks
-import scala.util.Random
 import chisel3.stage.PrintFullStackTraceAnnotation
 import chiseltest.experimental.TestOptionBuilder._
+import scala.util.Random
 
 class PacketQueueTester extends FlatSpec with ChiselScalatestTester with Matchers {
     val dutName = "PacketQueue"
@@ -129,6 +129,46 @@ class PacketQueueTester extends FlatSpec with ChiselScalatestTester with Matcher
         c.io.read.valid.expect(false.B)
     }
 
+    case class Packet(index: Int, length: Int) 
+
+    def randomMultiPacket(c: PacketQueue[UInt], numberOfPackets: Int, maxPacketLength: Int, maxPacketInterval: Int, enqueueProbability: Float, dequeueProbability: Float) {
+        c.io.write.initSource().setSourceClock(c.clock)
+        c.io.read.initSink().setSinkClock(c.clock)
+
+        val dataType = Flushable(0.U(8.W))
+        val entries = c.entries
+        val random = new Random()
+        val packets = (0 to numberOfPackets - 1).map(i => Packet(i, random.nextInt(maxPacketLength) + 1))
+
+        fork {
+            var data = 0
+            packets.foreach( packet => {
+                val interval = random.nextInt(maxPacketInterval + 1)
+                println(s"[W] index ${packet.index} length ${packet.length} interval ${interval}")
+                (0 to packet.length - 1).foreach(i => {
+                    c.io.write.enqueue(dataType.Lit( _.body -> data.U(8.W), _.last -> (i == packet.length - 1).B))
+                    if( random.nextFloat() > enqueueProbability ) { c.clock.step(1) }
+                    data = (data + 1) & 0xff
+                })
+                if( interval > 0 ) { c.clock.step(interval) }
+            })
+        } .fork {
+            var data = 0
+            packets.foreach( packet => {
+                val interval = random.nextInt(maxPacketInterval + 1)
+                println(s"[R] index ${packet.index} length ${packet.length} interval ${interval}")
+                (0 to packet.length - 1).foreach(i => {
+                    if( random.nextFloat() > dequeueProbability ) { c.clock.step(1) }
+                    c.io.read.expectDequeue(dataType.Lit( _.body -> data.U(8.W), _.last -> (i == packet.length - 1).B))
+                    data = (data + 1) & 0xff
+                })
+                if( interval > 0 ) { c.clock.step(interval) }
+            })
+        } .join
+
+        c.io.read.valid.expect(false.B)
+    }
+
     it should "push8pop8 depth 8" in {
         test(new PacketQueue(Flushable(0.U(8.W)), 8)).withAnnotations(Seq(PrintFullStackTraceAnnotation))  { c => push8pop8(c) }
     }
@@ -156,4 +196,16 @@ class PacketQueueTester extends FlatSpec with ChiselScalatestTester with Matcher
     it should "pushTwoPackets depth 9" in {
         test(new PacketQueue(Flushable(0.U(8.W)), 9)).withAnnotations(Seq(PrintFullStackTraceAnnotation))  { c => pushTwoPackets(c) }
     }
+    it should "randomMultiPacket depth 8" in {
+        test(new PacketQueue(Flushable(0.U(8.W)), 8)).withAnnotations(Seq(PrintFullStackTraceAnnotation))  { c => randomMultiPacket(c, 100, 10, 8, 0.9f, 0.9f) }
+    }
+    it should "randomMultiPacket depth 8 slow dequeue" in {
+        test(new PacketQueue(Flushable(0.U(8.W)), 8)).withAnnotations(Seq(PrintFullStackTraceAnnotation))  { c => randomMultiPacket(c, 100, 10, 8, 0.9f, 0.8f) }
+    }
+    it should "randomMultiPacket depth 8 slow dequeue 2" in {
+        test(new PacketQueue(Flushable(0.U(8.W)), 8)).withAnnotations(Seq(PrintFullStackTraceAnnotation))  { c => randomMultiPacket(c, 100, 16, 3, 0.9f, 0.5f) }
+    }
+    // it should "randomMultiPacket depth 2048" in {
+    //     test(new PacketQueue(Flushable(0.U(8.W)), 8)).withAnnotations(Seq(PrintFullStackTraceAnnotation))  { c => randomMultiPacket(c, 1000, 1280, 64, 0.9f, 0.9f) }
+    // }
 }
