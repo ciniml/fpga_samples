@@ -57,7 +57,7 @@ end
 
 logic row_enable;
 assign row_enable = refresh_counter < REFRESH_INTERVAL - REFRESH_ROW_GUARD;
-assign row = row_enable ? row_reg : '0;
+assign row = row_enable ? ~row_reg : '0;
 assign seven_seg = 0;
 
 always_ff @(posedge clock) begin

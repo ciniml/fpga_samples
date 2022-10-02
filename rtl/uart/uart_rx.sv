@@ -46,8 +46,8 @@ always_ff @(posedge clock) begin
 
         if( !running ) begin
             if( !rx_regs[1] && rx_regs[0] ) begin   // falling edge of START bit is detected.
-                rate_counter <= BAUD_DIVIDER*3/2 - 1;   // Wait until the center of LSB
-                bit_counter <= NUMBER_OF_BITS - 1;
+                rate_counter <= RATE_COUNTER_BITS'(BAUD_DIVIDER*3/2 - 1);   // Wait until the center of LSB
+                bit_counter <= BIT_COUNTER_BITS'(NUMBER_OF_BITS - 1);
                 running <= 1;
             end
         end
@@ -61,7 +61,7 @@ always_ff @(posedge clock) begin
                     running <= 0;
                 end
                 else begin
-                    rate_counter <= BAUD_DIVIDER - 1;
+                    rate_counter <= RATE_COUNTER_BITS'(BAUD_DIVIDER - 1);
                     bit_counter <= bit_counter - 1;
                 end
             end

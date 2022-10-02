@@ -34,7 +34,7 @@ typedef struct packed {
     logic [26:0] data;
 } video_reg_t;
 
-localparam VIDEO_REGS_DEPTH = 3;
+localparam VIDEO_REGS_DEPTH = 1;
 
 function automatic logic [1:0] popCount2(input logic [1:0] in);
     popCount2 = {1'b0, in[0]} + {1'b0, in[1]};
@@ -43,8 +43,8 @@ function automatic logic [2:0] popCount4(input logic [3:0] in);
     popCount4 = {1'b0, popCount2(in[3:2])} + {1'b0, popCount2(in[1:0])};
 endfunction
 
-function automatic logic [3:0] popCount(input logic [9:0] in);
-    popCount = {2'b00, popCount2(in[9:8])} + {1'b0, popCount4(in[7:4])} + {1'b0, popCount4(in[3:0])};
+function automatic logic [3:0] popCount8(input logic [9:0] in);
+    popCount8 = {1'b0, popCount4(in[7:4])} + {1'b0, popCount4(in[3:0])};
 endfunction
 
 function automatic logic [8:0] transitionMinimized(input logic [7:0] in);
@@ -53,7 +53,7 @@ begin
     logic xnor_process;
     logic [7:0] bits;
 
-    pop_count = popCount({2'd0, in});
+    pop_count = popCount8(in);
     xnor_process = pop_count > 4'd4 || (pop_count == 4'd4 && !in[0]);
     bits[0] = in[0];
     for(int i = 1; i < 8; i++) bits[i] = (bits[i-1] ^ in[i]) ^ xnor_process;
@@ -72,10 +72,7 @@ begin
     logic [7:0] n0n1;
     dc_balancing_t result;
 
-    result.out = {1'b0, in};
-    result.counter = '0;
-
-    n1 = popCount({2'b0, in[7:0]});
+    n1 = popCount8(in[7:0]);
     n0n1 = 8'd8 - {3'b000, n1, 1'b0};
 
     if(counter == '0 || n0n1 == '0) begin

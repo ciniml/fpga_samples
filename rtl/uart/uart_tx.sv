@@ -31,17 +31,17 @@ always_ff @(posedge clock) begin
     else begin
        if( data_valid && data_ready ) begin
            bits <= {1'b1, data_bits, 1'b0 };    // STOP(1), DATA, START(0)
-           bit_counter <= NUMBER_OF_BITS + 2;
-           rate_counter <= BAUD_DIVIDER - 1;
+           bit_counter <= BIT_COUNTER_BITS'(NUMBER_OF_BITS + 2);
+           rate_counter <= RATE_COUNTER_BITS'(BAUD_DIVIDER - 1);
        end
        if( bit_counter > 0 ) begin
            if( rate_counter == 0 ) begin
                 bits <= {1'b0, bits[NUMBER_OF_BITS+1:1]};
                 bit_counter <= bit_counter - 1;
-                rate_counter <= BAUD_DIVIDER - 1;    
+                rate_counter <= RATE_COUNTER_BITS'(BAUD_DIVIDER - 1);
            end
            else begin
-               rate_counter <= rate_counter - 1;
+               rate_counter <= RATE_COUNTER_BITS'(rate_counter - RATE_COUNTER_BITS'(1));
            end
        end
     end

@@ -17,30 +17,12 @@ module top(
     // Tang Nano On Board LEDs
     output logic [5:0] led,
 
-    // UART
-    output logic uart_tx,
-    input wire uart_rx,
-
     // DVI
     output logic tmds_clk_p,
     //output logic tmds_clk_n,
-    output logic [2:0] tmds_data_p,
+    output logic [2:0] tmds_data_p
     //output logic [2:0] tmds_data_n,
-
-    // PSRAM
-    //output logic [1:0] O_psram_ck,
-    //output logic [1:0] O_psram_ck_n,
-    //inout  wire  [15:0] IO_psram_dq,
-    //inout  wire  [1:0] IO_psram_rwds,
-    //output logic [1:0] O_psram_cs_n,
-    //output logic [1:0] O_psram_reset_n,
-
-    // Debug
-    output logic [5:0] debug_out
 );
-
-assign debug_out = 0;
-assign uart_tx = 0;
 
 logic clock_dvi;
 logic pll_lock;
@@ -51,13 +33,6 @@ logic [2:0] reset_button = '1;
 always_ff @(posedge clock) begin
   reset_button <= {!button_s2, reset_button[2:1]};
 end
-
-logic reset;
-reset_seq reset_seq_int(
-  .clock(clock),
-  .reset_in(reset_button[0]),
-  .reset_out(reset)
-);
 
 logic reset_ext;
 reset_seq reset_seq_ext(
@@ -95,7 +70,13 @@ logic video_hsync;
 logic video_vsync;
 logic [23:0] video_data;
 
-test_pattern_generator tpg_inst (
+test_pattern_generator #(
+  .BOUNCE_LOGO(1),
+  .LOGO_PATH("../cq_logo.hex"),
+  .LOGO_WIDTH(250),
+  .LOGO_HEIGHT(50),
+  .LOGO_COLOR(24'h000000)  
+) tpg_inst (
   .clock(clock_dvi),
   .reset(reset_dvi),
   .*
