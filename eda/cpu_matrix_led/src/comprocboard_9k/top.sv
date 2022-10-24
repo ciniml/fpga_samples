@@ -40,8 +40,8 @@ module top (
 
   logic [7:0] data[7:0];
   logic [7:0] row, col;
-  assign anode   = ~col;
-  assign cathode = row;
+  assign anode   = ~row;
+  assign cathode = col;
 
   matrix_led_driver inst_0 (
     .clk  (clk),
@@ -213,14 +213,14 @@ module matrix_led_driver (
   logic       overflow;
 
   assign row = 'b00000001 << row_cnt;
-  assign col = {data[7][row_cnt],
-                data[6][row_cnt],
-                data[5][row_cnt],
-                data[4][row_cnt],
-                data[3][row_cnt],
-                data[2][row_cnt],
-                data[1][row_cnt],
-                data[0][row_cnt]};
+  assign col = {data[row_cnt][7], // CPUとの接続が容易になるように
+                data[row_cnt][6], // data[行][列] の順に変更
+                data[row_cnt][5],
+                data[row_cnt][4],
+                data[row_cnt][3],
+                data[row_cnt][2],
+                data[row_cnt][1],
+                data[row_cnt][0]};
 
   always_ff @ (posedge clk) begin
     if (overflow) begin
