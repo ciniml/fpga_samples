@@ -11,6 +11,7 @@ package i2cslave
 import chisel3._
 import chisel3.util._
 import chisel3.util.Enum
+import chisel3.stage.ChiselStage
 
 class I2CSlaveRegIO(addressWidth: Int) extends Bundle {
   val address = Input(UInt(addressWidth.W))
@@ -19,8 +20,6 @@ class I2CSlaveRegIO(addressWidth: Int) extends Bundle {
   val read_data = Output(UInt(8.W))
   val request = Input(Bool())
   val response = Output(Bool())
-
-  override def cloneType: this.type = new I2CSlaveRegIO(addressWidth).asInstanceOf[this.type]
 }
 
 class I2CIO extends Bundle {
@@ -271,5 +270,8 @@ class I2CSlave(addressWidth: Int, filterDepth: Int, i2cAddress: Int) extends Mod
 }
 
 object ElaborateI2CSlave extends App {
-  Driver.execute(args, () => new I2CSlave(8, 3, 0x48))
+  (new ChiselStage).emitVerilog(new I2CSlave(8, 3, 0x48), Array(
+    "-o", "i2c_slave.v",
+    "--target-dir", "rtl/chisel/i2c_slave",
+  ))
 }

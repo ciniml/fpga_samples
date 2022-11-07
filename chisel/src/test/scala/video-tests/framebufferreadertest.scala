@@ -101,7 +101,7 @@ class FrameBufferReaderTester
       val width = c.params.pixelsH
       val height = c.params.pixelsV
       c.clock.setTimeout(width * height * 3 )
-      c.io.video.initSink.setSinkClock(c.clock)
+      c.io.video.initSink().setSinkClock(c.clock)
       val signalType = chiselTypeOf(c.io.video.bits)
       (0 to 1).foreach(frame => {
         (0 to (height / 2) - 1).foreach(y => {

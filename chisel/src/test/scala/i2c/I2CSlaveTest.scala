@@ -14,8 +14,6 @@ import chisel3._
 import chisel3.util._
 import org.scalatest._
 import chiseltest._
-import chiseltest.internal.VerilatorBackendAnnotation
-import chiseltest.experimental.TestOptionBuilder._
 
 class I2CSlaveTestRegister(addressWidth: Int) extends Module {
   val io = IO(new I2CSlaveRegIO(addressWidth))
@@ -69,7 +67,7 @@ class I2CSlaveUnitTester(system: I2CSlaveTestSystem, i2cClockBase: Int)  {
       system.clock.step(i2cClockBase*2)
       system.io.scl_i.poke(true.B)
       system.clock.step(i2cClockBase)
-      data = (data << 1) | (if( system.io.sda_o.peek.litToBoolean ) 1 else 0)
+      data = (data << 1) | (if( system.io.sda_o.peek().litToBoolean ) 1 else 0)
       system.clock.step(i2cClockBase)
     }
     system.io.scl_i.poke(false.B)

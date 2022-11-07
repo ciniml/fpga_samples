@@ -15,8 +15,6 @@ import chisel3.util._
 import org.scalatest._
 import chiseltest._
 import chisel3.experimental.ChiselEnum
-import chiseltest.internal.VerilatorBackendAnnotation
-import chiseltest.experimental.TestOptionBuilder._
 
 class LifeGameFramTestSystem() extends Module {
   val dut = Module(new LifeGameFram(new LifeGameFramConfig(8, 8, 10, 10, 1, 10)))

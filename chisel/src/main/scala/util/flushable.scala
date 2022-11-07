@@ -12,8 +12,6 @@ import chisel3.internal.firrtl.Width
 class Flushable[T <: Data](gen: T) extends Bundle {
     val body = gen.cloneType.asInstanceOf[T]
     val last = Bool()
-
-    override def cloneType: this.type = new Flushable(gen).asInstanceOf[this.type]
 }
 
 object Flushable {
@@ -22,5 +20,11 @@ object Flushable {
     }
     def apply(width: Width): Flushable[UInt] = {
         new Flushable(UInt(width))
+    }
+    def apply(multibyte: MultiByteSymbol): Flushable[UInt] = {
+        val flushable = Wire(new Flushable(UInt(multibyte.numberOfBits.W)))
+        flushable.body := multibyte.data
+        flushable.last := multibyte.last
+        flushable
     }
 }

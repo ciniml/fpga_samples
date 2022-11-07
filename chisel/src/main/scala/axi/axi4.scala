@@ -81,7 +81,6 @@ class MemoryReaderIO(addressBits: Int, dataBits: Int) extends Bundle {
     val data = Input(UInt(dataBits.W))
     val request = Output(Bool())
     val response = Input(Bool())
-    override def cloneType: MemoryReaderIO.this.type = new MemoryReaderIO(addressBits, dataBits).asInstanceOf[this.type]
 }
 
 
@@ -92,7 +91,6 @@ class MemoryWriterIO(addressBits: Int, dataBits: Int) extends Bundle {
     val strobe = Output(UInt(strbBits.W))
     val request = Output(Bool())
     val ready = Input(Bool())
-    override def cloneType: MemoryWriterIO.this.type = new MemoryWriterIO(addressBits, dataBits).asInstanceOf[this.type]
 }
 
 class RomReader(addressBits: Int, dataBits: Int, values: Seq[UInt], addressOffset: BigInt) extends Module {

@@ -12,6 +12,7 @@ import chisel3.experimental.chiselName
 import chisel3.experimental.ChiselEnum
 import spi._
 import firrtl.annotations.MemoryLoadFileType
+import chisel3.stage.ChiselStage
 
 case class LifeGameFramConfig(val rows: Int = 8, val columns: Int = 8, val clockFreq: Int, val refreshInterval: Int, refreshGuardInterval: Int, updateInterval: Int )
 
@@ -340,10 +341,8 @@ class LifeGameFram(val config: LifeGameFramConfig) extends RawModule {
 }
 
 object ElaborateLifeGameSram extends App {
-  Driver.execute(Array(
-    "-tn=lifegame_fram",
-    "-td=rtl/chisel/lifegame_fram",
-    // "--full-stacktrace",
-  ),
-  () => new LifeGameFram(new LifeGameFramConfig(8, 8, 27000000, 27000000/1000, 27000000/100000, 27000000)))
+  (new ChiselStage).emitVerilog(new LifeGameFram(new LifeGameFramConfig(8, 8, 27000000, 27000000/1000, 27000000/100000, 27000000)), Array(
+    "-o", "lifegame_fram.v",
+    "--target-dir", "rtl/chisel/lifegame_fram",
+  ))
 }

@@ -13,14 +13,13 @@ import chisel3._
 import chisel3.experimental.BundleLiterals._
 import scala.util.control.Breaks
 import chisel3.stage.PrintFullStackTraceAnnotation
-import chiseltest.experimental.TestOptionBuilder._
 import scala.util.Random
 
 class PacketQueueTester extends FlatSpec with ChiselScalatestTester with Matchers {
     val dutName = "PacketQueue"
     behavior of dutName
 
-    def push8pop8(c: PacketQueue[UInt]) {
+    def push8pop8(c: PacketQueue[UInt]): Unit = {
         c.io.write.initSource().setSourceClock(c.clock)
         c.io.read.initSink().setSinkClock(c.clock)
 
@@ -42,7 +41,7 @@ class PacketQueueTester extends FlatSpec with ChiselScalatestTester with Matcher
         c.io.read.valid.expect(false.B)
     }
 
-    def pushFull(c: PacketQueue[UInt]) {
+    def pushFull(c: PacketQueue[UInt]): Unit = {
         c.io.write.initSource().setSourceClock(c.clock)
         c.io.read.initSink().setSinkClock(c.clock)
 
@@ -63,7 +62,7 @@ class PacketQueueTester extends FlatSpec with ChiselScalatestTester with Matcher
         c.io.read.valid.expect(false.B)
     }
 
-    def pushFullTwoPacket(c: PacketQueue[UInt]) {
+    def pushFullTwoPacket(c: PacketQueue[UInt]): Unit = {
         c.io.write.initSource().setSourceClock(c.clock)
         c.io.read.initSink().setSinkClock(c.clock)
 
@@ -89,7 +88,7 @@ class PacketQueueTester extends FlatSpec with ChiselScalatestTester with Matcher
         c.io.read.valid.expect(false.B)
     }
 
-    def pushTwoPackets(c: PacketQueue[UInt]) {
+    def pushTwoPackets(c: PacketQueue[UInt]): Unit = {
         c.io.write.initSource().setSourceClock(c.clock)
         c.io.read.initSink().setSinkClock(c.clock)
 
@@ -164,7 +163,7 @@ class PacketQueueTester extends FlatSpec with ChiselScalatestTester with Matcher
                 })
                 if( interval > 0 ) { c.clock.step(interval) }
             })
-        } .join
+        } .join()
 
         c.io.read.valid.expect(false.B)
     }

@@ -14,8 +14,6 @@ import chisel3._
 import chisel3.util._
 import org.scalatest._
 import chiseltest._
-import chiseltest.internal.VerilatorBackendAnnotation
-import chiseltest.experimental.TestOptionBuilder._
 
 class SPIMasterTestSystem(halfClockDivider: Int = 10, dataBits: Int = 8) extends Module {
   val dut = Module(new SPIMaster(halfClockDivider, dataBits))

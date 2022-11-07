@@ -5,8 +5,9 @@ import chisel3.util._
 import chiseltest._
 import scala.util.control.Breaks
 import org.scalatest.flatspec.AnyFlatSpec
+import org.scalatest.matchers.should.Matchers 
 
-class DviOutTest extends AnyFlatSpec with ChiselScalatestTester {
+class DviOutTest extends AnyFlatSpec with ChiselScalatestTester with Matchers {
     it must "runs DviOut" in { 
     test(new DviOut)
             .withAnnotations(Seq(VerilatorBackendAnnotation, WriteFstAnnotation)) 

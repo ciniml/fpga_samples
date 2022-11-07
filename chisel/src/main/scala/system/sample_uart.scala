@@ -10,6 +10,7 @@ import chisel3._
 import chisel3.util._
 import chisel3.experimental.chiselName
 import uart._
+import chisel3.stage.ChiselStage
 
 @chiselName
 class UartSystem() extends RawModule {
@@ -31,11 +32,10 @@ class UartSystem() extends RawModule {
   }
 }
 
+
 object Elaborate extends App {
-  Driver.execute(Array(
-    "-tn=uartsystem",
-    "-td=rtl/chisel/uart",
-    // "--full-stacktrace",
-  ),
-  () => new UartSystem)
+  (new ChiselStage).emitVerilog(new UartSystem, Array(
+    "-o", "uart_system.v",
+    "--target-dir", "rtl/chisel/uart",
+  ))
 }

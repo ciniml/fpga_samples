@@ -4,3 +4,8 @@
 target
 project
 test_run_dir
+
+.Xil
+.bsp
+.jvmopts
+.vscode
