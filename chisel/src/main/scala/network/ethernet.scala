@@ -90,17 +90,45 @@ import _root_.util._
 //     io.taken.bits.last := isTakenLast
 // }
 
+object NetworkBytes {
+    def apply(value: UInt, from: Int, toInclusive: Int): UInt = {
+        Cat((from to toInclusive).map(i => value((i+1)*8-1, i*8)))
+    }
+}
+object FlipBytes {
+    def apply(value: UInt): UInt = {
+        val bytes = value.getWidth / 8
+        Cat((0 to bytes-1).map(i => value((i+1)*8-1, i*8)))
+    }
+}
+object Bytes {
+    def apply(value: UInt): Vec[UInt] = {
+        val bytes = value.getWidth / 8
+        VecInit((0 to bytes-1).map(i => value((i+1)*8-1, i*8)))
+    }
+}
 class EthernetHeader extends Bundle {
     val source = UInt((8*6).W)
     val destination = UInt((8*6).W)
     val protocol = UInt((8*2).W)
+
+    def toUInt(): UInt = {
+        Cat(
+            FlipBytes(protocol),
+            FlipBytes(source),
+            FlipBytes(destination),
+        )
+    }
+    def toBytes(): Vec[UInt] = {
+        Bytes(this.toUInt())
+    }
 }
 object EthernetHeader {
     def apply(value: UInt): EthernetHeader = {
         val header = Wire(new EthernetHeader)
-        header.source := value(47, 0)
-        header.destination := value(95, 48)
-        header.protocol := value(111, 96)
+        header.destination := NetworkBytes(value, 0, 5)
+        header.source := NetworkBytes(value, 6, 11)
+        header.protocol := NetworkBytes(value, 12, 13)
         header
     }
 }
@@ -115,19 +143,36 @@ class ArpFrame extends Bundle {
     val spa = UInt(32.W)
     val tha = UInt(48.W)
     val tpa = UInt(32.W)
+
+    def toUInt(): UInt = {
+        Cat(Seq(
+            FlipBytes(hardwareType),
+            FlipBytes(protocolType),
+            FlipBytes(hlen),
+            FlipBytes(plen),
+            FlipBytes(operation),
+            FlipBytes(sha),
+            FlipBytes(spa),
+            FlipBytes(tha),
+            FlipBytes(tpa),
+        ).reverse)
+    }
+    def toBytes(): Vec[UInt] = {
+        Bytes(this.toUInt())
+    }
 }
 object ArpFrame {
     def apply(value: UInt): ArpFrame = {
         val header = Wire(new ArpFrame)
-        header.hardwareType := value(16 - 1, 0)
-        header.protocolType := value(32 - 1, 16)
-        header.hlen := value(40 - 1, 32)
-        header.plen := value(48 - 1, 40)
-        header.operation := value(64 -1, 48)
-        header.sha := value(112 - 1, 64)
-        header.spa := value(144 - 1, 112)
-        header.tha := value(192 - 1, 144)
-        header.tpa := value(224 - 1, 192)
+        header.hardwareType := NetworkBytes(value, 0, 1)
+        header.protocolType := NetworkBytes(value, 2, 3)
+        header.hlen := NetworkBytes(value, 4, 4)
+        header.plen := NetworkBytes(value, 5, 5)
+        header.operation := NetworkBytes(value, 6, 7)
+        header.sha := NetworkBytes(value, 8, 13)
+        header.spa := NetworkBytes(value, 14, 17)
+        header.tha := NetworkBytes(value, 18, 23)
+        header.tpa := NetworkBytes(value, 24, 27)
         header
     }
 }
@@ -139,10 +184,11 @@ class EthernetService(streamWidth: Int = 1) extends Module {
     })
 
     val maxFrameLength = 2048
+    val minFrameLength = 64
     val ethernetHeaderLength = 6 + 6 + 2
     val arpFrameLength = 28
     val hardwareAddress = BigInt("112233445566", 16)
-    val ipAddress = BigInt("c0a00a02", 16)  // 192.168.10.2
+    val ipAddress = BigInt("c0a80a02", 16)  // 192.168.10.2
 
     val frameBuffer = SyncReadMem(maxFrameLength, UInt(8.W))
     val ethernetHeaderBuffer = RegInit(VecInit(Seq.fill(ethernetHeaderLength)(0.U(8.W))))
@@ -154,6 +200,8 @@ class EthernetService(streamWidth: Int = 1) extends Module {
     val bytesReceived = RegInit(0.U(log2Ceil(maxFrameLength).W))
     val bytesToWrite = RegInit(0.U(log2Ceil(maxFrameLength).W))
     val bytesWritten = RegInit(0.U(log2Ceil(maxFrameLength).W))
+    val paddingRemaining = RegInit(0.U(log2Ceil(minFrameLength).W))
+
 
     val inReady = WireDefault(false.B)
     io.in.ready := inReady
@@ -167,7 +215,7 @@ class EthernetService(streamWidth: Int = 1) extends Module {
     io.out.bits.last := outLast
     
     object State extends ChiselEnum {
-        val ReadHeader, CheckHeader, Read, Discard, Finalize, Write, ARPLoad, ARPProcess = Value
+        val ReadHeader, CheckHeader, Discard, Finalize, WriteHeader, WritePayload, WritePadding, ARPLoad, ARPProcess = Value
     }
     
     val state = RegInit(State.ReadHeader)
@@ -197,38 +245,74 @@ class EthernetService(streamWidth: Int = 1) extends Module {
             inReady := false.B
             state := State.Discard // By default, do not process the frame and discard it.
             bytesReceived := 0.U
-            when( bytesReceived >= ethernetHeaderLength.U ) {
-                switch(ethernetHeader.protocol) {
-                    is(0x0806.U) {    // ARP
-                        state := State.ARPLoad
-                    }
+            switch(ethernetHeader.protocol) {
+                is(0x0806.U) {    // ARP
+                    state := State.ARPLoad
                 }
             }
+            printf(p"[ETHERNET] header src=${Hexadecimal(ethernetHeader.source)} dst=${Hexadecimal(ethernetHeader.destination)} proto=${Hexadecimal(ethernetHeader.protocol)}\n")
         }
         is(State.Discard) {
             inReady := true.B
             when( io.in.valid && io.in.bits.last ) {
                 bytesReceived := 0.U
-                state := State.Read
+                state := State.ReadHeader
             }
         }
 
         is(State.Finalize) {
             inReady := false.B
             bytesReceived := 0.U
-            state := State.Read
+            state := State.ReadHeader
         }
-
-        is(State.Write) {
+        is(State.WriteHeader) {
+            inReady := false.B
+            when(!outValid || io.out.ready) {
+                val isLast = bytesWritten === (ethernetHeaderLength - 1).U
+                outValid := true.B
+                outLast := isLast && bytesToWrite === 0.U
+                outData := ethernetHeaderBuffer(bytesWritten)
+                bytesWritten := bytesWritten + 1.U
+                when(isLast) {
+                    bytesWritten := 0.U
+                    when( bytesToWrite === 0.U ) {
+                        state := State.ReadHeader
+                    } .otherwise {
+                        state := State.WritePayload
+                    }
+                }
+            }
+            when( bytesToWrite < (minFrameLength - ethernetHeaderLength).U ) {
+                paddingRemaining := (minFrameLength - ethernetHeaderLength).U - bytesToWrite
+            }
+        }
+        is(State.WritePayload) {
             inReady := false.B
             when(!outValid || io.out.ready) {
                 val isLast = bytesWritten === bytesToWrite - 1.U
                 outValid := true.B
-                outLast := isLast
+                outLast := isLast && paddingRemaining === 0.U
                 outData := protocolHeaderBuffer(bytesWritten)
                 bytesWritten := bytesWritten + 1.U
                 when(isLast) {
-                    state := State.Read
+                    when( paddingRemaining > 0.U ) {
+                        state := State.WritePadding
+                    } .otherwise {
+                        state := State.ReadHeader
+                    }
+                }
+            }
+        }
+        is(State.WritePadding) {
+            inReady := false.B
+            when(!outValid || io.out.ready) {
+                paddingRemaining := paddingRemaining - 1.U
+                val isLast = paddingRemaining === 1.U
+                outValid := true.B
+                outLast := isLast
+                outData := 0.U
+                when(isLast) {
+                    state := State.ReadHeader
                 }
             }
         }
@@ -237,29 +321,43 @@ class EthernetService(streamWidth: Int = 1) extends Module {
             inReady := true.B
             when( io.in.valid ) {
                 bytesReceived := bytesReceived + 1.U
-                protocolHeaderBuffer(bytesReceived) := io.in.bits.data
+                when(bytesReceived < arpFrameLength.U) {
+                    protocolHeaderBuffer(bytesReceived) := io.in.bits.data
+                }
                 when( io.in.bits.last ) {
-                    state := State.Finalize
-                    when( bytesReceived === arpFrameLength.U && arpFrame.operation === 0x0001.U && arpFrame.tpa === ipAddress.U ) {
+                    when( bytesReceived >= (arpFrameLength - 1).U ) {
                         state := State.ARPProcess
+                    } .otherwise {
+                        // Incomplete frame length
+                        state := State.Finalize
                     }
-                } .elsewhen( bytesReceived === (arpFrameLength - 1).U ){
-                    state := State.Discard  // Invalid ARP frame length. discard.
                 }
             }
         }
         is(State.ARPProcess) {
+            val isValid = arpFrame.operation === 0x0001.U && arpFrame.tpa === ipAddress.U
+            state := State.Finalize
+            printf(p"[ETHERNET] arp bytesReceived=${bytesReceived} op=${arpFrame.operation} tpa=${Hexadecimal(arpFrame.tpa)}  valid=${isValid}\n")
             // Update headers.
+            val newArpFrame = WireDefault(arpFrame)
+            val newEthernetHeader = WireDefault(ethernetHeader)
             inReady := false.B
-            arpFrame.operation := 0x0002.U
-            arpFrame.tha := arpFrame.sha
-            arpFrame.tpa := arpFrame.spa
-            arpFrame.sha := hardwareAddress.U
-            arpFrame.spa := ipAddress.U
-            ethernetHeader.destination := ethernetHeader.source
-            ethernetHeader.source := hardwareAddress.U
+            newArpFrame.operation := 0x0002.U
+            newArpFrame.tha := arpFrame.sha
+            newArpFrame.tpa := arpFrame.spa
+            newArpFrame.sha := hardwareAddress.U
+            newArpFrame.spa := ipAddress.U
+            newEthernetHeader.destination := ethernetHeader.source
+            newEthernetHeader.source := hardwareAddress.U
+            protocolHeaderBuffer := newArpFrame.toBytes()
+            ethernetHeaderBuffer := newEthernetHeader.toBytes()
             bytesToWrite := arpFrameLength.U
-            state := State.Write
+
+            when(isValid) {
+                state := State.WriteHeader
+            } .otherwise {
+                state := State.Finalize
+            }
         }
     }
 }
