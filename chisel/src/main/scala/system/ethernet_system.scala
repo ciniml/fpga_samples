@@ -30,22 +30,29 @@ class EthernetSystem() extends RawModule {
 
   withClockAndReset(clock, !aresetn) {
     val service = Module(new EthernetService)
-    val packetQueue = Module(new PacketQueue(Flushable(UInt(8.W)), 2048))
-    packetQueue.io.write.valid <> service.io.out.valid
-    packetQueue.io.write.ready <> service.io.out.ready
-    packetQueue.io.write.bits.body <> service.io.out.bits.data
-    packetQueue.io.write.bits.last <> service.io.out.bits.last
-
-    service.io.in.valid <> in_tvalid
-    service.io.in.ready <> in_tready
-    service.io.in.bits.data <> in_tdata
-    service.io.in.bits.last <> in_tlast
+    
+    val rxQueue = Module(new Queue(Flushable(UInt(8.W)), 2048))
+    rxQueue.io.deq.valid <> service.io.in.valid
+    rxQueue.io.deq.ready <> service.io.in.ready
+    rxQueue.io.deq.bits.body <> service.io.in.bits.data
+    rxQueue.io.deq.bits.last <> service.io.in.bits.last
     service.io.in.bits.keep := 1.U
 
-    packetQueue.io.read.valid <> out_tvalid
-    packetQueue.io.read.ready <> out_tready
-    packetQueue.io.read.bits.body <> out_tdata
-    packetQueue.io.read.bits.last <> out_tlast
+    val txPacketQueue = Module(new PacketQueue(Flushable(UInt(8.W)), 2048))
+    txPacketQueue.io.write.valid <> service.io.out.valid
+    txPacketQueue.io.write.ready <> service.io.out.ready
+    txPacketQueue.io.write.bits.body <> service.io.out.bits.data
+    txPacketQueue.io.write.bits.last <> service.io.out.bits.last
+
+    rxQueue.io.enq.valid <> in_tvalid
+    rxQueue.io.enq.ready <> in_tready
+    rxQueue.io.enq.bits.body <> in_tdata
+    rxQueue.io.enq.bits.last <> in_tlast
+
+    txPacketQueue.io.read.valid <> out_tvalid
+    txPacketQueue.io.read.ready <> out_tready
+    txPacketQueue.io.read.bits.body <> out_tdata
+    txPacketQueue.io.read.bits.last <> out_tlast
   }
 }
 
