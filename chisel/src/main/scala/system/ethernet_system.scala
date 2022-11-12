@@ -53,6 +53,12 @@ class EthernetSystem() extends RawModule {
     txPacketQueue.io.read.ready <> out_tready
     txPacketQueue.io.read.bits.body <> out_tdata
     txPacketQueue.io.read.bits.last <> out_tlast
+
+    val udpLoopback = Module(new UdpLoopback)
+    service.io.udpReceiveContext <> udpLoopback.io.udpReceiveContext
+    service.io.udpReceiveData <> udpLoopback.io.udpReceiveData
+    service.io.udpSendContext <> udpLoopback.io.udpSendContext
+    service.io.udpSendData <> udpLoopback.io.udpSendData
   }
 }
 

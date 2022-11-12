@@ -9,6 +9,7 @@ package ethernet
 import chisel3._
 import chisel3.util._
 import chisel3.experimental.ChiselEnum
+import chisel3.experimental.BundleLiterals._
 import _root_.util._
 
 
@@ -258,6 +259,122 @@ object IcmpHeader {
     }
 }
 
+
+class UdpHeader extends Bundle {
+    val sourcePort = UInt(16.W)
+    val destinationPort = UInt(16.W)
+    val dataLength = UInt(16.W)
+    val checksum = UInt(16.W)
+
+    
+
+    def toUInt(): UInt = {
+        Cat(Seq(
+            FlipBytes(sourcePort),
+            FlipBytes(destinationPort),
+            FlipBytes(dataLength),
+            FlipBytes(checksum),
+        ).reverse)
+    }
+    def toBytes(): Vec[UInt] = {
+        Bytes(this.toUInt())
+    }
+}
+
+object UdpHeader {
+    val length = 8
+    def apply(value: UInt): UdpHeader = {
+        val header = Wire(new UdpHeader)
+        header.sourcePort := NetworkBytes(value, 0, 1)
+        header.destinationPort := NetworkBytes(value, 2, 3)
+        header.dataLength := NetworkBytes(value, 4, 5)
+        header.checksum := NetworkBytes(value, 6, 7)
+        header
+    }
+}
+
+class PseudoIpv4Header extends Bundle {
+    val sourceAddress = UInt(32.W)
+    val destinationAddress = UInt(32.W)
+    val reservedZero = UInt(8.W)
+    val protocolNumber = UInt(8.W)
+    val udpLength = UInt(16.W)
+    val sourcePort = UInt(16.W)
+    val destinationPort = UInt(16.W)
+    val dataLength = UInt(16.W)
+    val checksum = UInt(16.W)
+
+    def toUInt(): UInt = {
+        Cat(Seq(
+            FlipBytes(sourceAddress),
+            FlipBytes(destinationAddress),
+            FlipBytes(reservedZero),
+            FlipBytes(protocolNumber),
+            FlipBytes(udpLength),
+            FlipBytes(sourcePort),
+            FlipBytes(destinationPort),
+            FlipBytes(dataLength),
+            FlipBytes(checksum),
+        ).reverse)
+    }
+    def toBytes(): Vec[UInt] = {
+        Bytes(this.toUInt())
+    }
+}
+
+object PseudoIpv4Header {
+    def apply(value: UInt): PseudoIpv4Header = {
+        val header = Wire(new PseudoIpv4Header)
+        header.sourceAddress := NetworkBytes(value, 0, 3)
+        header.destinationAddress := NetworkBytes(value, 4, 7)
+        header.reservedZero := NetworkBytes(value, 8, 8)
+        header.protocolNumber := NetworkBytes(value, 9, 9)
+        header.udpLength := NetworkBytes(value, 10, 11)
+        header.sourcePort := NetworkBytes(value, 12, 13)
+        header.destinationPort := NetworkBytes(value, 14, 15)
+        header.dataLength := NetworkBytes(value, 16, 17)
+        header.checksum := NetworkBytes(value, 18, 19)
+        header
+    }
+    def fromHeaders(ipv4: Ipv4Header, udp: UdpHeader): PseudoIpv4Header = {
+        val header = Wire(new PseudoIpv4Header)
+        header.sourceAddress := ipv4.source
+        header.destinationAddress := ipv4.destination
+        header.reservedZero := 0.U
+        header.protocolNumber := ipv4.protocol
+        header.udpLength := udp.dataLength + 8.U
+        header.sourcePort := udp.sourcePort
+        header.destinationPort := udp.destinationPort
+        header.dataLength := udp.dataLength
+        header.checksum := udp.checksum
+        header
+    }
+}
+
+class UdpContext extends Bundle {
+    val sourceMacAddress = UInt(48.W)
+    val destinationMacAddress = UInt(48.W)
+    val sourceAddress = UInt(32.W)
+    val destinationAddress = UInt(32.W)
+    val sourcePort = UInt(16.W)
+    val destinationPort = UInt(16.W)
+    val dataLength = UInt(16.W)
+}
+
+object UdpContext {
+    def apply(ethernet: EthernetHeader, ipv4: Ipv4Header, udp: UdpHeader): UdpContext = {
+        val context = Wire(new UdpContext)
+        context.sourceMacAddress := ethernet.source
+        context.destinationMacAddress := ethernet.destination
+        context.sourceAddress := ipv4.source
+        context.destinationAddress := ipv4.destination
+        context.sourcePort := udp.sourcePort
+        context.destinationPort := udp.destinationPort
+        context.dataLength := udp.dataLength
+        context
+    }
+}
+
 case class EthernetServiceConfig(val hardwareAddress: BigInt, val ipAddress: BigInt)
 object EthernetServiceConfig {
     def default(): EthernetServiceConfig = {
@@ -272,6 +389,10 @@ class EthernetService(config: EthernetServiceConfig = EthernetServiceConfig.defa
     val io = IO(new Bundle {
         val in = Flipped(Irrevocable(MultiByteSymbol(streamWidth)))
         val out = Irrevocable(MultiByteSymbol(streamWidth))
+        val udpReceiveData = Irrevocable(MultiByteSymbol(streamWidth))
+        val udpReceiveContext = Irrevocable(new UdpContext)
+        val udpSendData = Flipped(Irrevocable(MultiByteSymbol(streamWidth)))
+        val udpSendContext = Flipped(Irrevocable(new UdpContext))
     })
 
     val maxFrameLength = 2048
@@ -280,7 +401,11 @@ class EthernetService(config: EthernetServiceConfig = EthernetServiceConfig.defa
     val arpFrameLength = 28
     val ipv4HeaderLength = 20
     val icmpHeaderLength = 8
-    val maxProtocolHeaderLength = Seq(arpFrameLength, ipv4HeaderLength + icmpHeaderLength).max(Ordering.Int)
+    val udpHeaderLength = UdpHeader.length
+    val pseudoIpv4HeaderLength = udpHeaderLength + 12
+    val maxProtocolHeaderLength = Seq(arpFrameLength, ipv4HeaderLength + icmpHeaderLength, ipv4HeaderLength + udpHeaderLength).max(Ordering.Int)
+
+    val ipv4HeaderChecksumOffset = 10   // IPv4 Header Checksum field offset to partially update.
 
     val hardwareAddress = config.hardwareAddress
     val ipAddress = config.ipAddress
@@ -294,13 +419,28 @@ class EthernetService(config: EthernetServiceConfig = EthernetServiceConfig.defa
     val arpFrame = ArpFrame(Cat(protocolHeaderBuffer.reverse))
     val ipv4Header = Ipv4Header(Cat(protocolHeaderBuffer.reverse))
     val icmpHeader = IcmpHeader(Cat(protocolHeaderBuffer.iterator.drop(ipv4HeaderLength).toIndexedSeq.reverse))
+    val udpHeader = UdpHeader(Cat(protocolHeaderBuffer.iterator.drop(ipv4HeaderLength).toIndexedSeq.reverse))
+    val pseudoIpv4Header = PseudoIpv4Header.fromHeaders(ipv4Header, udpHeader)
+    val pseudoIpv4HeaderBytes = pseudoIpv4Header.toBytes()
+    val udpContext = UdpContext(ethernetHeader, ipv4Header, udpHeader)
+    
+    val sendIpv4Header = WireDefault((new Ipv4Header).Lit( _.version -> 0x45.U, _.length -> 0.U, _.identification -> 0x1234.U, _.flags_and_offset -> 0x4000.U, _.time_to_live -> 255.U, _.protocol -> 0x11.U, _.source -> ipAddress.U, _.destination -> 0.U, _.type_ -> 0.U ))
+    val sendIpv4HeaderChecksum = sendIpv4Header.toBytes().zipWithIndex.map { case (byte, i) => if( i % 2 == 0 ) { Cat(byte, 0.U(8.W)) } else { Cat(0.U(8.W), byte) } }.foldLeft(0.U(16.W))(onesComplementAdd)
 
     val bytesReceived = RegInit(0.U(log2Ceil(maxFrameLength).W))
     val headerBytesToWrite = RegInit(0.U(log2Ceil(maxFrameLength).W))
     val payloadBytesToWrite = RegInit(0.U(log2Ceil(maxFrameLength).W))
     val bytesWritten = RegInit(0.U(log2Ceil(maxFrameLength).W))
     val paddingRemaining = RegInit(0.U(log2Ceil(minFrameLength).W))
+    
+    object PayloadSource extends ChiselEnum {
+        val Buffer,             // From internal payload buffer.
+            UdpStream = Value   // From external UDP payload stream.
+    }
+    val payloadSource = RegInit(PayloadSource.Buffer)   // Source of packet payload.
 
+    val checksum = RegInit(0.U(16.W))
+    val bytePhase = RegInit(false.B)
 
     val inReady = WireDefault(false.B)
     io.in.ready := inReady
@@ -313,36 +453,71 @@ class EthernetService(config: EthernetServiceConfig = EthernetServiceConfig.defa
     io.out.bits.keep := Fill(streamWidth, 1.U(1.W))
     io.out.bits.last := outLast
     
+    val udpReceiveData = RegInit(0.U(8.W))
+    val udpReceiveDataValid = RegInit(false.B)
+    val udpReceiveDataLast = RegInit(false.B)
+    io.udpReceiveData.valid := udpReceiveDataValid
+    io.udpReceiveData.bits.data := udpReceiveData
+    io.udpReceiveData.bits.keep := Fill(streamWidth, 1.U(1.W))
+    io.udpReceiveData.bits.last := udpReceiveDataLast
+    val udpReceivedDataConsumed = RegInit(false.B)
+    val udpReceiveContextValid = RegInit(false.B)
+    io.udpReceiveContext.valid := udpReceiveContextValid
+    io.udpReceiveContext.bits := udpContext
+
+    val udpSendContextReady = WireDefault(false.B)
+    val udpSendContext = Reg(new UdpContext)
+    io.udpSendContext.ready := udpSendContextReady
+    val udpSendReady = WireDefault(false.B)
+    io.udpSendData.ready := udpSendReady
+
     def onesComplementAdd(lhs: UInt, rhs: UInt): UInt = {
         val add = lhs +& rhs    // +& is widening add operator, which automatically widen the width of the result to hold the carry bit.
         add(15, 0) + add(16)
     }
 
     object State extends ChiselEnum {
-        val ReadHeader, CheckHeader, Discard, Finalize, WriteEthernetHeader, WriteProtocolHeader, WritePayload, WritePadding, 
+        val Idle, CheckHeader, Discard, Finalize, 
+            WriteEthernetHeader, WriteProtocolHeader, WritePayloadFromBuffer, WritePayloadFromUDPStream, WritePadding, 
             ARPLoad, ARPProcess, 
             IPv4Load, IPv4Process, 
-            ICMPLoad, ICMPProcess = Value
+            ICMPLoad, ICMPProcess,
+            UDPLoad, UDPProcessReceive,
+            UDPPrepareSend, UDPUpdateChecksum, UDPSend = Value
     }
     
-    val state = RegInit(State.ReadHeader)
+    val state = RegInit(State.Idle)
 
     when(outValid && io.out.ready) {
         outValid := false.B
     }
+    when(udpReceiveDataValid && io.udpReceiveData.ready) {
+        udpReceiveDataValid := false.B
+    }
+    when(udpReceiveContextValid && io.udpReceiveContext.ready) {
+        udpReceiveContextValid := false.B
+    }
 
     switch(state) {
-        is(State.ReadHeader) {
-            inReady := true.B
+        is(State.Idle) {
+            inReady := !io.udpSendContext.valid
+            udpSendContextReady := true.B // Prioritize transmitter over receiver.
+
             bytesWritten := 0.U
             headerBytesToWrite := 0.U
-            when( io.in.valid ) {
+            when( io.udpSendContext.valid ) {
+                // Send request 
+                udpSendContext := io.udpSendContext.bits
+                state := State.UDPPrepareSend
+            } .elsewhen( io.in.valid ) {
+                // Some data is available.
+                bytePhase := true.B
                 bytesReceived := bytesReceived + 1.U
                 ethernetHeaderBuffer(bytesReceived) := io.in.bits.data
 
                 when(io.in.bits.last) { // last is asserted while receiving header.
                     bytesReceived := 0.U
-                    state := State.ReadHeader
+                    state := State.Idle
                 } .elsewhen(bytesReceived === (ethernetHeaderLength - 1).U) {
                     state := State.CheckHeader
                 }
@@ -367,14 +542,14 @@ class EthernetService(config: EthernetServiceConfig = EthernetServiceConfig.defa
             inReady := true.B
             when( io.in.valid && io.in.bits.last ) {
                 bytesReceived := 0.U
-                state := State.ReadHeader
+                state := State.Idle
             }
         }
 
         is(State.Finalize) {
             inReady := false.B
             bytesReceived := 0.U
-            state := State.ReadHeader
+            state := State.Idle
         }
         is(State.WriteEthernetHeader) {
             inReady := false.B
@@ -409,7 +584,10 @@ class EthernetService(config: EthernetServiceConfig = EthernetServiceConfig.defa
                     when( payloadBytesToWrite > 0.U ) {
                         bytesWritten := 0.U
                         frameBufferReg := frameBuffer.read(0.U)
-                        state := State.WritePayload
+                         switch(payloadSource) {
+                            is(PayloadSource.Buffer) { state := State.WritePayloadFromBuffer }
+                            is(PayloadSource.UdpStream) { state := State.WritePayloadFromUDPStream }
+                        }
                     } .elsewhen( paddingRemaining > 0.U) {
                         state := State.WritePadding
                     } .otherwise {
@@ -418,7 +596,7 @@ class EthernetService(config: EthernetServiceConfig = EthernetServiceConfig.defa
                 }
             }
         }
-        is(State.WritePayload) {
+        is(State.WritePayloadFromBuffer) {
             inReady := false.B
             when(!outValid || io.out.ready) {
                 val isLast = bytesWritten === payloadBytesToWrite - 1.U
@@ -429,6 +607,27 @@ class EthernetService(config: EthernetServiceConfig = EthernetServiceConfig.defa
                 bytesWritten := bytesWritten + 1.U
                 when(isLast) {
                     when( paddingRemaining > 0.U) {
+                        state := State.WritePadding
+                    } .otherwise {
+                        state := State.Finalize
+                    }
+                }
+            }
+        }
+        is(State.WritePayloadFromUDPStream) {
+            inReady := false.B
+            udpSendReady := !outValid || io.out.ready
+            when(io.udpSendData.valid && udpSendReady) {
+                val isLast = io.udpSendData.bits.last
+                val payloadBytesWrittenNext = bytesWritten + 1.U - headerBytesToWrite
+                val requirePadding = payloadBytesWrittenNext < (minFrameLength - ethernetHeaderLength).U
+                outValid := true.B
+                outLast := isLast && !requirePadding
+                outData := io.udpSendData.bits.data
+                bytesWritten := bytesWritten + 1.U
+                when(isLast) {
+                    when( requirePadding ) {
+                        paddingRemaining :=  (minFrameLength - ethernetHeaderLength).U - payloadBytesWrittenNext
                         state := State.WritePadding
                     } .otherwise {
                         state := State.Finalize
@@ -487,6 +686,7 @@ class EthernetService(config: EthernetServiceConfig = EthernetServiceConfig.defa
             headerBytesToWrite := arpFrameLength.U
             payloadBytesToWrite := 0.U
 
+            payloadSource := PayloadSource.Buffer
             when(isValid) {
                 state := State.WriteEthernetHeader
             } .otherwise {
@@ -514,11 +714,14 @@ class EthernetService(config: EthernetServiceConfig = EthernetServiceConfig.defa
             printf(p"[ETHERNET] ipv4 bytesReceived=${bytesReceived} destination=${Hexadecimal(ipv4Header.destination)} protocol=${Hexadecimal(ipv4Header.protocol)}\n")
             state := State.Discard
             when( ipv4Header.destination === ipAddress.U ) {    // Is this for me?
+                checksum := 0.U
                 switch(ipv4Header.protocol) {
                     is(0x01.U) {  // ICMP
                         state := State.ICMPLoad
                     }
-                    // TODO: add UDP handler
+                    is(0x11.U) {  // UDP
+                        state := State.UDPLoad
+                    }
                 }
             }
         }
@@ -567,11 +770,137 @@ class EthernetService(config: EthernetServiceConfig = EthernetServiceConfig.defa
             headerBytesToWrite := totalHeaderLength.U
             payloadBytesToWrite := bytesReceived - totalHeaderLength.U
 
+            payloadSource := PayloadSource.Buffer   // Use payload in the payload buffer.
             when(icmpHeader.type_ === 0x08.U) { // Check if this is ICMP Echo Request packet or not.
                 state := State.WriteEthernetHeader
             } .otherwise {
                 state := State.Finalize
             }
         }
+        // UDP receive process
+        is(State.UDPLoad) {
+            inReady := true.B
+            when( io.in.valid ) {
+                bytesReceived := bytesReceived + 1.U
+                when(bytesReceived < (ipv4HeaderLength + udpHeaderLength).U) {
+                    protocolHeaderBuffer(bytesReceived) := io.in.bits.data
+                } .otherwise {
+                    // Store payload to the frame buffer
+                    frameBuffer.write(bytesReceived - (ipv4HeaderLength + udpHeaderLength).U, io.in.bits.data)
+                }
+                
+                when( io.in.bits.last ) {
+                    // Not enough length
+                    state := State.Finalize
+                } .elsewhen( bytesReceived === (ipv4HeaderLength + udpHeaderLength - 1).U) {
+                    udpReceiveContextValid := true.B
+                    udpReceivedDataConsumed := false.B
+                    state := State.UDPProcessReceive
+                }
+            }
+        }
+        is(State.UDPProcessReceive) {
+            inReady := !udpReceiveDataValid || io.udpReceiveData.ready
+            
+            when(!udpReceivedDataConsumed && io.in.valid && inReady) {
+                udpReceiveDataValid := true.B
+                udpReceiveData := io.in.bits.data
+                udpReceiveDataLast := io.in.bits.last
+                when(io.in.bits.last) {
+                    udpReceivedDataConsumed := true.B
+                }
+            }
+            when(udpReceivedDataConsumed && !udpReceiveContextValid) {
+                state := State.Finalize
+            }
+        }
+        // UDP send process
+        is(State.UDPPrepareSend) {
+            val totalHeaderLength = ipv4HeaderLength + udpHeaderLength
+            val newIpv4Header = WireDefault(sendIpv4Header)
+            newIpv4Header.length := udpSendContext.dataLength + ipv4HeaderLength.U  // dataLength contains UDP header length.
+            newIpv4Header.destination := udpSendContext.destinationAddress
+            // Checksum calculation (phase 1) - Add pre-calculated base checksum and destination IP adddress.
+            val headerChecksum = onesComplementAdd(onesComplementAdd(sendIpv4HeaderChecksum, udpSendContext.destinationAddress(31, 16)), udpSendContext.destinationAddress(15, 0))
+            newIpv4Header.header_checksum := headerChecksum
+            
+            val newEthernetHeader = Wire(new EthernetHeader)
+            newEthernetHeader.destination := udpSendContext.destinationMacAddress
+            newEthernetHeader.source := hardwareAddress.U
+            newEthernetHeader.protocol := 0x0800.U  // IP
+
+            val newUdpHeader = Wire(new UdpHeader)
+            newUdpHeader.checksum := 0.U
+            newUdpHeader.destinationPort := udpSendContext.destinationPort
+            newUdpHeader.sourcePort := udpSendContext.sourcePort
+            newUdpHeader.dataLength := udpSendContext.dataLength
+
+            protocolHeaderBuffer := newIpv4Header.toBytes() ++ newUdpHeader.toBytes() ++ Seq.fill(maxProtocolHeaderLength - totalHeaderLength)(0.U(8.W))
+            ethernetHeaderBuffer := newEthernetHeader.toBytes()
+            headerBytesToWrite := totalHeaderLength.U
+            payloadBytesToWrite := udpSendContext.dataLength
+            state := State.UDPUpdateChecksum
+        }
+        is(State.UDPUpdateChecksum) {
+            val newChecksum = ~onesComplementAdd(ipv4Header.header_checksum, ipv4Header.length)
+            protocolHeaderBuffer(ipv4HeaderChecksumOffset + 0) := newChecksum(15, 8)
+            protocolHeaderBuffer(ipv4HeaderChecksumOffset + 1) := newChecksum(7, 0)
+            payloadSource := PayloadSource.UdpStream
+            state := State.WriteEthernetHeader
+        }
+    }
+    
+}
+
+
+class UdpLoopback(config: EthernetServiceConfig = EthernetServiceConfig.default(), streamWidth: Int = 1) extends Module {
+    val io = IO(new Bundle {
+        val udpReceiveData = Flipped(Irrevocable(MultiByteSymbol(streamWidth)))
+        val udpReceiveContext = Flipped(Irrevocable(new UdpContext))
+        val udpSendData = Irrevocable(MultiByteSymbol(streamWidth))
+        val udpSendContext = Irrevocable(new UdpContext)
+    })
+
+    object State extends ChiselEnum {
+        val Idle, Sending = Value
+    }
+
+    val state = RegInit(State.Idle)
+    val udpContext = Reg(new UdpContext)
+    
+    val udpReceiveContextReady = WireDefault(false.B)
+    io.udpReceiveContext.ready := udpReceiveContextReady
+
+    val udpSendContextValid = RegInit(false.B)
+    io.udpSendContext.valid := udpSendContextValid
+    io.udpSendContext.bits := udpContext
+
+    val queue = Module(new PacketQueue(Flushable((streamWidth*8).W), 2048))
+    queue.io.write.valid <> io.udpReceiveData.valid
+    queue.io.write.ready <> io.udpReceiveData.ready
+    queue.io.write.bits.body <> io.udpReceiveData.bits.data
+    queue.io.write.bits.last <> io.udpReceiveData.bits.last
+    queue.io.read.valid <> io.udpSendData.valid
+    queue.io.read.ready <> io.udpSendData.ready
+    queue.io.read.bits.body <> io.udpSendData.bits.data
+    queue.io.read.bits.last <> io.udpSendData.bits.last
+    io.udpSendData.bits.keep := 1.U
+    
+    when(udpSendContextValid && io.udpSendContext.ready) {
+        udpSendContextValid := false.B
+    }
+
+    udpReceiveContextReady := !udpSendContextValid
+    when( io.udpReceiveContext.valid && udpReceiveContextReady ) {
+        // Store UDP context with swapping source <-> destination
+        udpContext.dataLength := io.udpReceiveContext.bits.dataLength
+        udpContext.sourceAddress := io.udpReceiveContext.bits.destinationAddress
+        udpContext.sourcePort := io.udpReceiveContext.bits.destinationPort
+        udpContext.sourceMacAddress := io.udpReceiveContext.bits.destinationMacAddress
+        udpContext.destinationAddress := io.udpReceiveContext.bits.sourceAddress
+        udpContext.destinationPort := io.udpReceiveContext.bits.sourcePort
+        udpContext.destinationMacAddress := io.udpReceiveContext.bits.sourceMacAddress
+        udpSendContextValid := true.B
+        state := State.Sending
     }
 }
