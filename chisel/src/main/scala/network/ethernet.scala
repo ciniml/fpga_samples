@@ -389,10 +389,7 @@ class EthernetService(config: EthernetServiceConfig = EthernetServiceConfig.defa
     val io = IO(new Bundle {
         val in = Flipped(Irrevocable(MultiByteSymbol(streamWidth)))
         val out = Irrevocable(MultiByteSymbol(streamWidth))
-        val udpReceiveData = Irrevocable(MultiByteSymbol(streamWidth))
-        val udpReceiveContext = Irrevocable(new UdpContext)
-        val udpSendData = Flipped(Irrevocable(MultiByteSymbol(streamWidth)))
-        val udpSendContext = Flipped(Irrevocable(new UdpContext))
+        val port = Flipped(new UdpServicePort(streamWidth))
     })
 
     val maxFrameLength = 2048
@@ -456,20 +453,20 @@ class EthernetService(config: EthernetServiceConfig = EthernetServiceConfig.defa
     val udpReceiveData = RegInit(0.U(8.W))
     val udpReceiveDataValid = RegInit(false.B)
     val udpReceiveDataLast = RegInit(false.B)
-    io.udpReceiveData.valid := udpReceiveDataValid
-    io.udpReceiveData.bits.data := udpReceiveData
-    io.udpReceiveData.bits.keep := Fill(streamWidth, 1.U(1.W))
-    io.udpReceiveData.bits.last := udpReceiveDataLast
+    io.port.udpReceiveData.valid := udpReceiveDataValid
+    io.port.udpReceiveData.bits.data := udpReceiveData
+    io.port.udpReceiveData.bits.keep := Fill(streamWidth, 1.U(1.W))
+    io.port.udpReceiveData.bits.last := udpReceiveDataLast
     val udpReceivedDataConsumed = RegInit(false.B)
     val udpReceiveContextValid = RegInit(false.B)
-    io.udpReceiveContext.valid := udpReceiveContextValid
-    io.udpReceiveContext.bits := udpContext
+    io.port.udpReceiveContext.valid := udpReceiveContextValid
+    io.port.udpReceiveContext.bits := udpContext
 
     val udpSendContextReady = WireDefault(false.B)
     val udpSendContext = Reg(new UdpContext)
-    io.udpSendContext.ready := udpSendContextReady
+    io.port.udpSendContext.ready := udpSendContextReady
     val udpSendReady = WireDefault(false.B)
-    io.udpSendData.ready := udpSendReady
+    io.port.udpSendData.ready := udpSendReady
 
     def onesComplementAdd(lhs: UInt, rhs: UInt): UInt = {
         val add = lhs +& rhs    // +& is widening add operator, which automatically widen the width of the result to hold the carry bit.
@@ -491,23 +488,23 @@ class EthernetService(config: EthernetServiceConfig = EthernetServiceConfig.defa
     when(outValid && io.out.ready) {
         outValid := false.B
     }
-    when(udpReceiveDataValid && io.udpReceiveData.ready) {
+    when(udpReceiveDataValid && io.port.udpReceiveData.ready) {
         udpReceiveDataValid := false.B
     }
-    when(udpReceiveContextValid && io.udpReceiveContext.ready) {
+    when(udpReceiveContextValid && io.port.udpReceiveContext.ready) {
         udpReceiveContextValid := false.B
     }
 
     switch(state) {
         is(State.Idle) {
-            inReady := !io.udpSendContext.valid
+            inReady := !io.port.udpSendContext.valid
             udpSendContextReady := true.B // Prioritize transmitter over receiver.
 
             bytesWritten := 0.U
             headerBytesToWrite := 0.U
-            when( io.udpSendContext.valid ) {
+            when( io.port.udpSendContext.valid ) {
                 // Send request 
-                udpSendContext := io.udpSendContext.bits
+                udpSendContext := io.port.udpSendContext.bits
                 state := State.UDPPrepareSend
             } .elsewhen( io.in.valid ) {
                 // Some data is available.
@@ -617,13 +614,13 @@ class EthernetService(config: EthernetServiceConfig = EthernetServiceConfig.defa
         is(State.WritePayloadFromUDPStream) {
             inReady := false.B
             udpSendReady := !outValid || io.out.ready
-            when(io.udpSendData.valid && udpSendReady) {
-                val isLast = io.udpSendData.bits.last
-                val payloadBytesWrittenNext = bytesWritten + 1.U - headerBytesToWrite
+            when(io.port.udpSendData.valid && udpSendReady) {
+                val isLast = io.port.udpSendData.bits.last
+                val payloadBytesWrittenNext = bytesWritten + 1.U
                 val requirePadding = payloadBytesWrittenNext < (minFrameLength - ethernetHeaderLength).U
                 outValid := true.B
                 outLast := isLast && !requirePadding
-                outData := io.udpSendData.bits.data
+                outData := io.port.udpSendData.bits.data
                 bytesWritten := bytesWritten + 1.U
                 when(isLast) {
                     when( requirePadding ) {
@@ -800,7 +797,7 @@ class EthernetService(config: EthernetServiceConfig = EthernetServiceConfig.defa
             }
         }
         is(State.UDPProcessReceive) {
-            inReady := !udpReceiveDataValid || io.udpReceiveData.ready
+            inReady := !udpReceiveDataValid || io.port.udpReceiveData.ready
             
             when(!udpReceivedDataConsumed && io.in.valid && inReady) {
                 udpReceiveDataValid := true.B
@@ -848,17 +845,12 @@ class EthernetService(config: EthernetServiceConfig = EthernetServiceConfig.defa
             payloadSource := PayloadSource.UdpStream
             state := State.WriteEthernetHeader
         }
-    }
-    
+    }   
 }
-
 
 class UdpLoopback(config: EthernetServiceConfig = EthernetServiceConfig.default(), streamWidth: Int = 1) extends Module {
     val io = IO(new Bundle {
-        val udpReceiveData = Flipped(Irrevocable(MultiByteSymbol(streamWidth)))
-        val udpReceiveContext = Flipped(Irrevocable(new UdpContext))
-        val udpSendData = Irrevocable(MultiByteSymbol(streamWidth))
-        val udpSendContext = Irrevocable(new UdpContext)
+        val port = new UdpServicePort(streamWidth)
     })
 
     object State extends ChiselEnum {
@@ -869,38 +861,130 @@ class UdpLoopback(config: EthernetServiceConfig = EthernetServiceConfig.default(
     val udpContext = Reg(new UdpContext)
     
     val udpReceiveContextReady = WireDefault(false.B)
-    io.udpReceiveContext.ready := udpReceiveContextReady
+    io.port.udpReceiveContext.ready := udpReceiveContextReady
 
     val udpSendContextValid = RegInit(false.B)
-    io.udpSendContext.valid := udpSendContextValid
-    io.udpSendContext.bits := udpContext
+    io.port.udpSendContext.valid := udpSendContextValid
+    io.port.udpSendContext.bits := udpContext
 
     val queue = Module(new PacketQueue(Flushable((streamWidth*8).W), 2048))
-    queue.io.write.valid <> io.udpReceiveData.valid
-    queue.io.write.ready <> io.udpReceiveData.ready
-    queue.io.write.bits.body <> io.udpReceiveData.bits.data
-    queue.io.write.bits.last <> io.udpReceiveData.bits.last
-    queue.io.read.valid <> io.udpSendData.valid
-    queue.io.read.ready <> io.udpSendData.ready
-    queue.io.read.bits.body <> io.udpSendData.bits.data
-    queue.io.read.bits.last <> io.udpSendData.bits.last
-    io.udpSendData.bits.keep := 1.U
+    queue.io.write.valid <> io.port.udpReceiveData.valid
+    queue.io.write.ready <> io.port.udpReceiveData.ready
+    queue.io.write.bits.data <> io.port.udpReceiveData.bits.data
+    queue.io.write.bits.last <> io.port.udpReceiveData.bits.last
+    queue.io.read.valid <> io.port.udpSendData.valid
+    queue.io.read.ready <> io.port.udpSendData.ready
+    queue.io.read.bits.data <> io.port.udpSendData.bits.data
+    queue.io.read.bits.last <> io.port.udpSendData.bits.last
+    io.port.udpSendData.bits.keep := 1.U
     
-    when(udpSendContextValid && io.udpSendContext.ready) {
+    when(udpSendContextValid && io.port.udpSendContext.ready) {
         udpSendContextValid := false.B
     }
 
     udpReceiveContextReady := !udpSendContextValid
-    when( io.udpReceiveContext.valid && udpReceiveContextReady ) {
+    when( io.port.udpReceiveContext.valid && udpReceiveContextReady ) {
         // Store UDP context with swapping source <-> destination
-        udpContext.dataLength := io.udpReceiveContext.bits.dataLength
-        udpContext.sourceAddress := io.udpReceiveContext.bits.destinationAddress
-        udpContext.sourcePort := io.udpReceiveContext.bits.destinationPort
-        udpContext.sourceMacAddress := io.udpReceiveContext.bits.destinationMacAddress
-        udpContext.destinationAddress := io.udpReceiveContext.bits.sourceAddress
-        udpContext.destinationPort := io.udpReceiveContext.bits.sourcePort
-        udpContext.destinationMacAddress := io.udpReceiveContext.bits.sourceMacAddress
+        udpContext.dataLength := io.port.udpReceiveContext.bits.dataLength
+        udpContext.sourceAddress := io.port.udpReceiveContext.bits.destinationAddress
+        udpContext.sourcePort := io.port.udpReceiveContext.bits.destinationPort
+        udpContext.sourceMacAddress := io.port.udpReceiveContext.bits.destinationMacAddress
+        udpContext.destinationAddress := io.port.udpReceiveContext.bits.sourceAddress
+        udpContext.destinationPort := io.port.udpReceiveContext.bits.sourcePort
+        udpContext.destinationMacAddress := io.port.udpReceiveContext.bits.sourceMacAddress
         udpSendContextValid := true.B
         state := State.Sending
+    }
+}
+
+class UdpGpio(config: EthernetServiceConfig = EthernetServiceConfig.default(), streamWidth: Int = 1, numInputBits: Int = 8, numOutputBits: Int = 8) extends Module {
+    val io = IO(new Bundle {
+        val port = new UdpServicePort(streamWidth)
+        val gpioIn = Input(UInt(numInputBits.W))
+        val gpioOut = Output(UInt(numOutputBits.W))
+    })
+
+    object State extends ChiselEnum {
+        val Idle, Receiving, Sending = Value
+    }
+
+    val state = RegInit(State.Idle)
+    val udpContext = Reg(new UdpContext)
+    
+    val udpReceiveContextReady = WireDefault(false.B)
+    io.port.udpReceiveContext.ready := udpReceiveContextReady
+    val udpReceiveDataReady = WireDefault(false.B)
+    io.port.udpReceiveData.ready := udpReceiveDataReady
+
+    val udpSendContextValid = RegInit(false.B)
+    io.port.udpSendContext.valid := udpSendContextValid
+    io.port.udpSendContext.bits := udpContext
+    val udpSendDataValid = RegInit(false.B)
+    val udpSendData = RegInit(0.U(8.W))
+    val udpSendDataLast = RegInit(false.B)
+    io.port.udpSendData.valid := udpSendDataValid
+    io.port.udpSendData.bits.data := udpSendData
+    io.port.udpSendData.bits.keep := 1.U
+    io.port.udpSendData.bits.last := udpSendDataLast
+
+    when(udpSendContextValid && io.port.udpSendContext.ready) {
+        udpSendContextValid := false.B
+    }
+    when(udpSendDataValid && io.port.udpSendData.ready) {
+        udpSendDataValid := false.B
+    }
+
+    val numInputBytes = (numInputBits + 7) / 8
+    val numOutputBytes = (numOutputBits + 7) / 8
+    val gpioIn = RegInit(VecInit(Fill(numInputBytes, 0.U(8.W))))
+    val gpioOut = RegInit(VecInit(Fill(numOutputBytes, 0.U(8.W))))
+    val bytesInput = RegInit(0.U(log2Ceil(numInputBytes + 1).W))
+    val bytesOutput = RegInit(0.U(log2Ceil(numOutputBytes + 1).W))
+
+    io.gpioOut := Cat(gpioOut.reverse)
+
+    switch(state) {
+        is(State.Idle) {
+            udpReceiveContextReady := !udpSendContextValid
+            when( !udpSendContextValid && io.port.udpReceiveContext.valid ) {
+                // Store UDP context with swapping source <-> destination
+                udpContext.dataLength := (8 + numInputBytes).U
+                udpContext.sourceAddress := io.port.udpReceiveContext.bits.destinationAddress
+                udpContext.sourcePort := io.port.udpReceiveContext.bits.destinationPort
+                udpContext.sourceMacAddress := io.port.udpReceiveContext.bits.destinationMacAddress
+                udpContext.destinationAddress := io.port.udpReceiveContext.bits.sourceAddress
+                udpContext.destinationPort := io.port.udpReceiveContext.bits.sourcePort
+                udpContext.destinationMacAddress := io.port.udpReceiveContext.bits.sourceMacAddress
+                udpSendContextValid := true.B
+                bytesInput := 0.U
+                bytesOutput := 0.U
+                gpioIn := ((0 to numInputBytes - 1).map(i => io.gpioIn(((i+1)*8).min(numInputBits) - 1, i*8)))
+                state := State.Receiving
+            }
+        }
+        is(State.Receiving) {
+            udpReceiveDataReady := true.B
+            when( io.port.udpReceiveData.valid ) {
+                when(bytesOutput < numOutputBytes.U) {
+                    gpioOut(bytesOutput) := io.port.udpReceiveData.bits.data
+                    bytesOutput := bytesOutput + 1.U
+                }
+                when(io.port.udpReceiveData.bits.last) {
+                    state := State.Sending
+                }
+            }
+        }
+        is(State.Sending) {
+            when( !udpSendDataValid || io.port.udpSendData.ready ) {
+                udpSendData := gpioIn(bytesInput)
+                bytesInput := bytesInput + 1.U
+                udpSendDataValid := true.B
+                udpSendDataLast := false.B
+                when( bytesInput === (numInputBytes - 1).U) {
+                    udpSendDataLast := true.B
+                    state := State.Idle
+                }
+            }
+        }
     }
 }

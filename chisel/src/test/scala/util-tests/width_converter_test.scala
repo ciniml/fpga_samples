@@ -39,7 +39,7 @@ class WidthConverterTester extends FlatSpec with ChiselScalatestTester with Matc
                 (0 to bytesExpected - 1).foreach(f => {
                     body = body | (BigInt(i + f) << (8*f))
                 })
-                c.io.deq.expectDequeue(Flushable(c.outputWidth.W).Lit(_.body -> body.U, _.last -> isLast.B))
+                c.io.deq.expectDequeue(Flushable(c.outputWidth.W).Lit(_.data -> body.U, _.last -> isLast.B))
             })
         } .fork {
             (0 to 255 by bytesPerInput).foreach(i => {
@@ -53,7 +53,7 @@ class WidthConverterTester extends FlatSpec with ChiselScalatestTester with Matc
                 (0 to bytesToWrite - 1).foreach(f => {
                     body = body | (BigInt(i + f) << (8*f))
                 })
-                c.io.enq.enqueue(Flushable(c.inputWidth.W).Lit(_.body -> body.U, _.last -> isLast.B))
+                c.io.enq.enqueue(Flushable(c.inputWidth.W).Lit(_.data -> body.U, _.last -> isLast.B))
             })
         } .join
     }

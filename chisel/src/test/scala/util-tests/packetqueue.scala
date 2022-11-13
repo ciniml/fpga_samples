@@ -29,14 +29,14 @@ class PacketQueueTester extends FlatSpec with ChiselScalatestTester with Matcher
         (0 to 7).foreach(i => {
             c.io.write.ready.expect(true.B)
             c.io.read.valid.expect(false.B)
-            c.io.write.enqueue(dataType.Lit( _.body -> i.U(8.W), _.last -> (i == 7).B ) )
+            c.io.write.enqueue(dataType.Lit( _.data -> i.U(8.W), _.last -> (i == 7).B ) )
         })
         c.io.write.ready.expect((c.entries != 8).B) // READY must be asserted if a packet is received.
         c.clock.step(1)
         // Pop 8 entries
         (0 to 7).foreach(i => {
             c.io.read.valid.expect(true.B)
-            c.io.read.expectDequeue(dataType.Lit( _.body -> i.U(8.W), _.last -> (i == 7).B ) )
+            c.io.read.expectDequeue(dataType.Lit( _.data -> i.U(8.W), _.last -> (i == 7).B ) )
         })
         c.io.read.valid.expect(false.B)
     }
@@ -52,12 +52,12 @@ class PacketQueueTester extends FlatSpec with ChiselScalatestTester with Matcher
         (0 to lastEntry).foreach(i => {
             c.io.write.ready.expect(true.B)
             c.io.read.valid.expect(false.B)
-            c.io.write.enqueue(dataType.Lit( _.body -> i.U(8.W), _.last -> false.B ) )
+            c.io.write.enqueue(dataType.Lit( _.data -> i.U(8.W), _.last -> false.B ) )
         })
         c.clock.step(1)
         (0 to lastEntry).foreach(i => {
             c.io.read.valid.expect(true.B)
-            c.io.read.expectDequeue(dataType.Lit( _.body -> i.U(8.W), _.last -> false.B ) )
+            c.io.read.expectDequeue(dataType.Lit( _.data -> i.U(8.W), _.last -> false.B ) )
         })
         c.io.read.valid.expect(false.B)
     }
@@ -74,15 +74,15 @@ class PacketQueueTester extends FlatSpec with ChiselScalatestTester with Matcher
         (0 to lastEntry).foreach(i => {
             c.io.write.ready.expect(true.B)
             c.io.read.valid.expect((i > midEntry).B)
-            c.io.write.enqueue(dataType.Lit( _.body -> i.U(8.W), _.last -> (i ==  midEntry).B ) )
+            c.io.write.enqueue(dataType.Lit( _.data -> i.U(8.W), _.last -> (i ==  midEntry).B ) )
         })
         // Pop the all entries in the queue and fill
         (0 to midEntry).foreach(i => {
-            c.io.read.expectDequeue(dataType.Lit( _.body -> i.U(8.W), _.last -> (i == midEntry).B ) )
-            c.io.write.enqueueNow(dataType.Lit( _.body -> (entries + i).U(8.W), _.last -> false.B ))
+            c.io.read.expectDequeue(dataType.Lit( _.data -> i.U(8.W), _.last -> (i == midEntry).B ) )
+            c.io.write.enqueueNow(dataType.Lit( _.data -> (entries + i).U(8.W), _.last -> false.B ))
         })
         ((midEntry + 1) to (lastEntry + midEntry + 1)).foreach(i => {
-            c.io.read.expectDequeue(dataType.Lit( _.body -> i.U(8.W), _.last -> false.B ) )
+            c.io.read.expectDequeue(dataType.Lit( _.data -> i.U(8.W), _.last -> false.B ) )
         })
 
         c.io.read.valid.expect(false.B)
@@ -100,13 +100,13 @@ class PacketQueueTester extends FlatSpec with ChiselScalatestTester with Matcher
         (0 to midEntry).foreach(i => {
             c.io.write.ready.expect(true.B)
             c.io.read.valid.expect(false.B)
-            c.io.write.enqueue(dataType.Lit( _.body -> i.U(8.W), _.last -> (i ==  midEntry).B ) )
+            c.io.write.enqueue(dataType.Lit( _.data -> i.U(8.W), _.last -> (i ==  midEntry).B ) )
         })
         // Push to fill the last packet.
         (midEntry + 1 to lastEntry - 1).foreach(i => {
             c.io.write.ready.expect(true.B)
             c.io.read.valid.expect(true.B)
-            c.io.write.enqueue(dataType.Lit( _.body -> i.U(8.W), _.last -> false.B ) )
+            c.io.write.enqueue(dataType.Lit( _.data -> i.U(8.W), _.last -> false.B ) )
         })
         // Now, the queue cannot receive the entry if it is the last entry of the packet.
         // c.io.write.ready.expect(true.B)
@@ -116,13 +116,13 @@ class PacketQueueTester extends FlatSpec with ChiselScalatestTester with Matcher
 
         // Pop the first packet entries in the queue and fill
         (0 to midEntry).foreach(i => {
-            c.io.read.expectDequeue(dataType.Lit( _.body -> i.U(8.W), _.last -> (i == midEntry).B ) )
+            c.io.read.expectDequeue(dataType.Lit( _.data -> i.U(8.W), _.last -> (i == midEntry).B ) )
         })
         // Now, the last packet can be pushed.
-        c.io.write.enqueue(dataType.Lit(_.body -> lastEntry.U(8.W), _.last -> true.B))
+        c.io.write.enqueue(dataType.Lit(_.data -> lastEntry.U(8.W), _.last -> true.B))
         (midEntry + 1 to lastEntry).foreach(i => {
             c.io.write.ready.expect(true.B)
-            c.io.read.expectDequeue(dataType.Lit( _.body -> i.U(8.W), _.last -> (i == lastEntry).B ) )
+            c.io.read.expectDequeue(dataType.Lit( _.data -> i.U(8.W), _.last -> (i == lastEntry).B ) )
         })
 
         c.io.read.valid.expect(false.B)
@@ -145,7 +145,7 @@ class PacketQueueTester extends FlatSpec with ChiselScalatestTester with Matcher
                 val interval = random.nextInt(maxPacketInterval + 1)
                 println(s"[W] index ${packet.index} length ${packet.length} interval ${interval}")
                 (0 to packet.length - 1).foreach(i => {
-                    c.io.write.enqueue(dataType.Lit( _.body -> data.U(8.W), _.last -> (i == packet.length - 1).B))
+                    c.io.write.enqueue(dataType.Lit( _.data -> data.U(8.W), _.last -> (i == packet.length - 1).B))
                     if( random.nextFloat() > enqueueProbability ) { c.clock.step(1) }
                     data = (data + 1) & 0xff
                 })
@@ -158,7 +158,7 @@ class PacketQueueTester extends FlatSpec with ChiselScalatestTester with Matcher
                 println(s"[R] index ${packet.index} length ${packet.length} interval ${interval}")
                 (0 to packet.length - 1).foreach(i => {
                     if( random.nextFloat() > dequeueProbability ) { c.clock.step(1) }
-                    c.io.read.expectDequeue(dataType.Lit( _.body -> data.U(8.W), _.last -> (i == packet.length - 1).B))
+                    c.io.read.expectDequeue(dataType.Lit( _.data -> data.U(8.W), _.last -> (i == packet.length - 1).B))
                     data = (data + 1) & 0xff
                 })
                 if( interval > 0 ) { c.clock.step(interval) }

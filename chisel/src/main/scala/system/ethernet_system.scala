@@ -28,37 +28,48 @@ class EthernetSystem() extends RawModule {
   val out_tready = IO(Input(Bool()))
   val out_tlast = IO(Output(Bool()))
 
+  val gpio_in = IO(Input(UInt(8.W)))
+  val gpio_out = IO(Output(UInt(8.W)))
+
   withClockAndReset(clock, !aresetn) {
     val service = Module(new EthernetService)
     
     val rxQueue = Module(new Queue(Flushable(UInt(8.W)), 2048))
     rxQueue.io.deq.valid <> service.io.in.valid
     rxQueue.io.deq.ready <> service.io.in.ready
-    rxQueue.io.deq.bits.body <> service.io.in.bits.data
+    rxQueue.io.deq.bits.data <> service.io.in.bits.data
     rxQueue.io.deq.bits.last <> service.io.in.bits.last
     service.io.in.bits.keep := 1.U
 
     val txPacketQueue = Module(new PacketQueue(Flushable(UInt(8.W)), 2048))
     txPacketQueue.io.write.valid <> service.io.out.valid
     txPacketQueue.io.write.ready <> service.io.out.ready
-    txPacketQueue.io.write.bits.body <> service.io.out.bits.data
+    txPacketQueue.io.write.bits.data <> service.io.out.bits.data
     txPacketQueue.io.write.bits.last <> service.io.out.bits.last
 
     rxQueue.io.enq.valid <> in_tvalid
     rxQueue.io.enq.ready <> in_tready
-    rxQueue.io.enq.bits.body <> in_tdata
+    rxQueue.io.enq.bits.data <> in_tdata
     rxQueue.io.enq.bits.last <> in_tlast
 
     txPacketQueue.io.read.valid <> out_tvalid
     txPacketQueue.io.read.ready <> out_tready
-    txPacketQueue.io.read.bits.body <> out_tdata
+    txPacketQueue.io.read.bits.data <> out_tdata
     txPacketQueue.io.read.bits.last <> out_tlast
 
+    val serviceMux = Module(new UdpServiceMux(1, Seq(
+      (context => context.destinationPort === 10000.U),
+      (context => context.destinationPort === 10001.U),
+    )))
+    service.io.port <> serviceMux.io.in
+
     val udpLoopback = Module(new UdpLoopback)
-    service.io.udpReceiveContext <> udpLoopback.io.udpReceiveContext
-    service.io.udpReceiveData <> udpLoopback.io.udpReceiveData
-    service.io.udpSendContext <> udpLoopback.io.udpSendContext
-    service.io.udpSendData <> udpLoopback.io.udpSendData
+    serviceMux.io.servicePorts(0) <> udpLoopback.io.port
+
+    val udpGpio = Module(new UdpGpio())
+    serviceMux.io.servicePorts(1) <> udpGpio.io.port
+    gpio_out := udpGpio.io.gpioOut
+    udpGpio.io.gpioIn := gpio_in
   }
 }
 

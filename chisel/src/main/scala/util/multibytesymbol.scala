@@ -13,6 +13,16 @@ object MultiByteSymbol {
     def apply(numberOfBytes: Int): MultiByteSymbol = {
         new MultiByteSymbol(numberOfBytes)
     }
+    def apply(flushable: Flushable[UInt]): MultiByteSymbol = {
+        val bitWidth = flushable.data.getWidth
+        val byteWidth = bitWidth / 8
+        assert((bitWidth % 8) == 0)
+        val hw = Wire(new MultiByteSymbol(byteWidth))
+        hw.data := flushable.data
+        hw.keep := Fill(byteWidth, 1.U(1.W))
+        hw.last := flushable.last
+        hw
+    }
 }
 class MultiByteSymbolWithMetadata[T <: Data](val numberOfBytes: Int, metadataGen: T) extends Bundle {
     val numberOfBits = (numberOfBytes*8)

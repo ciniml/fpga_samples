@@ -60,10 +60,10 @@ class EthernetServiceTester extends AnyFlatSpec with ChiselScalatestTester with 
     def runReceiveTest(c: EthernetService, inputPackets: Seq[Array[Byte]], outputPackets: Option[Seq[Array[Byte]]], udpOutputPackets: Option[Seq[(Array[Byte], UdpContext)]]): Unit = {
         c.io.in.initSource().setSourceClock(c.clock)
         c.io.out.initSink().setSinkClock(c.clock)
-        c.io.udpSendContext.initSource().setSinkClock(c.clock)
-        c.io.udpSendData.initSource().setSinkClock(c.clock)
-        c.io.udpReceiveContext.initSink().setSinkClock(c.clock)
-        c.io.udpReceiveData.initSink().setSinkClock(c.clock)
+        c.io.port.udpSendContext.initSource().setSinkClock(c.clock)
+        c.io.port.udpSendData.initSource().setSinkClock(c.clock)
+        c.io.port.udpReceiveContext.initSink().setSinkClock(c.clock)
+        c.io.port.udpReceiveData.initSink().setSinkClock(c.clock)
         c.clock.setTimeout(1000)
         val random = new Random
         fork {
@@ -104,7 +104,7 @@ class EthernetServiceTester extends AnyFlatSpec with ChiselScalatestTester with 
                             (0 to idleCycles - 1).foreach(i => {
                                 c.clock.step(1)
                             })
-                            c.io.udpReceiveData.expectDequeue(MultiByteSymbol(1).Lit( _.data -> byte.U, _.keep -> 1.U, _.last -> (i == udpPacket.length - 1).B))
+                            c.io.port.udpReceiveData.expectDequeue(MultiByteSymbol(1).Lit( _.data -> byte.U, _.keep -> 1.U, _.last -> (i == udpPacket.length - 1).B))
                         })
                     }}
                 }
@@ -114,7 +114,7 @@ class EthernetServiceTester extends AnyFlatSpec with ChiselScalatestTester with 
             udpOutputPackets match {
                 case Some(udpOutputPackets) => {
                     udpOutputPackets.foreach { case (_, udpContext) => {
-                        c.io.udpReceiveContext.expectDequeue(udpContext)
+                        c.io.port.udpReceiveContext.expectDequeue(udpContext)
                     }}
                 }
                 case None => {}
@@ -125,10 +125,10 @@ class EthernetServiceTester extends AnyFlatSpec with ChiselScalatestTester with 
     def runUDPSendTest(c: EthernetService, udpInputPackets: Seq[(Array[Byte], UdpContext)], outputPackets: Seq[Array[Byte]] ): Unit = {
         c.io.in.initSource().setSourceClock(c.clock)
         c.io.out.initSink().setSinkClock(c.clock)
-        c.io.udpSendContext.initSource().setSourceClock(c.clock)
-        c.io.udpSendData.initSource().setSourceClock(c.clock)
-        c.io.udpReceiveContext.initSink().setSinkClock(c.clock)
-        c.io.udpReceiveData.initSink().setSinkClock(c.clock)
+        c.io.port.udpSendContext.initSource().setSourceClock(c.clock)
+        c.io.port.udpSendData.initSource().setSourceClock(c.clock)
+        c.io.port.udpReceiveContext.initSink().setSinkClock(c.clock)
+        c.io.port.udpReceiveData.initSink().setSinkClock(c.clock)
         c.clock.setTimeout(1000)
         val random = new Random
         fork {
@@ -151,12 +151,12 @@ class EthernetServiceTester extends AnyFlatSpec with ChiselScalatestTester with 
                     (0 to idleCycles - 1).foreach(i => {
                         c.clock.step(1)
                     })
-                    c.io.udpSendData.enqueue(MultiByteSymbol(1).Lit( _.data -> byte.U, _.keep -> 1.U, _.last -> (i == udpPacket.length - 1).B))
+                    c.io.port.udpSendData.enqueue(MultiByteSymbol(1).Lit( _.data -> byte.U, _.keep -> 1.U, _.last -> (i == udpPacket.length - 1).B))
                 })
             }}
         } .fork {
             udpInputPackets.foreach { case (_, udpContext) => {
-                c.io.udpSendContext.enqueue(udpContext)
+                c.io.port.udpSendContext.enqueue(udpContext)
             }}
         } .join()
     }

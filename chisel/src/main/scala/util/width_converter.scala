@@ -151,20 +151,20 @@ case class WidthConverterHalf(inputWidth: Int, outputWidth: Int) extends Module 
             flush := io.enq.bits.last
             (0 to maxInputCount - 1).foreach(i => {
                 when(inputIndex === i.U) {
-                    buffer(i) := io.enq.bits.body
+                    buffer(i) := io.enq.bits.data
                 }
             })
             //buffer := Cat(io.enq.bits.body, buffer(bufferWidth - 1, inputWidth))
         } else {
             phase := true.B
             flush := io.enq.bits.last
-            buffer := io.enq.bits.body
+            buffer := io.enq.bits.data
         }
     }
     io.transitToOutput := !phase && io.enq.valid && io.enq.ready && (if(maxInputCount > 1) counter === (maxCount - countPerInput).U || io.enq.bits.last else true.B)
 
     io.enq.ready := !phase
     io.deq.valid := valid
-    io.deq.bits.body := outputBuffer
+    io.deq.bits.data := outputBuffer
     io.deq.bits.last := last
 }

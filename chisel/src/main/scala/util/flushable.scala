@@ -10,7 +10,7 @@ import chisel3._
 import chisel3.internal.firrtl.Width
 
 class Flushable[T <: Data](gen: T) extends Bundle {
-    val body = gen.cloneType.asInstanceOf[T]
+    val data = gen.cloneType.asInstanceOf[T]
     val last = Bool()
 }
 
@@ -23,7 +23,7 @@ object Flushable {
     }
     def apply(multibyte: MultiByteSymbol): Flushable[UInt] = {
         val flushable = Wire(new Flushable(UInt(multibyte.numberOfBits.W)))
-        flushable.body := multibyte.data
+        flushable.data := multibyte.data
         flushable.last := multibyte.last
         flushable
     }

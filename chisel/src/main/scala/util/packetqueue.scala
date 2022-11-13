@@ -20,12 +20,12 @@ class PacketQueue[T <: Data](gen: Flushable[T], val entries: Int) extends Module
     val readCounter = RegInit(0.U(counterBits.W))
     val isPacketLast = RegInit(false.B)
 
-    val queue = Module(new Queue(gen.body, entries = entries))
+    val queue = Module(new Queue(gen.data, entries = entries))
 
     val enqueueValid = !(readCounter > 0.U && io.write.bits.last)   // Cannot accept a new data if reading the previous packet is not finished and this is the last beat of the current packet.
     io.write.ready := enqueueValid && queue.io.enq.ready
     queue.io.enq.valid := enqueueValid && io.write.valid
-    queue.io.enq.bits := io.write.bits.body
+    queue.io.enq.bits := io.write.bits.data
 
     when( io.write.valid && io.write.ready ) {
         when ( io.write.bits.last ) {
@@ -43,10 +43,10 @@ class PacketQueue[T <: Data](gen: Flushable[T], val entries: Int) extends Module
     
     io.read.valid := queue.io.deq.valid && readCounter > 0.U
     queue.io.deq.ready := io.read.ready && readCounter > 0.U
-    io.read.bits.body := queue.io.deq.bits
+    io.read.bits.data := queue.io.deq.bits
     io.read.bits.last := readCounter === 1.U && isPacketLast
-
+    
     when( io.read.valid && io.read.ready ) {
         readCounter := readCounter - 1.U
-    }    
+    }
 }
