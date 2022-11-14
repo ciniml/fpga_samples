@@ -24,7 +24,7 @@ class UdpServiceMuxTestSystem() extends Module {
     val io = IO(new Bundle {
         val in = UdpServicePort(1)
         val gpioIn = Input(UInt(8.W))
-        val gpioOut = Output(UInt(8.W))
+        val gpioOut = Output(UInt(72.W))
     })
     val mux = Module(new UdpServiceMux(1, Seq(
           (context => context.destinationPort === 10000.U),
@@ -32,7 +32,7 @@ class UdpServiceMuxTestSystem() extends Module {
         )))
     val loopback = Module(new UdpLoopback)
     loopback.io.port <> mux.io.servicePorts(0)
-    val gpio = Module(new UdpGpio)
+    val gpio = Module(new UdpGpio(numOutputBits = 72))
     gpio.io.port <> mux.io.servicePorts(1)
     gpio.io.gpioIn := io.gpioIn
     io.gpioOut := gpio.io.gpioOut
@@ -101,6 +101,7 @@ class UdpServiceMuxTest extends AnyFlatSpec with ChiselScalatestTester with Matc
         } .fork {
             c.io.in.udpSendData.expectDequeue(MultiByteSymbol(1).Lit(_.data -> 0x5a.U, _.keep -> 1.U, _.last -> true.B))
         } .join()
+        c.io.gpioOut.expect("x0807060504030201a5".U, "gpioOut must be the first 9 bytes of received data.")
     }
 
     val testAnnotations = Seq(PrintFullStackTraceAnnotation, VerilatorBackendAnnotation, WriteFstAnnotation)

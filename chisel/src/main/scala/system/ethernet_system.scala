@@ -29,7 +29,7 @@ class EthernetSystem() extends RawModule {
   val out_tlast = IO(Output(Bool()))
 
   val gpio_in = IO(Input(UInt(8.W)))
-  val gpio_out = IO(Output(UInt(8.W)))
+  val gpio_out = IO(Output(UInt(72.W)))
 
   withClockAndReset(clock, !aresetn) {
     val service = Module(new EthernetService)
@@ -66,7 +66,7 @@ class EthernetSystem() extends RawModule {
     val udpLoopback = Module(new UdpLoopback)
     serviceMux.io.servicePorts(0) <> udpLoopback.io.port
 
-    val udpGpio = Module(new UdpGpio())
+    val udpGpio = Module(new UdpGpio(numOutputBits = 72))
     serviceMux.io.servicePorts(1) <> udpGpio.io.port
     gpio_out := udpGpio.io.gpioOut
     udpGpio.io.gpioIn := gpio_in

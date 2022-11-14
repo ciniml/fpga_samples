@@ -54,7 +54,7 @@ logic       rx_maxis_tlast;
 logic       rx_maxis_tuser;
 
 logic [7:0] gpio_in;
-logic [7:0] gpio_out;
+logic [71:0] gpio_out;
 assign gpio_in = 8'h5a;
 assign led = gpio_out[5:0];
 

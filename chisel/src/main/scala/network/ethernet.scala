@@ -936,8 +936,8 @@ class UdpGpio(config: EthernetServiceConfig = EthernetServiceConfig.default(), s
 
     val numInputBytes = (numInputBits + 7) / 8
     val numOutputBytes = (numOutputBits + 7) / 8
-    val gpioIn = RegInit(VecInit(Fill(numInputBytes, 0.U(8.W))))
-    val gpioOut = RegInit(VecInit(Fill(numOutputBytes, 0.U(8.W))))
+    val gpioIn = RegInit(VecInit(Seq.fill(numInputBytes)(0.U(8.W))))
+    val gpioOut = RegInit(VecInit(Seq.fill(numOutputBytes)(0.U(8.W))))
     val bytesInput = RegInit(0.U(log2Ceil(numInputBytes + 1).W))
     val bytesOutput = RegInit(0.U(log2Ceil(numOutputBytes + 1).W))
 
