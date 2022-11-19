@@ -32,6 +32,7 @@ if {${TARGET} == "tangprimer20k"} {
     set_option -use_ready_as_gpio 1
 }
 if {${TARGET} == "tangprimer20k_hub75"} {
+    set_option -use_sspi_as_gpio 1
     set_option -use_done_as_gpio 1
     set_option -use_ready_as_gpio 1
 }
