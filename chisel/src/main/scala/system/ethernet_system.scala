@@ -11,6 +11,7 @@ import chisel3.util._
 import chisel3.experimental.chiselName
 import chisel3.stage.ChiselStage
 import ethernet._
+import display._
 import _root_.util._
 
 @chiselName
@@ -30,6 +31,8 @@ class EthernetSystem() extends RawModule {
 
   val gpio_in = IO(Input(UInt(8.W)))
   val gpio_out = IO(Output(UInt(72.W)))
+
+  val hub75io = IO(HUB75IO(2))
 
   withClockAndReset(clock, !aresetn) {
     val service = Module(new EthernetService)
@@ -60,6 +63,7 @@ class EthernetSystem() extends RawModule {
     val serviceMux = Module(new UdpServiceMux(1, Seq(
       (context => context.destinationPort === 10000.U),
       (context => context.destinationPort === 10001.U),
+      (context => context.destinationPort === 10002.U),
     )))
     service.io.port <> serviceMux.io.in
 
@@ -70,6 +74,22 @@ class EthernetSystem() extends RawModule {
     serviceMux.io.servicePorts(1) <> udpGpio.io.port
     gpio_out := udpGpio.io.gpioOut
     udpGpio.io.gpioIn := gpio_in
+
+    val hub75 = Module(new HUB75Controller(2))
+    val hub75PixelsUpper = Mem(64*16, UInt(3.W))
+    val hub75PixelsLower = Mem(64*16, UInt(3.W))
+    hub75.io.panelPixels(0).pixel := hub75PixelsUpper.read(hub75.io.panelPixels(0).address)
+    hub75.io.panelPixels(1).pixel := hub75PixelsLower.read(hub75.io.panelPixels(1).address)
+    val udpWriter = Module(new UdpMemoryWriter(numMemoryBytes = 64*32))
+    serviceMux.io.servicePorts(2) <> udpWriter.io.port
+    when( udpWriter.io.writeEnable ) {
+      when(udpWriter.io.address < (64*16).U) {
+        hub75PixelsUpper.write(udpWriter.io.address, udpWriter.io.data)
+      } .elsewhen(udpWriter.io.address < (64*32).U) {
+        hub75PixelsLower.write(udpWriter.io.address - (64*16).U, udpWriter.io.data)
+      }
+    }
+    hub75io <> hub75.io.hub75
   }
 }
 

@@ -31,6 +31,10 @@ if {${TARGET} == "tangprimer20k"} {
     set_option -use_done_as_gpio 1
     set_option -use_ready_as_gpio 1
 }
+if {${TARGET} == "tangprimer20k_hub75"} {
+    set_option -use_done_as_gpio 1
+    set_option -use_ready_as_gpio 1
+}
 
 add_file -type verilog [file normalize ${ETHERNET_DIR}/util/simple_fifo.v]
 add_file -type verilog [file normalize ${ETHERNET_DIR}/mii_axis/axis_to_rmii.sv]

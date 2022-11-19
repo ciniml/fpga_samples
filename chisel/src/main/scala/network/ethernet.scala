@@ -373,6 +373,17 @@ object UdpContext {
         context.dataLength := udp.dataLength
         context
     }
+    def default(): UdpContext = {
+        val context = Wire(new UdpContext)
+        context.sourceMacAddress := 0.U
+        context.destinationMacAddress := 0.U
+        context.sourceAddress := 0.U
+        context.destinationAddress := 0.U
+        context.sourcePort := 0.U
+        context.destinationPort := 0.U
+        context.dataLength := 0.U
+        context
+    }
 }
 
 case class EthernetServiceConfig(val hardwareAddress: BigInt, val ipAddress: BigInt)
@@ -982,6 +993,82 @@ class UdpGpio(config: EthernetServiceConfig = EthernetServiceConfig.default(), s
                 udpSendDataLast := false.B
                 when( bytesInput === (numInputBytes - 1).U) {
                     udpSendDataLast := true.B
+                    state := State.Idle
+                }
+            }
+        }
+    }
+}
+
+
+class UdpMemoryWriter(config: EthernetServiceConfig = EthernetServiceConfig.default(), streamWidth: Int = 1, numMemoryBytes: Int = 1024) extends Module {
+    val io = IO(new Bundle {
+        val port = new UdpServicePort(streamWidth)
+        val address = Output(UInt(log2Ceil(numMemoryBytes).W))
+        val data = Output(UInt((streamWidth*8).W))
+        val writeEnable = Output(Bool())
+    })
+
+    object State extends ChiselEnum {
+        val Idle, OffsetUpper, OffsetLower, Receiving = Value
+    }
+
+    val state = RegInit(State.Idle)
+    
+    val udpReceiveContextReady = WireDefault(false.B)
+    io.port.udpReceiveContext.ready := udpReceiveContextReady
+    val udpReceiveDataReady = WireDefault(false.B)
+    io.port.udpReceiveData.ready := udpReceiveDataReady
+
+    io.port.udpSendContext.valid := false.B
+    io.port.udpSendContext.bits := UdpContext.default()
+    io.port.udpSendData.valid := false.B
+    io.port.udpSendData.bits.data := 0.U
+    io.port.udpSendData.bits.keep := 0.U
+    io.port.udpSendData.bits.last := false.B
+
+    val address = RegInit(0.U(log2Ceil(numMemoryBytes).W))
+    val writeEnable = WireDefault(false.B)
+
+    io.address := address
+    io.data := io.port.udpReceiveData.bits.data
+    io.writeEnable := writeEnable
+
+    switch(state) {
+        is(State.Idle) {
+            udpReceiveContextReady := true.B
+            when( io.port.udpReceiveContext.valid ) {
+                state := State.OffsetUpper
+            }
+        }
+        is(State.OffsetUpper) {
+            udpReceiveDataReady := true.B
+            when( io.port.udpReceiveData.valid ) {
+                address := Cat(address(7, 0), io.port.udpReceiveData.bits.data)
+                state := State.OffsetLower
+                when(io.port.udpReceiveData.bits.last) {
+                    state := State.Idle
+                }
+            }
+        }
+        is(State.OffsetLower) {
+            udpReceiveDataReady := true.B
+            when( io.port.udpReceiveData.valid ) {
+                address := Cat(address(7, 0), io.port.udpReceiveData.bits.data)
+                state := State.Receiving
+                when(io.port.udpReceiveData.bits.last) {
+                    state := State.Idle
+                }
+            }
+        }
+        is(State.Receiving) {
+            udpReceiveDataReady := true.B
+            when( io.port.udpReceiveData.valid ) {
+                when(address < numMemoryBytes.U) {
+                    writeEnable := true.B
+                    address := address + 1.U
+                }
+                when(io.port.udpReceiveData.bits.last) {
                     state := State.Idle
                 }
             }
