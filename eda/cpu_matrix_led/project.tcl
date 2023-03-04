@@ -17,6 +17,11 @@ if {${TARGET} == "comprocboard_9k"} {
 if {${TARGET} == "tangnano9k"} {
     set_option -use_sspi_as_gpio 1
 }
+if {${TARGET} == "tangprimer20k_matrix_led"} {
+    set_option -use_sspi_as_gpio 1
+    set_option -use_done_as_gpio 1
+    set_option -use_ready_as_gpio 1
+}
 
 add_file -type verilog [file normalize ${RTL_DIR}/../external/picorv32/picorv32.v]
 add_file -type verilog [file normalize ${SRC_DIR}/top.sv]

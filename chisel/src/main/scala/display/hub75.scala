@@ -2,6 +2,7 @@ package display
 
 import chisel3._
 import chisel3.util._
+import chisel3.experimental.ChiselEnum
 import _root_.util.Flushable
 
 class HUB75IO(val numberOfParallelPanels: Int = 1) extends Bundle {
@@ -42,23 +43,32 @@ class HUB75Controller(numberOfParallelPanels: Int = 1) extends Module {
     val width = 64
     val height = 16
     val outputEnableWidth = 8
+    val initialBrigitness = 0xffff
 
     val xCounter = RegInit(0.U(log2Ceil(width).W))
     val yCounterNext = RegInit(0.U(log2Ceil(height).W))
     val yCounter = RegInit(0.U(log2Ceil(height).W))
     val oeCounter = RegInit(0.U(log2Ceil(outputEnableWidth).W))
-    val latchLine = RegInit(false.B)
+    val latch = RegInit(false.B)
     val rgb = RegInit(VecInit(Seq.fill(3)(0.U(numberOfParallelPanels.W))))
     val address = RegInit(0.U(log2Ceil(width*height).W))
     val clk = RegInit(false.B)
+    val outputEnable = WireDefault(true.B)
+    val brigitness = RegInit(initialBrigitness.U(16.W))
+
+    object State extends ChiselEnum {
+         val Reset, SetBrightness, Running = Value
+    }
+    
+    val state = RegInit(State.Reset)
 
     io.hub75.clk := clk
     io.hub75.row_a := yCounter(0)
     io.hub75.row_b := yCounter(1)
     io.hub75.row_c := yCounter(2)
     io.hub75.row_d := yCounter(3)
-    io.hub75.lat := latchLine
-    io.hub75.oe := oeCounter > 0.U
+    io.hub75.lat := latch
+    io.hub75.oe := outputEnable
     io.hub75.r := rgb(2)
     io.hub75.g := rgb(1)
     io.hub75.b := rgb(0)
@@ -66,30 +76,65 @@ class HUB75Controller(numberOfParallelPanels: Int = 1) extends Module {
         io.panelPixels(panelIndex).address := address
     }
 
-    latchLine := false.B
-    when(oeCounter > 0.U) {
-        oeCounter := oeCounter - 1.U
-    }
-
-    for(component <- 0 to 2) {
-        rgb(component) := Cat((0 to numberOfParallelPanels-1).map(panelIndex => io.panelPixels(panelIndex).pixel(component).asUInt).reverse)
-    }
-    clk := !clk
-    when(!clk) {
-        address := address + 1.U
-        when( xCounter === (width - 1).U ) {
+    switch(state) {
+        is(State.Reset) {
+            clk := false.B
+            latch := false.B
             xCounter := 0.U
-            latchLine := true.B
-            oeCounter := (outputEnableWidth - 1).U
-            when( yCounterNext === (height - 1).U ) {
-                address := 0.U
-                yCounterNext := 0.U
+            yCounter := 0.U
+            brigitness := initialBrigitness.U
+            state := State.SetBrightness
+        }
+        is(State.SetBrightness) {
+            clk := !clk
+            when(!clk) {
+                // Set RGB signal output 
+                for(component <- 0 to 2) {
+                    rgb(component) := Fill(numberOfParallelPanels, brigitness(15.U - xCounter))
+                }
+                when( xCounter >= 3.U ) {
+                    latch := true.B
+                } .otherwise {
+                    latch := false.B
+                }
             } .otherwise {
-                yCounterNext := yCounterNext + 1.U
+                xCounter := xCounter + 1.U
+                when( xCounter === 15.U ) {
+                    xCounter := 0.U
+                    state := State.Running
+                }
             }
-            yCounter := yCounterNext
-        } .otherwise {
-            xCounter := xCounter + 1.U
+        }
+        is(State.Running) {
+            outputEnable := oeCounter > 0.U
+            latch := false.B
+            when(oeCounter > 0.U) {
+                oeCounter := oeCounter - 1.U
+            }
+
+            for(component <- 0 to 2) {
+                rgb(component) := Cat((0 to numberOfParallelPanels-1).map(panelIndex => io.panelPixels(panelIndex).pixel(component).asUInt).reverse)
+            }
+            
+            clk := !clk
+            when(!clk) {
+                address := address + 1.U
+                when( xCounter === (width - 1).U ) {
+                    xCounter := 0.U
+                    latch := true.B
+                    oeCounter := (outputEnableWidth - 1).U
+                    when( yCounterNext === (height - 1).U ) {
+                        address := 0.U
+                        yCounterNext := 0.U
+                    } .otherwise {
+                        yCounterNext := yCounterNext + 1.U
+                    }
+                    yCounter := yCounterNext
+                } .otherwise {
+                    xCounter := xCounter + 1.U
+                }
+            }
         }
     }
+    
 }

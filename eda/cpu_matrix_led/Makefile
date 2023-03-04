@@ -1,4 +1,4 @@
-PROJECT_NAME := cpu_stopwatch
+PROJECT_NAME := cpu_matrix_led
 SRCS := $(wildcard src/$(TARGET)/*.cst) $(wildcard src/$(TARGET)/*.sdc) $(wildcard src/$(TARGET)/*.sv) ../../external/picorv32/picorv32.v project.tcl src/sw/bootrom.hex
 
 include ../build_gowin.mk

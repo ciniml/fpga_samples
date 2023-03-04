@@ -44,15 +44,10 @@ module top(
     output logic       hub75io_oe
 );
 
-logic [2:0] reset_button = '1;
-always_ff @(posedge rmii_txclk) begin
-  reset_button <= {1'b0, reset_button[2:1]};
-end
-
 logic reset;
-reset_seq reset_seq_ext(
-  .clock(rmii_txclk),
-  .reset_in(reset_button[0]),
+reset_seq #(.RESET_DELAY_CYCLES(64)) reset_seq_ext(
+  .clock(clock),
+  .reset_in(0),
   .reset_out(reset)
 );
 
