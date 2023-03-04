@@ -1,0 +1,17 @@
+signal_name,pmod_pin
+anode[0],pmod0_7
+anode[1],pmod0_1
+anode[2],pmod0_8
+anode[3],pmod0_2
+anode[4],pmod0_9
+anode[5],pmod0_3
+anode[6],pmod0_10
+anode[7],pmod0_4
+cathode[0],pmod1_7
+cathode[1],pmod1_1
+cathode[2],pmod1_8
+cathode[3],pmod1_2
+cathode[4],pmod1_9
+cathode[5],pmod1_3
+cathode[6],pmod1_10
+cathode[7],pmod1_4

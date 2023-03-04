@@ -112,14 +112,17 @@ fn read_pmod_ports(path: &Path) -> Result<PmodPorts> {
     Ok(defs)
 }
 
-fn assign_pmod_modules_to_ports(ports: &PmodPorts, modules: &Vec<PmodModule>, port_offset: usize) -> Result<Vec<(String, String)>> {
+fn assign_pmod_modules_to_ports(ports: &PmodPorts, modules: &Vec<PmodModule>, port_offset: usize, direction: PmodDirection) -> Result<Vec<(String, String)>> {
     let required_ports: usize = modules.iter().map(|module| module.len()).sum();
     if required_ports + port_offset > ports.len() {
         anyhow::bail!("Too few Pmod ports available. required: {}, available: {}", required_ports + port_offset, ports.len());
     }
 
     let mut pin_map = Vec::new();
-    let modules_ports_iter = modules.iter().map(|module| module.iter()).flatten();
+    let modules_ports_iter: Box<dyn Iterator<Item = &PmodUsage>> = match direction {
+        PmodDirection::LeftToRight => Box::new(modules.iter().map(|module| module.iter()).flatten()),
+        PmodDirection::RightToLeft => Box::new(modules.iter().map(|module| module.iter()).flatten().rev()),
+    };
     let ports_iter = ports.iter().skip(port_offset);
     for (module_port, port) in modules_ports_iter.zip(ports_iter) {
         for (module_pin, port_pin) in module_port.pins.iter().zip(port.pins.iter()) {
@@ -150,7 +153,7 @@ fn main() {
     let pmod_modules: Vec<PmodModule> = args.pmods.iter().map(|pmod| {
         read_pmod_module(&Path::new(pmod.as_str())).unwrap()
     }).collect();
-    let pins = assign_pmod_modules_to_ports(&pmod_ports, &pmod_modules, args.port_offset).unwrap();
+    let pins = assign_pmod_modules_to_ports(&pmod_ports, &pmod_modules, args.port_offset, args.direction).unwrap();
     match args.output {
         Some(output) => write_pins_as_gowin_loc(&mut std::fs::File::create(&Path::new(output.as_str())).unwrap(), &pins).unwrap(),
         None => write_pins_as_gowin_loc(&mut std::io::stdout(), &pins).unwrap(),

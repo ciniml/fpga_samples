@@ -7,8 +7,16 @@ TARGET ?= tangnano1k
 BITSTREAM := build/$(TARGET)/impl/pnr/$(PROJECT_NAME).fs
 SRC_DIR := $(abspath src/$(TARGET))
 RTL_DIR := $(abspath ../../rtl)
+UTIL_DIR := $(abspath ../../util)
 
-include ../targets/$(TARGET)/target.mk
+MAPPMOD_DIR ?= $(UTIL_DIR)/mappmod
+MAPPMOD ?= $(MAPPMOD_DIR)/target/release/mappmod
+
+MOD_DIR := $(abspath ../../mod)
+TARGETS_DIR := $(abspath ../targets)
+TARGET_DEF_DIR := $(TARGETS_DIR)/$(TARGET)
+
+include $(TARGET_DEF_DIR)/target.mk
 
 DEVICE ?= $(DEVICE_FAMILY)
 PROGRAMMER_CLI_DIR ?= $(dir $(shell which programmer_cli))
@@ -52,3 +60,6 @@ clean:
 ifneq ($(PROJECT_ADDITIONAL_CLEAN),)
 	-$(RM) $(PROJECT_ADDITIONAL_CLEAN)
 endif
+
+$(MAPPMOD):
+	cd $(MAPPMOD_DIR); cargo build --release
