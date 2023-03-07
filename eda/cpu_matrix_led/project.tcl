@@ -12,6 +12,8 @@ set_option -verilog_std sysv2017
 set_option -vhdl_std vhd2008
 set_option -print_all_synthesis_warning 1
 set_option -use_sspi_as_gpio 1
+set_option -use_done_as_gpio 1
+set_option -use_ready_as_gpio 1
 
 add_file -type verilog [file normalize ${RTL_DIR}/../external/picorv32/picorv32.v]
 add_file -type verilog [file normalize ${SRC_DIR}/top.sv]
