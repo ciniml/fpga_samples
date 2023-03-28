@@ -1,0 +1,14 @@
+signal_name,pmod_pin
+hub75io_clk,pmod1_9
+hub75io_r[0],pmod0_1
+hub75io_r[1],pmod0_3
+hub75io_g[0],pmod0_7
+hub75io_g[1],pmod0_8
+hub75io_b[0],pmod0_2
+hub75io_b[1],pmod0_4
+hub75io_row_a,pmod1_7
+hub75io_row_b,pmod0_10
+hub75io_row_c,pmod1_8
+hub75io_row_d,pmod1_1
+hub75io_lat,pmod1_2
+hub75io_oe,pmod1_10
