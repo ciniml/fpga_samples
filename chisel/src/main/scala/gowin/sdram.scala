@@ -81,14 +81,14 @@ class SimSDRC(params: SDRAMBridgeParams, size: Int, initializationFile: Option[S
         }
         is( State.sIdle ) {
             when( !io.sdrc.rd_n ) {
-                printf(p"[SimSDRC] REQ READ Address: ${Hexadecimal(io.sdrc.addr)}")
+                printf(p"[SimSDRC] REQ READ Address: ${Hexadecimal(io.sdrc.addr)}\n")
                 address := io.sdrc.addr
                 burstCount := io.sdrc.dataLen
                 delay := 16.U   // From the actual waveform measured by GAO
                 busyAssertDelay := "b111".U
                 state := State.sRead
             } .elsewhen ( !io.sdrc.wr_n ) {
-                printf(p"[SimSDRC] REQ WRITE Address: ${Hexadecimal(io.sdrc.addr)}, Data: ${Hexadecimal(io.sdrc.dataWrite)}, DQM: ${Hexadecimal(io.sdrc.dqm)}")
+                printf(p"[SimSDRC] REQ WRITE Address: ${Hexadecimal(io.sdrc.addr)}, Data: ${Hexadecimal(io.sdrc.dataWrite)}, DQM: ${Hexadecimal(io.sdrc.dqm)}\n")
                 address := io.sdrc.addr
                 data := mem(io.sdrc.addr)
                 nextDataMask := FillInterleaved(8, ~io.sdrc.dqm)
@@ -102,7 +102,7 @@ class SimSDRC(params: SDRAMBridgeParams, size: Int, initializationFile: Option[S
         is( State.sRead ) {
             when( delay === 0.U ) {
                 val readData = Mux( address < mem.length.U, mem(address), 0.U)
-                printf(p"[SimSDRC] READ Address: ${Hexadecimal(address)}, Data: ${Hexadecimal(readData)}")
+                printf(p"[SimSDRC] READ Address: ${Hexadecimal(address)}, Data: ${Hexadecimal(readData)}\n")
                 address := address + 1.U
                 data := readData
                 readValid := true.B
@@ -125,7 +125,7 @@ class SimSDRC(params: SDRAMBridgeParams, size: Int, initializationFile: Option[S
             }
             when( address < mem.length.U ) {
                 val writeData = (data & ~nextDataMask) | (nextWriteData & nextDataMask)
-                printf(p"[SimSDRC] WRITE Address: ${Hexadecimal(address)}, Data: ${Hexadecimal(writeData)}")
+                printf(p"[SimSDRC] WRITE Address: ${Hexadecimal(address)}, Data: ${Hexadecimal(writeData)}\n")
                 mem(address) := writeData
             }
             when( burstCount === 0.U ) {
@@ -177,7 +177,7 @@ class SDRCBridge(params: SDRAMBridgeParams) extends Module {
     fifo_aw.io.deq <> fifo_aw_deq.io.in
 
     object State extends ChiselEnum {
-        val sReset, sWaitReset, sIdle, sRead, sWrite = Value
+        val sReset, sWaitReset, sIdle, sRead, sBeginWrite, sWrite = Value
     }
 
     val state = RegInit(State.sReset)
@@ -216,12 +216,16 @@ class SDRCBridge(params: SDRAMBridgeParams) extends Module {
         // Note that the AxLEN equals to (transfer count - 1) e.g. AxLEN == 0 means 1 transfer, AxLEN == 2 means 3 transfers, so we can compare vacant count and ARLEN with "greater than" operator to ensure the space.
         arready := !sdrcBusy && readFifoVacancy > readFifoVacancyRequired
         // start WRITE transaction if there are enough data in the W channel FIFO to run the requested burst write, READ transaction is not ready, and B channel FIFO is not full.
-        awready := !sdrcBusy && fifo_aw_deq.io.out.valid && fifo_w.io.count > fifo_aw_deq.io.out.bits.len.get && !arready && fifo_b.io.enq.ready
-        wready := awready
+        awready := !sdrcBusy && fifo_aw_deq.io.out.valid && fifo_w.io.deq.valid && fifo_w.io.count > fifo_aw_deq.io.out.bits.len.get && !arready && fifo_b.io.enq.ready
+        wready := false.B
+    } .elsewhen ( state === State.sBeginWrite ) {
+        arready := false.B
+        awready := false.B
+        wready := true.B
     } .elsewhen ( state === State.sWrite ) {
         arready := false.B
         awready := false.B
-        wready := writeBurstCount > 0.U
+        wready := true.B
     } .otherwise {
         arready := false.B
         awready := false.B
@@ -255,28 +259,12 @@ class SDRCBridge(params: SDRAMBridgeParams) extends Module {
                 address := fifo_aw_deq.io.out.bits.addr >> byteAddressShift.U
                 dataLen := fifo_aw_deq.io.out.bits.len.get
                 writeBurstCount := fifo_aw_deq.io.out.bits.len.get
-                wr_n := false.B
-                data := fifo_w.io.deq.bits.data
-                dqm := ~fifo_w.io.deq.bits.strb
-                sdrcBusyDelay := Fill(sdrcBusyDelay.getWidth, 1.U(1.W))
-
-                printf(p"[SDRCBridge] WRITE Data: ${Hexadecimal(fifo_w.io.deq.bits.data)} Strb: ${Hexadecimal(fifo_w.io.deq.bits.strb)} Count: ${writeBurstCount}")
-
-                when( fifo_aw_deq.io.out.bits.len.get === 0.U ) {
-                    // Single beat transaction. put the response to B channel.
-                    // Note that fifo_bready is already checked in `fifo_awready` signal.
-                    // So we can assume that B channel fifo is not full.
-                    bvalid := true.B
-                    bsignal.resp := AXI4Resp.OKAY
-                    state := State.sIdle
-                } .otherwise {
-                    state := State.sWrite
-                }
+                state := State.sBeginWrite
             }
         }
         is ( State.sRead ) {
             when( io.sdrc.rdValid ) {
-                printf(p"[SDRCBridge] READ Remaining: ${readBurstCount}")
+                printf(p"[SDRCBridge] READ Remaining: ${readBurstCount} Data: ${Hexadecimal(io.sdrc.dataRead)}\n")
                 rvalid := true.B
                 rsignal.data := io.sdrc.dataRead
                 rsignal.resp := AXI4Resp.OKAY
@@ -288,8 +276,28 @@ class SDRCBridge(params: SDRAMBridgeParams) extends Module {
                 }
             }
         }
+        is ( State.sBeginWrite ) {
+            wr_n := false.B
+            data := fifo_w.io.deq.bits.data
+            dqm := ~fifo_w.io.deq.bits.strb
+            sdrcBusyDelay := Fill(sdrcBusyDelay.getWidth, 1.U(1.W))
+
+            printf(p"[SDRCBridge] WRITE Data: ${Hexadecimal(fifo_w.io.deq.bits.data)} Strb: ${Hexadecimal(fifo_w.io.deq.bits.strb)} Count: ${writeBurstCount}\n")
+
+            when( writeBurstCount === 0.U ) {
+                // Single beat transaction. put the response to B channel.
+                // Note that fifo_bready is already checked in `fifo_awready` signal.
+                // So we can assume that B channel fifo is not full.
+                bvalid := true.B
+                bsignal.resp := AXI4Resp.OKAY
+                state := State.sIdle
+            } .otherwise {
+                writeBurstCount := writeBurstCount - 1.U
+                state := State.sWrite
+            }
+        }
         is ( State.sWrite ) {
-            printf(p"[SDRCBridge] WRITE Data: ${Hexadecimal(fifo_w.io.deq.bits.data)} Strb: ${Hexadecimal(fifo_w.io.deq.bits.strb)} Count: ${writeBurstCount}")
+            printf(p"[SDRCBridge] WRITE Data: ${Hexadecimal(fifo_w.io.deq.bits.data)} Strb: ${Hexadecimal(fifo_w.io.deq.bits.strb)} Count: ${writeBurstCount}\n")
             data := fifo_w.io.deq.bits.data
             dqm := ~fifo_w.io.deq.bits.strb
             when( writeBurstCount === 0.U ) {
