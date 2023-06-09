@@ -190,5 +190,5 @@ class VideoSignalGenerator(defaultVideoParams: VideoParams, maxVideoParams: Vide
     io.video.hSync := hSync
     io.video.vSync := vSync
     io.video.dataEnable := dataEnableReg
-    io.video.pixelData := Mux(dataEnable, data, 0.U)
+    io.video.pixelData := Mux(dataEnableReg, data, 0.U)
 }
