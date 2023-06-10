@@ -1,0 +1,9 @@
+signal_name,pmod_pin
+com_ser,pmod0_1
+com_rclk,pmod0_2
+com_srclk,pmod0_7
+com_oe,pmod0_8
+seg_ser,pmod0_3
+seg_rclk,pmod0_4
+seg_srclk,pmod0_9
+seg_oe,pmod0_10
