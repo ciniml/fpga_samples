@@ -10,5 +10,6 @@ hub75io_row_a,pmod1_7
 hub75io_row_b,pmod0_10
 hub75io_row_c,pmod1_8
 hub75io_row_d,pmod1_1
+hub75io_row_e,pmod0_9
 hub75io_lat,pmod1_2
 hub75io_oe,pmod1_10
