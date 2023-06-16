@@ -14,6 +14,8 @@ import ethernet._
 import display._
 import _root_.util._
 
+
+
 @chiselName
 class EthernetSystem() extends RawModule {
   val clock = IO(Input(Clock()))
@@ -33,6 +35,13 @@ class EthernetSystem() extends RawModule {
   val gpio_out = IO(Output(UInt(72.W)))
 
   val hub75io = IO(HUB75IO(2))
+
+  def rgb565ToRgb666(rgb565: UInt): UInt = {
+    val r = Cat(rgb565(15, 11), rgb565(15))
+    val g = rgb565(10, 5)
+    val b = Cat(rgb565(4, 0), rgb565(4))
+    Cat(r, g, b)
+  }
 
   withClockAndReset(clock, !aresetn) {
     val service = Module(new EthernetService)
@@ -75,18 +84,26 @@ class EthernetSystem() extends RawModule {
     gpio_out := udpGpio.io.gpioOut
     udpGpio.io.gpioIn := gpio_in
 
-    val hub75 = Module(new HUB75Controller(2))
-    val hub75PixelsUpper = Mem(64*16, UInt(3.W))
-    val hub75PixelsLower = Mem(64*16, UInt(3.W))
-    hub75.io.panelPixels(0).pixel := hub75PixelsUpper.read(hub75.io.panelPixels(0).address)
-    hub75.io.panelPixels(1).pixel := hub75PixelsLower.read(hub75.io.panelPixels(1).address)
-    val udpWriter = Module(new UdpMemoryWriter(numMemoryBytes = 64*32))
+    val hub75Width = 64
+    val hub75Height = 32
+    val bytesPerPixel = 2
+    val numberOfPanels = 2
+    val hub75 = Module(new HUB75Controller(hub75Width, hub75Height, numberOfPanels, pixelComponentBits = 6))
+    //val hub75 = Module(new HUB75Controller(hub75Width, hub75Height, 2))
+    val hub75PixelsUpper = Mem(hub75Width*hub75Height, Vec(2, UInt(8.W)))
+    val hub75PixelsLower = Mem(hub75Width*hub75Height, Vec(2, UInt(8.W)))
+    hub75.io.panelPixels(0).pixel := rgb565ToRgb666(hub75PixelsUpper.read(hub75.io.panelPixels(0).address).asUInt)
+    hub75.io.panelPixels(1).pixel := rgb565ToRgb666(hub75PixelsLower.read(hub75.io.panelPixels(1).address).asUInt)
+    val udpWriter = Module(new UdpMemoryWriter(numMemoryBytes = hub75Width*hub75Height*numberOfPanels*bytesPerPixel))
     serviceMux.io.servicePorts(2) <> udpWriter.io.port
+
     when( udpWriter.io.writeEnable ) {
-      when(udpWriter.io.address < (64*16).U) {
-        hub75PixelsUpper.write(udpWriter.io.address, udpWriter.io.data)
-      } .elsewhen(udpWriter.io.address < (64*32).U) {
-        hub75PixelsLower.write(udpWriter.io.address - (64*16).U, udpWriter.io.data)
+      val mask = VecInit(!udpWriter.io.address(0), udpWriter.io.address(0))
+      val value = VecInit(Seq.fill(2)(udpWriter.io.data))
+      when(udpWriter.io.address < (hub75Width*hub75Height*bytesPerPixel).U) {
+        hub75PixelsUpper.write(udpWriter.io.address >> 1, value, mask)
+      } .elsewhen(udpWriter.io.address < (hub75Width*hub75Height*bytesPerPixel*numberOfPanels).U) {
+        hub75PixelsLower.write(udpWriter.io.address >> 1, value, mask)
       }
     }
     hub75io <> hub75.io.hub75

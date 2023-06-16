@@ -4,7 +4,7 @@
 //    (See accompanying file LICENSE_1_0.txt or copy at
 //          https://www.boost.org/LICENSE_1_0.txt)
 
-package ethernet
+package display
 
 import chiseltest._
 import chisel3.util._
@@ -22,13 +22,14 @@ import scala.util.Failure
 import display.HUB75Controller
 import display.HUB75IO
 
-class HUB75TestSystem(pixels: Seq[Int]) extends Module {
+class HUB75TestSystem(pixels: Seq[Int], numberOfComponentBits: Int = 1) extends Module {
     val io = IO(new Bundle{
         val hub75 = HUB75IO()
     })
 
-    val dut = Module(new HUB75Controller)
-    val mem = RegInit(VecInit(pixels.map(n => n.U(3.W))))
+    val componentBits = (1 << numberOfComponentBits) - 1
+    val dut = Module(new HUB75Controller(clockDivider = 0, pixelComponentBits = numberOfComponentBits))
+    val mem = RegInit(VecInit(pixels.map(n => (((n & componentBits) << (2 * numberOfComponentBits)) | ((n & componentBits) << (1 * numberOfComponentBits)) | ((n & componentBits) << (0 * numberOfComponentBits))).U((3 * numberOfComponentBits).W))))
     dut.io.panelPixels(0).pixel := mem(dut.io.panelPixels(0).address)
     io.hub75 <> dut.io.hub75
 }
@@ -67,10 +68,22 @@ class HUB75Tester extends AnyFlatSpec with ChiselScalatestTester with Matchers {
     }
 
 
-    val pixels = (0 to 64*16-1).map(n => n & 7).toIndexedSeq
+    val pixels = (0 to 64*16-1).toIndexedSeq
     
-    it should "run" in {
+    it should "output" in {
         test(new HUB75TestSystem(pixels)).withAnnotations(Seq(PrintFullStackTraceAnnotation, VerilatorBackendAnnotation, WriteFstAnnotation)) { c => run(c, pixels) }
+    }
+    it should "just run" in {
+        test(new HUB75TestSystem(pixels)).withAnnotations(Seq(PrintFullStackTraceAnnotation, VerilatorBackendAnnotation, WriteFstAnnotation)) { c => {
+            c.clock.setTimeout(64*16*16 + 1)
+            c.clock.step(64*16*16)
+        } }
+    }
+    it should "multi level" in {
+        test(new HUB75TestSystem(pixels, numberOfComponentBits = 4)).withAnnotations(Seq(PrintFullStackTraceAnnotation, VerilatorBackendAnnotation, WriteFstAnnotation)) { c => {
+            c.clock.setTimeout(64*16*16 + 1)
+            c.clock.step(64*16*16)
+        } }
     }
 }
 

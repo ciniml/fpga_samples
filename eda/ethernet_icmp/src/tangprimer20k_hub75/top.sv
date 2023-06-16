@@ -40,6 +40,7 @@ module top(
     output logic       hub75io_row_b,
     output logic       hub75io_row_c,
     output logic       hub75io_row_d,
+    output logic       hub75io_row_e,
     output logic       hub75io_lat,
     output logic       hub75io_oe
 );
@@ -108,6 +109,7 @@ EthernetSystem ethernet_system_isnt (
   .hub75io_row_b(hub75io_row_b),
   .hub75io_row_c(hub75io_row_c),
   .hub75io_row_d(hub75io_row_d),
+  .hub75io_row_e(hub75io_row_e),
   .hub75io_r(hub75io_r),
   .hub75io_g(hub75io_g),
   .hub75io_b(hub75io_b),
