@@ -40,23 +40,22 @@ class HUB75Controller(width: Int = 64, height: Int = 16, numberOfParallelPanels:
         val hub75 = HUB75IO(numberOfParallelPanels)
         val panelPixels = Vec(numberOfParallelPanels, PixelBufferIO(3*pixelComponentBits, width*height))
     })
-
-    val outputEnableWidth = 8
-
     val brightnessInitPattern = "b0000011111100000".U(16.W)
     val enableOutputPattern = "b0000001000000000".U(16.W)
     val MAX_PULSE_COUNT = (BigInt(1) << (pixelComponentBits)) - BigInt(1)
-
+    val BASE_OUTPUT_CYCLES = 8
+    val FULL_WIDTH_OUTPUT_CYCLES = (BigInt(1) << pixelComponentBits) * BigInt(BASE_OUTPUT_CYCLES)
     object State extends ChiselEnum {
-        val Reset, InitBrightness, InitOutput, StartFrame, SetupRow, OutputRow, NextRow, Running = Value
+        val Reset, InitBrightness, InitOutput, StartFrame, SetupRow, OutputRow, WaitOutputEnable, NextRow, Running = Value
     }
     
     val state = RegInit(State.Reset)
 
     val xCounter = RegInit(0.U(log2Ceil(width).W))
     val yCounter = RegInit(0.U(log2Ceil(height).W))
-    val oeCounter = RegInit(0.U(log2Ceil(outputEnableWidth).W))
-    val pulseCounter = RegInit(0.U(pixelComponentBits.W))
+    val oeCounter = RegInit(0.U(log2Ceil(FULL_WIDTH_OUTPUT_CYCLES + 1).W))
+    val outputBit = RegInit(0.U(pixelComponentBits.W))
+    val nextOECounter = RegInit(0.U(log2Ceil(FULL_WIDTH_OUTPUT_CYCLES + 1).W))
     val latchLine = RegInit(false.B)
     val pixelData = (0 until numberOfParallelPanels).map(_ => (0 until 3).map(_ => RegInit(0.U(pixelComponentBits.W))))
     val rgb = RegInit(VecInit(Seq.fill(3)(0.U(numberOfParallelPanels.W))))
@@ -73,7 +72,9 @@ class HUB75Controller(width: Int = 64, height: Int = 16, numberOfParallelPanels:
     io.hub75.row_d := yCounter(3)
     io.hub75.row_e := (if( height >= 32 ) { yCounter(4) } else { false.B })
     io.hub75.lat := latchLine
-    io.hub75.oe := oeCounter > 0.U || (state === State.Reset || state === State.InitBrightness || state === State.InitOutput)
+
+    val initializing = state === State.Reset || state === State.InitBrightness || state === State.InitOutput
+    io.hub75.oe := oeCounter === 0.U || initializing
     io.hub75.r := rgb(2)
     io.hub75.g := rgb(1)
     io.hub75.b := rgb(0)
@@ -163,9 +164,10 @@ class HUB75Controller(width: Int = 64, height: Int = 16, numberOfParallelPanels:
         }
         is(State.SetupRow) {
             xCounter := 0.U
-            pulseCounter := 0.U
             clk := false.B
             rowStartAddress := address
+            outputBit := (1 << (pixelComponentBits - 1)).U
+            nextOECounter := FULL_WIDTH_OUTPUT_CYCLES.U
             state := State.OutputRow
         }
         is(State.OutputRow) {
@@ -175,7 +177,7 @@ class HUB75Controller(width: Int = 64, height: Int = 16, numberOfParallelPanels:
                     val rgbData = Wire(Vec(3, Vec(numberOfParallelPanels, Bool())))
                     for(panelIndex <- 0 until numberOfParallelPanels) {
                         for(component <- 0 to 2) {
-                            rgbData(component)(panelIndex) := pixelData(panelIndex)(component) > pulseCounter
+                            rgbData(component)(panelIndex) := (pixelData(panelIndex)(component) & outputBit) =/= 0.U
                         }
                     }
                     for(component <- 0 to 2) {
@@ -184,13 +186,7 @@ class HUB75Controller(width: Int = 64, height: Int = 16, numberOfParallelPanels:
                     when( xCounter === (width - 1).U ) {
                         xCounter := 0.U
                         latchLine := true.B
-                        oeCounter := (outputEnableWidth - 1).U
-                        when( pulseCounter === MAX_PULSE_COUNT.U) {
-                            state := State.NextRow
-                        } .otherwise {
-                            pulseCounter := pulseCounter + 1.U
-                            address := rowStartAddress
-                        }
+                        state := State.WaitOutputEnable
                     } .otherwise {
                         xCounter := xCounter + 1.U
                     }
@@ -201,6 +197,25 @@ class HUB75Controller(width: Int = 64, height: Int = 16, numberOfParallelPanels:
                         }
                     }
                     address := address + 1.U
+                }
+            }
+        }
+        is(State.WaitOutputEnable) {
+            when( clockEnable ) {
+                when(clk) { // falling edge
+                    latchLine := false.B    // Deassert the LAT signal every clk cycle.
+                    when( oeCounter === 0.U ) {
+                        oeCounter := nextOECounter
+                        nextOECounter := nextOECounter >> 1
+                        outputBit := outputBit >> 1
+                        when( outputBit === 1.U ) {
+                            state := State.NextRow
+                            rowStartAddress := rowStartAddress + width.U
+                        } .otherwise {
+                            address := rowStartAddress
+                            state := State.OutputRow
+                        }
+                    }
                 }
             }
         }

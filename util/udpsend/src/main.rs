@@ -2,25 +2,39 @@ use std::{io, time};
 use std::net::{Ipv4Addr, UdpSocket};
 use std::time::Duration;
 
-
-fn to_hub75_data(image: &bmp::Image) -> [u8; 1026*2] {
-    let mut data = [0u8; 1026*2];
-    for y in 0..32 {
-        for x in 0..64 {
-            let index = y * 64 + x + if y < 16 { 2 } else { 4 };
+const WIDTH: usize = 64;
+const HEIGHT: usize = 64;
+const BYTES_PER_PIXEL: usize = 2;
+const NUMBER_OF_BLOCKS: usize = (WIDTH * HEIGHT * BYTES_PER_PIXEL) / 1024;
+const TOTAL_IMAGE_SIZE: usize = (WIDTH * HEIGHT * BYTES_PER_PIXEL) + 2 * NUMBER_OF_BLOCKS;
+fn to_hub75_data(image: &bmp::Image) -> [u8; TOTAL_IMAGE_SIZE] {
+    let mut data = [0u8; TOTAL_IMAGE_SIZE];
+    let width = WIDTH.min(image.get_width() as usize);
+    let height = HEIGHT.min(image.get_height() as usize);
+    for y in 0..height {
+        let block_offset = ((y * WIDTH * BYTES_PER_PIXEL) / 1024 + 1) * 2;
+        for x in 0..width {
+            let index = (y * WIDTH + x) * BYTES_PER_PIXEL + block_offset;
             //data[index] = (y & 7) as u8; //((y + x) & 7) as u8;
             let pixel = image.get_pixel(x as u32, y as u32);
-            let mut byte_pixel = 0u8;
-            if pixel.r >= 128 { byte_pixel |= 4; }
-            if pixel.g >= 128 { byte_pixel |= 2; }
-            if pixel.b >= 128 { byte_pixel |= 1; }
-            data[index] = byte_pixel;
+            // let mut byte_pixel = 0u8;
+            // if pixel.r >= 128 { byte_pixel |= 4; }
+            // if pixel.g >= 128 { byte_pixel |= 2; }
+            // if pixel.b >= 128 { byte_pixel |= 1; }
+            // data[index] = byte_pixel;
+            let mut pixel565 = ((pixel.r >> 3) as u16) << 11
+                             | ((pixel.g >> 2) as u16) << 5
+                             | ((pixel.b >> 3) as u16) << 0;
+            data[index + 0] = (pixel565 & 0xff) as u8;
+            data[index + 1] = (pixel565 >> 8) as u8;
         }
     }
-    data[0] = 0;
-    data[1] = 0;
-    data[1026] = (1024 >> 8) as u8;
-    data[1027] = (1024 & 0xff) as u8;
+    for block_index in 0..NUMBER_OF_BLOCKS {
+        let index = 1026 * block_index;
+        let offset = 1024 * block_index;
+        data[index + 0] = (offset >> 8) as u8;
+        data[index + 1] = (offset & 0xff) as u8;
+    }
     data
 }
 
@@ -52,7 +66,11 @@ fn main() -> io::Result<()> {
     let images = [
         to_hub75_data(&bmp::open("assets/hoge.bmp").unwrap()),
         to_hub75_data(&bmp::open("assets/fuga.bmp").unwrap()),
+        to_hub75_data(&bmp::open("assets/fuga_64x64.bmp").unwrap()),
         to_hub75_data(&bmp::open("assets/fpga.bmp").unwrap()),
+        to_hub75_data(&bmp::open("assets/white_64x64.bmp").unwrap()),
+        to_hub75_data(&bmp::open("assets/pattern_64x64.bmp").unwrap()),
+        to_hub75_data(&bmp::open("assets/rustacean-orig-noshadow_64x64.bmp").unwrap()),
     ];
 
     let patterns = [
@@ -115,11 +133,11 @@ fn main() -> io::Result<()> {
             image_index = (image_index + 1) % images.len();
         
             let data = &images[image_index];
-            if let Err(error) = socket.send_to(&data[0..1026], "192.168.10.2:10002") {
-                println!("data send error: {}", error);
-            }
-            if let Err(error) = socket.send_to(&data[1026..], "192.168.10.2:10002") {
-                println!("data send error: {}", error);
+            for block_index in 0..NUMBER_OF_BLOCKS {
+                let offset = block_index * (1024 + 2);
+                if let Err(error) = socket.send_to(&data[offset..offset + 1026], "192.168.10.2:10002") {
+                    println!("data send error: {}", error);
+                }
             }
 
             last_auto_updated = time::Instant::now();
