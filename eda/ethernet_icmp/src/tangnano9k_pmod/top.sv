@@ -50,14 +50,32 @@ always_ff @(posedge rmii_txclk) begin
   reset_button <= {1'b0, reset_button[2:1]};
 end
 
-logic reset;
+logic reset_rmii;
 reset_seq reset_seq_ext(
   .clock(rmii_txclk),
   .reset_in(reset_button[0]),
-  .reset_out(reset)
+  .reset_out(reset_rmii)
 );
 
-assign rmii_rstn = !reset;
+// rPLL to generate system clock (20MHz) from RMII 50MHz clock.
+logic lock_clock_main;
+logic clock_main;
+gowin_rpll rpll_main(
+    .clkout(clock_main), //output clkout
+    .lock(lock_clock_main), //output lock
+    .clkin(rmii_txclk) //input clkin
+);
+
+logic reset_seq_out_main;
+reset_seq reset_seq_main(
+  .clock(clock_main),
+  .reset_in(reset_button[0]),
+  .reset_out(reset_seq_out_main)
+);
+logic reset_main;
+assign reset_main = reset_seq_out_main || !lock_clock_main;
+
+assign rmii_rstn = !reset_rmii;
 assign rmii_mdc = 0;
 
 logic [7:0] tx_saxis_tdata;
@@ -78,11 +96,11 @@ assign led = gpio_out[5:0];
 
 rmii_mac rmii_mac_inst (
   .tx_clock(rmii_txclk),
-  .tx_reset(reset),
+  .tx_reset(reset_rmii),
   .tx_rmii_d(rmii_txd),
   .tx_rmii_en(rmii_txen),
   .rx_clock(rmii_txclk),
-  .rx_reset(reset),
+  .rx_reset(reset_rmii),
   .rx_rmii_d(rmii_rxd),
   .rx_rmii_dv(rmii_crs_dv),
   .tx_saxis_bypass_tdata(0),
@@ -93,8 +111,10 @@ rmii_mac rmii_mac_inst (
 );
 
 EthernetSystem ethernet_system_inst (
-  .clock(rmii_txclk),
-  .aresetn(!reset),
+  .clock(clock_main),
+  .aresetn(!reset_main),
+  .rmii_clock(rmii_txclk),
+  .rmii_reset(reset_rmii),
   .in_tdata (rx_maxis_tdata),
   .in_tvalid(rx_maxis_tvalid),
   .in_tready(rx_maxis_tready),

@@ -17,10 +17,16 @@ import _root_.util._
 
 
 @chiselName
-class EthernetSystem() extends RawModule {
+class EthernetSystem(asyncSystemClock: Boolean = false) extends RawModule {
   val clock = IO(Input(Clock()))
   val aresetn = IO(Input(Bool()))
   
+  val rmii_clock = if(asyncSystemClock) { Some(IO(Input(Clock()))) } else { None }
+  val rmii_reset = if(asyncSystemClock) { Some(IO(Input(Bool()))) } else { None }
+  
+  val selected_rmii_clock = if(asyncSystemClock) { rmii_clock.get } else { clock }
+  val selected_rmii_reset = if(asyncSystemClock) { rmii_reset.get } else { !aresetn }
+
   val in_tdata = IO(Input(UInt(8.W)))
   val in_tvalid = IO(Input(Bool()))
   val in_tready = IO(Output(Bool()))
@@ -43,6 +49,34 @@ class EthernetSystem() extends RawModule {
     Cat(r, g, b)
   }
 
+  val txAsyncFifo = if(asyncSystemClock) { Some(withClockAndReset(rmii_clock.get, rmii_reset.get) { Module(new AsyncFIFO(Flushable(UInt(8.W)), 3))} ) } else { None }
+  val rxAsyncFifo = if(asyncSystemClock) { Some(withClockAndReset(rmii_clock.get, rmii_reset.get) { Module(new AsyncFIFO(Flushable(UInt(8.W)), 3))} ) } else { None }
+
+  if(asyncSystemClock) {
+    val txFifo = txAsyncFifo.get
+    val rxFifo = rxAsyncFifo.get
+    txFifo.io.readClock := rmii_clock.get
+    txFifo.io.readReset := rmii_reset.get
+    txFifo.io.writeClock := clock
+    txFifo.io.writeReset := !aresetn
+
+    txFifo.io.read.valid <> out_tvalid
+    txFifo.io.read.ready <> out_tready
+    txFifo.io.read.bits.data <> out_tdata
+    txFifo.io.read.bits.last <> out_tlast
+
+    rxFifo.io.readClock := clock
+    rxFifo.io.readReset := !aresetn
+    rxFifo.io.writeClock := rmii_clock.get
+    rxFifo.io.writeReset := rmii_reset.get
+
+    rxFifo.io.write.valid <> in_tvalid
+    rxFifo.io.write.ready <> in_tready
+    rxFifo.io.write.bits.data <> in_tdata
+    rxFifo.io.write.bits.last <> in_tlast
+  
+  }
+
   withClockAndReset(clock, !aresetn) {
     val service = Module(new EthernetService)
     
@@ -59,15 +93,27 @@ class EthernetSystem() extends RawModule {
     txPacketQueue.io.write.bits.data <> service.io.out.bits.data
     txPacketQueue.io.write.bits.last <> service.io.out.bits.last
 
-    rxQueue.io.enq.valid <> in_tvalid
-    rxQueue.io.enq.ready <> in_tready
-    rxQueue.io.enq.bits.data <> in_tdata
-    rxQueue.io.enq.bits.last <> in_tlast
+    if(asyncSystemClock) {
+      rxQueue.io.enq.valid <> rxAsyncFifo.get.io.read.valid
+      rxQueue.io.enq.ready <> rxAsyncFifo.get.io.read.ready
+      rxQueue.io.enq.bits.data <> rxAsyncFifo.get.io.read.bits.data
+      rxQueue.io.enq.bits.last <> rxAsyncFifo.get.io.read.bits.last
 
-    txPacketQueue.io.read.valid <> out_tvalid
-    txPacketQueue.io.read.ready <> out_tready
-    txPacketQueue.io.read.bits.data <> out_tdata
-    txPacketQueue.io.read.bits.last <> out_tlast
+      txPacketQueue.io.read.valid <> txAsyncFifo.get.io.write.valid
+      txPacketQueue.io.read.ready <> txAsyncFifo.get.io.write.ready
+      txPacketQueue.io.read.bits.data <> txAsyncFifo.get.io.write.bits.data
+      txPacketQueue.io.read.bits.last <> txAsyncFifo.get.io.write.bits.last
+    } else {
+      rxQueue.io.enq.valid <> in_tvalid
+      rxQueue.io.enq.ready <> in_tready
+      rxQueue.io.enq.bits.data <> in_tdata
+      rxQueue.io.enq.bits.last <> in_tlast
+
+      txPacketQueue.io.read.valid <> out_tvalid
+      txPacketQueue.io.read.ready <> out_tready
+      txPacketQueue.io.read.bits.data <> out_tdata
+      txPacketQueue.io.read.bits.last <> out_tlast
+    }
 
     val serviceMux = Module(new UdpServiceMux(1, Seq(
       (context => context.destinationPort === 10000.U),
@@ -113,6 +159,13 @@ class EthernetSystem() extends RawModule {
 object ElaborateEthernetSystem extends App {
   (new ChiselStage).emitVerilog(new EthernetSystem, Array(
     "-o", "ethernet_system.v",
+    "--target-dir", "rtl/chisel/ethernet_system",
+  ))
+}
+
+object ElaborateAsyncEthernetSystem extends App {
+  (new ChiselStage).emitVerilog(new EthernetSystem(true), Array(
+    "-o", "ethernet_system_async.v",
     "--target-dir", "rtl/chisel/ethernet_system",
   ))
 }
