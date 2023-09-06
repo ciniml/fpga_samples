@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2023.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+
 package sound
 
 import chisel3._
@@ -26,7 +32,7 @@ class I2sMaster(val numberOfBitsPerChannel: Int, val numberOfCyclesPerChannel: I
     io.dataIn.ready := counter === 1.U && wordSelect && io.clockEnable
     io.wordSelect := wordSelect
     io.dataOut := dataOut
-    
+
     when( io.clockEnable ) {
         when( io.dataIn.ready ) {
             printf(p"counter: ${counter} set:   ${Hexadecimal(nextDataIn)} out: ${nextDataOut}\n")

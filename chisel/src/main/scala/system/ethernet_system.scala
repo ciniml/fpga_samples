@@ -17,7 +17,7 @@ import _root_.util._
 
 
 @chiselName
-class EthernetSystem(asyncSystemClock: Boolean = false) extends RawModule {
+class EthernetSystem(mainClockFrequencyHz: BigInt, asyncSystemClock: Boolean = false) extends RawModule {
   val clock = IO(Input(Clock()))
   val aresetn = IO(Input(Bool()))
   
@@ -134,7 +134,8 @@ class EthernetSystem(asyncSystemClock: Boolean = false) extends RawModule {
     val hub75Height = 32
     val bytesPerPixel = 2
     val numberOfPanels = 2
-    val hub75 = Module(new HUB75Controller(hub75Width, hub75Height, numberOfPanels, pixelComponentBits = 6))
+    val clockDivider = (20000000 + mainClockFrequencyHz - 1) / mainClockFrequencyHz
+    val hub75 = Module(new HUB75Controller(hub75Width, hub75Height, numberOfPanels, pixelComponentBits = 6, clockDivider = clockDivider.toInt))
     //val hub75 = Module(new HUB75Controller(hub75Width, hub75Height, 2))
     val hub75PixelsUpper = Mem(hub75Width*hub75Height, Vec(2, UInt(8.W)))
     val hub75PixelsLower = Mem(hub75Width*hub75Height, Vec(2, UInt(8.W)))
@@ -157,14 +158,14 @@ class EthernetSystem(asyncSystemClock: Boolean = false) extends RawModule {
 }
 
 object ElaborateEthernetSystem extends App {
-  (new ChiselStage).emitVerilog(new EthernetSystem, Array(
+  (new ChiselStage).emitVerilog(new EthernetSystem(50000000), Array(
     "-o", "ethernet_system.v",
     "--target-dir", "rtl/chisel/ethernet_system",
   ))
 }
 
 object ElaborateAsyncEthernetSystem extends App {
-  (new ChiselStage).emitVerilog(new EthernetSystem(true), Array(
+  (new ChiselStage).emitVerilog(new EthernetSystem(20000000, true), Array(
     "-o", "ethernet_system_async.v",
     "--target-dir", "rtl/chisel/ethernet_system",
   ))

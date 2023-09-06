@@ -1075,3 +1075,29 @@ class UdpMemoryWriter(config: EthernetServiceConfig = EthernetServiceConfig.defa
         }
     }
 }
+
+class UdpStreamWriter(config: EthernetServiceConfig = EthernetServiceConfig.default(), streamWidth: Int = 1) extends Module {
+    val io = IO(new Bundle {
+        val port = new UdpServicePort(streamWidth)
+        val dataReceived = Irrevocable(MultiByteSymbol(streamWidth))
+    })
+
+    object State extends ChiselEnum {
+        val Idle, OffsetUpper, OffsetLower, Receiving = Value
+    }
+
+    val state = RegInit(State.Idle)
+    
+    val udpReceiveContextReady = RegInit(false.B)
+    udpReceiveContextReady := true.B
+    io.port.udpReceiveContext.ready := udpReceiveContextReady
+    
+    io.port.udpSendContext.valid := false.B
+    io.port.udpSendContext.bits := UdpContext.default()
+    io.port.udpSendData.valid := false.B
+    io.port.udpSendData.bits.data := 0.U
+    io.port.udpSendData.bits.keep := 0.U
+    io.port.udpSendData.bits.last := false.B
+
+    io.dataReceived <> io.port.udpReceiveData
+}
