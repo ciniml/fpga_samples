@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<wave_config>
+   <wave_state>
+   </wave_state>
+   <db_ref_list>
+      <db_ref path="./test.wdb" id="1">
+         <top_modules>
+            <top_module name="tb" />
+         </top_modules>
+      </db_ref>
+   </db_ref_list>
+   <zoom_setting>
+      <ZoomStartTime time="2.325 ns"></ZoomStartTime>
+      <ZoomEndTime time="892.824 ns"></ZoomEndTime>
+      <Cursor1Time time="795.000 ns"></Cursor1Time>
+   </zoom_setting>
+   <column_width_setting>
+      <NameColumnWidth column_width="264"></NameColumnWidth>
+      <ValueColumnWidth column_width="72"></ValueColumnWidth>
+   </column_width_setting>
+   <WVObjectSize size="19" />
+   <wvobject type="logic" fp_name="/tb/dut_rmii_to_axis/clock">
+      <obj_property name="ElementShortName">clock</obj_property>
+      <obj_property name="ObjectShortName">clock</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut_rmii_to_axis/aresetn">
+      <obj_property name="ElementShortName">aresetn</obj_property>
+      <obj_property name="ObjectShortName">aresetn</obj_property>
+   </wvobject>
+   <wvobject type="array" fp_name="/tb/dut_rmii_to_axis/rmii_d">
+      <obj_property name="ElementShortName">rmii_d[1:0]</obj_property>
+      <obj_property name="ObjectShortName">rmii_d[1:0]</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut_rmii_to_axis/rmii_dv">
+      <obj_property name="ElementShortName">rmii_dv</obj_property>
+      <obj_property name="ObjectShortName">rmii_dv</obj_property>
+   </wvobject>
+   <wvobject type="array" fp_name="/tb/dut_rmii_to_axis/phase">
+      <obj_property name="ElementShortName">phase[1:0]</obj_property>
+      <obj_property name="ObjectShortName">phase[1:0]</obj_property>
+   </wvobject>
+   <wvobject type="array" fp_name="/tb/dut_rmii_to_axis/dv_buf_3">
+      <obj_property name="ElementShortName">dv_buf_3[2:0]</obj_property>
+      <obj_property name="ObjectShortName">dv_buf_3[2:0]</obj_property>
+      <obj_property name="Radix">HEXRADIX</obj_property>
+   </wvobject>
+   <wvobject type="array" fp_name="/tb/dut_rmii_to_axis/d_buf_3">
+      <obj_property name="ElementShortName">d_buf_3[5:0]</obj_property>
+      <obj_property name="ObjectShortName">d_buf_3[5:0]</obj_property>
+      <obj_property name="Radix">HEXRADIX</obj_property>
+   </wvobject>
+   <wvobject type="array" fp_name="/tb/dut_rmii_to_axis/dv_4">
+      <obj_property name="ElementShortName">dv_4[3:0]</obj_property>
+      <obj_property name="ObjectShortName">dv_4[3:0]</obj_property>
+      <obj_property name="Radix">HEXRADIX</obj_property>
+   </wvobject>
+   <wvobject type="array" fp_name="/tb/dut_rmii_to_axis/d_4">
+      <obj_property name="ElementShortName">d_4[7:0]</obj_property>
+      <obj_property name="ObjectShortName">d_4[7:0]</obj_property>
+      <obj_property name="Radix">HEXRADIX</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut_rmii_to_axis/in_frame">
+      <obj_property name="ElementShortName">in_frame</obj_property>
+      <obj_property name="ObjectShortName">in_frame</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut_rmii_to_axis/prev_in_frame">
+      <obj_property name="ElementShortName">prev_in_frame</obj_property>
+      <obj_property name="ObjectShortName">prev_in_frame</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut_rmii_to_axis/maxis_tvalid_next">
+      <obj_property name="ElementShortName">maxis_tvalid_next</obj_property>
+      <obj_property name="ObjectShortName">maxis_tvalid_next</obj_property>
+   </wvobject>
+   <wvobject type="array" fp_name="/tb/dut_rmii_to_axis/maxis_tdata_next">
+      <obj_property name="ElementShortName">maxis_tdata_next[7:0]</obj_property>
+      <obj_property name="ObjectShortName">maxis_tdata_next[7:0]</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut_rmii_to_axis/maxis_tvalid">
+      <obj_property name="ElementShortName">maxis_tvalid</obj_property>
+      <obj_property name="ObjectShortName">maxis_tvalid</obj_property>
+   </wvobject>
+   <wvobject type="array" fp_name="/tb/dut_rmii_to_axis/maxis_tdata">
+      <obj_property name="ElementShortName">maxis_tdata[7:0]</obj_property>
+      <obj_property name="ObjectShortName">maxis_tdata[7:0]</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut_rmii_to_axis/maxis_tuser">
+      <obj_property name="ElementShortName">maxis_tuser</obj_property>
+      <obj_property name="ObjectShortName">maxis_tuser</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut_rmii_to_axis/maxis_tlast">
+      <obj_property name="ElementShortName">maxis_tlast</obj_property>
+      <obj_property name="ObjectShortName">maxis_tlast</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut_rmii_to_axis/sfd_detected">
+      <obj_property name="ElementShortName">sfd_detected</obj_property>
+      <obj_property name="ObjectShortName">sfd_detected</obj_property>
+   </wvobject>
+   <wvobject type="array" fp_name="/tb/dut_rmii_to_axis/SFD">
+      <obj_property name="ElementShortName">SFD[7:0]</obj_property>
+      <obj_property name="ObjectShortName">SFD[7:0]</obj_property>
+   </wvobject>
+</wave_config>

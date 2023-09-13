@@ -1,0 +1,351 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<wave_config>
+   <wave_state>
+   </wave_state>
+   <db_ref_list>
+      <db_ref path="test.wdb" id="1">
+         <top_modules>
+            <top_module name="tb" />
+         </top_modules>
+      </db_ref>
+   </db_ref_list>
+   <zoom_setting>
+      <ZoomStartTime time="2477667fs"></ZoomStartTime>
+      <ZoomEndTime time="2821668fs"></ZoomEndTime>
+      <Cursor1Time time="2615000fs"></Cursor1Time>
+   </zoom_setting>
+   <column_width_setting>
+      <NameColumnWidth column_width="311"></NameColumnWidth>
+      <ValueColumnWidth column_width="205"></ValueColumnWidth>
+   </column_width_setting>
+   <WVObjectSize size="10" />
+   <wvobject type="logic" fp_name="/tb/tb_maxis_if/clock">
+      <obj_property name="ElementShortName">clock</obj_property>
+      <obj_property name="ObjectShortName">clock</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/tb_maxis_if/aresetn">
+      <obj_property name="ElementShortName">aresetn</obj_property>
+      <obj_property name="ObjectShortName">aresetn</obj_property>
+   </wvobject>
+   <wvobject type="group" fp_name="group185">
+      <obj_property name="label">maxis</obj_property>
+      <obj_property name="DisplayName">label</obj_property>
+      <obj_property name="isExpanded"></obj_property>
+      <wvobject type="array" fp_name="/tb/tb_maxis_if/tdata">
+         <obj_property name="ElementShortName">tdata[7:0]</obj_property>
+         <obj_property name="ObjectShortName">tdata[7:0]</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/tb_maxis_if/tvalid">
+         <obj_property name="ElementShortName">tvalid</obj_property>
+         <obj_property name="ObjectShortName">tvalid</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/tb_maxis_if/tready">
+         <obj_property name="ElementShortName">tready</obj_property>
+         <obj_property name="ObjectShortName">tready</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/tb_maxis_if/tlast">
+         <obj_property name="ElementShortName">tlast</obj_property>
+         <obj_property name="ObjectShortName">tlast</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/tb_maxis_if/tkeep">
+         <obj_property name="ElementShortName">tkeep[0:0]</obj_property>
+         <obj_property name="ObjectShortName">tkeep[0:0]</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/tb_maxis_if/tuser">
+         <obj_property name="ElementShortName">tuser[0:0]</obj_property>
+         <obj_property name="ObjectShortName">tuser[0:0]</obj_property>
+      </wvobject>
+   </wvobject>
+   <wvobject type="group" fp_name="group196">
+      <obj_property name="label">saxis</obj_property>
+      <obj_property name="DisplayName">label</obj_property>
+      <obj_property name="isExpanded"></obj_property>
+      <wvobject type="array" fp_name="/tb/tb_saxis_if/tdata">
+         <obj_property name="ElementShortName">tdata[7:0]</obj_property>
+         <obj_property name="ObjectShortName">tdata[7:0]</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/tb_saxis_if/tvalid">
+         <obj_property name="ElementShortName">tvalid</obj_property>
+         <obj_property name="ObjectShortName">tvalid</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/tb_saxis_if/tready">
+         <obj_property name="ElementShortName">tready</obj_property>
+         <obj_property name="ObjectShortName">tready</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/tb_saxis_if/tlast">
+         <obj_property name="ElementShortName">tlast</obj_property>
+         <obj_property name="ObjectShortName">tlast</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/tb_saxis_if/tkeep">
+         <obj_property name="ElementShortName">tkeep[0:0]</obj_property>
+         <obj_property name="ObjectShortName">tkeep[0:0]</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/tb_saxis_if/tuser">
+         <obj_property name="ElementShortName">tuser[0:0]</obj_property>
+         <obj_property name="ObjectShortName">tuser[0:0]</obj_property>
+      </wvobject>
+   </wvobject>
+   <wvobject fp_name="divider989" type="divider">
+      <obj_property name="label">transmitter</obj_property>
+      <obj_property name="DisplayName">label</obj_property>
+   </wvobject>
+   <wvobject type="group" fp_name="group703">
+      <obj_property name="label">axis_to_mii</obj_property>
+      <obj_property name="DisplayName">label</obj_property>
+      <wvobject type="logic" fp_name="/tb/dut_tx/axis_to_mii_inst/clock">
+         <obj_property name="ElementShortName">clock</obj_property>
+         <obj_property name="ObjectShortName">clock</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_tx/axis_to_mii_inst/aresetn">
+         <obj_property name="ElementShortName">aresetn</obj_property>
+         <obj_property name="ObjectShortName">aresetn</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/dut_tx/axis_to_mii_inst/mii_d">
+         <obj_property name="ElementShortName">mii_d[3:0]</obj_property>
+         <obj_property name="ObjectShortName">mii_d[3:0]</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_tx/axis_to_mii_inst/mii_en">
+         <obj_property name="ElementShortName">mii_en</obj_property>
+         <obj_property name="ObjectShortName">mii_en</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_tx/axis_to_mii_inst/mii_er">
+         <obj_property name="ElementShortName">mii_er</obj_property>
+         <obj_property name="ObjectShortName">mii_er</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/dut_tx/axis_to_mii_inst/saxis_tdata">
+         <obj_property name="ElementShortName">saxis_tdata[7:0]</obj_property>
+         <obj_property name="ObjectShortName">saxis_tdata[7:0]</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_tx/axis_to_mii_inst/saxis_tvalid">
+         <obj_property name="ElementShortName">saxis_tvalid</obj_property>
+         <obj_property name="ObjectShortName">saxis_tvalid</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_tx/axis_to_mii_inst/saxis_tready">
+         <obj_property name="ElementShortName">saxis_tready</obj_property>
+         <obj_property name="ObjectShortName">saxis_tready</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_tx/axis_to_mii_inst/saxis_tlast">
+         <obj_property name="ElementShortName">saxis_tlast</obj_property>
+         <obj_property name="ObjectShortName">saxis_tlast</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/dut_tx/axis_to_mii_inst/tdata">
+         <obj_property name="ElementShortName">tdata[7:0]</obj_property>
+         <obj_property name="ObjectShortName">tdata[7:0]</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_tx/axis_to_mii_inst/tlast">
+         <obj_property name="ElementShortName">tlast</obj_property>
+         <obj_property name="ObjectShortName">tlast</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/dut_tx/axis_to_mii_inst/state">
+         <obj_property name="ElementShortName">state[31:0]</obj_property>
+         <obj_property name="ObjectShortName">state[31:0]</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/dut_tx/axis_to_mii_inst/interframe">
+         <obj_property name="ElementShortName">interframe[23:0]</obj_property>
+         <obj_property name="ObjectShortName">interframe[23:0]</obj_property>
+      </wvobject>
+   </wvobject>
+   <wvobject fp_name="divider734" type="divider">
+      <obj_property name="label">receiver</obj_property>
+      <obj_property name="DisplayName">label</obj_property>
+   </wvobject>
+   <wvobject type="group" fp_name="group396">
+      <obj_property name="label">mii_to_axis</obj_property>
+      <obj_property name="DisplayName">label</obj_property>
+      <obj_property name="isExpanded"></obj_property>
+      <wvobject type="logic" fp_name="/tb/dut_rx/mii_to_axis_inst/clock">
+         <obj_property name="ElementShortName">clock</obj_property>
+         <obj_property name="ObjectShortName">clock</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/mii_to_axis_inst/aresetn">
+         <obj_property name="ElementShortName">aresetn</obj_property>
+         <obj_property name="ObjectShortName">aresetn</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/dut_rx/mii_to_axis_inst/mii_d">
+         <obj_property name="ElementShortName">mii_d[3:0]</obj_property>
+         <obj_property name="ObjectShortName">mii_d[3:0]</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/mii_to_axis_inst/mii_dv">
+         <obj_property name="ElementShortName">mii_dv</obj_property>
+         <obj_property name="ObjectShortName">mii_dv</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/mii_to_axis_inst/mii_er">
+         <obj_property name="ElementShortName">mii_er</obj_property>
+         <obj_property name="ObjectShortName">mii_er</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/dut_rx/mii_to_axis_inst/maxis_tdata">
+         <obj_property name="ElementShortName">maxis_tdata[7:0]</obj_property>
+         <obj_property name="ObjectShortName">maxis_tdata[7:0]</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/mii_to_axis_inst/maxis_tvalid">
+         <obj_property name="ElementShortName">maxis_tvalid</obj_property>
+         <obj_property name="ObjectShortName">maxis_tvalid</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/mii_to_axis_inst/maxis_tuser">
+         <obj_property name="ElementShortName">maxis_tuser</obj_property>
+         <obj_property name="ObjectShortName">maxis_tuser</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/mii_to_axis_inst/maxis_tlast">
+         <obj_property name="ElementShortName">maxis_tlast</obj_property>
+         <obj_property name="ObjectShortName">maxis_tlast</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/mii_to_axis_inst/prev_is_sfd_lower">
+         <obj_property name="ElementShortName">prev_is_sfd_lower</obj_property>
+         <obj_property name="ObjectShortName">prev_is_sfd_lower</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/mii_to_axis_inst/sfd_detected">
+         <obj_property name="ElementShortName">sfd_detected</obj_property>
+         <obj_property name="ObjectShortName">sfd_detected</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/mii_to_axis_inst/phase">
+         <obj_property name="ElementShortName">phase</obj_property>
+         <obj_property name="ObjectShortName">phase</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/mii_to_axis_inst/prev_in_frame">
+         <obj_property name="ElementShortName">prev_in_frame</obj_property>
+         <obj_property name="ObjectShortName">prev_in_frame</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/mii_to_axis_inst/in_frame">
+         <obj_property name="ElementShortName">in_frame</obj_property>
+         <obj_property name="ObjectShortName">in_frame</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/dut_rx/mii_to_axis_inst/tdata">
+         <obj_property name="ElementShortName">tdata[7:0]</obj_property>
+         <obj_property name="ObjectShortName">tdata[7:0]</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/mii_to_axis_inst/tuser">
+         <obj_property name="ElementShortName">tuser</obj_property>
+         <obj_property name="ObjectShortName">tuser</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/dut_rx/mii_to_axis_inst/SFD">
+         <obj_property name="ElementShortName">SFD[7:0]</obj_property>
+         <obj_property name="ObjectShortName">SFD[7:0]</obj_property>
+      </wvobject>
+   </wvobject>
+   <wvobject type="group" fp_name="group410">
+      <obj_property name="label">fifo</obj_property>
+      <obj_property name="DisplayName">label</obj_property>
+      <obj_property name="isExpanded"></obj_property>
+      <wvobject type="logic" fp_name="/tb/dut_rx/fifo_inst/clock">
+         <obj_property name="ElementShortName">clock</obj_property>
+         <obj_property name="ObjectShortName">clock</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/fifo_inst/aresetn">
+         <obj_property name="ElementShortName">aresetn</obj_property>
+         <obj_property name="ObjectShortName">aresetn</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/dut_rx/fifo_inst/saxis_tdata">
+         <obj_property name="ElementShortName">saxis_tdata[9:0]</obj_property>
+         <obj_property name="ObjectShortName">saxis_tdata[9:0]</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/fifo_inst/saxis_tvalid">
+         <obj_property name="ElementShortName">saxis_tvalid</obj_property>
+         <obj_property name="ObjectShortName">saxis_tvalid</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/fifo_inst/saxis_tready">
+         <obj_property name="ElementShortName">saxis_tready</obj_property>
+         <obj_property name="ObjectShortName">saxis_tready</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/dut_rx/fifo_inst/maxis_tdata">
+         <obj_property name="ElementShortName">maxis_tdata[9:0]</obj_property>
+         <obj_property name="ObjectShortName">maxis_tdata[9:0]</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/fifo_inst/maxis_tvalid">
+         <obj_property name="ElementShortName">maxis_tvalid</obj_property>
+         <obj_property name="ObjectShortName">maxis_tvalid</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/fifo_inst/maxis_tready">
+         <obj_property name="ElementShortName">maxis_tready</obj_property>
+         <obj_property name="ObjectShortName">maxis_tready</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/dut_rx/fifo_inst/index_r">
+         <obj_property name="ElementShortName">index_r[4:0]</obj_property>
+         <obj_property name="ObjectShortName">index_r[4:0]</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/dut_rx/fifo_inst/index_w">
+         <obj_property name="ElementShortName">index_w[4:0]</obj_property>
+         <obj_property name="ObjectShortName">index_w[4:0]</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/dut_rx/fifo_inst/memory">
+         <obj_property name="ElementShortName">memory[15:0][9:0]</obj_property>
+         <obj_property name="ObjectShortName">memory[15:0][9:0]</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/dut_rx/fifo_inst/DATA_BITS">
+         <obj_property name="ElementShortName">DATA_BITS[31:0]</obj_property>
+         <obj_property name="ObjectShortName">DATA_BITS[31:0]</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/dut_rx/fifo_inst/DEPTH_BITS">
+         <obj_property name="ElementShortName">DEPTH_BITS[31:0]</obj_property>
+         <obj_property name="ObjectShortName">DEPTH_BITS[31:0]</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/dut_rx/fifo_out_tdata">
+         <obj_property name="ElementShortName">fifo_out_tdata</obj_property>
+         <obj_property name="ObjectShortName">fifo_out_tdata</obj_property>
+      </wvobject>
+   </wvobject>
+   <wvobject type="group" fp_name="group468">
+      <obj_property name="label">remove_crc</obj_property>
+      <obj_property name="DisplayName">label</obj_property>
+      <obj_property name="isExpanded"></obj_property>
+      <wvobject type="logic" fp_name="/tb/dut_rx/remove_crc_inst/clock">
+         <obj_property name="ElementShortName">clock</obj_property>
+         <obj_property name="ObjectShortName">clock</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/remove_crc_inst/aresetn">
+         <obj_property name="ElementShortName">aresetn</obj_property>
+         <obj_property name="ObjectShortName">aresetn</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/dut_rx/remove_crc_inst/saxis_tdata">
+         <obj_property name="ElementShortName">saxis_tdata[7:0]</obj_property>
+         <obj_property name="ObjectShortName">saxis_tdata[7:0]</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/remove_crc_inst/saxis_tvalid">
+         <obj_property name="ElementShortName">saxis_tvalid</obj_property>
+         <obj_property name="ObjectShortName">saxis_tvalid</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/remove_crc_inst/saxis_tready">
+         <obj_property name="ElementShortName">saxis_tready</obj_property>
+         <obj_property name="ObjectShortName">saxis_tready</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/remove_crc_inst/saxis_tlast">
+         <obj_property name="ElementShortName">saxis_tlast</obj_property>
+         <obj_property name="ObjectShortName">saxis_tlast</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/remove_crc_inst/saxis_tuser">
+         <obj_property name="ElementShortName">saxis_tuser</obj_property>
+         <obj_property name="ObjectShortName">saxis_tuser</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/dut_rx/remove_crc_inst/maxis_tdata">
+         <obj_property name="ElementShortName">maxis_tdata[7:0]</obj_property>
+         <obj_property name="ObjectShortName">maxis_tdata[7:0]</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/remove_crc_inst/maxis_tvalid">
+         <obj_property name="ElementShortName">maxis_tvalid</obj_property>
+         <obj_property name="ObjectShortName">maxis_tvalid</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/remove_crc_inst/maxis_tready">
+         <obj_property name="ElementShortName">maxis_tready</obj_property>
+         <obj_property name="ObjectShortName">maxis_tready</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/remove_crc_inst/maxis_tlast">
+         <obj_property name="ElementShortName">maxis_tlast</obj_property>
+         <obj_property name="ObjectShortName">maxis_tlast</obj_property>
+      </wvobject>
+      <wvobject type="logic" fp_name="/tb/dut_rx/remove_crc_inst/maxis_tuser">
+         <obj_property name="ElementShortName">maxis_tuser</obj_property>
+         <obj_property name="ObjectShortName">maxis_tuser</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/dut_rx/remove_crc_inst/crc">
+         <obj_property name="ElementShortName">crc[31:0]</obj_property>
+         <obj_property name="ObjectShortName">crc[31:0]</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/dut_rx/remove_crc_inst/buffer">
+         <obj_property name="ElementShortName">buffer[31:0]</obj_property>
+         <obj_property name="ObjectShortName">buffer[31:0]</obj_property>
+      </wvobject>
+      <wvobject type="array" fp_name="/tb/dut_rx/remove_crc_inst/state">
+         <obj_property name="ElementShortName">state[31:0]</obj_property>
+         <obj_property name="ObjectShortName">state[31:0]</obj_property>
+      </wvobject>
+   </wvobject>
+</wave_config>

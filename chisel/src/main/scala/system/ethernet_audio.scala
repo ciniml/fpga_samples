@@ -117,13 +117,16 @@ class EthernetAudioSystem(mainClockFrequencyHz: BigInt) extends RawModule {
     serviceMux.io.servicePorts(1) <> udpGpio.io.port
     gpio_out := udpGpio.io.gpioOut
     udpGpio.io.gpioIn := gpio_in
+    val volumeControl = udpGpio.io.gpioOut(71, 8)
 
     val sampleRate = 48000
     val master = Module(new I2sMaster(16, (mainClockFrequencyHz / sampleRate / 2).toInt, 0))
-    val audioMixer = Module(new AudioMixer(16, audioChannels, 0))
-
+    val audioMixer = Module(new AudioMixerXls(16, audioChannels, 0))
+    val audioSampler = Module(new AudioSampler(16, audioChannels, 0, (mainClockFrequencyHz / sampleRate).toInt))
     for(channelIndex <- 0 until audioMixer.channels) {
-      val udpStream = Module(new UdpStreamWriter())
+      val audioBufferSize = 2048
+      val backPressureThreshold = audioBufferSize * 3 / 4
+      val udpStream = Module(new UdpStreamWriter(backPressureMaxBufferSize = Some(audioBufferSize)))
       serviceMux.io.servicePorts(2 + channelIndex) <> udpStream.io.port
       
       val widthConverter = Module(WidthConverter(8, 32))
@@ -137,16 +140,26 @@ class EthernetAudioSystem(mainClockFrequencyHz: BigInt) extends RawModule {
       widthConverterDeq.ready <> widthConverter.io.deq.ready
       widthConverterDeq.bits  <> widthConverter.io.deq.bits.data
       
-      val audioBuffer = Module(new AudioBuffer(32, 4096, 2048))
+      val audioBuffer = Module(new AudioBuffer(32, audioBufferSize, audioBufferSize))
       audioBuffer.io.dataIn <> widthConverterDeq
-      
+      audioSampler.io.dataIn(channelIndex) <> audioBuffer.io.dataOut
+      val audioBufferFilled = audioBuffer.io.bufferedEntries >= backPressureThreshold.U
+      val audioBufferFilledReg = RegNext(audioBufferFilled, false.B)
+      val backPressure = udpStream.io.backPressure.get
+      backPressure.valid := audioBufferFilledReg && !audioBufferFilled
+      backPressure.bits := audioBuffer.io.bufferedEntries
+
       if( channelIndex == 0 ) { 
-        audioMixer.io.dataIn(channelIndex) <> audioBuffer.io.dataOut
+        audioMixer.io.dataIn(channelIndex) <> audioSampler.io.dataOut(channelIndex)
       } else {
         val filter = Module(new AudioMovingAverageFilter(16, 8))
-        filter.io.dataIn <> audioBuffer.io.dataOut
+        filter.io.dataIn <> audioSampler.io.dataOut(channelIndex)
         audioMixer.io.dataIn(channelIndex) <> filter.io.dataOut
       }
+
+      audioMixer.io.volumeIn(channelIndex).bits := volumeControl(32*(channelIndex + 1)-1, 32*channelIndex) // "x80008000".U
+      audioMixer.io.volumeIn(channelIndex).valid := true.B
+
       if( channelIndex == 0 ) {
         dbg_buffering := audioBuffer.io.buffering
       }
@@ -174,9 +187,15 @@ class EthernetAudioSystem(mainClockFrequencyHz: BigInt) extends RawModule {
   }
 }
 
+/**
+  * Elaborate EthernetAudioSystem.
+  * 
+  */
 object ElaborateEthernetAudioSystem extends App {
-  (new ChiselStage).emitVerilog(new EthernetAudioSystem(36000000), Array(
+  val directory = args(0)
+  val mainClockFrequencyHz = args(1).toInt
+  (new ChiselStage).emitVerilog(new EthernetAudioSystem(mainClockFrequencyHz = mainClockFrequencyHz), Array(
     "-o", "ethernet_audio.v",
-    "--target-dir", "rtl/chisel/ethernet_audio",
+    "--target-dir", directory,
   ))
 }
