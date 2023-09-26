@@ -15,10 +15,12 @@ IO_LOC  "out_bclk_dbg"  B11;
 IO_LOC  "out_data_dbg"  D11;
 IO_LOC  "out_ws_dbg"    N7;
 IO_LOC  "dbg_buffering" N8;
+IO_LOC  "dbg_probeOut"  E15;
 IO_PORT "out_bclk_dbg"  IO_TYPE=LVCMOS33;
 IO_PORT "out_data_dbg"  IO_TYPE=LVCMOS33;
 IO_PORT "out_ws_dbg"    IO_TYPE=LVCMOS33;
 IO_PORT "dbg_buffering" IO_TYPE=LVCMOS33;
+IO_PORT "dbg_probeOut"  IO_TYPE=LVCMOS33;
 
 IO_LOC "button_s0" T10;
 IO_LOC "button_s1" T3;

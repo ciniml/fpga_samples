@@ -14,7 +14,8 @@ import chisel3.stage.ChiselStage
 import ethernet._
 import sound._
 import _root_.util._
-
+import diag.{Probe, ProbeFrameAdapter}
+import uart.UartTx
 
 @chiselName
 class EthernetAudioSystem(mainClockFrequencyHz: BigInt) extends RawModule {
@@ -42,13 +43,7 @@ class EthernetAudioSystem(mainClockFrequencyHz: BigInt) extends RawModule {
   val out_data = IO(Output(Bool()))
 
   val dbg_buffering = IO(Output(Bool()))
-
-  def rgb565ToRgb666(rgb565: UInt): UInt = {
-    val r = Cat(rgb565(15, 11), rgb565(15))
-    val g = rgb565(10, 5)
-    val b = Cat(rgb565(4, 0), rgb565(4))
-    Cat(r, g, b)
-  }
+  val dbg_probeOut = IO(Output(Bool()))
 
   val txAsyncFifo = withClockAndReset(rmii_clock, rmii_reset) { Module(new AsyncFIFO(Flushable(UInt(8.W)), 3))}
   val rxAsyncFifo = withClockAndReset(rmii_clock, rmii_reset) { Module(new AsyncFIFO(Flushable(UInt(8.W)), 3))}
@@ -119,6 +114,8 @@ class EthernetAudioSystem(mainClockFrequencyHz: BigInt) extends RawModule {
     udpGpio.io.gpioIn := gpio_in
     val volumeControl = udpGpio.io.gpioOut(71, 8)
 
+    val dbg_bufferCount = WireDefault(0.U(32.W))
+
     val sampleRate = 48000
     val master = Module(new I2sMaster(16, (mainClockFrequencyHz / sampleRate / 2).toInt, 0))
     val audioMixer = Module(new AudioMixerXls(16, audioChannels, 0))
@@ -162,6 +159,7 @@ class EthernetAudioSystem(mainClockFrequencyHz: BigInt) extends RawModule {
 
       if( channelIndex == 0 ) {
         dbg_buffering := audioBuffer.io.buffering
+        dbg_bufferCount := audioBuffer.io.bufferedEntries
       }
     }
 
@@ -184,6 +182,16 @@ class EthernetAudioSystem(mainClockFrequencyHz: BigInt) extends RawModule {
     out_bclk := clock.asBool
     out_data := master.io.dataOut
     out_ws := master.io.wordSelect
+
+    // Construct embedded logic probe
+    val probe = Module(new diag.Probe(new diag.ProbeConfig(bufferDepth = 512, triggerPosition = 512 - 16), 33))
+    probe.io.in := Cat(dbg_buffering, dbg_bufferCount)
+    probe.io.trigger := dbg_buffering
+    val probeFrameAdapter = Module(new diag.ProbeFrameAdapter(probe.width))
+    probeFrameAdapter.io.in <> probe.io.out
+    val probeUartTx = Module(new UartTx(numberOfBits = 8, baudDivider = (mainClockFrequencyHz / BigInt(115200)).toInt))
+    probeUartTx.io.in <> probeFrameAdapter.io.out
+    dbg_probeOut := probeUartTx.io.tx
   }
 }
 

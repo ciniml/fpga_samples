@@ -41,7 +41,8 @@ module top(
     output logic out_bclk_dbg,
     output logic out_data_dbg,
     output logic out_ws_dbg,
-    output logic dbg_buffering
+    output logic dbg_buffering,
+    output logic dbg_probeOut
 );
 
 logic rmii_reset;
@@ -122,7 +123,8 @@ EthernetAudioSystem ethernet_audio_system_inst (
   .out_bclk(out_bclk),
   .out_data(out_data),
   .out_ws(out_ws),
-  .dbg_buffering(dbg_buffering)
+  .dbg_buffering(dbg_buffering),
+  .dbg_probeOut(dbg_probeOut)
 );
 
 // Connect I2S signals for debugging
