@@ -119,15 +119,17 @@ class UdpServiceMux( streamWidth: Int = 1, serviceMap: Seq[UdpContext => Bool]) 
             // Since it is not possible to select seviceMap by muxSelect signal at runtime, 
             // we must generate selectors by comparing muxSelect and channelIndex.
             when(muxSelect === channelIndex.U) {
+                val contextSent = WireDefault(false.B)
                 when( io.servicePorts(channelIndex).udpSendContext.valid && io.servicePorts(channelIndex).udpSendContext.ready ) {
                     contextMuxEnable := false.B
+                    contextSent := true.B
                     when( !dataMuxEnable ) {
                         muxInPacket := false.B
                     }
                 }
                 when( io.servicePorts(channelIndex).udpSendData.valid && io.servicePorts(channelIndex).udpSendData.ready && io.servicePorts(channelIndex).udpSendData.bits.last ) {
                     dataMuxEnable := false.B
-                    when( !contextMuxEnable ) {
+                    when( !contextMuxEnable || contextSent) {
                         muxInPacket := false.B
                     }
                 }
