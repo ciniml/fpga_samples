@@ -1001,12 +1001,18 @@ class UdpGpio(config: EthernetServiceConfig = EthernetServiceConfig.default(), s
 }
 
 
-class UdpMemoryWriter(config: EthernetServiceConfig = EthernetServiceConfig.default(), streamWidth: Int = 1, numMemoryBytes: Int = 1024) extends Module {
+class UdpMemoryWriter(config: EthernetServiceConfig = EthernetServiceConfig.default(), streamWidth: Int = 1, numMemoryBytes: Int = 1024, backPressureDataSize: Option[Int] = None, enableDebug: Boolean = false) extends Module {
     val io = IO(new Bundle {
         val port = new UdpServicePort(streamWidth)
         val address = Output(UInt(log2Ceil(numMemoryBytes).W))
         val data = Output(UInt((streamWidth*8).W))
         val writeEnable = Output(Bool())
+        val backPressure = backPressureDataSize match {
+            case Some(backPressureDataSize) => Some(Flipped(Irrevocable(UInt(backPressureDataSize.W))))
+            case None => None
+        }
+        val sendPortValid = if(enableDebug) Some(Output(Bool())) else None
+        val sendContextValid = if(enableDebug) Some(Output(Bool())) else None
     })
 
     object State extends ChiselEnum {
@@ -1071,6 +1077,101 @@ class UdpMemoryWriter(config: EthernetServiceConfig = EthernetServiceConfig.defa
                 when(io.port.udpReceiveData.bits.last) {
                     state := State.Idle
                 }
+            }
+        }
+    }
+    
+    backPressureDataSize match {
+        case Some(backPressureDataSize) => {
+            object BackPressureState extends ChiselEnum {
+                val Idle, SendBackPressurePayload = Value
+            }
+
+            val state = RegInit(BackPressureState.Idle)
+
+            val backPressurePort = io.backPressure.get
+            val backPressure = RegInit(0.U(backPressureDataSize.W))
+            val backPressureDataSizeBytes = (backPressureDataSize + 7) / 8  // Number of bytes required to store back pressure data.
+            val backPressurePayloadSize = backPressureDataSizeBytes         // Number of bytes of back pressure payload.
+            val sendPortValid = RegInit(false.B)
+
+            // Store send context.
+            val sendContext = RegInit(UdpContext.default())
+            val sendContextValid = RegInit(false.B)
+            when( io.port.udpReceiveContext.fire && state === BackPressureState.Idle ) {
+                sendContext.dataLength := (8 + backPressurePayloadSize).U
+                sendContext.sourceAddress := io.port.udpReceiveContext.bits.destinationAddress
+                sendContext.sourcePort := io.port.udpReceiveContext.bits.destinationPort
+                sendContext.sourceMacAddress := io.port.udpReceiveContext.bits.destinationMacAddress
+                sendContext.destinationAddress := io.port.udpReceiveContext.bits.sourceAddress
+                sendContext.destinationPort := io.port.udpReceiveContext.bits.sourcePort
+                sendContext.destinationMacAddress := io.port.udpReceiveContext.bits.sourceMacAddress
+                sendContextValid := true.B
+            }
+
+            when(io.port.udpSendContext.fire) {
+                sendPortValid := false.B
+            }
+
+            // Payload bytes
+            // 0 - backPressureDataSizeBytes                                 : back pressure byte
+            val payloadIndex = RegInit(0.U(log2Ceil(backPressurePayloadSize + 1).W))
+            val backPressureValue = Cat(0.U((8 - backPressureDataSize%8).W),  backPressure)
+            
+            io.port.udpSendData.valid := state === BackPressureState.SendBackPressurePayload
+            io.port.udpSendData.bits.keep := 1.U
+            val backPressureData = WireDefault(0.U(8.W))
+            io.port.udpSendData.bits.data := backPressureData
+            for(i <- 0 to backPressureDataSizeBytes - 1) {
+                when(payloadIndex === i.U) {
+                    backPressureData := backPressureValue(8 * (backPressureDataSizeBytes - i) - 1, 8 * (backPressureDataSizeBytes - i - 1))
+                }
+            }
+
+            // Assert last when the last byte is sent.
+            io.port.udpSendData.bits.last := payloadIndex === (backPressurePayloadSize - 1).U
+
+            backPressurePort.ready := state === BackPressureState.Idle && sendContextValid && !sendPortValid
+            switch(state) {
+                is(BackPressureState.Idle) {
+                    // If back pressure is asserted and send context is available, send back pressure payload.
+                    when( backPressurePort.fire ) {
+                        backPressure := backPressurePort.bits
+                        state := BackPressureState.SendBackPressurePayload
+                        payloadIndex := 0.U
+                        sendPortValid := true.B // Send context
+                    }
+                }
+                is(BackPressureState.SendBackPressurePayload) {
+                    when( io.port.udpSendData.fire ) {
+                        payloadIndex := payloadIndex + 1.U
+                        when( payloadIndex === (backPressurePayloadSize - 1).U ) {
+                            state := BackPressureState.Idle
+                        }
+                    }
+                }
+            }
+
+            io.port.udpSendContext.valid := sendPortValid
+            io.port.udpSendContext.bits := sendContext
+
+            if( enableDebug ) {
+                io.sendPortValid.get := sendPortValid
+                io.sendContextValid.get := sendContextValid
+            }
+        }
+        case None => {
+            // No backpressure.
+            io.port.udpSendContext.valid := false.B
+            io.port.udpSendContext.bits := UdpContext.default()
+            io.port.udpSendData.valid := false.B
+            io.port.udpSendData.bits.data := 0.U
+            io.port.udpSendData.bits.keep := 0.U
+            io.port.udpSendData.bits.last := false.B
+
+            if( enableDebug ) {
+                io.sendPortValid.get := false.B
+                io.sendContextValid.get := false.B
             }
         }
     }
