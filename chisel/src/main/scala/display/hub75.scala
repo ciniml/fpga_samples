@@ -39,11 +39,13 @@ class HUB75Controller(width: Int = 64, height: Int = 16, numberOfParallelPanels:
     val io = IO(new Bundle{
         val hub75 = HUB75IO(numberOfParallelPanels)
         val panelPixels = Vec(numberOfParallelPanels, PixelBufferIO(3*pixelComponentBits, width*height))
+        val startOfFrame = Output(Bool())
+        val endOfFrame = Output(Bool())
     })
     val brightnessInitPattern = "b0000011111100000".U(16.W)
     val enableOutputPattern = "b0000001000000000".U(16.W)
     val MAX_PULSE_COUNT = (BigInt(1) << (pixelComponentBits)) - BigInt(1)
-    val BASE_OUTPUT_CYCLES = 8
+    val BASE_OUTPUT_CYCLES = 16
     val FULL_WIDTH_OUTPUT_CYCLES = (BigInt(1) << pixelComponentBits) * BigInt(BASE_OUTPUT_CYCLES)
     object State extends ChiselEnum {
         val Reset, InitBrightness, InitOutput, StartFrame, SetupRow, OutputRow, WaitOutputEnable, NextRow, Running = Value
@@ -64,6 +66,11 @@ class HUB75Controller(width: Int = 64, height: Int = 16, numberOfParallelPanels:
     val clk = RegInit(false.B)
     val clockCounter = RegInit(0.U(Math.max(log2Ceil(clockDivider + 1), 1).W))
     val outPhase = RegInit(false.B)
+
+    // Output start of frame trigger for synchronization.
+    io.startOfFrame := state === State.StartFrame
+    val endOfFrame = WireDefault(false.B)
+    io.endOfFrame := endOfFrame
 
     io.hub75.clk := clk
     io.hub75.row_a := yCounter(0)
@@ -88,12 +95,17 @@ class HUB75Controller(width: Int = 64, height: Int = 16, numberOfParallelPanels:
 
     val clockEnable = WireDefault(false.B)
     when(state =/= State.Reset) {
-        when( clockCounter === 0.U ) {
+        if( clockDivider == 0 ) {
             clk := !clk
             clockEnable := true.B
-            clockCounter := clockDivider.U
-        } .otherwise {
-            clockCounter := clockCounter - 1.U
+        } else {
+            when( clockCounter === 0.U ) {
+                clk := !clk
+                clockEnable := true.B
+                clockCounter := clockDivider.U
+            } .otherwise {
+                clockCounter := clockCounter - 1.U
+            }
         }
     }
 
@@ -222,6 +234,7 @@ class HUB75Controller(width: Int = 64, height: Int = 16, numberOfParallelPanels:
         is(State.NextRow) {
             when( yCounter === (height - 1).U ) {
                 state := State.StartFrame
+                endOfFrame := true.B
             } .otherwise {
                 yCounter := yCounter + 1.U
                 state := State.SetupRow
