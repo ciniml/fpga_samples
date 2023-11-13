@@ -1,0 +1,52 @@
+struct State {
+  buffer: s16[8],
+  accumulator: s19,
+  index: u3,
+  filled: u1,
+}
+
+proc moving_average {
+    input_consumer: chan<s16> in;
+    output_producer: chan<s16> out;
+    
+    init { State { buffer: s16[8]:[s16:0, ...], accumulator: s19:0, index: u3:0, filled: u1:0 } }
+
+    config(input_consumer: chan<s16> in, output_producer: chan<s16> out) {
+      (input_consumer, output_producer)
+    }
+
+    next(tok: token, state: State) {
+      let (tok, input) = recv(tok, input_consumer);
+      let old = if state.filled { state.buffer[state.index] } else { s16:0 };
+      let accumulator = (state.accumulator - old as s19) + input as s19;
+      let index = state.index + u3:1;
+      let filled = state.filled || state.index == u3:7;
+      let buffer = update(state.buffer, state.index, input);
+      let tok = send(tok, output_producer, (accumulator >> 3) as s16);
+      State { buffer, accumulator, index, filled }
+    }
+}
+
+#[test_proc]
+proc smoke_test {
+    input_s: chan<s16> out;
+    output_r: chan<s16> in;
+    terminator: chan<bool> out;
+
+    init { () }
+
+    config(terminator: chan<bool> out) {
+        let (input_s, input_r) = chan<s16>;
+        let (output_s, output_r) = chan<s16>;
+        spawn moving_average(input_r, output_s);
+        (input_s, output_r, terminator)
+    }
+
+    next(tok: token, state: ()) {
+        let tok = send(tok, input_s, s16:0);
+        let (tok, result) = recv(tok, output_r);
+        assert_eq(result, s16:0);
+
+        let tok = send(tok, terminator, true);
+    }
+}
