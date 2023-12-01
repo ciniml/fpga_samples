@@ -42,7 +42,7 @@ scan:
 run: $(BITSTREAM)
 ifeq ($(USE_OPENFPGA_LOADER),0)
 	if lsmod | grep ftdi_sio; then sudo modprobe -r ftdi_sio; fi
-	cd $(PROGRAMMER_CLI_DIR); ./programmer_cli $(PROGRAMMER_CABLE) --device $(DEVICE) --run 2 --fsFile $(abspath $(BITSTREAM))
+	cd $(PROGRAMMER_CLI_DIR); ./programmer_cli $(PROGRAMMER_CABLE) $(CABLE_INDEX_OPT) --device $(DEVICE) --run 2 --fsFile $(abspath $(BITSTREAM))
 else
 	$(OPENFPGA_LOADER) $(OPENFPGA_LOADER_TARGET) --write-sram $(abspath $(BITSTREAM))
 endif
@@ -50,9 +50,9 @@ endif
 deploy: $(BITSTREAM)
 ifeq ($(USE_OPENFPGA_LOADER),0)
 	if lsmod | grep ftdi_sio; then sudo modprobe -r ftdi_sio; fi
-	cd $(PROGRAMMER_CLI_DIR); ./programmer_cli $(PROGRAMMER_CABLE) --device $(DEVICE) --run 6 --fsFile $(abspath $(BITSTREAM))
+	cd $(PROGRAMMER_CLI_DIR); ./programmer_cli $(PROGRAMMER_CABLE) $(CABLE_INDEX_OPT) --device $(DEVICE) --run 6 --fsFile $(abspath $(BITSTREAM))
 else
-	$(OPENFPGA_LOADER) $(OPENFPGA_LOADER_TARGET) --write-flash $(abspath $(BITSTREAM))
+	$(OPENFPGA_LOADER) $(OPENFPGA_LOADER_TARGET) --write-flash $(abspath $(BITSTREAM)) --unprotect-flash
 endif
 
 clean:

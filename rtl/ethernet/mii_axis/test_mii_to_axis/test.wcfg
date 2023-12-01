@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<wave_config>
+   <wave_state>
+   </wave_state>
+   <db_ref_list>
+      <db_ref path="./test.wdb" id="1">
+         <top_modules>
+            <top_module name="tb" />
+         </top_modules>
+      </db_ref>
+   </db_ref_list>
+   <zoom_setting>
+      <ZoomStartTime time="0fs"></ZoomStartTime>
+      <ZoomEndTime time="176601fs"></ZoomEndTime>
+      <Cursor1Time time="125000fs"></Cursor1Time>
+   </zoom_setting>
+   <column_width_setting>
+      <NameColumnWidth column_width="492"></NameColumnWidth>
+      <ValueColumnWidth column_width="116"></ValueColumnWidth>
+   </column_width_setting>
+   <WVObjectSize size="9" />
+   <wvobject type="logic" fp_name="/tb/clock">
+      <obj_property name="ElementShortName">clock</obj_property>
+      <obj_property name="ObjectShortName">clock</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/aresetn">
+      <obj_property name="ElementShortName">aresetn</obj_property>
+      <obj_property name="ObjectShortName">aresetn</obj_property>
+   </wvobject>
+   <wvobject type="array" fp_name="/tb/mii_d">
+      <obj_property name="ElementShortName">mii_d[3:0]</obj_property>
+      <obj_property name="ObjectShortName">mii_d[3:0]</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/mii_dv">
+      <obj_property name="ElementShortName">mii_dv</obj_property>
+      <obj_property name="ObjectShortName">mii_dv</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/mii_er">
+      <obj_property name="ElementShortName">mii_er</obj_property>
+      <obj_property name="ObjectShortName">mii_er</obj_property>
+   </wvobject>
+   <wvobject type="array" fp_name="/tb/maxis_tdata">
+      <obj_property name="ElementShortName">maxis_tdata[7:0]</obj_property>
+      <obj_property name="ObjectShortName">maxis_tdata[7:0]</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/maxis_tvalid">
+      <obj_property name="ElementShortName">maxis_tvalid</obj_property>
+      <obj_property name="ObjectShortName">maxis_tvalid</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/maxis_tuser">
+      <obj_property name="ElementShortName">maxis_tuser</obj_property>
+      <obj_property name="ObjectShortName">maxis_tuser</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/maxis_tlast">
+      <obj_property name="ElementShortName">maxis_tlast</obj_property>
+      <obj_property name="ObjectShortName">maxis_tlast</obj_property>
+   </wvobject>
+</wave_config>

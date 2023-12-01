@@ -1,0 +1,104 @@
+
+proc mixer_body<N: u32, M: u32> {
+    inputs_ch: chan<s16[M][N]> in;
+    volumes_ch: chan<u16[M][N]> in;
+    output_ch: chan<s16[M]> out;
+    
+    init { () }
+
+    config(inputs_ch: chan<s16[M][N]> in, volumes_ch: chan<u16[M][N]> in, output_ch: chan<s16[M]> out) {
+      (inputs_ch, volumes_ch, output_ch)
+    }
+
+    next(tok: token, state: ()) {
+      let (tok_volume, volumes) = recv(tok, volumes_ch);
+      let (tok, inputs) = recv(tok, inputs_ch);
+      let outputs = for (i, outputs) : (u32, s16[M]) in range(u32:0, M) {
+        let acc = for(j, acc) : (u32, s32) in range(u32:0, N) {
+          acc + ((inputs[j][i] as s32) * (volumes[j][i] as s32))
+        }(s32:0);
+        update(outputs, i, ((acc / (N as s32)) as u32)[-17:-1] as s16)
+      }(s16[M]:[s16:0, ...]);
+      send(tok, output_ch, outputs);
+    }
+}
+
+proc mixer {
+    init { () }
+
+    config(inputs_ch: chan<s16[2][2]> in, volumes_ch: chan<u16[2][2]> in, output_ch: chan<s16[2]> out) {
+      spawn mixer_body<u32:2, u32:2>(inputs_ch, volumes_ch, output_ch);
+      ()
+    }
+
+    next(tok: token, state: ()) { () }
+}
+
+#[test_proc]
+proc smoke_test {
+    input_s: chan<s16[2][2]> out;
+    volumes_s: chan<u16[2][2]> out;
+    output_r: chan<s16[2]> in;
+    terminator: chan<bool> out;
+
+    init { () }
+
+    config(terminator: chan<bool> out) {
+        let (inputs_s, inputs_r) = chan<s16[2][2]>;
+        let (volumes_s, volumes_r) = chan<u16[2][2]>;
+        let (output_s, output_r) = chan<s16[2]>;
+        spawn mixer(inputs_r, volumes_r, output_s);
+        (inputs_s, volumes_s, output_r, terminator)
+    }
+
+    next(tok: token, state: ()) {
+        let tok = send(tok, input_s, s16[2][2]: [s16[2]: [s16:0, ...], ...]);
+        let tok = send(tok, volumes_s, u16[2][2]: [u16[2]: [u16:0, ...], ...]);
+        let (tok, result) = recv(tok, output_r);
+        assert_eq(result, s16[2]: [s16:0, ...]);
+
+        let tok = send(tok, terminator, true);
+    }
+}
+
+#[test_proc]
+proc test_minmax {
+    input_s: chan<s16[1][2]> out;
+    volumes_s: chan<u16[1][2]> out;
+    output_r: chan<s16[1]> in;
+    terminator: chan<bool> out;
+
+    init { () }
+
+    config(terminator: chan<bool> out) {
+        let (inputs_s, inputs_r) = chan<s16[1][2]>;
+        let (volumes_s, volumes_r) = chan<u16[1][2]>;
+        let (output_s, output_r) = chan<s16[1]>;
+        spawn mixer_body<u32:2, u32:1>(inputs_r, volumes_r, output_s);
+        (inputs_s, volumes_s, output_r, terminator)
+    }
+
+    next(tok: token, state: ()) {
+        let tok = send(tok, input_s, [[s16:0x7fff], [s16:0x7fff]]);
+        let tok = send(tok, volumes_s, [[u16: 0x0000], [u16: 0x0000]]);
+        let (tok, result) = recv(tok, output_r);
+        assert_eq(result, [s16:0]);
+
+        let tok = send(tok, input_s, [[s16:0x7fff], [s16:-0x8000]]);
+        let tok = send(tok, volumes_s, [[u16: 0x8000], [u16: 0x8000]]);
+        let (tok, result) = recv(tok, output_r);
+        assert_eq(result, [s16:0xffff]);
+
+        let tok = send(tok, input_s, [[s16:0x7fff], [s16:0x7fff]]);
+        let tok = send(tok, volumes_s, [[u16: 0x8000], [u16: 0x8000]]);
+        let (tok, result) = recv(tok, output_r);
+        assert_eq(result, [s16:0x7fff]);
+
+        let tok = send(tok, input_s, [[s16:-0x8000], [s16:-0x8000]]);
+        let tok = send(tok, volumes_s, [[u16: 0x8000], [u16: 0x8000]]);
+        let (tok, result) = recv(tok, output_r);
+        assert_eq(result, [s16:-0x8000]);
+        
+        let tok = send(tok, terminator, true);
+    }
+}

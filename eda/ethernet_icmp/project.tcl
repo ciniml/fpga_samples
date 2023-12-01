@@ -27,6 +27,9 @@ if {${TARGET} == "tangnano9k"} {
 if {${TARGET} == "tangnano9k_matrix_led"} {
     set_option -use_sspi_as_gpio 1
 }
+if {${TARGET} == "tangnano9k_pmod"} {
+    set_option -use_sspi_as_gpio 1
+}
 if {${TARGET} == "tangprimer20k"} {
     set_option -use_done_as_gpio 1
     set_option -use_ready_as_gpio 1
@@ -48,6 +51,10 @@ add_file -type verilog [file normalize ${ETHERNET_DIR}/mii_mac/crc_mac.sv]
 add_file -type verilog [file normalize ${ETHERNET_DIR}/mii_mac/mii_mac_rx.sv]
 add_file -type verilog [file normalize ${ETHERNET_DIR}/mii_mac/mii_mac_tx.sv]
 add_file -type verilog [file normalize ${ETHERNET_DIR}/rmii_mac/rmii_mac.sv]
+if {${TARGET} == "tangnano9k_pmod"} {
+    # Tang Nano 9K design requires GOWIN rPLL IP to generate async system clock (20MHz) from RMII clock.
+    add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_rpll/gowin_rpll.v]
+}
 add_file -type verilog [file normalize ${ETHERNET_SERVICE_SRC}]
 add_file -type verilog [file normalize ${SRC_DIR}/top.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/reset_seq.sv]

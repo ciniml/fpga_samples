@@ -50,8 +50,8 @@ class MultiSegmentLed() extends RawModule {
       segmentUpdateCounter := segmentUpdateCounter + 1.U
     }
 
-    //led.io.digits := VecInit((0 until 6).map(i => allSegments((i + 1) * 8 - 1, i * 8)))
-    led.io.digits := VecInit(Seq.fill(6)(0xff.U(8.W)))
+    led.io.digits := VecInit((0 until 6).map(i => allSegments((i + 1) * 8 - 1, i * 8)))
+    //led.io.digits := VecInit(Seq.fill(6)(0xff.U(8.W)))
   }
 }
 
