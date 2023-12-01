@@ -1,0 +1,9 @@
+signal_name,pmod_pin
+stepper_m1p[0],pmod0_1
+stepper_m1p[1],pmod0_7
+stepper_m1p[2],pmod0_2
+stepper_m1p[3],pmod0_8
+stepper_m2p[0],pmod0_3
+stepper_m2p[1],pmod0_9
+stepper_m2p[2],pmod0_4
+stepper_m2p[3],pmod0_10

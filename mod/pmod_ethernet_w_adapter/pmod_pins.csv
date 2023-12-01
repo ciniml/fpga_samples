@@ -1,0 +1,8 @@
+signal_name,pmod_pin
+rmii_txclk,pmod0_1
+rmii_rxd[0],pmod0_2
+rmii_rxd[1],pmod0_8
+rmii_crs_dv,pmod0_7
+rmii_txd[0],pmod0_9
+rmii_txd[1],pmod0_4
+rmii_txen,pmod0_3
