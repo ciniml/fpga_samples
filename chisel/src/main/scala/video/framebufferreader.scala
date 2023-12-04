@@ -13,9 +13,9 @@ import chisel3.experimental.ChiselEnum
 import chisel3.experimental.BundleLiterals._
 import axi._
 
-class FrameBufferReaderConfig(val pixelBits: Int, val maxWidth: Int, val maxHeight: Int) extends Bundle {
-    val scaleX = UInt(4.W)
-    val scaleY = UInt(4.W)
+class FrameBufferReaderConfig(val pixelBits: Int, val maxWidth: Int, val maxHeight: Int, val maxScale: Int) extends Bundle {
+    val scaleX = UInt(log2Ceil(maxScale + 1).W)
+    val scaleY = UInt(log2Ceil(maxScale + 1).W)
     val startX = UInt(log2Ceil(maxWidth).W)
     val startY = UInt(log2Ceil(maxHeight).W)
     val pixelsH = UInt(log2Ceil(maxWidth + 1).W)
@@ -32,7 +32,7 @@ class FrameBufferReader(pixelBits: Int, maxWidth: Int, maxHeight: Int, memBusWid
     val videoParams = new VideoParams(pixelBits, 0, maxHeight, 0, 0, 0, maxWidth, 0, 0)
     val axiParams = new AXI4Params(addressBits, memBusWidthBits, AXI4ReadOnly, Some(maxBurst))
     val maxBurstPixels = maxBurst * 4 / 3
-    val frameBufferConfigType = new FrameBufferReaderConfig(pixelBits, maxWidth, maxHeight)
+    val frameBufferConfigType = new FrameBufferReaderConfig(pixelBits, maxWidth, maxHeight, 1)
     val io = IO(new Bundle{
         val data = Irrevocable(new VideoSignal(pixelBits))
         val mem = new AXI4IO(axiParams)
