@@ -9,7 +9,7 @@ package video
 import chisel3._
 import chisel3.util._
 import chisel3.experimental.BundleLiterals._
-
+import chisel3.experimental.ChiselEnum
 case class VideoParams
 (
     pixelBits: Int,
@@ -102,89 +102,194 @@ class VideoMemoryIO(val pixelBits: Int, val addressWidth: Int) extends Bundle {
     val address = Output(UInt(addressWidth.W))
 }
 
-class VideoSignalGenerator(defaultVideoParams: VideoParams, maxVideoParams: VideoParams) extends Module {
+class VideoMultiplicationConfig(val maxMultiplierH: Int = 1, val maxMultiplierV: Int = 1) extends Bundle {
+    val multiplierH = UInt(log2Ceil(maxMultiplierH + 1).W)
+    val multiplierV = UInt(log2Ceil(maxMultiplierV + 1).W)
+
+    def default(): VideoMultiplicationConfig = {
+        WireInit(
+            this.Lit(
+                _.multiplierH -> 1.U,
+                _.multiplierV -> 1.U,
+            )
+        )
+    }
+}
+
+class VideoSignalGenerator(defaultVideoParams: VideoParams, maxVideoParams: VideoParams, maxMultiplierH: Int = 1, maxMultiplierV: Int = 1) extends Module {
     val videoConfigType = new VideoConfig(maxVideoParams)
+    val videoMultiplierConfigType = new VideoMultiplicationConfig(maxMultiplierH, maxMultiplierV)
     val io = IO(new Bundle {
         val video = new VideoIO(maxVideoParams.pixelBits)
         val data = Flipped(Irrevocable(new VideoSignal(maxVideoParams.pixelBits)))
         val triggerFrame = Output(Bool())
         val dataInSync = Output(Bool())
         val config = Flipped(Valid(videoConfigType))
+        val multiplierConfig = Flipped(Valid(videoMultiplierConfigType))
+        val vActive = Output(Bool())
     })
 
     val nextVideoConfig = RegInit(videoConfigType.default(defaultVideoParams))
     val videoConfig = RegInit(videoConfigType.default(defaultVideoParams))
+    val nextMultiplierConfig = RegInit(WireInit(videoMultiplierConfigType.Lit(_.multiplierH -> 1.U, _.multiplierV -> 1.U)))
+    val multiplierConfig = RegInit(WireInit(videoMultiplierConfigType.Lit(_.multiplierH -> 1.U, _.multiplierV -> 1.U)))
+    object State extends ChiselEnum {
+        val Sync, Back, Active, Front = Value
+    }
+    val stateH = RegInit(State.Sync)
+    val stateV = RegInit(State.Sync)
 
-    val totalCountsHMinus1 = RegInit(0.U(maxVideoParams.countHBits.W))
-    val totalCountsVMinus1 = RegInit(0.U(maxVideoParams.countHBits.W))
-    val activeHLower = RegInit(0.U(maxVideoParams.countHBits.W))
-    val activeHUpper = RegInit(0.U(maxVideoParams.countHBits.W))
-    val activeVLower = RegInit(0.U(maxVideoParams.countVBits.W))
-    val activeVUpper = RegInit(0.U(maxVideoParams.countVBits.W))
+    val activeCounterH = RegInit(0.U(log2Ceil(maxVideoParams.pixelsH).W))
+    val activeCounterV = RegInit(0.U(log2Ceil(maxVideoParams.pixelsV).W))
+    val inactiveMaxH = Seq(maxVideoParams.backPorchH, maxVideoParams.frontPorchH, maxVideoParams.pulseWidthH).max
+    val inactiveMaxV = Seq(maxVideoParams.backPorchV, maxVideoParams.frontPorchV, maxVideoParams.pulseWidthV).max
+    val inactiveCounterH = RegInit(0.U(log2Ceil(inactiveMaxH + 1).W))
+    val inactiveCounterV = RegInit(0.U(log2Ceil(inactiveMaxV + 1).W))
+    val multiplierH = RegInit(0.U(Seq(1, log2Ceil(maxMultiplierH)).max.W))
+    val multiplierV = RegInit(0.U(Seq(1, log2Ceil(maxMultiplierV)).max.W))
 
-    val counterH = RegInit(0.U(maxVideoParams.countHBits.W))
-    val counterV = RegInit(0.U(maxVideoParams.countVBits.W))
-    val data = RegInit(0.U(maxVideoParams.pixelBits.W))
-    val dataEnable = Wire(Bool())
-    val dataEnableReg = RegInit(false.B)
-    val hSync = RegInit(true.B)
-    val vSync = RegInit(true.B)
+    val multiplierBuffer = Mem(maxVideoParams.pixelsH, UInt(maxVideoParams.pixelBits.W))
+    // Buffer the pixel data from the multiplier buffer to increase the timing margin.
+    val nextActiveCounterH = Mux(activeCounterH === videoConfig.pixelsH - 1.U, 0.U, activeCounterH + 1.U)
+    val pixelFromBuffer = RegNext(multiplierBuffer.read(nextActiveCounterH), 0.U)
+
+    val advanceV = WireDefault(false.B) // advances vertical counter/state machine
+    val nextFrame = WireDefault(false.B) // next frame
+
+    val data = RegInit(0.U(maxVideoParams.pixelBits.W)) // Pixel data.
     val dataInSync = RegInit(false.B)
-    val dataReady = Wire(Bool())
+    val dataReady = WireDefault(!dataInSync && !io.data.bits.startOfFrame)
 
+    // Horizontal state machine
+    switch(stateH) {
+        is(State.Sync) {
+            inactiveCounterH := inactiveCounterH + 1.U
+            when(inactiveCounterH === videoConfig.pulseWidthH - 1.U) {
+                stateH := State.Back        // to back porch
+                inactiveCounterH := 0.U
+            }
+            multiplierH := 0.U  // Reset multiplier counter
+        }
+        is(State.Back) {
+            inactiveCounterH := inactiveCounterH + 1.U
+            when(inactiveCounterH === videoConfig.backPorchH - 1.U) {
+                stateH := State.Active      // to active
+                inactiveCounterH := 0.U
+            }
+        }
+        is(State.Active) {
+            activeCounterH := activeCounterH + 1.U
+            when(activeCounterH === videoConfig.pixelsH - 1.U) {
+                stateH := State.Front       // to front porch
+                activeCounterH := 0.U
+            }
+            // Active area?
+            when( stateV === State.Active ) {
+                when( multiplierV === 0.U ) {   // not vertical multiplication. load pixel from the data stream.
+                    // Update multiplier counter
+                    multiplierH := multiplierH + 1.U
+                    when( multiplierH === multiplierConfig.multiplierH - 1.U ) {
+                        multiplierH := 0.U
+                    }
+                    when( multiplierH === 0.U ) {   // This is the first pixel of multiplication. (or the multiplication is disabled at all.)
+                        val pixelData = Mux(io.data.valid && dataInSync, io.data.bits.pixelData, 0.U)
+                        dataReady := true.B         // Consume data from the stream.
+                        dataInSync := io.data.valid // Data stream is in sync if the data is available.
+                        multiplierBuffer.write(activeCounterH, pixelData)
+                        data := pixelData
+                    } .otherwise {  // This is not the first pixel of multiplication.
+                        // No need to update the output pixel data. Just write it to the multiplier buffer.
+                        multiplierBuffer.write(activeCounterH, data)
+                    }
+                } .otherwise {  // vertical multiplication. load pixel from the multiplier buffer.
+                    data := pixelFromBuffer
+                }
+            }
+        }
+        is(State.Front) {
+            inactiveCounterH := inactiveCounterH + 1.U
+            when(inactiveCounterH === videoConfig.frontPorchH - 1.U) {
+                stateH := State.Sync        // to sync
+                inactiveCounterH := 0.U
+                advanceV := true.B          // Advance vertical counter/statemachine
+            }
+        }
+    }
+
+    // Vertical state machine
+    switch( stateV ) {
+        is( State.Sync ) {
+            when( advanceV ) {
+                inactiveCounterV := inactiveCounterV + 1.U
+                when( inactiveCounterV === videoConfig.pulseWidthV - 1.U ) {
+                    stateV := State.Back        // to back porch
+                    inactiveCounterV := 0.U
+                }
+                multiplierV := 0.U // reset multiplier
+            }
+        }
+        is( State.Back ) {
+            when( advanceV ) {
+                inactiveCounterV := inactiveCounterV + 1.U
+                when( inactiveCounterV === videoConfig.backPorchV - 1.U ) {
+                    stateV := State.Active      // to active
+                    inactiveCounterV := 0.U
+                }
+            }
+        }
+        is( State.Active ) {
+            when( advanceV ) {
+                activeCounterV := activeCounterV + 1.U
+                when( activeCounterV === videoConfig.pixelsV - 1.U ) {
+                    stateV := State.Front       // to front porch
+                    activeCounterV := 0.U
+                }
+
+                multiplierV := multiplierV + 1.U
+                when( multiplierV === multiplierConfig.multiplierV - 1.U ) {
+                    multiplierV := 0.U
+                }
+            }
+        }
+        is( State.Front ) {
+            when( advanceV ) {
+                inactiveCounterV := inactiveCounterV + 1.U
+                when( inactiveCounterV === videoConfig.frontPorchV - 1.U ) {
+                    stateV := State.Sync        // to sync
+                    inactiveCounterV := 0.U
+                    nextFrame := true.B
+                }
+            }
+        }
+    }
+
+
+    val dataEnable = stateH === State.Active && stateV === State.Active
+    val dataEnableReg = RegNext(dataEnable, false.B)
+    val hSync = RegNext(stateH === State.Sync, false.B)
+    val vSync = RegNext(stateV === State.Sync, false.B)
+    
     // Update video config
     when(io.config.valid) {
         nextVideoConfig := io.config.bits
     }
+    when(io.multiplierConfig.valid) {
+        nextMultiplierConfig := io.multiplierConfig.bits
+    }
 
-    when( counterH === 0.U && counterV === 0.U ) { // Update config.
+    // Fetch current config
+    val triggerFrame = RegInit(false.B)
+    triggerFrame := false.B
+    when( nextFrame ) {
         videoConfig := nextVideoConfig
-        totalCountsHMinus1 := nextVideoConfig.totalCountsH() - 1.U
-        totalCountsVMinus1 := nextVideoConfig.totalCountsV() - 1.U
-        printf(p"[VideoSignalGenerator] Update Video Config nextVideoConfig: ${nextVideoConfig}")
-        activeHLower := (nextVideoConfig.pulseWidthH + 0.U(maxVideoParams.countHBits.W)) + nextVideoConfig.backPorchH
-        activeVLower := (nextVideoConfig.pulseWidthV + 0.U(maxVideoParams.countVBits.W)) + nextVideoConfig.backPorchV
-        activeHUpper := (nextVideoConfig.pulseWidthH + 0.U(maxVideoParams.countHBits.W)) + nextVideoConfig.backPorchH + nextVideoConfig.pixelsH
-        activeVUpper := (nextVideoConfig.pulseWidthV + 0.U(maxVideoParams.countVBits.W)) + nextVideoConfig.backPorchV + nextVideoConfig.pixelsV
+        multiplierConfig := nextMultiplierConfig
+        triggerFrame := true.B
     }
+    val vActive = RegNext(stateV === State.Active, false.B)
 
-    when( !dataInSync ) {
-        counterH := 0.U
-        counterV := 0.U
-        
-        when( io.data.valid ) {
-            when ( io.data.bits.startOfFrame ) {
-                dataInSync := true.B
-            }
-        }
-    } .otherwise {
-
-        when(counterH < totalCountsHMinus1) {
-            counterH := counterH + 1.U
-        } .otherwise {
-            counterH := 0.U
-            when( counterV < totalCountsVMinus1 ) {
-                counterV := counterV + 1.U
-            } .otherwise {
-                counterV := 0.U
-            }
-        }
-        when( counterH === activeHLower && counterV === activeVLower && (!io.data.valid || !io.data.bits.startOfFrame) ) {
-            // If current data does not have SOF flag at the top-left point, the data stream is not in sync.
-            printf(p"[VideoSignalGenerator] Lost sync. counterH=${counterH}, activeHLower=${activeHLower}, counterV=${counterV}, activeVLower=${activeVLower}")
-            dataInSync := false.B
-        }
-        data := Mux(io.data.valid, io.data.bits.pixelData, 0.U)
-        dataEnableReg := dataEnable
-    }
-
-    dataReady := (!dataInSync && io.data.valid && !io.data.bits.startOfFrame) || (dataInSync && dataEnable)
-    hSync := !(counterH < videoConfig.pulseWidthH)
-    vSync := !(counterV < videoConfig.pulseWidthV)
-    dataEnable := activeHLower <= counterH && counterH < activeHUpper &&
-                  activeVLower <= counterV && counterV < activeVUpper
-    
-    io.triggerFrame := !dataInSync || (!hSync && !vSync)
+    // Output signals
+    io.triggerFrame := triggerFrame
+    io.vActive := vActive
     io.dataInSync := dataInSync
     io.data.ready := dataReady
     io.video.hSync := hSync

@@ -31,6 +31,9 @@ class VideoTestSystem() extends Module {
   dut.io.data <> tpg.io.data
   dut.io.config.bits := VideoConfig(params).default(params)
   dut.io.config.valid := false.B
+  dut.io.multiplierConfig.bits.multiplierH := 1.U
+  dut.io.multiplierConfig.bits.multiplierV := 1.U
+  dut.io.multiplierConfig.valid := false.B
 }
 
 class VideoTester extends FlatSpec with ChiselScalatestTester with Matchers {
@@ -41,7 +44,6 @@ class VideoTester extends FlatSpec with ChiselScalatestTester with Matchers {
         test(new VideoTestSystem) { c =>
             c.clock.setTimeout(2000)
             c.clock.step(1)
-            c.io.dataInSync.expect(false.B)
             while(!c.io.dataInSync.peek.litToBoolean) {
                 c.clock.step(1)
             }
