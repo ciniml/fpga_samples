@@ -6,11 +6,13 @@
 
 package video
 
-import org.scalatest._
 import chiseltest._
 import chisel3._
 import chisel3.util._
 import scala.util.control.Breaks
+import org.scalatest.flatspec.AnyFlatSpec
+import org.scalatest.matchers.should.Matchers 
+
 import java.io.FileInputStream
 import scala.collection.mutable
 import _root_.util.AsyncFIFO
@@ -18,8 +20,8 @@ import axi._
 import chisel3.experimental.BundleLiterals._
 import chisel3.experimental.ChiselEnum
 
-class FrameBufferReaderTestSystem(scaling: Int) extends Module {
-  val params = new VideoParams(24, 2, 20, 4, 3, 5, 24, 2, 1)
+class FrameBufferReaderTestSystem(scaling: Int, pixelBits: Int = 24) extends Module {
+  val params = new VideoParams(pixelBits, 2, 20, 4, 3, 5, 24, 2, 1)
   val maxBurstCount = 6
   val dut = Module(
     new FrameBufferReader(
@@ -42,7 +44,11 @@ class FrameBufferReaderTestSystem(scaling: Int) extends Module {
   }
   dut.io.trigger := triggerCounter > 0.U || io.forceTrigger
 
-  val values = (0 to (params.framePixels - 1)).flatMap(v => (0 to 2).map(x => BigInt(v*3 + x) & 0xff)).grouped(4).map(x => (x(0) | (x(1) << 8) | (x(2) << 16) | (x(3) << 24)).U).toSeq
+  val values: Seq[UInt] = params.pixelBits match {
+    case 16 => (0 to (params.framePixels - 1)).flatMap(v => (0 to 1).map(x => BigInt(v*2 + x) & 0xff)).grouped(4).map(x => (x(0) | (x(1) << 8) | (x(2) << 16) | (x(3) << 24)).U).toSeq
+    case 24 => (0 to (params.framePixels - 1)).flatMap(v => (0 to 2).map(x => BigInt(v*3 + x) & 0xff)).grouped(4).map(x => (x(0) | (x(1) << 8) | (x(2) << 16) | (x(3) << 24)).U).toSeq
+    case n => { assert(false, f"pixelBits ${n} not supported"); Seq() }
+  }
   val memoryAddressBits = log2Ceil(params.frameBytes * 2)
   val memory = Module(new AXI4Memory(memoryAddressBits, 32, AXI4ReadOnly, maxBurstCount))
   val rom = Module(new RomReader(memoryAddressBits, 32, values, 0))
@@ -61,18 +67,18 @@ class FrameBufferReaderTestSystem(scaling: Int) extends Module {
 }
 
 class FrameBufferReaderTester
-    extends FlatSpec
+    extends AnyFlatSpec
     with ChiselScalatestTester
     with Matchers {
   val dutName = "FrameBufferReader"
   behavior of dutName
 
   it should "simple" in {
-    test(new FrameBufferReaderTestSystem(1)) { c =>
+    test(new FrameBufferReaderTestSystem(1)).withAnnotations(Seq(VerilatorBackendAnnotation)) { c =>
       val width = c.params.pixelsH
       val height = c.params.pixelsV
       c.clock.setTimeout(width * height * 3 )
-      c.io.video.initSink.setSinkClock(c.clock)
+      c.io.video.initSink().setSinkClock(c.clock)
       val signalType = chiselTypeOf(c.io.video.bits)
       (0 to (width * height * 2) - 1).foreach(i => {
         val pixelAddress = i % (width * height)
@@ -97,7 +103,7 @@ class FrameBufferReaderTester
     }
   }
   it should "double" in {
-    test(new FrameBufferReaderTestSystem(2)) { c =>
+    test(new FrameBufferReaderTestSystem(2)).withAnnotations(Seq(VerilatorBackendAnnotation)) { c =>
       val width = c.params.pixelsH
       val height = c.params.pixelsV
       c.clock.setTimeout(width * height * 3 )
@@ -129,6 +135,34 @@ class FrameBufferReaderTester
           })
         })
       })
+      c.io.video.expectInvalid()
+    }
+  }
+  it should "16bit" in {
+    test(new FrameBufferReaderTestSystem(1, 16)).withAnnotations(Seq(VerilatorBackendAnnotation)) { c =>
+      val width = c.params.pixelsH
+      val height = c.params.pixelsV
+      c.clock.setTimeout(width * height * 2 )
+      c.io.video.initSink().setSinkClock(c.clock)
+      val signalType = chiselTypeOf(c.io.video.bits)
+      (0 to (width * height * 2) - 1).foreach(i => {
+        val pixelAddress = i % (width * height)
+        val startOfFrame = pixelAddress == 0
+        c.io.forceTrigger.poke(startOfFrame.B)
+
+        val pixelValueBase = BigInt(pixelAddress * 2)
+        val pixelValue0 = (pixelValueBase + 0) & 0xff
+        val pixelValue1 = (pixelValueBase + 1) & 0xff
+        val pixelValue = pixelValue0 | (pixelValue1 << 8)
+        c.io.video.expectDequeue(
+          signalType.Lit(
+            _.pixelData -> pixelValue.U,
+            _.startOfFrame -> startOfFrame.B,
+            _.endOfLine -> (i % width == width - 1).B
+          )
+        )
+      })
+
       c.io.video.expectInvalid()
     }
   }

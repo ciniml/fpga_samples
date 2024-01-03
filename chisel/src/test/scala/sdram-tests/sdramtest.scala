@@ -79,7 +79,7 @@ class SDRAMTester extends FlatSpec with ChiselScalatestTester with Matchers {
                 val address = (BigInt(params.addressBits, Random) >> 2) << 2
                 val burstLen = random.nextInt(7)
                 val dataSeq = (0 to burstLen).map(_ => BigInt(params.dataBits, Random))
-                println(f"""Address: ${address}, BurstLen: ${burstLen}, Data: ${dataSeq.map(value => bigintToHex(value)).mkString(",")}""")
+                println(f"""Address: ${address}, BurstLen: ${burstLen}, Data: ${dataSeq.map(value => value.toString(16)).mkString(",")}""")
                 c.io.axi.aw.get.enqueueNow(awbits.Lit(_.addr -> address.U, _.len.get -> burstLen.U))
                 c.clock.step(1)
                 c.io.axi.w.get.enqueueSeq((0 to burstLen).map(index => 

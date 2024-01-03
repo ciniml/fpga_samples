@@ -6,11 +6,13 @@
 
 package video
 
-import org.scalatest._
 import chiseltest._
 import chisel3._
 import chisel3.util._
 import scala.util.control.Breaks
+import org.scalatest.flatspec.AnyFlatSpec
+import org.scalatest.matchers.should.Matchers 
+
 import java.io.FileInputStream
 import scala.collection.mutable
 import _root_.util.AsyncFIFO
@@ -18,8 +20,8 @@ import axi._
 import chisel3.experimental.BundleLiterals._
 import chisel3.experimental.ChiselEnum
 
-class StreamWriterTestSystem() extends Module {
-  val videoParams = new VideoParams(24, 2, 8, 4, 3, 24, 8, 2, 1)
+class StreamWriterTestSystem(pixelBits: Int) extends Module {
+  val videoParams = new VideoParams(pixelBits, 2, 8, 4, 3, 24, 8, 2, 1)
   val memoryAddressBits = log2Ceil(videoParams.frameBytes * 2)
   val maxBurstWords = 4
   val axiParams = new AXI4Params(memoryAddressBits, 32, AXI4WriteOnly, Some(maxBurstWords))
@@ -67,7 +69,7 @@ class StreamWriterTestSystem() extends Module {
     dataType.Lit(_.startOfFrame -> false.B, _.endOfLine -> false.B, _.pixelData -> "x1b1c1d".U),
     dataType.Lit(_.startOfFrame -> false.B, _.endOfLine -> false.B, _.pixelData -> "x000000".U),  // Sentinel
   ))
-  val memResult = VecInit(Seq(
+  val memResult24 = Seq(
     "xef123456".U,  // 000 : line0
     "x0000abcd".U,  // 004
     "x00000000".U,  // 008
@@ -95,7 +97,29 @@ class StreamWriterTestSystem() extends Module {
     "x1a000000".U,  // 054
     "x1c1d1819".U,  // 058
     "x0000001b".U,  // 04c
-  ))
+  )
+  val memResult16 = Seq(
+    "xcdef3456".U,  // 000 : line0
+    "x00000000".U,  // 004
+    "x00000000".U,  // 008
+    "x00000000".U,  // 00c
+
+    "xdcba4321".U,  // 010 : line1
+    "x21222122".U,  // 014
+    "x00001112".U,  // 018
+    "x00000000".U,  // 01c
+
+    "x00000000".U,  // 020 : line2
+    "x21222122".U,  // 024
+    "x13141112".U,  // 028
+    "x00001617".U,  // 02c
+    
+    "x00000000".U,  // 030 : line3
+    "x00000000".U,  // 034
+    "x191a0000".U,  // 038
+    "x00001c1d".U,  // 03c
+  )
+  val memResult = VecInit(if(videoParams.pixelBits == 24) { memResult24 } else { memResult16 })
 
   val commandIndex = RegInit(0.U(log2Ceil(commandSequence.length+1).W))
   val resultIndex = RegInit(0.U(log2Ceil(memResult.length + 1).W))
@@ -164,17 +188,29 @@ class StreamWriterTestSystem() extends Module {
 }
 
 class StreamWriterTest
-    extends FlatSpec
+    extends AnyFlatSpec
     with ChiselScalatestTester
     with Matchers {
   val dutName = "StreamWriter"
   behavior of dutName
 
-  it should "simple" in {
-    test(new StreamWriterTestSystem) { c =>
+  it should "24bit" in {
+    test(new StreamWriterTestSystem(24)).withAnnotations(Seq(VerilatorBackendAnnotation)) { c =>
       val width = c.videoParams.pixelsH
       val height = c.videoParams.pixelsV
       c.clock.setTimeout(width * height * 3 * 12 )
+      
+      while( !c.io.finished.peek().litToBoolean ) {
+        c.io.fail.expect(false.B, "Result check failed")
+        c.clock.step()
+      }
+    }
+  }
+    it should "16bit" in {
+    test(new StreamWriterTestSystem(16)).withAnnotations(Seq(VerilatorBackendAnnotation)) { c =>
+      val width = c.videoParams.pixelsH
+      val height = c.videoParams.pixelsV
+      c.clock.setTimeout(width * height * 2 * 12 )
       
       while( !c.io.finished.peek().litToBoolean ) {
         c.io.fail.expect(false.B, "Result check failed")

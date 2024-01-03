@@ -26,8 +26,8 @@ object LineReaderCommand {
 }
 
 class LineReader(videoParams: VideoParams, axiParams: AXI4Params, burstPixels: Int = 128) extends Module {
-    // Currently only supports 24bpp and 32bit bus
-    assert(videoParams.pixelBits == 24)
+    // Currently only supports 16 or 24 bpp and 32bit bus
+    assert(videoParams.pixelBits == 16 || videoParams.pixelBits == 24)
     assert(axiParams.dataBits == 32)
     assert((burstPixels * videoParams.pixelBytes)%(axiParams.dataBits/8) == 0 )
 
@@ -97,10 +97,16 @@ class LineReader(videoParams: VideoParams, axiParams: AXI4Params, burstPixels: I
     val realignBufferHasPartialData = WireDefault(realignOutputIndex < realignInputIndex && realignInputSide === realignOutputSide)
 
     def addressToPixelPhase(address: UInt): UInt = {
-        (axiParams.dataBits/8).U - address(addressMaskBits-1, 0)
+        videoParams.pixelBits match {
+            case 16 => address(1)
+            case 24 => (axiParams.dataBits/8).U - address(addressMaskBits-1, 0)
+        }
     }
     def pixelPhaseToRealignIndex(phase: UInt) = {
-        MuxLookup(phase, 0.U, Seq(0.U -> 0.U, 1.U -> 3.U, 2.U -> 6.U, 3.U -> 9.U))
+        videoParams.pixelBits match {
+            case 16 => phase * 2.U
+            case 24 => MuxLookup(phase, 0.U, Seq(0.U -> 0.U, 1.U -> 3.U, 2.U -> 6.U, 3.U -> 9.U))
+        }
     }
 
     val arValid = RegInit(false.B)
@@ -152,7 +158,11 @@ class LineReader(videoParams: VideoParams, axiParams: AXI4Params, burstPixels: I
             pixelsRemaining := command.count
             startOfFrame := command.startOfFrame
             val initialPointer = pixelPhaseToRealignIndex(addressToPixelPhase(command.startAddress))
-            realignInputPointer := Cat(initialPointer(realignIndexBits-1, addressMaskBits), Fill(addressMaskBits, 0.U)) // Mask unaligned address bits.
+            realignInputPointer := (if( realignIndexBits > addressMaskBits ) { 
+                Cat(initialPointer(realignIndexBits-1, addressMaskBits), Fill(addressMaskBits, 0.U)) // Mask unaligned address bits.
+            } else {
+                0.U // Just put the input data to realign buffer.
+            })
             realignOutputPointer := initialPointer
             addressWordsRemaining := wordsToTransfer
             dataWordsRemaining := 0.U
@@ -230,8 +240,8 @@ object StreamReaderCommand {
 }
 
 class StreamReader(videoParams: VideoParams, axiParams: AXI4Params, burstPixels: Int = 128) extends Module {
-    // Currently only supports 24bpp and 32bit bus
-    assert(videoParams.pixelBits == 24)
+    // Currently only supports 16/24bpp and 32bit bus
+    assert(videoParams.pixelBits == 16 || videoParams.pixelBits == 24)
     assert(axiParams.dataBits == 32)
     assert((burstPixels * videoParams.pixelBytes)%(axiParams.dataBits/8) == 0 )
 

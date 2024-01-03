@@ -28,7 +28,7 @@ object LineWriterCommand {
 
 class LineWriter(videoParams: VideoParams, axiParams: AXI4Params, writeBurstPixels: Int = 128) extends Module {
     // Currently only supports 24bpp and 32bit bus
-    assert(videoParams.pixelBits == 24)
+    assert(videoParams.pixelBits == 16 || videoParams.pixelBits == 24)
     assert(axiParams.dataBits == 32)
     assert((writeBurstPixels * videoParams.pixelBytes)%(axiParams.dataBits/8) == 0 )
 
@@ -100,10 +100,16 @@ class LineWriter(videoParams: VideoParams, axiParams: AXI4Params, writeBurstPixe
     val realignBufferHasPartialData = WireDefault(realignOutputIndex < realignInputIndex && realignInputSide === realignOutputSide)
 
     def addressToPixelPhase(address: UInt): UInt = {
-        (axiParams.dataBits/8).U - address(addressMaskBits-1, 0)
+        videoParams.pixelBits match {
+            case 16 => address(1)
+            case 24 => (axiParams.dataBits/8).U - address(addressMaskBits-1, 0)
+        }
     }
     def pixelPhaseToRealignIndex(phase: UInt) = {
-        MuxLookup(phase, 0.U, Seq(0.U -> 0.U, 1.U -> 3.U, 2.U -> 6.U, 3.U -> 9.U))
+        videoParams.pixelBits match {
+            case 16 => phase * 2.U
+            case 24 => MuxLookup(phase, 0.U, Seq(0.U -> 0.U, 1.U -> 3.U, 2.U -> 6.U, 3.U -> 9.U))
+        }
     }
 
     val awValid = RegInit(false.B)
@@ -155,8 +161,13 @@ class LineWriter(videoParams: VideoParams, axiParams: AXI4Params, writeBurstPixe
             printf(p"DECODE bytesToTransfer:${bytesToTransfer} wordsToTransfer:${wordsToTransfer} isLastPartialWrite:${isLastPartialWrite}\n")
             pixelsRemaining := command.count
             realignBufferValid := (0 to realignBufferBytes-1).map(i => false.B)
-            realignInputPointer := pixelPhaseToRealignIndex(addressToPixelPhase(command.startAddress))
-            realignOutputPointer := Cat(pixelPhaseToRealignIndex(addressToPixelPhase(command.startAddress))(realignIndexBits-1, addressMaskBits), Fill(addressMaskBits, 0.U))
+            val initialPointer =  pixelPhaseToRealignIndex(addressToPixelPhase(command.startAddress))
+            realignInputPointer := initialPointer
+            realignOutputPointer := (if( realignIndexBits > addressMaskBits ) { 
+                Cat(initialPointer(realignIndexBits-1, addressMaskBits), Fill(addressMaskBits, 0.U)) // Mask unaligned address bits.
+            } else {
+                0.U // Just put the output data from the realign buffer to the memory location.
+            })
             addressWordsRemaining := wordsToTransfer
             dataWordsRemaining := 0.U
             nextAddress := startAddressAligned
@@ -238,8 +249,8 @@ object StreamWriterCommand {
 }
 
 class StreamWriter(videoParams: VideoParams, axiParams: AXI4Params, writeBurstPixels: Int = 128) extends Module {
-    // Currently only supports 24bpp and 32bit bus
-    assert(videoParams.pixelBits == 24)
+    // Currently only supports 16/24bpp and 32bit bus
+    assert(videoParams.pixelBits == 16 || videoParams.pixelBits == 24)
     assert(axiParams.dataBits == 32)
     assert((writeBurstPixels * videoParams.pixelBytes)%(axiParams.dataBits/8) == 0 )
 

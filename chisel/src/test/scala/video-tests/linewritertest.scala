@@ -6,11 +6,13 @@
 
 package video
 
-import org.scalatest._
 import chiseltest._
 import chisel3._
 import chisel3.util._
 import scala.util.control.Breaks
+import org.scalatest.flatspec.AnyFlatSpec
+import org.scalatest.matchers.should.Matchers 
+
 import java.io.FileInputStream
 import scala.collection.mutable
 import _root_.util.AsyncFIFO
@@ -18,8 +20,8 @@ import axi._
 import chisel3.experimental.BundleLiterals._
 import chisel3.experimental.ChiselEnum
 
-class LineWriterTestSystem() extends Module {
-  val videoParams = new VideoParams(24, 2, 20, 4, 3, 24, 5, 2, 1)
+class LineWriterTestSystem(pixelBits: Int) extends Module {
+  val videoParams = new VideoParams(pixelBits, 2, 20, 4, 3, 24, 5, 2, 1)
   val memoryAddressBits = log2Ceil(videoParams.frameBytes * 2)
   val maxBurstWords = 4
   val axiParams = new AXI4Params(memoryAddressBits, 32, AXI4WriteOnly, Some(maxBurstWords))
@@ -48,25 +50,34 @@ class LineWriterTestSystem() extends Module {
   val ramData = ram.io.reader.data
   ram.io.writer <> memory.io.writer.get
 
+  def toPixelType(pixel: UInt, useMsb: Boolean = false): UInt = {
+    videoParams.pixelBits match {
+      case 16 => (if(useMsb) { pixel(23, 8) } else { pixel(15, 0) })
+      case 24 => pixel(23, 0)
+      case n => { assert(false, f"pixelBits ${n} not supported"); 0.U }
+    }
+  }
+
   val commandType = LineWriterCommand(videoParams, axiParams)
   val commandSequence = VecInit(Seq(
     // Fill Tests
-    commandType.Lit(_.startAddress -> 0x00.U, _.count -> 1.U, _.doFill -> true.B, _.color -> "x452301".U),
-    commandType.Lit(_.startAddress -> 0x03.U, _.count -> 1.U, _.doFill -> true.B, _.color -> "xab8967".U),
-    commandType.Lit(_.startAddress -> 0x0c.U, _.count -> 2.U, _.doFill -> true.B, _.color -> "xdeadbe".U),
-    commandType.Lit(_.startAddress -> 0x12.U, _.count -> 5.U, _.doFill -> true.B, _.color -> "xcafeef".U),  // 2 bursts transfer
-    commandType.Lit(_.startAddress -> 0x23.U, _.count -> 8.U, _.doFill -> true.B, _.color -> "xa5b6c7".U),  // 3 bursts transfer
+    commandType.Lit(_.startAddress -> (0*videoParams.pixelBytes).U, _.count -> 1.U, _.doFill -> true.B, _.color -> toPixelType("x452301".U)),
+    commandType.Lit(_.startAddress -> (1*videoParams.pixelBytes).U, _.count -> 1.U, _.doFill -> true.B, _.color -> toPixelType("xab8967".U)),
+    commandType.Lit(_.startAddress -> (4*videoParams.pixelBytes).U, _.count -> 2.U, _.doFill -> true.B, _.color -> toPixelType("xdeadbe".U)),
+    commandType.Lit(_.startAddress -> (6*videoParams.pixelBytes).U, _.count -> 5.U, _.doFill -> true.B, _.color -> toPixelType("xcafeef".U)),  // 2 bursts transfer
+    commandType.Lit(_.startAddress -> (11*videoParams.pixelBytes).U, _.count -> 8.U, _.doFill -> true.B, _.color -> toPixelType("xa5b6c7".U)),  // 3 bursts transfer
     // Stream Tests
-    commandType.Lit(_.startAddress -> 0x3b.U, _.count -> 3.U, _.doFill -> false.B, _.color -> "xa5a5a5".U), // 3 pixels from data stream
+    commandType.Lit(_.startAddress -> (19*videoParams.pixelBytes).U, _.count -> 3.U, _.doFill -> false.B, _.color -> "xa5a5a5".U), // 3 pixels from data stream
   ))
   val dataType = new VideoSignal(videoParams.pixelBits)
   val dataSequence = VecInit(Seq(
-    dataType.Lit(_.startOfFrame -> false.B, _.endOfLine -> false.B, _.pixelData -> "x121314".U),
-    dataType.Lit(_.startOfFrame -> false.B, _.endOfLine -> false.B, _.pixelData -> "x151617".U),
-    dataType.Lit(_.startOfFrame -> false.B, _.endOfLine -> false.B, _.pixelData -> "x18191a".U),
-    dataType.Lit(_.startOfFrame -> false.B, _.endOfLine -> false.B, _.pixelData -> "x000000".U),  // Sentinel
+    dataType.Lit(_.startOfFrame -> false.B, _.endOfLine -> false.B, _.pixelData -> toPixelType("x121314".U, true)),
+    dataType.Lit(_.startOfFrame -> false.B, _.endOfLine -> false.B, _.pixelData -> toPixelType("x151617".U, true)),
+    dataType.Lit(_.startOfFrame -> false.B, _.endOfLine -> false.B, _.pixelData -> toPixelType("x18191a".U, true)),
+    dataType.Lit(_.startOfFrame -> false.B, _.endOfLine -> false.B, _.pixelData -> toPixelType("x000000".U, true)),  // Sentinel
   ))
-  val memResult = VecInit(Seq(
+
+  val memResult24 = Seq(
     "x67452301".U,  // 00
     "x0000AB89".U,  // 04
     "x00000000".U,  // 08
@@ -75,16 +86,32 @@ class LineWriterTestSystem() extends Module {
     "xcafeefca".U,  // 14
     "xefcafeef".U,  // 18
     "xfeefcafe".U,  // 1c
-    "xc70000ca".U,  // 20
-    "xb6c7a5b6".U,  // 24
-    "xa5b6c7a5".U,  // 28
-    "xc7a5b6c7".U,  // 2c
-    "xb6c7a5b6".U,  // 30
-    "xa5b6c7a5".U,  // 34
-    "x14a5b6c7".U,  // 38
-    "x16171213".U,  // 3c
-    "x18191a15".U,  // 40
-  ))
+    "xa5b6c7ca".U,  // 20
+    "xc7a5b6c7".U,  // 24
+    "xb6c7a5b6".U,  // 28
+    "xa5b6c7a5".U,  // 2c
+    "xc7a5b6c7".U,  // 30
+    "xb6c7a5b6".U,  // 34
+    "x121314a5".U,  // 38
+    "x1a151617".U,  // 3c
+    "x00001819".U,  // 40
+    "x00000000".U,  // 44
+  )
+  val memResult16 = Seq(
+    "x89672301".U,  // 00
+    "x00000000".U,  // 04
+    "xadbeadbe".U,  // 08
+    "xfeeffeef".U,  // 0c
+    "xfeeffeef".U,  // 10
+    "xb6c7feef".U,  // 14
+    "xb6c7b6c7".U,  // 18
+    "xb6c7b6c7".U,  // 1c
+    "xb6c7b6c7".U,  // 20
+    "x1213b6c7".U,  // 24
+    "x18191516".U,  // 28
+    "x00000000".U,  // 2c
+  )
+  val memResult = VecInit(if(videoParams.pixelBits == 24) { memResult24 } else { memResult16 })
 
   val commandIndex = RegInit(0.U(log2Ceil(commandSequence.length+1).W))
   val resultIndex = RegInit(0.U(log2Ceil(memResult.length + 1).W))
@@ -105,7 +132,7 @@ class LineWriterTestSystem() extends Module {
   dut.io.data.bits := dataSequence(dataIndex)
   dataWait := false.B
   when(dut.io.data.valid && dut.io.data.ready) {
-    printf(p"DATA index: ${dataIndex} value: ${Hexadecimal(dataSequence(dataIndex).pixelData)}")
+    printf(p"DATA index: ${dataIndex} value: ${Hexadecimal(dataSequence(dataIndex).pixelData)}\n")
     dataIndex := dataIndex + 1.U
     dataWait := true.B
   }
@@ -139,7 +166,7 @@ class LineWriterTestSystem() extends Module {
       }
     }
     is(State.sCheck) {
-      printf(p"CHECK index:${resultIndex} expected:${Hexadecimal(memResult(resultIndex))} actual ${Hexadecimal(ramData)}")
+      printf(p"CHECK index:${resultIndex} expected:${Hexadecimal(memResult(resultIndex))} actual ${Hexadecimal(ramData)}\n")
       when( ramData =/= memResult(resultIndex) ) {
         state := State.sFail
       }
@@ -153,14 +180,26 @@ class LineWriterTestSystem() extends Module {
 }
 
 class LineWriterTest
-    extends FlatSpec
+    extends AnyFlatSpec
     with ChiselScalatestTester
     with Matchers {
   val dutName = "LineWriter"
   behavior of dutName
 
-  it should "simple" in {
-    test(new LineWriterTestSystem) { c =>
+  it should "24bit" in {
+    test(new LineWriterTestSystem(24)).withAnnotations(Seq(VerilatorBackendAnnotation)) { c =>
+      val width = c.videoParams.pixelsH
+      val height = c.videoParams.pixelsV
+      c.clock.setTimeout(width * height * 3 )
+      
+      while( !c.io.finished.peek().litToBoolean ) {
+        c.io.fail.expect(false.B, "Result check failed")
+        c.clock.step()
+      }
+    }
+  }
+    it should "16bit" in {
+    test(new LineWriterTestSystem(16)).withAnnotations(Seq(VerilatorBackendAnnotation)) { c =>
       val width = c.videoParams.pixelsH
       val height = c.videoParams.pixelsV
       c.clock.setTimeout(width * height * 3 )
