@@ -13,6 +13,7 @@ import sdram.SDRAMBridgeParams
 import axi._
 import _root_.util.MathUtil
 import chisel3.experimental.ChiselEnum
+import chisel3.{printf => chiselPrintf}
 
 class LineReaderCommand(val videoParams: VideoParams, val axiParams: AXI4Params) extends Bundle {
     val startAddress = UInt(axiParams.addressBits.W)
@@ -25,11 +26,20 @@ object LineReaderCommand {
     }
 }
 
-class LineReader(videoParams: VideoParams, axiParams: AXI4Params, burstPixels: Int = 128) extends Module {
+class LineReader(videoParams: VideoParams, axiParams: AXI4Params, burstPixels: Int = 128, enableDebugMessage: Boolean = false) extends Module {
     // Currently only supports 16 or 24 bpp and 32bit bus
     assert(videoParams.pixelBits == 16 || videoParams.pixelBits == 24)
     assert(axiParams.dataBits == 32)
     assert((burstPixels * videoParams.pixelBytes)%(axiParams.dataBits/8) == 0 )
+
+    object DebugPrintf {
+        def apply(p: Printable): Unit = {
+            if(enableDebugMessage) {
+                chiselPrintf(p)
+            }
+        }
+    }
+    val printf = DebugPrintf
 
     val io = IO(new Bundle{
         val data = Irrevocable(new VideoSignal(videoParams.pixelBits))
@@ -68,7 +78,8 @@ class LineReader(videoParams: VideoParams, axiParams: AXI4Params, burstPixels: I
     // Realignment buffer
     val realignInputBytes = axiParams.dataBits/8        // Input bytes = memory bus width
     val realignOutputBytes = videoParams.pixelBits/8    // Output bytes = bytes per pixel
-    val realignBufferBytes = MathUtil.lcm(realignInputBytes, realignOutputBytes).toInt
+    val lcm = MathUtil.lcm(realignInputBytes, realignOutputBytes).toInt
+    val realignBufferBytes = if( lcm == realignInputBytes.max(realignOutputBytes) ) { lcm * 2 } else { lcm }    // If the LCM is equal to the larger value, double the buffer size to read/write to the buffer simultaneously.
     val realignBuffer = Reg(Vec(realignBufferBytes, UInt(8.W)))
     val realignPointerBits = log2Ceil(realignBufferBytes*2)
     val realignIndexBits   = log2Ceil(realignBufferBytes)
@@ -117,11 +128,12 @@ class LineReader(videoParams: VideoParams, axiParams: AXI4Params, burstPixels: I
     io.axi.ar.get.bits.addr := arAddr
     io.axi.ar.get.bits.len.get := arLen
 
-    val rValid = WireDefault(io.axi.r.get.valid)
+    val rChannel = Queue(io.axi.r.get, 2048)
+    val rValid = WireDefault(rChannel.valid)
     val rReady = WireDefault(false.B)
-    val rData = WireDefault(io.axi.r.get.bits.data)
-    val rLast = WireDefault(io.axi.r.get.bits.last.get)
-    io.axi.r.get.ready := rReady
+    val rData = WireDefault(rChannel.bits.data)
+    val rLast = WireDefault(rChannel.bits.last.get)
+    rChannel.ready := rReady
 
     // Data signal connections
     val dataValid = RegInit(false.B)
@@ -161,7 +173,7 @@ class LineReader(videoParams: VideoParams, axiParams: AXI4Params, burstPixels: I
             realignInputPointer := (if( realignIndexBits > addressMaskBits ) { 
                 Cat(initialPointer(realignIndexBits-1, addressMaskBits), Fill(addressMaskBits, 0.U)) // Mask unaligned address bits.
             } else {
-                0.U // Just put the input data to realign buffer.
+                initialPointer // No masking is required.
             })
             realignOutputPointer := initialPointer
             addressWordsRemaining := wordsToTransfer
@@ -239,11 +251,20 @@ object StreamReaderCommand {
     }
 }
 
-class StreamReader(videoParams: VideoParams, axiParams: AXI4Params, burstPixels: Int = 128) extends Module {
+class StreamReader(videoParams: VideoParams, axiParams: AXI4Params, burstPixels: Int = 128, enableDebugMessage: Boolean = false) extends Module {
     // Currently only supports 16/24bpp and 32bit bus
     assert(videoParams.pixelBits == 16 || videoParams.pixelBits == 24)
     assert(axiParams.dataBits == 32)
     assert((burstPixels * videoParams.pixelBytes)%(axiParams.dataBits/8) == 0 )
+
+    object DebugPrintf {
+        def apply(p: Printable): Unit = {
+            if(enableDebugMessage) {
+                chiselPrintf(p)
+            }
+        }
+    }
+    val printf = DebugPrintf
 
     val io = IO(new Bundle{
         val data = Irrevocable(new VideoSignal(videoParams.pixelBits))

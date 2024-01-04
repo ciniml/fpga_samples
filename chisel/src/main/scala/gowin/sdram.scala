@@ -14,6 +14,8 @@ import chisel3.util.experimental.loadMemoryFromFileInline
 import _root_.util.IrrevocableRegSlice
 import firrtl.annotations.MemoryLoadFileType
 
+import chisel3.{printf => chiselPrintf}
+
 case class SDRAMBridgeParams
 (
     addressBits: Int,
@@ -40,7 +42,16 @@ class SDRCIO(val params: SDRAMBridgeParams) extends Bundle {
     val wrdAck = Input(Bool())
 }
 
-class SimSDRC(params: SDRAMBridgeParams, size: Int, initializationFile: Option[String] = None) extends Module {
+class SimSDRC(params: SDRAMBridgeParams, size: Int, initializationFile: Option[String] = None, disableDebugMessage: Boolean = false) extends Module {
+    object DebugPrintf {
+        def apply(p: Printable): Unit = {
+            if(!disableDebugMessage) {
+                chiselPrintf(p)
+            }
+        }
+    }
+    val printf = DebugPrintf
+
     val io = IO(new Bundle {
         val sdrc = Flipped(new SDRCIO(params))
     })
@@ -150,13 +161,22 @@ class SimSDRC(params: SDRAMBridgeParams, size: Int, initializationFile: Option[S
     io.sdrc.wrdAck := false.B
 }
 
-class SDRCBridge(params: SDRAMBridgeParams) extends Module {
+class SDRCBridge(params: SDRAMBridgeParams, disableDebugMessage: Boolean = false) extends Module {
     val byteAddressShift = log2Ceil(params.dataBytes)
     val axi4Params = AXI4Params(params.addressBits + byteAddressShift, params.dataBits, AXI4ReadWrite, Some(params.maxBurstLength))
     val io = IO(new Bundle {
         val sdrc = new SDRCIO(params)
         val axi = Flipped(new AXI4IO(axi4Params))
     })
+
+    object DebugPrintf {
+        def apply(p: Printable): Unit = {
+            if(!disableDebugMessage) {
+                chiselPrintf(p)
+            }
+        }
+    }
+    val printf = DebugPrintf
 
     val fifo_ar = Module(new Queue(new AXI4A(axi4Params), entries = 2))
     val fifo_aw = Module(new Queue(new AXI4A(axi4Params), entries = 2))

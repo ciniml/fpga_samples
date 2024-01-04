@@ -278,7 +278,7 @@ class VideoSignalGenerator(defaultVideoParams: VideoParams, maxVideoParams: Vide
     }
 
     // Fetch current config
-    val triggerFrame = RegInit(false.B)
+    val triggerFrame = RegInit(true.B)
     triggerFrame := false.B
     when( nextFrame ) {
         videoConfig := nextVideoConfig
