@@ -13,6 +13,7 @@ import sdram.SDRAMBridgeParams
 import axi._
 import _root_.util.MathUtil
 import chisel3.experimental.ChiselEnum
+import chisel3.{printf => chiselPrintf}
 
 class LineWriterCommand(val videoParams: VideoParams, val axiParams: AXI4Params) extends Bundle {
     val startAddress = UInt(axiParams.addressBits.W)
@@ -26,11 +27,20 @@ object LineWriterCommand {
     }
 }
 
-class LineWriter(videoParams: VideoParams, axiParams: AXI4Params, writeBurstPixels: Int = 128) extends Module {
+class LineWriter(videoParams: VideoParams, axiParams: AXI4Params, writeBurstPixels: Int = 128, enableDebugMessage: Boolean = false) extends Module {
     // Currently only supports 24bpp and 32bit bus
     assert(videoParams.pixelBits == 16 || videoParams.pixelBits == 24)
     assert(axiParams.dataBits == 32)
     assert((writeBurstPixels * videoParams.pixelBytes)%(axiParams.dataBits/8) == 0 )
+
+    object DebugPrintf {
+        def apply(p: Printable): Unit = {
+            if(enableDebugMessage) {
+                chiselPrintf(p)
+            }
+        }
+    }
+    val printf = DebugPrintf
 
     val io = IO(new Bundle{
         val data = Flipped(Irrevocable(new VideoSignal(videoParams.pixelBits)))
@@ -175,7 +185,7 @@ class LineWriter(videoParams: VideoParams, axiParams: AXI4Params, writeBurstPixe
         }
         is(State.sRunning) {
             // Generate address
-            when( (!awValid || awReady) && addressWordsRemaining > 0.U && issuedDataWordsRemaining === 0.U ) {
+            when( (!awValid || awReady) && addressWordsRemaining > 0.U && issuedDataWordsRemaining === 0.U && (command.doFill || dataValid)) { // Do not issue next write request until the data gets ready.
                 awAddr := nextAddress
                 awValid := true.B
                 val nextLen = WireDefault((writeBurstWords - 1).U)
@@ -248,11 +258,20 @@ object StreamWriterCommand {
     }
 }
 
-class StreamWriter(videoParams: VideoParams, axiParams: AXI4Params, writeBurstPixels: Int = 128) extends Module {
+class StreamWriter(videoParams: VideoParams, axiParams: AXI4Params, writeBurstPixels: Int = 128, enableDebugMessage: Boolean = false) extends Module {
     // Currently only supports 16/24bpp and 32bit bus
     assert(videoParams.pixelBits == 16 || videoParams.pixelBits == 24)
     assert(axiParams.dataBits == 32)
     assert((writeBurstPixels * videoParams.pixelBytes)%(axiParams.dataBits/8) == 0 )
+
+    object DebugPrintf {
+        def apply(p: Printable): Unit = {
+            if(enableDebugMessage) {
+                chiselPrintf(p)
+            }
+        }
+    }
+    val printf = DebugPrintf
 
     val io = IO(new Bundle{
         val data = Flipped(Irrevocable(new VideoSignal(videoParams.pixelBits)))

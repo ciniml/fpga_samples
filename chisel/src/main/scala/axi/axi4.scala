@@ -28,6 +28,10 @@ case class AXI4Params
 ) {
     val strbBits = dataBits / 8
     val allowBurst = maxBurstLength.isDefined
+
+    def asAXIMode(mode: AXI4Mode): AXI4Params = {
+        AXI4Params(addressBits, dataBits, mode, maxBurstLength)
+    }
 }
 
 class AXI4A(val params: AXI4Params) extends Bundle {

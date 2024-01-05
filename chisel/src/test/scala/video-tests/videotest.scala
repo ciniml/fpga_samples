@@ -10,8 +10,6 @@ import org.scalatest._
 import chiseltest._
 import chisel3._
 import scala.util.control.Breaks
-import chisel3._
-import chisel3.util._
 import java.io.FileInputStream
 import scala.collection.mutable
 import _root_.util.AsyncFIFO

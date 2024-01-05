@@ -9,6 +9,7 @@ package axi
 import chisel3._
 import chisel3.util._
 import chisel3.experimental.ChiselEnum
+import chisel3.{printf => chiselPrintf}
 
 class AXI4Demux(axi4Params: AXI4Params, numberOfMasters: Int) extends Module {
     val io = IO(new Bundle {
@@ -128,7 +129,7 @@ class AXI4Demux(axi4Params: AXI4Params, numberOfMasters: Int) extends Module {
             switch(state) {
                 is(sIdle) {
                     when(in.aw.get.valid && in.aw.get.ready) { // Current selected channel is ready.
-                        printf(p"[DEMUX] Select index=${inputIndex} addr=${Hexadecimal(in.aw.get.bits.addr)} len=${Hexadecimal(in.aw.get.bits.len.get)}")
+                        printf(p"[DEMUX] Select index=${inputIndex} addr=${Hexadecimal(in.aw.get.bits.addr)} len=${Hexadecimal(in.aw.get.bits.len.get)}\n")
                         awValid := true.B
                         awAddr := in.aw.get.bits.addr
                         awLen := in.aw.get.bits.len.get
@@ -162,3 +163,190 @@ class AXI4Demux(axi4Params: AXI4Params, numberOfMasters: Int) extends Module {
         }
     }
 }
+
+/* 
+ * AXI4 demuxer with priority. A master with lower index has higher priority.
+ */
+class AXI4PriorityDemux(axi4Params: AXI4Params, masterModes: Seq[AXI4Mode], enableDebugMessage: Boolean = false) extends Module {
+    val numberOfMasters = masterModes.length
+    val io = IO(new Bundle {
+        val in = MixedVec(masterModes.map(mode => Flipped(AXI4IO(axi4Params.asAXIMode(mode)))))
+        val out = AXI4IO(axi4Params)
+    })
+
+    object DebugPrintf {
+        def apply(p: Printable): Unit = {
+            if(enableDebugMessage) {
+                chiselPrintf(p)
+            }
+        }
+    }
+    val printf = DebugPrintf
+
+    val inputIndexBits = log2Ceil(numberOfMasters + 1)
+    val inputIndex = RegInit(numberOfMasters.U(inputIndexBits.W))   // Default: No input is selected.
+    val addressBits = axi4Params.addressBits
+    val maxBurstLength = axi4Params.maxBurstLength.get
+
+    object State extends ChiselEnum {
+        val sIdle, sReadTransfer, sWriteTransfer, sWriteResp= Value
+    }
+    val state = RegInit(State.sIdle)
+    
+    val ar = io.out.ar.get
+    val r = io.out.r.get
+    val count = RegInit(0.U(log2Ceil(maxBurstLength).W))
+    val aw = io.out.aw.get
+    val w = io.out.w.get
+    val b = io.out.b.get
+
+    val arValid = RegInit(false.B)
+    val arReady = WireDefault(ar.ready)
+    val arAddr = RegInit(0.U(addressBits.W))
+    val arLen = RegInit(0.U(log2Ceil(maxBurstLength).W))
+    ar.valid := arValid
+    ar.bits.addr := arAddr
+    ar.bits.len.get := arLen
+
+    val rValid = WireDefault(r.valid)
+    val rReady = WireDefault(false.B)
+    val rData = WireDefault(r.bits.data)
+    val rLast = WireDefault(r.bits.last.get)
+    val rResp = WireDefault(r.bits.resp)
+    r.ready := rReady
+    
+    val awValid = RegInit(false.B)
+    val awReady = WireDefault(aw.ready)
+    val awAddr = RegInit(0.U(addressBits.W))
+    val awLen = RegInit(0.U(log2Ceil(maxBurstLength).W))
+    aw.valid := awValid
+    aw.bits.addr := awAddr
+    aw.bits.len.get := awLen
+
+    val wValid = WireDefault(false.B)
+    val wBits = Wire(new AXI4W(axi4Params))
+    val bReady = WireDefault(false.B)
+    wBits.data := 0.U
+    wBits.last match {
+        case Some(last) => last := false.B
+        case None => {}
+    }
+    wBits.strb := 0.U
+    w.valid := wValid
+    w.bits := wBits
+    b.ready := bReady
+
+    // Clear ARVALID if the last transaction completes.
+    when(arValid && arReady) {
+        arValid := false.B
+    }
+    // Clear AWVALID if the last transaction completes.
+    when(awValid && awReady) {
+        awValid := false.B
+    }
+
+    val hasReadRequest = io.in.map(port => port.ar.map(a => a.valid).getOrElse(false.B) ).reduce((l, r) => l || r)
+    val hasWriteRequest = io.in.map(port => port.aw.map(a => a.valid).getOrElse(false.B) ).reduce((l, r) => l || r)
+    val arIndex = PriorityEncoder(io.in.map(port => port.ar.map(a => a.valid).getOrElse(false.B)).toSeq)
+    val awIndex = PriorityEncoder(io.in.map(port => port.aw.map(a => a.valid).getOrElse(false.B)).toSeq)
+    
+    for(masterIndex <- 0 to numberOfMasters - 1) {
+        val mode = masterModes(masterIndex)
+        val in = io.in(masterIndex)
+        val selected = masterIndex.U === inputIndex
+        val portArReady = WireDefault(false.B)
+        val portAwReady = WireDefault(false.B)
+        
+        mode match {
+            case AXI4ReadOnly => {}
+            case _ => {
+                in.aw.get.ready := portAwReady
+                in.w.get.ready := selected && w.ready && state === State.sWriteTransfer
+                in.b.get.valid := selected && b.valid && state === State.sWriteResp
+                in.b.get.bits := b.bits
+
+                when(state === State.sIdle && hasWriteRequest && awIndex === masterIndex.U && (!hasReadRequest || awIndex < arIndex)) {
+                    inputIndex := masterIndex.U
+                    when(!awValid) {
+                        awValid := true.B
+                        awAddr := in.aw.get.bits.addr
+                        awLen := in.aw.get.bits.len.get
+                        count := in.aw.get.bits.len.get
+                    }
+                    when(awReady) {
+                        // Transit to sWriteTransfer state if the slave is ready.
+                        state := State.sWriteTransfer
+                        printf(p"[DEMUX] AW Select index=${masterIndex} addr=${Hexadecimal(in.aw.get.bits.addr)} len=${Hexadecimal(in.aw.get.bits.len.get)}\n")
+                    }
+
+                    portAwReady := awReady
+                }
+                when(selected) {
+                    switch(state) {
+                        is(State.sIdle) { }
+                        is(State.sReadTransfer) { }
+                        is(State.sWriteTransfer) {
+                            wValid := in.w.get.valid
+                            wBits := in.w.get.bits
+                            when( in.w.get.valid && in.w.get.ready ) {
+                                count := count - 1.U
+                                when( count === 0.U ) {
+                                    state := State.sWriteResp
+                                }
+                            }
+                        }
+                        is(State.sWriteResp) {
+                            bReady := in.b.get.ready
+                            when(in.b.get.valid && in.b.get.ready ) {
+                                state := State.sIdle
+                                inputIndex := numberOfMasters.U // invalidate inputIndex
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        
+        mode match {
+            case AXI4WriteOnly => {}
+            case _ => {
+                in.ar.get.ready := portArReady
+                in.r.get.valid := selected && rValid && state === State.sReadTransfer
+                in.r.get.bits := r.bits
+
+                when(state === State.sIdle && hasReadRequest && arIndex === masterIndex.U && (!hasWriteRequest || arIndex <= awIndex)) {
+                    inputIndex := masterIndex.U
+                    when(!arValid) {
+                        arValid := true.B
+                        arAddr := in.ar.get.bits.addr
+                        arLen := in.ar.get.bits.len.get
+                    }
+                    when(arReady) {
+                        // Transit to sReadTransfer state if the slave is ready.
+                        state := State.sReadTransfer
+                        printf(p"[DEMUX] AR Select index=${masterIndex} addr=${Hexadecimal(in.ar.get.bits.addr)} len=${Hexadecimal(in.ar.get.bits.len.get)}\n")
+                    }
+
+                    portArReady := arReady
+                }
+                when(selected) {
+                    switch(state) {
+                        is(State.sIdle) { }
+                        is(State.sReadTransfer) {
+                            rReady := in.r.get.ready
+
+                            when(rValid && rReady && rLast ) {
+                                state := State.sIdle
+                                inputIndex := numberOfMasters.U // invalidate inputIndex
+                            }
+                        }
+                        is(State.sWriteTransfer) { }
+                        is(State.sWriteResp) { }
+                    }
+                }
+            }
+        }
+    }
+}
+

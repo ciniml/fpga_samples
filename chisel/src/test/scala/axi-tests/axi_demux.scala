@@ -6,12 +6,15 @@
 
 package axi
 
-import org.scalatest._
 import chiseltest._
 import chisel3._
 import chisel3.util._
 import chisel3.util.random.LFSRReduce
 
+import scala.util.control.Breaks
+import org.scalatest.flatspec.AnyFlatSpec
+import org.scalatest.matchers.should.Matchers 
+import chisel3.stage.PrintFullStackTraceAnnotation
 
 class AXITrafficSource(axiParams: AXI4Params, fromAddress: BigInt, toAddressInclusive: BigInt, burstLength: Int) extends Module {
     val io = IO(new Bundle{
@@ -24,6 +27,19 @@ class AXITrafficSource(axiParams: AXI4Params, fromAddress: BigInt, toAddressIncl
     io.fail := fail
     val done = WireDefault(false.B)
     io.done := done
+
+    axiParams.mode match {
+        case AXI4WriteOnly => {}
+        case _ => {
+            io.axi.ar.get.valid := false.B
+            io.axi.ar.get.bits.addr := 0.U
+            io.axi.ar.get.bits.len match {
+                case Some(len) => len := 0.U
+                case None => {}
+            }
+            io.axi.r.get.ready := false.B
+        }
+    }
 
     val burstBytes = (burstLength * axiParams.dataBits / 8)
     val bytesToTransfer = (toAddressInclusive - fromAddress + 1)
@@ -69,7 +85,7 @@ class AXITrafficSource(axiParams: AXI4Params, fromAddress: BigInt, toAddressIncl
 
             when( !inTransaction ) {
                 when((!awValid || awReady) && address <= toAddressInclusive.U) {
-                    printf(p"[${Hexadecimal(address)}] issue AW")
+                    printf(p"[${Hexadecimal(address)}] issue AW\n")
                     awValid := true.B
                     awAddr := address
                     address := address + burstBytes.U
@@ -78,7 +94,7 @@ class AXITrafficSource(axiParams: AXI4Params, fromAddress: BigInt, toAddressIncl
                 }
             } .otherwise {
                 when((!wValid || wReady) && bytesTransferred < bytesToTransfer.U && random.LFSR(4).xorR()) {
-                    printf(p"[${Hexadecimal(awAddr)}] issue W beat=${burstCount}")
+                    printf(p"[${Hexadecimal(awAddr)}] issue W beat=${burstCount}\n")
                     val isLast = burstCount === (burstLength - 1).U
                     wValid := true.B
                     wLast := isLast
@@ -108,6 +124,20 @@ class AXITrafficSink(axiParams: AXI4Params) extends Module {
     io.fail := fail
 
     axiParams.mode match {
+        case AXI4WriteOnly => {}
+        case _ => {
+            io.axi.ar.get.ready := false.B
+            io.axi.r.get.valid := false.B
+            io.axi.r.get.bits.data := 0.U
+            io.axi.r.get.bits.resp := AXI4Resp.OKAY
+            io.axi.r.get.bits.last match {
+                case Some(last) => last := false.B
+                case None => {}
+            }
+        }
+    }
+
+    axiParams.mode match {
         case AXI4ReadOnly => {}
         case _ => {
             val aw = io.axi.aw.get
@@ -133,7 +163,7 @@ class AXITrafficSink(axiParams: AXI4Params) extends Module {
                 is( sIdle ) {
                     awReady := random.LFSR(8).xorR()
                     when(awValid && awReady) {
-                        printf(p"[${Hexadecimal(address)}] AW addr=${Hexadecimal(aw.bits.addr)} len=${Hexadecimal(aw.bits.len.get)}")
+                        printf(p"[${Hexadecimal(address)}] AW addr=${Hexadecimal(aw.bits.addr)} len=${Hexadecimal(aw.bits.len.get)}\n")
 
                         address := aw.bits.addr
                         count := aw.bits.len.get
@@ -151,12 +181,12 @@ class AXITrafficSink(axiParams: AXI4Params) extends Module {
                         // Check
                         val wLastExpected = count === 0.U
                         when( wLastExpected =/= w.bits.last.get ) {
-                            printf(p"[${Hexadecimal(address)}] WLAST mismatch expected: ${wLastExpected} actual: ${w.bits.last.get}")
+                            printf(p"[${Hexadecimal(address)}] WLAST mismatch expected: ${wLastExpected} actual: ${w.bits.last.get}\n")
                             state := sError
                         }
                         val wDataExpected = address / (axiParams.dataBits/8).U
                         when( w.bits.data =/= wDataExpected ) {
-                            printf(p"[${Hexadecimal(address)}] WDATA mismatch expected: ${Hexadecimal(wDataExpected)} actual: ${Hexadecimal(w.bits.data)}")
+                            printf(p"[${Hexadecimal(address)}] WDATA mismatch expected: ${Hexadecimal(wDataExpected)} actual: ${Hexadecimal(w.bits.data)}\n")
                             state := sError
                         }
                     }
@@ -197,15 +227,49 @@ class AXI4DemuxTestSystem extends Module {
     io.finish := source1.io.done && source2.io.done
 }
 
+class AXI4PriorityDemuxTestSystem extends Module {
+    val io = IO(new Bundle {
+        val finish = Output(Bool())
+        val fail = Output(Bool())
+    })
+
+    val params = AXI4Params(32, 32, AXI4ReadWrite, Some(9))
+    val demux = Module(new AXI4PriorityDemux(params, Seq(AXI4ReadWrite, AXI4ReadWrite)))
+    val sink = Module(new AXITrafficSink(params))
+    val source1 = Module(new AXITrafficSource(params, 0x0000, 0x0fff, 4))
+    val source2 = Module(new AXITrafficSource(params, 0x0000, 0x1fff, 8))
+    val source1Error = WireDefault(false.B)
+    val source2Error = WireDefault(false.B)
+
+    demux.io.in(0) <> AXIProtocolChecker(source1.io.axi, Some(source1Error))
+    demux.io.in(1) <> AXIProtocolChecker(source2.io.axi, Some(source2Error))
+    demux.io.out <> sink.io.axi
+
+    io.fail := source1.io.fail || source2.io.fail || sink.io.fail || source1Error || source2Error
+    io.finish := source1.io.done && source2.io.done
+}
+
 class AXI4DemuxTest
-    extends FlatSpec
+    extends AnyFlatSpec
     with ChiselScalatestTester
     with Matchers {
-  val dutName = "AXI4Demux"
-  behavior of dutName
+  behavior of "AXI4Demux"
 
   it should "simple" in {
-    test(new AXI4DemuxTestSystem) { c =>
+    test(new AXI4DemuxTestSystem).withAnnotations(Seq(VerilatorBackendAnnotation, WriteFstAnnotation)) { c =>
+      c.clock.setTimeout(0x2000*4)
+      
+      while( !c.io.finish.peek().litToBoolean ) {
+        c.io.fail.expect(false.B, "Result check failed")
+        c.clock.step()
+      }
+    }
+  }
+
+  behavior of "AXI4PriorityDemux"
+  
+  it should "priority" in {
+    test(new AXI4PriorityDemuxTestSystem).withAnnotations(Seq(VerilatorBackendAnnotation, WriteFstAnnotation, PrintFullStackTraceAnnotation)) { c =>
       c.clock.setTimeout(0x2000*4)
       
       while( !c.io.finish.peek().litToBoolean ) {
