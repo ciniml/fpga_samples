@@ -1,0 +1,5 @@
+signal_name,pmod_pin
+tmds_data_p[2],pmod0_1
+tmds_data_p[1],pmod0_2
+tmds_data_p[0],pmod0_3
+tmds_clk_p,pmod0_4

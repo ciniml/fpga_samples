@@ -26,13 +26,22 @@ if {${TARGET} == "tangprimer20k"} {
     set_option -use_done_as_gpio 1
     set_option -use_ready_as_gpio 1
 }
+if {${TARGET} == "tangprimer25k"} {
+    set_option -use_cpu_as_gpio 1
+}
 
 add_file -type verilog [file normalize ${RTL_DIR}/dvi_out/dvi_out.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/video/test_pattern_generator.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/top.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/reset_seq.sv]
-add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_rpll_dvi/gowin_rpll_dvi.v]
-add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_rpll_ser/gowin_rpll_ser.v]
+if {${TARGET} == "tangprimer25k"} {
+    add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_pll_27/gowin_pll_27.v]
+    add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_pll/gowin_pll.v]
+} else {
+    add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_rpll_dvi/gowin_rpll_dvi.v]
+    add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_rpll_ser/gowin_rpll_ser.v]
+}
+
 add_file -type cst [file normalize ${SRC_DIR}/pins.cst]
 add_file -type sdc [file normalize ${SRC_DIR}/timing.sdc]
 

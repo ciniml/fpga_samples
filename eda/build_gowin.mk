@@ -16,6 +16,8 @@ MOD_DIR := $(abspath ../../mod)
 TARGETS_DIR := $(abspath ../targets)
 TARGET_DEF_DIR := $(TARGETS_DIR)/$(TARGET)
 
+GW_SH ?= $(shell which gw_sh)
+
 include $(TARGET_DEF_DIR)/target.mk
 
 DEVICE ?= $(DEVICE_FAMILY)
@@ -26,10 +28,15 @@ OPENFPGA_LOADER ?= $(shell which openFPGALoader)
 PROJECT_ADDITIONAL_ARGS ?= 
 PROJECT_ADDITIONAL_CLEAN ?=
 
+PROGRAMMER_FLASH_OP_INDEX ?= 6
+OPENFPGA_LOADER_DEVICE_OVERRIDE ?=
+
+PROJECT_TCL ?= ../../project.tcl
+
 all: synthesis
 
 $(BITSTREAM): $(SRCS)
-	mkdir -p build/$(TARGET) && cd build/$(TARGET) && gw_sh ../../project.tcl $(SRC_DIR) $(RTL_DIR) $(TARGET) $(DEVICE_FAMILY) $(DEVICE_PART) $(PROJECT_NAME) $(PROJECT_ADDITIONAL_ARGS)
+	mkdir -p build/$(TARGET) && cd build/$(TARGET) && $(GW_SH) $(PROJECT_TCL) $(SRC_DIR) $(RTL_DIR) $(TARGET) $(DEVICE_FAMILY) $(DEVICE_PART) $(PROJECT_NAME) $(PROJECT_ADDITIONAL_ARGS)
 
 synthesis: $(BITSTREAM)
 
@@ -44,15 +51,15 @@ ifeq ($(USE_OPENFPGA_LOADER),0)
 	if lsmod | grep ftdi_sio; then sudo modprobe -r ftdi_sio; fi
 	cd $(PROGRAMMER_CLI_DIR); ./programmer_cli $(PROGRAMMER_CABLE) $(CABLE_INDEX_OPT) --device $(DEVICE) --run 2 --fsFile $(abspath $(BITSTREAM))
 else
-	$(OPENFPGA_LOADER) $(OPENFPGA_LOADER_TARGET) --write-sram $(abspath $(BITSTREAM))
+	$(OPENFPGA_LOADER) $(OPENFPGA_LOADER_TARGET) $(OPENFPGA_LOADER_DEVICE_OVERRIDE) --write-sram $(abspath $(BITSTREAM))
 endif
 
 deploy: $(BITSTREAM)
 ifeq ($(USE_OPENFPGA_LOADER),0)
 	if lsmod | grep ftdi_sio; then sudo modprobe -r ftdi_sio; fi
-	cd $(PROGRAMMER_CLI_DIR); ./programmer_cli $(PROGRAMMER_CABLE) $(CABLE_INDEX_OPT) --device $(DEVICE) --run 6 --fsFile $(abspath $(BITSTREAM))
+	cd $(PROGRAMMER_CLI_DIR); ./programmer_cli $(PROGRAMMER_CABLE) $(CABLE_INDEX_OPT) --device $(DEVICE) --run $(PROGRAMMER_FLASH_OP_INDEX) --fsFile $(abspath $(BITSTREAM))
 else
-	$(OPENFPGA_LOADER) $(OPENFPGA_LOADER_TARGET) --write-flash $(abspath $(BITSTREAM)) --unprotect-flash
+	$(OPENFPGA_LOADER) $(OPENFPGA_LOADER_TARGET) $(OPENFPGA_LOADER_DEVICE_OVERRIDE) --write-flash $(abspath $(BITSTREAM)) --unprotect-flash
 endif
 
 clean:
