@@ -14,6 +14,8 @@ HDMIコネクタで使用している信号はComProc CPU Boardのボード上�
 
 ## 合成の準備
 
+### Tang Nano 9K向け
+
 いくつかのGOWIN EDA付属のIPを使用している。現状GOWINのIPはスクリプトからIPのHDLファイルを再生成することができないので、IP定義ファイルからの再生成をGUIを操作して手動で行う必要がある。
 
 `src/comprocboard_9k_ip` 以下にある3つのIPを復元する。
@@ -27,3 +29,14 @@ IPの復元はGOWIN EDAのGUI上の `Tools -> IP Core Generator` メニューか
 
 ![IPCファイルの読み込み](./regenerate_ip.drawio.svg)
 
+### Tang Primer 25K向け
+
+Tang Primer 25K向けのデザインを試すには、Tang Primer 25K本体以外にSipeedのPmod DVIモジュールが必要となる。Pmod DVIモジュールは DE0 互換コネクタを手前に持ってきた状態 (Pmodコネクタを奥側にした状態) で一番右側のコネクタ (F5, G5のピンが含まれるコネクタ) に接続する。
+
+Tang Nano 9K向けと同様に、`src/ip` 以下にある、 `gowin_pll` と `gowin_pll_27` を復元する。
+
+その後、以下のコマンドでビットストリームを生成する。
+
+```
+$ make TARGET=tangprimer25k 
+```

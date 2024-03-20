@@ -20,10 +20,6 @@ module top(
 
 logic clock_dvi;
 logic clock_dvi_ser;
-logic clock_dvi_74_25;
-logic clock_dvi_ser_371_25;
-logic clock_dvi_148_5;
-logic clock_dvi_ser_742_5;
 logic pll_lock;
 logic pll_lock_27;
 
@@ -41,14 +37,13 @@ gowin_pll_27 pll_27(
     .clkin(clock) //input clkin
 );
 gowin_pll pll_dvi(
-    .clkout0(clock_dvi_74_25),
-    .clkout1(clock_dvi_ser_371_25),
-    .clkout2(clock_dvi_148_5),
-    .clkout3(clock_dvi_ser_742_5),
+    .clkout0(clock_dvi),
+    .clkout1(clock_dvi_ser),
     .lock(pll_lock), //output lock
     .clkin(clock_27) //input clkin
 );
 
+// 1280x720 60
 // localparam int HSYNC = 40;
 // localparam int HBACK = 220;
 // localparam int HACTIVE = 1280;
@@ -58,16 +53,25 @@ gowin_pll pll_dvi(
 // localparam int VACTIVE = 720;
 // localparam int VFRONT = 5;
 
-localparam int HSYNC = 44;
-localparam int HBACK = 148;
-localparam int HACTIVE = 1920;
-localparam int HFRONT = 88;
-localparam int VSYNC = 5;
-localparam int VBACK = 36;
-localparam int VACTIVE = 1080;
-localparam int VFRONT = 4;
-assign clock_dvi     = clock_dvi_148_5;
-assign clock_dvi_ser = clock_dvi_ser_742_5;
+// 1920x1080 60
+// localparam int HSYNC = 44;
+// localparam int HBACK = 148;
+// localparam int HACTIVE = 1920;
+// localparam int HFRONT = 88;
+// localparam int VSYNC = 5;
+// localparam int VBACK = 36;
+// localparam int VACTIVE = 1080;
+// localparam int VFRONT = 4;
+
+// 1600x1200 60
+localparam int HSYNC = 192;
+localparam int HBACK = 304;
+localparam int HACTIVE = 1600;
+localparam int HFRONT = 64;
+localparam int VSYNC = 3;
+localparam int VBACK = 46;
+localparam int VACTIVE = 1200;
+localparam int VFRONT = 1;
 
 logic reset_dvi;
 reset_seq #( .RESET_DELAY_CYCLES(4) ) reset_seq_dvi(
