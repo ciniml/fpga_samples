@@ -44,6 +44,7 @@ typedef logic [HCOUNTER_BITS-1:0] hcounter_t;
 typedef logic [VCOUNTER_BITS-1:0] vcounter_t;
 
 hcounter_t hcounter = 0;
+hcounter_t hcounter_next;
 vcounter_t vcounter = 0;
 
 localparam int LOGO_STRIDE = (LOGO_WIDTH + 7) & ~7;
@@ -56,11 +57,18 @@ hcounter_t logo_x = 0;
 vcounter_t logo_y = 0;
 logic logo_dx = 0;
 logic logo_dy = 0;
+hcounter_t logo_left = 0;
+hcounter_t logo_right = 0;
+vcounter_t logo_top = 0;
+vcounter_t logo_bottom = 0;
 
 logo_address_t logo_address = 0;
 logic [7:0] logo_pixels = 0;
 logic logo_pixel = 0;
-logic within_logo = 0;
+logic within_logo;
+logic within_logo_h;
+logic within_logo_v;
+
 
 if( BOUNCE_LOGO ) begin: bounce_logo_memory_load
     initial begin
@@ -80,9 +88,7 @@ end
 always_comb begin
     logo_pixel = logo_pixels[logo_address&7];
     //logo_pixel = logo_memory[logo_address >> 3][logo_address&7];
-
-    within_logo = HSYNC + HBACK + logo_x <= hcounter && hcounter < HSYNC + HBACK + logo_x + LOGO_WIDTH
-               && VSYNC + VBACK + logo_y <= vcounter && vcounter < VSYNC + VBACK + logo_y + LOGO_HEIGHT;
+    within_logo = within_logo_h && within_logo_v;
 end
 
 always_ff @(posedge clock) begin
@@ -94,6 +100,12 @@ always_ff @(posedge clock) begin
         video_hsync <= 0;
         video_vsync <= 0;
         video_data <= 0;
+        within_logo_h <= 0;
+        within_logo_v <= 0;
+        logo_left <= HSYNC + HBACK;
+        logo_right <= HSYNC + HBACK + LOGO_WIDTH - 1;
+        logo_top <= VSYNC + VBACK;
+        logo_bottom <= VSYNC + VBACK + LOGO_HEIGHT - 1;
     end
     else begin
         if( within_logo ) begin
@@ -103,7 +115,12 @@ always_ff @(posedge clock) begin
 
         if( hcounter == HTOTAL - 1) begin
             hcounter <= '0;
+            within_logo_h <= HSYNC + HBACK == 0;
+
             if( vcounter == VTOTAL - 1) begin
+                hcounter_t logo_x_next;
+                vcounter_t logo_y_next;
+
                 vcounter <= '0;
                 logo_address <= '0;
                 // Update logo position
@@ -113,16 +130,34 @@ always_ff @(posedge clock) begin
                 if( logo_dy && logo_y == 0 || !logo_dy && logo_y == (VACTIVE - LOGO_HEIGHT - 1)) begin
                     logo_dy <= !logo_dy;
                 end
-                logo_x <= logo_dx ? logo_x - 1 : logo_x + 1;
-                logo_y <= logo_dy ? logo_y - 1 : logo_y + 1;
+                logo_x_next = logo_dx ? logo_x - 1 : logo_x + 1;
+                logo_y_next = logo_dy ? logo_y - 1 : logo_y + 1;
+
+                logo_x <= logo_x_next;
+                logo_y <= logo_y_next;
+
+                logo_left   <= HSYNC + HBACK + logo_x_next;
+                logo_right  <= HSYNC + HBACK + logo_x_next + LOGO_WIDTH - 1;
+                logo_top    <= VSYNC + VBACK + logo_y_next;
+                logo_bottom <= VSYNC + VBACK + logo_y_next + LOGO_HEIGHT - 1;
+
+                within_logo_v <= VSYNC + VBACK == 0;    // If the VSYNC + VBACK is 0 then the V counter is within the logo from the start of the frame.
             end
             else begin
+                vcounter_t vcounter_next;
+
+                vcounter_next = vcounter + vcounter_t'(1);
                 logo_address <= (logo_address + logo_address_t'(7)) & ~logo_address_t'(7);
-                vcounter <= vcounter + vcounter_t'(1);
+                vcounter <= vcounter_next;
+                within_logo_v <= logo_top <= vcounter_next && vcounter_next <= logo_bottom;
             end
         end
         else begin
-            hcounter <= hcounter + hcounter_t'(1);
+            hcounter_t hcounter_next;
+            hcounter_next = hcounter + hcounter_t'(1);
+
+            hcounter <= hcounter_next;
+            within_logo_h <= logo_left <= hcounter_next && hcounter_next <= logo_right;
         end
 
         video_de <= HSYNC + HBACK <= hcounter && hcounter < HSYNC + HBACK + HACTIVE
