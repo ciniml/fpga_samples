@@ -28,6 +28,8 @@ if {${TARGET} == "tangprimer20k"} {
 }
 if {${TARGET} == "tangprimer25k"} {
     set_option -use_cpu_as_gpio 1
+    set_option -place_option 1
+    set_option -route_option 2
 }
 
 add_file -type verilog [file normalize ${RTL_DIR}/dvi_out/dvi_out.sv]
