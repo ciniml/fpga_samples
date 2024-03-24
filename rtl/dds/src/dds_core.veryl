@@ -1,0 +1,241 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2023-2024.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file dds_core.veryl
+ * @brief Simple DDS waveform generator.
+ */
+
+pub module dds_core #(
+    parameter SAMPLE_BITS: u32 = 16,
+    parameter TABLE_LENGTH_BITS: u32 = 8,
+    parameter TABLE_READ_LATENCY: u32 = 1,  // table memory access latency. must be greater than or equal to 1. 1 means data is valid at the next cycle.
+    parameter PHASE_COUNTER_BITS: u32 = 14,
+    parameter MULTIPLYER_LATENCY: u32 = 1,  // multiplier latency. must be greater than or equal to 1. 1 means multiplicand output is valid at the next cycle.
+    parameter DEBUG_OUT: bit = 0,           // Enable debug output messages
+) (
+    clock: input logic,
+    aresetn: input logic,
+
+    // Table access
+    table_addr   : output logic<TABLE_LENGTH_BITS> [2],
+    table_read_en: output logic [2],
+    table_data   : input logic<SAMPLE_BITS> [2],
+
+    // DDS control input
+    saxis_control_tvalid: input logic,
+    saxis_control_tready: output logic,
+    saxis_control_tdata : input logic<PHASE_COUNTER_BITS + 2>,
+
+    // DDS output
+    maxis_wave_tvalid: output logic,
+    maxis_wave_tready: input logic,
+    maxis_wave_tdata : output logic<SAMPLE_BITS>,
+) {
+    type sample_t = logic<SAMPLE_BITS>;
+    type signed_sample_t = signed logic<SAMPLE_BITS>;
+
+    localparam TABLE_READ_LATENCY_COUNTER_BITS: u32 = if TABLE_READ_LATENCY <= 1 { 1 } else { $clog2(TABLE_READ_LATENCY) };
+    type read_latency_counter_t = logic<TABLE_READ_LATENCY_COUNTER_BITS>;
+    type table_addr_t = logic<TABLE_LENGTH_BITS>;
+    type phase_counter_t = logic<PHASE_COUNTER_BITS>;
+
+    // Table read access process.
+    var table_read_data_valid   : logic;
+    var table_read_data_ready   : logic;
+    var table_read_data         : logic<SAMPLE_BITS> [2];
+    var table_read_phase_counter: phase_counter_t;
+    var table_latency_counter: read_latency_counter_t;
+    enum TableReadState: logic<2> {
+        IDLE,
+        WAIT,
+        READ,
+    }
+    var table_read_state: TableReadState;
+
+    // DDS phase counter
+    var phase_counter: phase_counter_t;
+    var phase_increment: phase_counter_t;
+
+    // counter reset control
+    var phase_counter_reset_req: logic;
+    var phase_counter_set_req  : logic;
+    var new_phase_counter      : phase_counter_t;
+
+    function address_from_phase_counter(phase: input phase_counter_t) -> table_addr_t {
+        return phase[$bits(phase_counter_t) - 1:$bits(phase_counter_t) - TABLE_LENGTH_BITS];
+    }
+
+    always_ff (clock, aresetn) {
+        if_reset {
+            table_addr[0] = 0;
+            table_addr[1] = 0;
+            table_read_en[0] = 0;
+            table_read_en[1] = 0;
+            table_read_data_valid = 0;
+            table_read_data[0] = 0;
+            table_read_data[1] = 0;
+            table_read_phase_counter = 0;
+            table_latency_counter = 0;
+            table_read_state = TableReadState::IDLE;
+            phase_counter = 0;
+        } else {
+            if phase_counter_reset_req {
+                phase_counter = 0;
+            }
+            if phase_counter_set_req {
+                phase_counter = new_phase_counter;
+            }
+
+            table_read_en[0] = 0;
+            table_read_en[1] = 0;
+            if table_read_data_valid && table_read_data_ready {
+                table_read_data_valid = 0;
+            }
+            case table_read_state {
+                TableReadState::IDLE: {
+                    if !table_read_data_valid || table_read_data_ready {
+                        table_read_en[0] = 1;
+                        table_read_en[1] = 1;
+                        table_addr[0] = address_from_phase_counter(phase_counter);
+                        table_addr[1] = address_from_phase_counter(phase_counter) + 1;
+                        table_read_phase_counter = phase_counter;   // Store the phase counter for interpolation.
+                        if DEBUG_OUT {
+                            $display("read: %0d, table_addr: %0d", phase_counter, address_from_phase_counter(phase_counter));
+                        }
+                        if TABLE_READ_LATENCY >= 1 {
+                            table_read_state = TableReadState::WAIT;
+                            table_latency_counter = (TABLE_READ_LATENCY - 1) as read_latency_counter_t;
+                        } else {
+                            table_read_state = TableReadState::READ;
+                        }
+                    }
+                }
+                TableReadState::WAIT: {
+                    if table_latency_counter == 0 {
+                        table_read_state = TableReadState::READ;
+                    } else {
+                        table_latency_counter = table_latency_counter - 1;
+                    }
+                }
+                TableReadState::READ: {
+                    table_read_data_valid = 1;
+                    table_read_data[0] = table_data[0];
+                    table_read_data[1] = table_data[1];
+                    phase_counter = phase_counter + phase_increment;
+                    table_read_state = TableReadState::IDLE;
+                }
+                default: {
+                    table_read_state = TableReadState::IDLE;
+                }
+            }
+        }
+    }
+    
+    // DDS control process
+    always_comb {
+        saxis_control_tready = aresetn;
+    }
+    always_ff(clock, aresetn) {
+        if_reset {
+            phase_increment = 0;
+            new_phase_counter = 0;
+            phase_counter_reset_req = 0;
+            phase_counter_set_req = 0;
+        } else {
+            // Ensure that reset/set request is asserted only one cycle.
+            phase_counter_reset_req = 0;
+            phase_counter_set_req = 0;
+
+            if saxis_control_tvalid {
+                case saxis_control_tdata[$bits(saxis_control_tdata)-1:$bits(saxis_control_tdata)-2] {
+                    2'b00: phase_increment = saxis_control_tdata[$bits(saxis_control_tdata) - 3:0];
+                    2'b01: {
+                        new_phase_counter = saxis_control_tdata[$bits(saxis_control_tdata) - 3:0];
+                        phase_counter_set_req = 1;
+                    }
+                    2'b10: {}   // do nothing
+                    2'b11: phase_counter_reset_req = 1;
+                }
+            }
+        }
+    }
+
+    // Interpolation process
+    localparam PHASE_FRACTION_BITS: u32 = PHASE_COUNTER_BITS - TABLE_LENGTH_BITS + 1;
+    type phase_fraction_t = logic<PHASE_FRACTION_BITS>;
+    type signed_phase_fraction_t = signed logic<PHASE_FRACTION_BITS + 1>;
+    localparam PHASE_FRACTION_MAX: phase_fraction_t = 1 << (PHASE_FRACTION_BITS - 1);
+    function to_phase_fraction(phase: input phase_counter_t) -> phase_fraction_t {
+        return {1'b0, phase[$bits(phase_counter_t) - TABLE_LENGTH_BITS - 1:0]};
+    }
+    type phase_fraction_pair_t = phase_fraction_t [2];
+    function to_interpolation_ratio(phase: input phase_counter_t) -> phase_fraction_pair_t {
+        var fraction: phase_fraction_t;
+        fraction = to_phase_fraction(phase);
+        return {PHASE_FRACTION_MAX - fraction, fraction};
+    }
+    enum InterpolationState: logic<2> {
+        IDLE,
+        MULTIPLY,
+        ADD,
+    }
+    var interpolation_state: InterpolationState;
+    localparam MULTIPLYER_LATENCY_BITS: u32 = if MULTIPLYER_LATENCY <= 1 { 1 } else { $clog2(MULTIPLYER_LATENCY) };
+    type multiplier_latency_count_t = logic<MULTIPLYER_LATENCY_BITS>;
+    var multiplier_latency_counter: multiplier_latency_count_t;
+    type multiplier_result_t = signed logic<SAMPLE_BITS + PHASE_FRACTION_BITS + 1>;
+    var multiplier_buffer: multiplier_result_t [2];
+
+    var interpolation_ratio: phase_fraction_pair_t;
+    assign interpolation_ratio = to_interpolation_ratio(table_read_phase_counter);
+
+    always_comb {
+        table_read_data_ready = aresetn && interpolation_state == InterpolationState::IDLE && (!maxis_wave_tvalid || maxis_wave_tready);
+    }
+    always_ff(clock, aresetn) {
+        if_reset {
+            interpolation_state = InterpolationState::IDLE;
+            multiplier_latency_counter = 0;
+            maxis_wave_tvalid = 0;
+            maxis_wave_tdata = 0;
+            multiplier_buffer = {0, 0};
+        } else {
+            if maxis_wave_tvalid && maxis_wave_tready {
+                maxis_wave_tvalid = 0;
+            }
+            case interpolation_state {
+                InterpolationState::IDLE: {
+                    if (!maxis_wave_tvalid || maxis_wave_tready) && table_read_data_valid {
+                        // Calculate phase-interpolated value
+                        multiplier_buffer[0] = ((table_data[0] as signed_sample_t) * (interpolation_ratio[0] as signed_phase_fraction_t));
+                        multiplier_buffer[1] = ((table_data[1] as signed_sample_t) * (interpolation_ratio[1] as signed_phase_fraction_t));
+                        if MULTIPLYER_LATENCY >: 1 {
+                            multiplier_latency_counter = (MULTIPLYER_LATENCY - 1) as multiplier_latency_count_t;
+                            interpolation_state = InterpolationState::MULTIPLY;
+                        } else {
+                            interpolation_state = InterpolationState::ADD;
+                        }
+                    }
+                }
+                InterpolationState::MULTIPLY: {
+                    if multiplier_latency_counter == 0 {
+                        interpolation_state = InterpolationState::ADD;
+                    } else {
+                        multiplier_latency_counter = multiplier_latency_counter - 1;
+                    }
+                }
+                InterpolationState::ADD: {
+                    maxis_wave_tvalid = 1;
+                    maxis_wave_tdata = ((multiplier_buffer[0] + multiplier_buffer[1]) >> (PHASE_FRACTION_BITS - 1)) as sample_t;
+                    interpolation_state = InterpolationState::IDLE;
+                }
+                default: {
+                    interpolation_state = InterpolationState::IDLE;
+                }
+            }
+        }
+    }
+}

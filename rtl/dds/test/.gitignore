@@ -1,0 +1,9 @@
+test.wdb
+*.log
+*.jou
+*.str
+*.pb
+*.jou
+.Xil
+xsim.dir
+run-*
