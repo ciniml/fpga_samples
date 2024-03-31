@@ -1,0 +1,167 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2024.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file aux_ch_rx.veryl
+ * @brief DisplayPort AUX_CH RX module
+ */
+
+pub module aux_ch_rx #(
+    param CLOCK_HZ: u32 = 32'd100_000_000,  // Clock frequency (default = 100MHz)
+    param MANCHESTER_CLOCK_HZ: u32 = 32'd1_000_000,  // Manchester clock frequency (default = 1MHz)
+    param DEBUG_OUT: bit = 0,               // Enable debug output messages
+) (
+    clock: input logic,
+    aresetn: input logic,
+
+    // AUX_CH data stream output
+    maxis_data_tvalid: output logic,
+    maxis_data_tready: input logic,
+    maxis_data_tdata : output logic<8>,
+    maxis_data_tlast : output logic,
+
+    // AUX_CH input
+    aux_ch_in:        input logic,
+) {
+    local CLOCK_COUNT_MAX: u32 = (CLOCK_HZ * 5 / MANCHESTER_CLOCK_HZ / 2) - 1;   // Max clock counter value
+    local CLOCK_COUNT_VARIANCE: u32 = (CLOCK_HZ / MANCHESTER_CLOCK_HZ) / 10;
+
+    type clock_counter_t = logic<$clog2(CLOCK_COUNT_MAX + 1)>;
+    type U32 = u32;
+    var clock_counter: clock_counter_t;
+
+    local CLOCK_COUNT_HALF: clock_counter_t = ((CLOCK_HZ / MANCHESTER_CLOCK_HZ) / 2) as clock_counter_t;
+    local CLOCK_COUNT_HALF_RANGE_L: clock_counter_t = (((CLOCK_COUNT_HALF) as U32) - CLOCK_COUNT_VARIANCE) as clock_counter_t;
+    local CLOCK_COUNT_HALF_RANGE_H: clock_counter_t = (((CLOCK_COUNT_HALF) as U32) + CLOCK_COUNT_VARIANCE) as clock_counter_t;
+
+    var clock_half_count: clock_counter_t;
+    var symbol_buffer: logic<16>;
+    var next_valid: logic;
+    var next_buffer: logic<8>;
+    var aux_ch_in_prev: logic;
+
+    enum State: logic<2> {
+        IDLE,
+        SYNC_END,
+        RECEIVE,
+    }
+
+    var state: State;
+    type symbol_counter_t = logic<4>;
+    var symbol_counter: symbol_counter_t;
+
+    always_ff (clock, aresetn) {
+        if_reset {
+            clock_counter = 0;
+            clock_half_count = 0;
+            
+            symbol_buffer = 0;
+            symbol_counter = 0;
+            state = State::IDLE;
+            
+            next_valid = 0;
+            next_buffer = 0;
+
+            aux_ch_in_prev = 0;
+
+            maxis_data_tvalid = 0;
+            maxis_data_tdata = 0;
+            maxis_data_tlast = 0;
+        } else {
+            aux_ch_in_prev = aux_ch_in;
+
+            if maxis_data_tvalid && maxis_data_tready {
+                maxis_data_tvalid = 0;
+            }
+
+            // default clock counter operation: increment
+            clock_counter = clock_counter + 1;
+
+            case state {
+                State::IDLE: {
+                    let base_clock_half_count: clock_counter_t = if clock_half_count == 0 { CLOCK_COUNT_HALF } else { clock_half_count };
+                    let clock_max: clock_counter_t = if base_clock_half_count <: (CLOCK_COUNT_MAX / 2) as clock_counter_t { base_clock_half_count * 2 + 1 } else { CLOCK_COUNT_MAX as clock_counter_t };
+                    let locked: logic = 1; //CLOCK_COUNT_HALF_RANGE_L <= clock_half_count && clock_half_count <= CLOCK_COUNT_HALF_RANGE_H;
+                    let sync_end: logic = symbol_buffer[7:0] == 8'b11110000;
+
+                    next_valid = 0;
+
+                    if aux_ch_in_prev != aux_ch_in {
+                        clock_counter = 0;
+                        if clock_counter <= CLOCK_COUNT_HALF_RANGE_H {
+                            clock_half_count = ((base_clock_half_count + clock_counter + (1 as clock_counter_t)) / (2 as clock_counter_t)) as clock_counter_t;
+                        }
+                        if locked && sync_end { // SYNC end
+                            // Must be at the edge of the first `1` bit.
+                            symbol_counter = 0;
+                            state = State::RECEIVE;
+                        }
+                    }
+                    if clock_counter == (clock_half_count >> 1) as clock_counter_t {
+                        symbol_buffer = {symbol_buffer[14:0], aux_ch_in};
+                    }
+                    if clock_counter == (clock_half_count + ((clock_half_count + 1 as clock_counter_t) >> 1)) as clock_counter_t {
+                        symbol_buffer = {symbol_buffer[14:0], aux_ch_in};
+                    }
+                    if clock_counter == clock_max {
+                        clock_counter = 0;
+                        if locked && sync_end { // SYNC end
+                            // Must be at the edge of the first `0` or `1` bit.
+                            symbol_counter = 0;
+                            state = State::RECEIVE;
+                        }
+                    } 
+                }
+                State::RECEIVE: {
+                    if aux_ch_in_prev != aux_ch_in {
+                        // Resync to the edge.
+                        clock_counter = 0;
+                    }
+                    if clock_counter == ((clock_half_count * 2) + 1) as clock_counter_t {
+                        clock_counter = 0;
+                    }
+                    let is_sample_point: logic = clock_counter == (clock_half_count >> 1) as clock_counter_t || clock_counter == (clock_half_count + ((clock_half_count + 1 as clock_counter_t) >> 1)) as clock_counter_t;   // Sample at 1/4 or 3/4 of the clock period.
+                    
+                    if is_sample_point {
+                        let next_symbol_buffer: logic<16> = {symbol_buffer[14:0], aux_ch_in};
+                        symbol_buffer = next_symbol_buffer;
+
+                        if symbol_counter[0] && next_symbol_buffer[7:0] == 8'b11110000 { // STOP
+                            maxis_data_tvalid = 1;
+                            maxis_data_tdata = next_buffer;
+                            maxis_data_tlast = 1;
+                            symbol_buffer = 0;
+                            state = State::IDLE;
+                        }
+                        if symbol_counter == (16 - 1) as symbol_counter_t {
+                            let next_symbol_valid: logic = &({next_symbol_buffer[15] ^ next_symbol_buffer[14], next_symbol_buffer[13] ^ next_symbol_buffer[12], next_symbol_buffer[11] ^ next_symbol_buffer[10], next_symbol_buffer[9] ^ next_symbol_buffer[8], next_symbol_buffer[7] ^ next_symbol_buffer[6], next_symbol_buffer[5] ^ next_symbol_buffer[4], next_symbol_buffer[3] ^ next_symbol_buffer[2], next_symbol_buffer[1] ^ next_symbol_buffer[0]});
+                            symbol_counter = '0;
+                            next_valid = 0;
+
+                            if next_valid {
+                                // Push out the buffer data.
+                                maxis_data_tvalid = 1;
+                                maxis_data_tdata = next_buffer;
+                                maxis_data_tlast = !next_symbol_valid;  // If the next symbol is invalid, Treat this as the last data and end the transmission.
+                            }
+                            if !next_symbol_valid {
+                                symbol_buffer = 0;
+                                state = State::IDLE;
+                            } else {
+                                next_buffer = {next_symbol_buffer[15], next_symbol_buffer[13], next_symbol_buffer[11], next_symbol_buffer[9], next_symbol_buffer[7], next_symbol_buffer[5], next_symbol_buffer[3], next_symbol_buffer[1]};
+                                next_valid = 1;
+                            }
+                        } else {
+                            symbol_counter = symbol_counter + 1;
+                        }
+                    }
+                }
+                default: {
+                    state = State::IDLE;
+                }
+            }
+        }
+    }
+}
