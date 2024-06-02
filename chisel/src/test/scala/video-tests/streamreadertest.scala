@@ -17,7 +17,7 @@ import scala.collection.mutable
 import _root_.util.AsyncFIFO
 import axi._
 import chisel3.experimental.BundleLiterals._
-import chisel3.experimental.ChiselEnum
+
 
 class StreamReaderTestSystem() extends Module {
   val videoParams = new VideoParams(24, 2, 8, 4, 3, 24, 8, 2, 1)
@@ -166,7 +166,7 @@ class StreamReaderTestSystem() extends Module {
   val dataReady = RegInit(false.B)
   val dataBits = WireDefault(dut.io.data.bits.pixelData)
   dut.io.data.ready := dataReady
-  dataReady := random.LFSR(16).xorR()
+  dataReady := random.LFSR(16).xorR
 
   io.finished := state === State.sFinish
   io.fail := state === State.sFail

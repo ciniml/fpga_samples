@@ -8,8 +8,8 @@ package video
 
 import chisel3._
 import chisel3.util._
-import chisel3.experimental.chiselName
-import chisel3.experimental.ChiselEnum
+
+
 import chisel3.experimental.BundleLiterals._
 import axi._
 
@@ -22,7 +22,7 @@ class FrameBufferReaderConfig(val pixelBits: Int, val maxWidth: Int, val maxHeig
     val pixelsV = UInt(log2Ceil(maxHeight + 1).W)
 }
 
-@chiselName
+
 class FrameBufferReader(pixelBits: Int, maxWidth: Int, maxHeight: Int, memBusWidthBits: Int, maxBurst: Int) extends Module {
     assert((pixelBits % 8) == 0)
     val pixelBytes = pixelBits / 8

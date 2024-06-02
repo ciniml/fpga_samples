@@ -8,12 +8,12 @@ package system
 
 import chisel3._
 import chisel3.util._
-import chisel3.experimental.chiselName
-import chisel3.stage.ChiselStage
+
+import _root_.circt.stage.ChiselStage
 
 import sound._
 
-@chiselName
+
 class I2sMasterSystem() extends RawModule {
   val clock = IO(Input(Clock()))
   val reset = IO(Input(Bool()))
@@ -49,7 +49,7 @@ class I2sMasterSystem() extends RawModule {
 }
 
 object ElaborateI2sMasterSystem extends App {
-  (new ChiselStage).emitVerilog(new I2sMasterSystem, Array(
+  ChiselStage.emitSystemVerilogFile(new I2sMasterSystem, Array(
     "-o", "i2s_master_system.v",
     "--target-dir", "rtl/chisel/i2s_master_system",
   ))

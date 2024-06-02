@@ -8,7 +8,7 @@ package axi
 
 import chisel3._
 import chisel3.util._
-import chisel3.experimental.ChiselEnum
+
 import _root_.util.IrrevocableRegSlice
 
 class AXI4ModeAdapter(inParams: AXI4Params, outMode: AXI4Mode) extends Module {

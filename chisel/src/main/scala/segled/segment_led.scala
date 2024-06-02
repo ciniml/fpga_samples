@@ -52,7 +52,7 @@ class SevenSegmentLed(numberOfDigits: Int, segmentUpdateDivider: Int, cathodeCom
     led.io.digits := segmentDigits
 
     for(digit <- 0 to numberOfDigits - 1) {
-        segmentDigits(digit) := Cat(io.digits(digit)(4), MuxLookup(io.digits(digit)(3, 0), 0.U, Seq(
+        segmentDigits(digit) := Cat(io.digits(digit)(4), MuxLookup(io.digits(digit)(3, 0), 0.U)(Seq(
             0x0.U -> "b0111111".U,
             0x1.U -> "b0000110".U,
             0x2.U -> "b1011011".U,

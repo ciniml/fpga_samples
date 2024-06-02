@@ -8,8 +8,8 @@ package system
 
 import chisel3._
 import chisel3.util._
-import chisel3.experimental.chiselName
-import chisel3.stage.ChiselStage
+
+import _root_.circt.stage.ChiselStage
 
 import ethernet._
 import sound._
@@ -17,7 +17,7 @@ import _root_.util._
 import diag.{Probe, ProbeFrameAdapter}
 import uart.UartTx
 
-@chiselName
+
 class EthernetAudioSystem(mainClockFrequencyHz: BigInt) extends RawModule {
   val clock = IO(Input(Clock()))
   val aresetn = IO(Input(Bool()))
@@ -202,7 +202,7 @@ class EthernetAudioSystem(mainClockFrequencyHz: BigInt) extends RawModule {
 object ElaborateEthernetAudioSystem extends App {
   val directory = args(0)
   val mainClockFrequencyHz = args(1).toInt
-  (new ChiselStage).emitVerilog(new EthernetAudioSystem(mainClockFrequencyHz = mainClockFrequencyHz), Array(
+  ChiselStage.emitSystemVerilogFile(new EthernetAudioSystem(mainClockFrequencyHz = mainClockFrequencyHz), Array(
     "-o", "ethernet_audio.v",
     "--target-dir", directory,
   ))

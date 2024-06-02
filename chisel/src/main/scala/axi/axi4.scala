@@ -8,7 +8,6 @@ package axi
 
 import chisel3._
 import chisel3.util._
-import chisel3.experimental.ChiselEnum
 
 sealed trait AXI4Mode
 case object AXI4ReadWrite extends AXI4Mode
@@ -140,8 +139,8 @@ class RamReaderWriter(addressBits: Int, dataBits: Int, addressOffset: BigInt, si
     val isWriteIndexValid = WireDefault(checkRange(io.writer.address))
 
     val writeData = WireDefault(VecInit((0 until dataBytes by 1).map(i => io.writer.data((i+1)*8-1, i*8))))
-    val writeStrobes = io.writer.strobe.asBools()
-    io.writer.ready := !reset.asBool()
+    val writeStrobes = io.writer.strobe.asBools
+    io.writer.ready := !reset.asBool
     when(io.writer.request && isWriteIndexValid) {
         mem.write(writeIndex, writeData, writeStrobes)
     }

@@ -12,7 +12,7 @@ import video._
 import sdram.SDRAMBridgeParams
 import axi._
 import _root_.util.MathUtil
-import chisel3.experimental.ChiselEnum
+
 
 class LineWriterCommand(val videoParams: VideoParams, val axiParams: AXI4Params) extends Bundle {
     val startAddress = UInt(axiParams.addressBits.W)
@@ -103,7 +103,7 @@ class LineWriter(videoParams: VideoParams, axiParams: AXI4Params, writeBurstPixe
         (axiParams.dataBits/8).U - address(addressMaskBits-1, 0)
     }
     def pixelPhaseToRealignIndex(phase: UInt) = {
-        MuxLookup(phase, 0.U, Seq(0.U -> 0.U, 1.U -> 3.U, 2.U -> 6.U, 3.U -> 9.U))
+        MuxLookup(phase, 0.U)(Seq(0.U -> 0.U, 1.U -> 3.U, 2.U -> 6.U, 3.U -> 9.U))
     }
 
     val awValid = RegInit(false.B)

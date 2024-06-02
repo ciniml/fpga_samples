@@ -8,15 +8,15 @@ package system
 
 import chisel3._
 import chisel3.util._
-import chisel3.experimental.chiselName
-import chisel3.experimental.ChiselEnum
+
+
 import spi._
 import firrtl.annotations.MemoryLoadFileType
-import chisel3.stage.ChiselStage
+import _root_.circt.stage.ChiselStage
 
 case class LifeGameFramConfig(val rows: Int = 8, val columns: Int = 8, val clockFreq: Int, val refreshInterval: Int, refreshGuardInterval: Int, updateInterval: Int )
 
-@chiselName
+
 class LifeGameFram(val config: LifeGameFramConfig) extends RawModule {
   val columns = config.columns
   val rows = config.rows
@@ -108,7 +108,7 @@ class LifeGameFram(val config: LifeGameFramConfig) extends RawModule {
           spiTxBufferNext(i + 1) := spiTxBuffer(i)
         }
         spiTxBuffer := spiTxBufferNext
-        printf(p"[LIFEGAME] Write Sent=${Hexadecimal(spiTxBuffer(spiBufferLength-1))} BufferNext=${Hexadecimal(spiTxBufferNext.asUInt())}, spiTxCounterNext=${spiTxCounter - 1.U}\n")
+        printf(p"[LIFEGAME] Write Sent=${Hexadecimal(spiTxBuffer(spiBufferLength-1))} BufferNext=${Hexadecimal(spiTxBufferNext.asUInt)}, spiTxCounterNext=${spiTxCounter - 1.U}\n")
       }
     }
     spim.io.rx.ready := spiRxCounter > 0.U
@@ -134,7 +134,7 @@ class LifeGameFram(val config: LifeGameFramConfig) extends RawModule {
           spiRxBufferNext(i + 1) := spiRxBuffer(i)
         }
         spiRxBuffer := spiRxBufferNext
-        printf(p"[LIFEGAME] Read ${Hexadecimal(spiRxBufferNext.asUInt())}, spiRxCounterNext=${spiRxCounter - 1.U}\n")
+        printf(p"[LIFEGAME] Read ${Hexadecimal(spiRxBufferNext.asUInt)}, spiRxCounterNext=${spiRxCounter - 1.U}\n")
       }
     }
     
@@ -264,7 +264,7 @@ class LifeGameFram(val config: LifeGameFramConfig) extends RawModule {
         } .elsewhen(cc && (count <= 1.U || 4.U <= count) ) {
           cell := false.B
         }
-        boardNext(updateRow) := VecInit((0 to columns - 1).map(i => Mux(updateColumn === i.U, cell, boardNext(updateRow)(i)))).asUInt()
+        boardNext(updateRow) := VecInit((0 to columns - 1).map(i => Mux(updateColumn === i.U, cell, boardNext(updateRow)(i)))).asUInt
         
         when(updateColumn === (columns - 1).U) {
           updateRow := updateRow + 1.U
@@ -341,7 +341,7 @@ class LifeGameFram(val config: LifeGameFramConfig) extends RawModule {
 }
 
 object ElaborateLifeGameSram extends App {
-  (new ChiselStage).emitVerilog(new LifeGameFram(new LifeGameFramConfig(8, 8, 27000000, 27000000/1000, 27000000/100000, 27000000)), Array(
+  ChiselStage.emitSystemVerilogFile(new LifeGameFram(new LifeGameFramConfig(8, 8, 27000000, 27000000/1000, 27000000/100000, 27000000)), Array(
     "-o", "lifegame_fram.v",
     "--target-dir", "rtl/chisel/lifegame_fram",
   ))

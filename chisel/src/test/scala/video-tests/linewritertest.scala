@@ -16,7 +16,7 @@ import scala.collection.mutable
 import _root_.util.AsyncFIFO
 import axi._
 import chisel3.experimental.BundleLiterals._
-import chisel3.experimental.ChiselEnum
+
 
 class LineWriterTestSystem() extends Module {
   val videoParams = new VideoParams(24, 2, 20, 4, 3, 24, 5, 2, 1)

@@ -8,12 +8,12 @@ package system
 
 import chisel3._
 import chisel3.util._
-import chisel3.experimental.chiselName
+
 import segled._
-import chisel3.stage.ChiselStage
+import _root_.circt.stage.ChiselStage
 import segled.SegmentLedWithShiftRegs
 
-@chiselName
+
 class MultiSegmentLed() extends RawModule {
   val clock = IO(Input(Clock()))
   val resetn = IO(Input(Bool()))
@@ -56,7 +56,7 @@ class MultiSegmentLed() extends RawModule {
 }
 
 object ElaborateMultiSegmentLed extends App {
-  (new ChiselStage).emitVerilog(new MultiSegmentLed, Array(
+  ChiselStage.emitSystemVerilogFile(new MultiSegmentLed, Array(
     "-o", "multi_segment_led.v",
     "--target-dir", "rtl/chisel/segment_led",
   ))

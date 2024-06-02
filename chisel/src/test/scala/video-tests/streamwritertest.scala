@@ -16,7 +16,7 @@ import scala.collection.mutable
 import _root_.util.AsyncFIFO
 import axi._
 import chisel3.experimental.BundleLiterals._
-import chisel3.experimental.ChiselEnum
+
 
 class StreamWriterTestSystem() extends Module {
   val videoParams = new VideoParams(24, 2, 8, 4, 3, 24, 8, 2, 1)

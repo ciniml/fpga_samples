@@ -10,7 +10,7 @@ package spi
 
 import chisel3._
 import chisel3.util._
-import chisel3.experimental.ChiselEnum
+
 
 import axi._
 import _root_.util._

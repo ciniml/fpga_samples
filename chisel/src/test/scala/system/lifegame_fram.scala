@@ -14,7 +14,7 @@ import chisel3._
 import chisel3.util._
 import org.scalatest._
 import chiseltest._
-import chisel3.experimental.ChiselEnum
+
 
 class LifeGameFramTestSystem() extends Module {
   val dut = Module(new LifeGameFram(new LifeGameFramConfig(8, 8, 10, 10, 1, 10)))
@@ -92,7 +92,7 @@ class LifeGameFramTestSystem() extends Module {
             }
           }
           is(State.ReadId) {
-            shiftReg := MuxLookup(byteCounter, 0.U, Seq(
+            shiftReg := MuxLookup(byteCounter, 0.U)(Seq(
               0.U -> DeviceId(23, 16), 
               1.U -> DeviceId(15, 8),
               2.U -> DeviceId(7, 0),

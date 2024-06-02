@@ -27,8 +27,8 @@ class SPISlave(idleSendData: Int = 0xff) extends Module {
         val send = Flipped(Irrevocable(UInt(8.W)))
     })
 
-    val spiReset = io.spi.cs.asAsyncReset()
-    val spiClock = io.spi.sck.asClock()
+    val spiReset = io.spi.cs.asAsyncReset
+    val spiClock = io.spi.sck.asClock
     val fifo = Module(new Queue(SPIData(), 32))
     
     io.receive <> WithIrrevocableRegSlice(UnsafeIrrevocable(fifo.io.deq))

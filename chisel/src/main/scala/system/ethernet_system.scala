@@ -8,15 +8,15 @@ package system
 
 import chisel3._
 import chisel3.util._
-import chisel3.experimental.chiselName
-import chisel3.stage.ChiselStage
+
+import _root_.circt.stage.ChiselStage
 import ethernet._
 import display._
 import _root_.util._
 
 
 
-@chiselName
+
 class EthernetSystem(mainClockFrequencyHz: BigInt, asyncSystemClock: Boolean = false) extends RawModule {
   val clock = IO(Input(Clock()))
   val aresetn = IO(Input(Bool()))
@@ -158,14 +158,14 @@ class EthernetSystem(mainClockFrequencyHz: BigInt, asyncSystemClock: Boolean = f
 }
 
 object ElaborateEthernetSystem extends App {
-  (new ChiselStage).emitVerilog(new EthernetSystem(50000000), Array(
+  ChiselStage.emitSystemVerilogFile(new EthernetSystem(50000000), Array(
     "-o", "ethernet_system.v",
     "--target-dir", "rtl/chisel/ethernet_system",
   ))
 }
 
 object ElaborateAsyncEthernetSystem extends App {
-  (new ChiselStage).emitVerilog(new EthernetSystem(20000000, true), Array(
+  ChiselStage.emitSystemVerilogFile(new EthernetSystem(20000000, true), Array(
     "-o", "ethernet_system_async.v",
     "--target-dir", "rtl/chisel/ethernet_system",
   ))

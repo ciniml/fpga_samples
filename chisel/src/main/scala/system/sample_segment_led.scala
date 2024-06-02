@@ -8,11 +8,11 @@ package system
 
 import chisel3._
 import chisel3.util._
-import chisel3.experimental.chiselName
-import segled._
-import chisel3.stage.ChiselStage
 
-@chiselName
+import segled._
+import _root_.circt.stage.ChiselStage
+
+
 class SegmentLedSystem() extends RawModule {
   val clock = IO(Input(Clock()))
   val resetn = IO(Input(Bool()))
@@ -71,7 +71,7 @@ class SegmentLedSystem() extends RawModule {
 }
 
 object ElaborateSegLed extends App {
-  (new ChiselStage).emitVerilog(new SegmentLedSystem, Array(
+  ChiselStage.emitSystemVerilogFile(new SegmentLedSystem, Array(
     "-o", "segment_led.v",
     "--target-dir", "rtl/chisel/segment_led",
   ))

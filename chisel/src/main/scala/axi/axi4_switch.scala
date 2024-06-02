@@ -8,7 +8,7 @@ package axi
 
 import chisel3._
 import chisel3.util._
-import chisel3.experimental.ChiselEnum
+
 
 class AXI4Demux(axi4Params: AXI4Params, numberOfMasters: Int) extends Module {
     val io = IO(new Bundle {

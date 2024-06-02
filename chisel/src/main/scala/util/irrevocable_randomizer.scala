@@ -15,7 +15,7 @@ class IrrevocableRandomizer[T <: Data](gen: T) extends Module {
         val out = Irrevocable(gen)
     })
 
-    val block = random.LFSR(16).xorR()
+    val block = random.LFSR(16).xorR
     io.out.valid := io.in.valid && !block
     io.in.ready := io.out.ready && !block
     io.out.bits := io.in.bits

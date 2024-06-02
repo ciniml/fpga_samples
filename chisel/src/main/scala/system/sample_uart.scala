@@ -8,11 +8,11 @@ package system
 
 import chisel3._
 import chisel3.util._
-import chisel3.experimental.chiselName
-import uart._
-import chisel3.stage.ChiselStage
 
-@chiselName
+import uart._
+import _root_.circt.stage.ChiselStage
+
+
 class UartSystem() extends RawModule {
   val clock = IO(Input(Clock()))
   val resetn = IO(Input(Bool()))
@@ -34,7 +34,7 @@ class UartSystem() extends RawModule {
 
 
 object Elaborate extends App {
-  (new ChiselStage).emitVerilog(new UartSystem, Array(
+  ChiselStage.emitSystemVerilogFile(new UartSystem, Array(
     "-o", "uart_system.v",
     "--target-dir", "rtl/chisel/uart",
   ))

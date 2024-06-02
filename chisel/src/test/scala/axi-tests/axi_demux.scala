@@ -58,7 +58,7 @@ class AXITrafficSource(axiParams: AXI4Params, fromAddress: BigInt, toAddressIncl
 
             val inTransaction = RegInit(false.B)
 
-            b.ready := random.LFSR(16).xorR()
+            b.ready := random.LFSR(16).xorR
 
             when(awValid && awReady) {
                 awValid := false.B
@@ -77,7 +77,7 @@ class AXITrafficSource(axiParams: AXI4Params, fromAddress: BigInt, toAddressIncl
                     burstCount := 0.U
                 }
             } .otherwise {
-                when((!wValid || wReady) && bytesTransferred < bytesToTransfer.U && random.LFSR(4).xorR()) {
+                when((!wValid || wReady) && bytesTransferred < bytesToTransfer.U && random.LFSR(4).xorR) {
                     printf(p"[${Hexadecimal(awAddr)}] issue W beat=${burstCount}")
                     val isLast = burstCount === (burstLength - 1).U
                     wValid := true.B
@@ -131,7 +131,7 @@ class AXITrafficSink(axiParams: AXI4Params) extends Module {
             val state = RegInit(sIdle)
             switch(state) {
                 is( sIdle ) {
-                    awReady := random.LFSR(8).xorR()
+                    awReady := random.LFSR(8).xorR
                     when(awValid && awReady) {
                         printf(p"[${Hexadecimal(address)}] AW addr=${Hexadecimal(aw.bits.addr)} len=${Hexadecimal(aw.bits.len.get)}")
 
@@ -141,7 +141,7 @@ class AXITrafficSink(axiParams: AXI4Params) extends Module {
                     } 
                 }
                 is( sData ) {
-                    wReady := random.LFSR(8).xorR()
+                    wReady := random.LFSR(8).xorR
                     when(wValid && wReady) {
                         count := count - 1.U
                         address := address + (axiParams.dataBits/8).U

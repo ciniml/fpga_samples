@@ -8,8 +8,8 @@ package system
 
 import chisel3._
 import chisel3.util._
-import chisel3.experimental.chiselName
-import chisel3.stage.ChiselStage
+
+import _root_.circt.stage.ChiselStage
 
 import ethernet._
 import sound._
@@ -19,7 +19,7 @@ import uart.UartTx
 import display.HUB75Controller
 import display.HUB75IO
 
-@chiselName
+
 class EthernetVideoSystem(mainClockFrequencyHz: BigInt) extends RawModule {
   val clock = IO(Input(Clock()))
   val aresetn = IO(Input(Bool()))
@@ -309,7 +309,7 @@ class EthernetVideoSystem(mainClockFrequencyHz: BigInt) extends RawModule {
 object ElaborateEthernetVideoSystem extends App {
   val directory = args(0)
   val mainClockFrequencyHz = args(1).toInt
-  (new ChiselStage).emitVerilog(new EthernetVideoSystem(mainClockFrequencyHz = mainClockFrequencyHz), Array(
+  ChiselStage.emitSystemVerilogFile(new EthernetVideoSystem(mainClockFrequencyHz = mainClockFrequencyHz), Array(
     "-o", "ethernet_video.v",
     "--target-dir", directory,
   ))

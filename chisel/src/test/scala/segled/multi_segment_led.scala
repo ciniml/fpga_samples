@@ -12,7 +12,7 @@ import chisel3._
 import chisel3.util._
 import scala.util.control.Breaks
 import chisel3.experimental.BundleLiterals._
-import chisel3.experimental.ChiselEnum
+
 
 class ShiftRegister595 extends Module {
   val io = IO(new Bundle {
@@ -20,7 +20,7 @@ class ShiftRegister595 extends Module {
     val output = Output(UInt(8.W))
   })
 
-  val shiftClock = io.shift.shiftClock.asClock()
+  val shiftClock = io.shift.shiftClock.asClock
   val shiftRegSignal = Wire(UInt(8.W))
 
   withClock(shiftClock) {
@@ -29,7 +29,7 @@ class ShiftRegister595 extends Module {
     shiftReg := Cat(shiftReg(6, 0), io.shift.data)
   }
 
-  withClock(io.shift.latch.asClock()) {
+  withClock(io.shift.latch.asClock) {
     val outputReg = RegInit(0.U(8.W))
     outputReg := shiftRegSignal
     // Emulate output enable as a output mask. no tristate.

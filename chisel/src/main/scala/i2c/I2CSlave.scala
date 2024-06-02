@@ -11,7 +11,7 @@ package i2cslave
 import chisel3._
 import chisel3.util._
 import chisel3.util.Enum
-import chisel3.stage.ChiselStage
+import _root_.circt.stage.ChiselStage
 
 class I2CSlaveRegIO(addressWidth: Int) extends Bundle {
   val address = Input(UInt(addressWidth.W))
@@ -52,21 +52,21 @@ class I2CSlave(addressWidth: Int, filterDepth: Int, i2cAddress: Int) extends Mod
   val sda_i_filter = RegInit(UInt(filterDepth.W), 0.U)
 
   when (scl_i) {
-    scl_i := scl_i_filter.orR()
+    scl_i := scl_i_filter.orR
   } .otherwise {
-    scl_i := scl_i_filter.andR()
+    scl_i := scl_i_filter.andR
   }
   when (sda_i) {
-    sda_i := sda_i_filter.orR()
+    sda_i := sda_i_filter.orR
   } .otherwise {
-    sda_i := sda_i_filter.andR()
+    sda_i := sda_i_filter.andR
   }
 
   scl_i_reg := scl_i
   sda_i_reg := sda_i
 
-  scl_i_filter := Cat(scl_i_filter(filterDepth-2, 0), io.i2c.scl_i.asUInt())
-  sda_i_filter := Cat(sda_i_filter(filterDepth-2, 0), io.i2c.sda_i.asUInt())
+  scl_i_filter := Cat(scl_i_filter(filterDepth-2, 0), io.i2c.scl_i.asUInt)
+  sda_i_filter := Cat(sda_i_filter(filterDepth-2, 0), io.i2c.sda_i.asUInt)
 
   val start_condition = Wire(Bool())
   val stop_condition = Wire(Bool())
@@ -270,7 +270,7 @@ class I2CSlave(addressWidth: Int, filterDepth: Int, i2cAddress: Int) extends Mod
 }
 
 object ElaborateI2CSlave extends App {
-  (new ChiselStage).emitVerilog(new I2CSlave(8, 3, 0x48), Array(
+  ChiselStage.emitSystemVerilogFile(new I2CSlave(8, 3, 0x48), Array(
     "-o", "i2c_slave.v",
     "--target-dir", "rtl/chisel/i2c_slave",
   ))

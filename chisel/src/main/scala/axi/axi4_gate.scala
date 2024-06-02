@@ -9,7 +9,7 @@ package axi
 
 import chisel3._
 import chisel3.util._
-import chisel3.experimental.ChiselEnum
+
 import _root_.util.WithIrrevocableGate
 
 class AXI4Gate(axi4Params: AXI4Params) extends Module {

@@ -8,7 +8,7 @@ package video
 
 import chisel3._
 import chisel3.util._
-import chisel3.stage.ChiselStage
+import _root_.circt.stage.ChiselStage
 
 /**
  * 24bpp DVI signal generator.
@@ -98,7 +98,7 @@ class DviOut extends Module {
     
     def transitionMaximized(in: UInt): UInt = {
         assert(in.getWidth == 2)
-        MuxLookup(in, 0.U(10.W), Seq(
+        MuxLookup(in, 0.U(10.W))(Seq(
             "b00".U -> "b1101010100".U,
             "b01".U -> "b0010101011".U,
             "b10".U -> "b0101010100".U,
@@ -126,7 +126,7 @@ class DviOut extends Module {
 }
 
 object ElaborateDviOut extends App {
-  (new ChiselStage).emitVerilog(new DviOut, Array(
+  ChiselStage.emitSystemVerilogFile(new DviOut, Array(
     "-o", "dviout_chisel.v",
     "--target-dir", "rtl/dvi_out",
   ))

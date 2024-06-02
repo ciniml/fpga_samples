@@ -9,7 +9,7 @@ package sdram
 import chisel3._
 import chisel3.util._
 import axi._
-import chisel3.experimental.ChiselEnum
+
 import chisel3.util.experimental.loadMemoryFromFileInline
 import _root_.util.IrrevocableRegSlice
 import firrtl.annotations.MemoryLoadFileType

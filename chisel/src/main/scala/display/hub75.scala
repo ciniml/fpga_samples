@@ -2,7 +2,7 @@ package display
 
 import chisel3._
 import chisel3.util._
-import chisel3.experimental.ChiselEnum
+
 import _root_.util.Flushable
 
 class HUB75IO(val numberOfParallelPanels: Int = 1) extends Bundle {

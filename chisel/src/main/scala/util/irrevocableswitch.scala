@@ -8,11 +8,11 @@ package util
 
 import chisel3._
 import chisel3.util._
-import chisel3.internal.naming.chiselName
-import chisel3.experimental.ChiselEnum
 
 
-@chiselName
+
+
+
 class IrrevocableUnsafeMux[T <: Data](val gen: T, val n: Int) extends Module {
     val io = IO(new Bundle {
         val in = Flipped(Vec(n, Irrevocable(gen)))
@@ -36,7 +36,7 @@ class IrrevocableUnsafeMux[T <: Data](val gen: T, val n: Int) extends Module {
     }
 }
 
-@chiselName
+
 class IrrevocableUnsafeDemux[T <: Data](val gen: T, val n: Int) extends Module {
     val io = IO(new Bundle {
         val in = Flipped(Irrevocable(gen))
@@ -57,7 +57,7 @@ class IrrevocableUnsafeDemux[T <: Data](val gen: T, val n: Int) extends Module {
 }
 
 
-@chiselName
+
 class IrrevocableMux[T <: Data](val gen: T, val n: Int) extends Module {
     val io = IO(new Bundle {
         val in = Flipped(Vec(n, Irrevocable(gen)))
@@ -85,7 +85,7 @@ class IrrevocableMux[T <: Data](val gen: T, val n: Int) extends Module {
 }
 
 
-@chiselName
+
 class IrrevocableDemux[T <: Data](val gen: T, val n: Int) extends Module {
     val io = IO(new Bundle {
         val in = Flipped(Irrevocable(gen))
@@ -115,7 +115,7 @@ class IrrevocableDemux[T <: Data](val gen: T, val n: Int) extends Module {
 }
 
 
-@chiselName
+
 class IrrevocableBroadcaster[T <: Data](val gen: T, val n: Int) extends Module {
     val io = IO(new Bundle {
         val in = Flipped(Irrevocable(gen))
@@ -159,7 +159,7 @@ object CountingIrrevocableSwitchCommand {
     }
 }
 
-@chiselName
+
 class CountingIrrevocableMux[T <: Data](val gen: T, val n: Int, val maxCount: Int) extends Module {
     val io = IO(new Bundle {
         val in = Flipped(Vec(n, Irrevocable(gen)))
@@ -219,7 +219,7 @@ class CountingIrrevocableMux[T <: Data](val gen: T, val n: Int, val maxCount: In
 }
 
 
-@chiselName
+
 class CountingIrrevocableDemux[T <: Data](val gen: T, val n: Int, val maxCount: Int) extends Module {
     val io = IO(new Bundle {
         val in = Flipped(Irrevocable(gen))
