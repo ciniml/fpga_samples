@@ -20,21 +20,26 @@ import display.HUB75Controller
 import display.HUB75IO
 
 @chiselName
-class EthernetVideoSystem(mainClockFrequencyHz: BigInt) extends RawModule {
+class EthernetVideoSystem(mainClockFrequencyHz: BigInt, useAudio: Boolean = true, ethernetWidthBits: Int = 8, maxFrameSize: Int = 2048) extends RawModule {
+  assert(ethernetWidthBits % 8 == 0)
+  val ethernetWidthBytes = ethernetWidthBits / 8
+
   val clock = IO(Input(Clock()))
   val aresetn = IO(Input(Bool()))
   
   val rmii_clock = IO(Input(Clock()))
   val rmii_reset = IO(Input(Bool()))
   
-  val in_tdata = IO(Input(UInt(8.W)))
+  val in_tdata = IO(Input(UInt(ethernetWidthBits.W)))
   val in_tvalid = IO(Input(Bool()))
   val in_tready = IO(Output(Bool()))
+  val in_tkeep = IO(Input(UInt(ethernetWidthBytes.W)))
   val in_tlast = IO(Input(Bool()))
 
-  val out_tdata = IO(Output(UInt(8.W)))
+  val out_tdata = IO(Output(UInt(ethernetWidthBits.W)))
   val out_tvalid = IO(Output(Bool()))
   val out_tready = IO(Input(Bool()))
+  val out_tkeep = IO(Output(UInt(ethernetWidthBytes.W)))
   val out_tlast = IO(Output(Bool()))
 
   val gpio_in = IO(Input(UInt(8.W)))
@@ -56,65 +61,73 @@ class EthernetVideoSystem(mainClockFrequencyHz: BigInt) extends RawModule {
     Cat(r, g, b)
   }
 
-  val txAsyncFifo = withClockAndReset(rmii_clock, rmii_reset) { Module(new AsyncFIFO(Flushable(UInt(8.W)), 3))}
-  val rxAsyncFifo = withClockAndReset(rmii_clock, rmii_reset) { Module(new AsyncFIFO(Flushable(UInt(8.W)), 3))}
+  val ethernetFifoDepth = (maxFrameSize + ethernetWidthBytes - 1) / ethernetWidthBytes
 
-  val txFifo = txAsyncFifo
-  val rxFifo = rxAsyncFifo
-  txFifo.io.readClock := rmii_clock
-  txFifo.io.readReset := rmii_reset
-  txFifo.io.writeClock := clock
-  txFifo.io.writeReset := !aresetn
+  val (txAsyncFifo, rxAsyncFifo) = withClockAndReset(rmii_clock, rmii_reset) {
+    val txAsyncFifo = Module(new AsyncFIFO(MultiByteSymbol(1), 3))
+    val rxAsyncFifo = Module(new AsyncFIFO(MultiByteSymbol(1), 3))
 
-  txFifo.io.read.valid <> out_tvalid
-  txFifo.io.read.ready <> out_tready
-  txFifo.io.read.bits.data <> out_tdata
-  txFifo.io.read.bits.last <> out_tlast
+    val ethernetDataType = MultiByteSymbol(ethernetWidthBytes)
 
-  rxFifo.io.readClock := clock
-  rxFifo.io.readReset := !aresetn
-  rxFifo.io.writeClock := rmii_clock
-  rxFifo.io.writeReset := rmii_reset
+    val rxQueue = Module(new Queue(ethernetDataType, ethernetFifoDepth))
+    val txQueue = Module(PacketQueue(ethernetDataType.flushableType, ethernetFifoDepth))
+    
+    rxQueue.io.enq.valid := in_tvalid
+    rxQueue.io.enq.bits.data := in_tdata
+    rxQueue.io.enq.bits.keep := in_tkeep
+    rxQueue.io.enq.bits.last := in_tlast
+    in_tready := rxQueue.io.enq.ready
+    
+    val txQueueBits = Wire(ethernetDataType)
+    txQueueBits.fromFlushable(txQueue.io.read.bits)
+    out_tvalid := txQueue.io.read.valid
+    out_tdata := txQueueBits.data
+    out_tkeep := txQueueBits.keep
+    out_tlast := txQueueBits.last
+    txQueue.io.read.ready := out_tready
 
-  rxFifo.io.write.valid <> in_tvalid
-  rxFifo.io.write.ready <> in_tready
-  rxFifo.io.write.bits.data <> in_tdata
-  rxFifo.io.write.bits.last <> in_tlast
+    if(ethernetWidthBits != 8 ) {
+      val rxWidthConverter = Module(new WidthConverterWithKeep(ethernetWidthBits, 8))
+      val txWidthConverter = Module(new WidthConverterWithKeep(8, ethernetWidthBits))
+
+      rxWidthConverter.io.enq <> rxQueue.io.deq
+      rxAsyncFifo.io.write <> rxWidthConverter.io.deq
+
+      txQueue.io.write.valid <> txWidthConverter.io.deq.valid
+      txQueue.io.write.ready <> txWidthConverter.io.deq.ready
+      txQueue.io.write.bits := txWidthConverter.io.deq.bits.toFlushable
+      txWidthConverter.io.enq <> txAsyncFifo.io.read
+    } else {
+      rxAsyncFifo.io.write <> rxQueue.io.deq
+      txQueue.io.write <> txAsyncFifo.io.read
+    }
+
+    (txAsyncFifo, rxAsyncFifo)
+  }
+
+  txAsyncFifo.io.readClock := rmii_clock
+  txAsyncFifo.io.readReset := rmii_reset
+  txAsyncFifo.io.writeClock := clock
+  txAsyncFifo.io.writeReset := !aresetn
+
+  rxAsyncFifo.io.readClock := clock
+  rxAsyncFifo.io.readReset := !aresetn
+  rxAsyncFifo.io.writeClock := rmii_clock
+  rxAsyncFifo.io.writeReset := rmii_reset
 
   withClockAndReset(clock, !aresetn) {
     val service = Module(new EthernetService)
-    
-    val rxQueue = Module(new Queue(Flushable(UInt(8.W)), 2048))
-    rxQueue.io.deq.valid <> service.io.in.valid
-    rxQueue.io.deq.ready <> service.io.in.ready
-    rxQueue.io.deq.bits.data <> service.io.in.bits.data
-    rxQueue.io.deq.bits.last <> service.io.in.bits.last
-    service.io.in.bits.keep := 1.U
+    service.io.in <> rxAsyncFifo.io.read
+    service.io.out <> txAsyncFifo.io.write
 
-    val txPacketQueue = Module(new PacketQueue(Flushable(UInt(8.W)), 2048))
-    txPacketQueue.io.write.valid <> service.io.out.valid
-    txPacketQueue.io.write.ready <> service.io.out.ready
-    txPacketQueue.io.write.bits.data <> service.io.out.bits.data
-    txPacketQueue.io.write.bits.last <> service.io.out.bits.last
-
-    rxQueue.io.enq.valid <> rxAsyncFifo.io.read.valid
-    rxQueue.io.enq.ready <> rxAsyncFifo.io.read.ready
-    rxQueue.io.enq.bits.data <> rxAsyncFifo.io.read.bits.data
-    rxQueue.io.enq.bits.last <> rxAsyncFifo.io.read.bits.last
-
-    txPacketQueue.io.read.valid <> txAsyncFifo.io.write.valid
-    txPacketQueue.io.read.ready <> txAsyncFifo.io.write.ready
-    txPacketQueue.io.read.bits.data <> txAsyncFifo.io.write.bits.data
-    txPacketQueue.io.read.bits.last <> txAsyncFifo.io.write.bits.last
-  
     val audioChannels = 2
     val serviceMux = Module(new UdpServiceMux(1, Seq(
-      (context => context.destinationPort === 10000.U), // Loopback
-      (context => context.destinationPort === 10001.U), // GPIO 
-      (context => context.destinationPort === 10002.U), // Audio 1
-      (context => context.destinationPort === 10003.U), // Audio 2
-      (context => context.destinationPort === 10004.U), // Video
-    )))
+      Some((context: UdpContext) => context.destinationPort === 10000.U), // Loopback
+      Some((context: UdpContext) => context.destinationPort === 10001.U), // GPIO 
+      if(useAudio) { Some((context: UdpContext) => context.destinationPort === 10002.U) } else { None }, // Audio 1
+      if(useAudio) { Some((context: UdpContext) => context.destinationPort === 10003.U) } else { None }, // Audio 2
+      Some((context: UdpContext) => context.destinationPort === 10004.U), // Video
+    ).flatMap(x => x)))
     service.io.port <> serviceMux.io.in
 
     val udpLoopback = Module(new UdpLoopback)
@@ -130,67 +143,86 @@ class EthernetVideoSystem(mainClockFrequencyHz: BigInt) extends RawModule {
     val dbg_probeSignals = WireDefault(0.U(10.W))
     val dbg_probeTrigger = WireDefault(false.B)
 
-    val sampleRate = 48000
-    val master = Module(new I2sMaster(16, (mainClockFrequencyHz / sampleRate / 2).toInt, 0))
-    val audioMixer = Module(new AudioMixerXls(16, audioChannels, 0))
-    val audioSampler = Module(new AudioSampler(16, audioChannels, 0, (mainClockFrequencyHz / sampleRate).toInt))
-    for(channelIndex <- 0 until audioMixer.channels) {
-      val audioBufferSize = 2048
-      val backPressureThreshold = audioBufferSize * 3 / 4
-      val udpStream = Module(new UdpStreamWriter(backPressureMaxBufferSize = Some(audioBufferSize)))
-      serviceMux.io.servicePorts(2 + channelIndex) <> udpStream.io.port
-      
-      val widthConverter = Module(WidthConverter(8, 32))
-      widthConverter.io.enq.valid     <> udpStream.io.dataReceived.valid
-      widthConverter.io.enq.ready     <> udpStream.io.dataReceived.ready
-      widthConverter.io.enq.bits.data <> udpStream.io.dataReceived.bits.data
-      widthConverter.io.enq.bits.last <> udpStream.io.dataReceived.bits.last
+    dbg_probeTrigger := txAsyncFifo.io.write.valid
+    dbg_probeSignals := Cat(txAsyncFifo.io.write.bits.last, txAsyncFifo.io.write.valid, txAsyncFifo.io.write.bits.data)
 
-      val widthConverterDeq = Wire(Decoupled(UInt(32.W)))
-      widthConverterDeq.valid <> widthConverter.io.deq.valid
-      widthConverterDeq.ready <> widthConverter.io.deq.ready
-      widthConverterDeq.bits  <> widthConverter.io.deq.bits.data
-      
-      val audioBuffer = Module(new AudioBuffer(32, audioBufferSize, audioBufferSize))
-      audioBuffer.io.dataIn <> widthConverterDeq
-      audioSampler.io.dataIn(channelIndex) <> audioBuffer.io.dataOut
-      val audioBufferFilled = audioBuffer.io.bufferedEntries >= backPressureThreshold.U
-      val audioBufferFilledReg = RegNext(audioBufferFilled, false.B)
-      val backPressure = udpStream.io.backPressure.get
-      backPressure.valid := audioBufferFilledReg && !audioBufferFilled
-      backPressure.bits := audioBuffer.io.bufferedEntries
+    if( useAudio ) {
+      val sampleRate = 48000
+      val master = Module(new I2sMaster(16, (mainClockFrequencyHz / sampleRate / 2).toInt, 0))
+      val audioMixer = Module(new AudioMixerXls(16, audioChannels, 0))
+      val audioSampler = Module(new AudioSampler(16, audioChannels, 0, (mainClockFrequencyHz / sampleRate).toInt))
+      for(channelIndex <- 0 until audioMixer.channels) {
+        val audioBufferSize = 2048
+        val backPressureThreshold = audioBufferSize * 3 / 4
+        val udpStream = Module(new UdpStreamWriter(backPressureMaxBufferSize = Some(audioBufferSize)))
+        serviceMux.io.servicePorts(2 + channelIndex) <> udpStream.io.port
+        
+        val widthConverter = Module(WidthConverter(8, 32))
+        widthConverter.io.enq.valid     <> udpStream.io.dataReceived.valid
+        widthConverter.io.enq.ready     <> udpStream.io.dataReceived.ready
+        widthConverter.io.enq.bits.data <> udpStream.io.dataReceived.bits.data
+        widthConverter.io.enq.bits.last <> udpStream.io.dataReceived.bits.last
 
-      if( channelIndex == 0 ) { 
-        audioMixer.io.dataIn(channelIndex) <> audioSampler.io.dataOut(channelIndex)
+        val widthConverterDeq = Wire(Decoupled(UInt(32.W)))
+        widthConverterDeq.valid <> widthConverter.io.deq.valid
+        widthConverterDeq.ready <> widthConverter.io.deq.ready
+        widthConverterDeq.bits  <> widthConverter.io.deq.bits.data
+        
+        val audioBuffer = Module(new AudioBuffer(32, audioBufferSize, audioBufferSize))
+        audioBuffer.io.dataIn <> widthConverterDeq
+        audioSampler.io.dataIn(channelIndex) <> audioBuffer.io.dataOut
+        val audioBufferFilled = audioBuffer.io.bufferedEntries >= backPressureThreshold.U
+        val audioBufferFilledReg = RegNext(audioBufferFilled, false.B)
+        val backPressure = udpStream.io.backPressure.get
+        backPressure.valid := audioBufferFilledReg && !audioBufferFilled
+        backPressure.bits := audioBuffer.io.bufferedEntries
+
+        if( channelIndex == 0 ) { 
+          audioMixer.io.dataIn(channelIndex) <> audioSampler.io.dataOut(channelIndex)
+        } else {
+          val filter = Module(new AudioMovingAverageFilter(16, 8))
+          filter.io.dataIn <> audioSampler.io.dataOut(channelIndex)
+          audioMixer.io.dataIn(channelIndex) <> filter.io.dataOut
+        }
+
+        audioMixer.io.volumeIn(channelIndex).bits := volumeControl(32*(channelIndex + 1)-1, 32*channelIndex) // "x80008000".U
+        audioMixer.io.volumeIn(channelIndex).valid := true.B
+
+        if( channelIndex == 0 ) {
+          dbg_buffering := audioBuffer.io.buffering
+          dbg_bufferCount := audioBuffer.io.bufferedEntries
+        }
+      }
+
+      master.io.dataIn.valid <> audioMixer.io.dataOut.valid
+      master.io.dataIn.ready <> audioMixer.io.dataOut.ready
+      val attenuation = 0
+      if( attenuation > 0 ) {
+        val lch = (audioMixer.io.dataOut.bits(15, 0) >> attenuation)
+        val rch = (audioMixer.io.dataOut.bits(31, 16) >> attenuation)
+        master.io.dataIn.bits := Cat(Fill(attenuation, rch(15-attenuation)), rch, Fill(attenuation, lch(15-attenuation)), lch)
       } else {
-        val filter = Module(new AudioMovingAverageFilter(16, 8))
-        filter.io.dataIn <> audioSampler.io.dataOut(channelIndex)
-        audioMixer.io.dataIn(channelIndex) <> filter.io.dataOut
+        master.io.dataIn.bits := audioMixer.io.dataOut.bits
       }
 
-      audioMixer.io.volumeIn(channelIndex).bits := volumeControl(32*(channelIndex + 1)-1, 32*channelIndex) // "x80008000".U
-      audioMixer.io.volumeIn(channelIndex).valid := true.B
-
-      if( channelIndex == 0 ) {
-        dbg_buffering := audioBuffer.io.buffering
-        dbg_bufferCount := audioBuffer.io.bufferedEntries
-      }
-    }
-
-    master.io.dataIn.valid <> audioMixer.io.dataOut.valid
-    master.io.dataIn.ready <> audioMixer.io.dataOut.ready
-    val attenuation = 0
-    if( attenuation > 0 ) {
-      val lch = (audioMixer.io.dataOut.bits(15, 0) >> attenuation)
-      val rch = (audioMixer.io.dataOut.bits(31, 16) >> attenuation)
-      master.io.dataIn.bits := Cat(Fill(attenuation, rch(15-attenuation)), rch, Fill(attenuation, lch(15-attenuation)), lch)
+      // val clockEnable = RegInit(false.B)
+      // clockEnable := !clockEnable
+      // master.io.clockEnable := clockEnable
+      // out_bclk := clockEnable
+      master.io.clockEnable := true.B
+      out_bclk := clock.asBool
+      out_data := master.io.dataOut
+      out_ws := master.io.wordSelect
     } else {
-      master.io.dataIn.bits := audioMixer.io.dataOut.bits
+      dbg_buffering := false.B
+      out_bclk := false.B
+      out_data := false.B
+      out_ws := false.B
     }
 
     // Video output (HUB75)
     {
-      val hub75Width = 64
+      val hub75Width = 128
       val hub75Height = 32
       val bytesPerPixel = 2
       val numberOfPanels = 2
@@ -241,7 +273,7 @@ class EthernetVideoSystem(mainClockFrequencyHz: BigInt) extends RawModule {
       }
 
       val udpWriter = Module(new UdpMemoryWriter(numMemoryBytes = hub75Width*hub75Height*numberOfPanels*bytesPerPixel, backPressureDataSize = Some(32), enableDebug = true))
-      serviceMux.io.servicePorts(4) <> udpWriter.io.port
+      serviceMux.io.servicePorts.last <> udpWriter.io.port
       val backPressureValid = RegInit(false.B)
       when( udpWriter.io.backPressure.get.fire ) {
         backPressureValid := false.B
@@ -277,18 +309,9 @@ class EthernetVideoSystem(mainClockFrequencyHz: BigInt) extends RawModule {
       }
       hub75io <> hub75.io.hub75
 
-      dbg_probeSignals := Cat(receivingBufferIndex, renderingBufferIndex, service.io.port.udpSendData.ready, service.io.port.udpSendData.valid, service.io.port.udpSendContext.ready, service.io.port.udpSendContext.valid, backPressureValid, advanceRenderingBufferIndex)
-      dbg_probeTrigger := advanceRenderingBufferIndex
+      // dbg_probeSignals := Cat(receivingBufferIndex, renderingBufferIndex, service.io.port.udpSendData.ready, service.io.port.udpSendData.valid, service.io.port.udpSendContext.ready, service.io.port.udpSendContext.valid, backPressureValid, advanceRenderingBufferIndex)
+      // dbg_probeTrigger := advanceRenderingBufferIndex
     }
-
-    // val clockEnable = RegInit(false.B)
-    // clockEnable := !clockEnable
-    // master.io.clockEnable := clockEnable
-    // out_bclk := clockEnable
-    master.io.clockEnable := true.B
-    out_bclk := clock.asBool
-    out_data := master.io.dataOut
-    out_ws := master.io.wordSelect
 
     // Construct embedded logic probe
     val probe = Module(new diag.Probe(new diag.ProbeConfig(bufferDepth = 512, triggerPosition = 16), dbg_probeSignals.getWidth))
@@ -309,7 +332,10 @@ class EthernetVideoSystem(mainClockFrequencyHz: BigInt) extends RawModule {
 object ElaborateEthernetVideoSystem extends App {
   val directory = args(0)
   val mainClockFrequencyHz = args(1).toInt
-  (new ChiselStage).emitVerilog(new EthernetVideoSystem(mainClockFrequencyHz = mainClockFrequencyHz), Array(
+  val useAudio = args(2).toBoolean
+  val ethernetWidthBits = if(args.length >= 4) { args(3).toInt } else { 8 }
+
+  (new ChiselStage).emitVerilog(new EthernetVideoSystem(mainClockFrequencyHz = mainClockFrequencyHz, useAudio = useAudio, ethernetWidthBits = ethernetWidthBits), Array(
     "-o", "ethernet_video.v",
     "--target-dir", directory,
   ))

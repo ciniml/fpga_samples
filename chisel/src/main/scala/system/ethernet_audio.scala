@@ -80,7 +80,7 @@ class EthernetAudioSystem(mainClockFrequencyHz: BigInt) extends RawModule {
     rxQueue.io.deq.bits.last <> service.io.in.bits.last
     service.io.in.bits.keep := 1.U
 
-    val txPacketQueue = Module(new PacketQueue(Flushable(UInt(8.W)), 2048))
+    val txPacketQueue = Module(PacketQueue(Flushable(UInt(8.W)), 2048))
     txPacketQueue.io.write.valid <> service.io.out.valid
     txPacketQueue.io.write.ready <> service.io.out.ready
     txPacketQueue.io.write.bits.data <> service.io.out.bits.data

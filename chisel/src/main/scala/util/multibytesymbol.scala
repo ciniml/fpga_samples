@@ -8,6 +8,21 @@ class MultiByteSymbol(val numberOfBytes: Int) extends Bundle {
     val data = UInt(numberOfBits.W)
     val keep = UInt(numberOfBytes.W)
     val last = Bool()
+
+    def toFlushable: Flushable[UInt] = {
+        val flushable = Wire(new Flushable(UInt((numberOfBits + numberOfBytes).W)))
+        flushable.data := Cat(keep, data)
+        flushable.last := last
+        flushable
+    }
+    def fromFlushable(flushable: Flushable[UInt]): Unit = {
+        data := flushable.data(numberOfBits-1, 0)
+        keep := flushable.data(numberOfBits + numberOfBytes - 1, numberOfBits)
+        last := flushable.last
+    }
+    def flushableType: Flushable[UInt] = {
+        new Flushable(UInt((numberOfBits + numberOfBytes).W))
+    }
 }
 object MultiByteSymbol {
     def apply(numberOfBytes: Int): MultiByteSymbol = {
