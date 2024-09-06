@@ -20,7 +20,7 @@ import display.HUB75Controller
 import display.HUB75IO
 
 @chiselName
-class EthernetVideoSystem(mainClockFrequencyHz: BigInt, useAudio: Boolean = true, ethernetWidthBits: Int = 8, maxFrameSize: Int = 2048) extends RawModule {
+class EthernetVideoSystem(mainClockFrequencyHz: BigInt, useAudio: Boolean = true, ethernetWidthBits: Int = 8, maxFrameSize: Int = 2048, useRgb332: Boolean = false, hub75Width: Int = 128, numberOfPanels: Int = 2) extends RawModule {
   assert(ethernetWidthBits % 8 == 0)
   val ethernetWidthBytes = ethernetWidthBits / 8
 
@@ -49,7 +49,7 @@ class EthernetVideoSystem(mainClockFrequencyHz: BigInt, useAudio: Boolean = true
   val out_bclk = IO(Output(Bool()))
   val out_data = IO(Output(Bool()))
 
-  val hub75io = IO(HUB75IO(2))
+  val hub75io = IO(HUB75IO(numberOfPanels))
 
   val dbg_buffering = IO(Output(Bool()))
   val dbg_probeOut = IO(Output(Bool()))
@@ -58,6 +58,15 @@ class EthernetVideoSystem(mainClockFrequencyHz: BigInt, useAudio: Boolean = true
     val r = Cat(rgb565(15, 11), rgb565(11))
     val g = rgb565(10, 5)
     val b = Cat(rgb565(4, 0), rgb565(0))
+    Cat(r, g, b)
+  }
+  def rgb332ToRgb666(rgb332: UInt): UInt = {
+    val r_3 = rgb332(7, 5)
+    val g_3 = rgb332(4, 2)
+    val b_2 = rgb332(1, 0)
+    val r = Cat(r_3, r_3)
+    val g = Cat(g_3, g_3)
+    val b = Cat(b_2, b_2, b_2)
     Cat(r, g, b)
   }
 
@@ -99,7 +108,9 @@ class EthernetVideoSystem(mainClockFrequencyHz: BigInt, useAudio: Boolean = true
       txWidthConverter.io.enq <> txAsyncFifo.io.read
     } else {
       rxAsyncFifo.io.write <> rxQueue.io.deq
-      txQueue.io.write <> txAsyncFifo.io.read
+      txQueue.io.write.valid <> txAsyncFifo.io.read.valid
+      txQueue.io.write.ready <> txAsyncFifo.io.read.ready
+      txQueue.io.write.bits := txAsyncFifo.io.read.bits.toFlushable
     }
 
     (txAsyncFifo, rxAsyncFifo)
@@ -222,26 +233,30 @@ class EthernetVideoSystem(mainClockFrequencyHz: BigInt, useAudio: Boolean = true
 
     // Video output (HUB75)
     {
-      val hub75Width = 128
+      //val hub75Width = 128  // passed by parameter
       val hub75Height = 32
-      val bytesPerPixel = 2
-      val numberOfPanels = 2
-      val numberOfFrameBuffers = 3
+      val bytesPerPixel = if( useRgb332 ) { 1 } else { 2 }
+      //val numberOfPanels = 2  // passed by parameter
+      val numberOfFrameBuffers = 2
       val clockDivider = 0  // 18MHz
       val hub75 = Module(new HUB75Controller(hub75Width, hub75Height, numberOfPanels, pixelComponentBits = 6, clockDivider = clockDivider.toInt))
-      val frameRateHz = 30
+      val frameRateHz = 20
       val frameRateDivider = (mainClockFrequencyHz + frameRateHz - 1) / frameRateHz
       val frameRateCounter = RegInit(0.U(log2Ceil(frameRateDivider).W))
 
       // Frame buffers.
       // For each frame buffer, we have two buffers for `numberOfPanels` panels.
       val maxPixelAddress = hub75Width*hub75Height*numberOfFrameBuffers
-      val frameBuffers = (0 to numberOfPanels - 1).map(_ => Mem(maxPixelAddress, Vec(2, UInt(8.W))))
+      val frameBuffers = (0 to numberOfPanels - 1).map(_ => Mem(maxPixelAddress, Vec(bytesPerPixel, UInt(8.W))))
       val renderingBufferIndex = RegInit(0.U(log2Ceil(numberOfFrameBuffers).W))
       val receivingBufferIndex = RegInit(0.U(log2Ceil(numberOfFrameBuffers).W))
       val nextPixelAddress = WireDefault(0.U(log2Ceil(maxPixelAddress).W))
       for(panelIndex <- 0 to numberOfPanels - 1) {
-        hub75.io.panelPixels(panelIndex).pixel := rgb565ToRgb666(frameBuffers(panelIndex).read(nextPixelAddress).asUInt)
+        if( useRgb332 ) {
+          hub75.io.panelPixels(panelIndex).pixel := rgb332ToRgb666(frameBuffers(panelIndex).read(nextPixelAddress).asUInt)
+        } else {
+          hub75.io.panelPixels(panelIndex).pixel := rgb565ToRgb666(frameBuffers(panelIndex).read(nextPixelAddress).asUInt)
+        }
       }
       for(bufferIndex <- 0 to numberOfFrameBuffers - 1) {
         when( renderingBufferIndex === bufferIndex.U ) {
@@ -285,8 +300,8 @@ class EthernetVideoSystem(mainClockFrequencyHz: BigInt, useAudio: Boolean = true
       udpWriter.io.backPressure.get.bits := "xdeadbeef".U
       
       when( udpWriter.io.writeEnable ) {
-        val mask = VecInit(!udpWriter.io.address(0), udpWriter.io.address(0))
-        val value = VecInit(Seq.fill(2)(udpWriter.io.data))
+        val mask = if( bytesPerPixel == 2 ) { VecInit(!udpWriter.io.address(0), udpWriter.io.address(0)) } else { VecInit(true.B) }
+        val value =  if( bytesPerPixel == 2 ) { VecInit(Seq.fill(2)(udpWriter.io.data)) } else { VecInit(Seq(udpWriter.io.data)) }
         val accessToLastByte = WireDefault(false.B)
         val frameBufferAddressOffset = WireDefault(0.U(log2Ceil(maxPixelAddress).W))
         // Calculate frame buffer offset
@@ -299,7 +314,7 @@ class EthernetVideoSystem(mainClockFrequencyHz: BigInt, useAudio: Boolean = true
           val panelLowerAddress = panelIndex * hub75Width * hub75Height * bytesPerPixel
           val panelUpperAddress = (panelIndex + 1) * hub75Width * hub75Height * bytesPerPixel - 1
           when( panelLowerAddress.U <= udpWriter.io.address && udpWriter.io.address <= panelUpperAddress.U ) {
-            frameBuffers(panelIndex).write(((udpWriter.io.address - panelLowerAddress.U) >> 1) + frameBufferAddressOffset, value, mask)
+            frameBuffers(panelIndex).write(((udpWriter.io.address - panelLowerAddress.U) / bytesPerPixel.U) + frameBufferAddressOffset, value, mask)
           }
         }
         when( udpWriter.io.address === (hub75Width * hub75Height * bytesPerPixel * numberOfPanels - 1).U ) {
@@ -334,8 +349,10 @@ object ElaborateEthernetVideoSystem extends App {
   val mainClockFrequencyHz = args(1).toInt
   val useAudio = args(2).toBoolean
   val ethernetWidthBits = if(args.length >= 4) { args(3).toInt } else { 8 }
+  val numberOfPanels = if(args.length >= 5) { args(4).toInt } else { 2 }
+  val useRgb332 = if(args.length >= 6) { args(5) == "true" } else { false }
 
-  (new ChiselStage).emitVerilog(new EthernetVideoSystem(mainClockFrequencyHz = mainClockFrequencyHz, useAudio = useAudio, ethernetWidthBits = ethernetWidthBits), Array(
+  (new ChiselStage).emitVerilog(new EthernetVideoSystem(mainClockFrequencyHz = mainClockFrequencyHz, useAudio = useAudio, ethernetWidthBits = ethernetWidthBits, useRgb332 = useRgb332, numberOfPanels = numberOfPanels), Array(
     "-o", "ethernet_video.v",
     "--target-dir", directory,
   ))

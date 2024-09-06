@@ -4,6 +4,7 @@ TARGET ?= tangprimer20k
 ROOT_DIR ?= $(abspath ../..)
 RTL_DIR ?= $(ROOT_DIR)/rtl
 ETHERNET_DIR ?= $(RTL_DIR)/ethernet
+ENABLE_AUDIO ?= true
 
 MII_MAC_SRC := $(wildcard $(ETHERNET_DIR)/mii_mac/*.sv) $(wildcard $(ETHERNET_DIR)/mii_axis/*.sv) $(ETHERNET_DIR)/util/simple_fifo.v
 
@@ -19,7 +20,18 @@ PROJECT_ADDITIONAL_CLEAN += $(ETHERNET_VIDEO_CORE_ELABORATE_DIR)/*
 SRCS := src/$(TARGET)/pins.cst $(wildcard src/$(TARGET)/*.sdc) $(wildcard src/$(TARGET)/*.sv) project.tcl $(MII_MAC_SRC) $(ETHERNET_VIDEO_CORE_SRC)
 
 PMOD_PORT_OFFSET ?= 0
-PMOD_TARGETS := tangnano9k_pmod tangprimer20k
+PMOD_TARGETS := tangnano9k_pmod tangprimer20k tangprimer25k
+PMOD_TARGETS_REQUIRE_ETHERNET := tangnano9k_pmod tangprimer25k
+TARGETS_HAS_AUDIO := tangprimer20k 
+
+ETHERNET_STREAM_WIDTH_BITS := 8
+ifeq ($(TARGET),tangmega138k_10gbe)
+PROJECT_TCL := $(abspath src/$(TARGET)/project.tcl)
+ETHERNET_STREAM_WIDTH_BITS := 64
+endif
+
+# By default, disable audio subsystem
+USE_AUDIO := false
 
 # Check if the target contains PMOD ports
 USE_PMOD := 0
@@ -29,15 +41,21 @@ PROJECT_ADDITIONAL_CLEAN += src/$(TARGET)/pins.cst
 endif
 include ../build_gowin.mk
 
-ifeq ($(TARGET),tangnano9k_pmod)
-# Add Pmod Ethernet module
-PMOD_MODULES += $(MOD_DIR)/pmod_ethernet/pmod_pins.csv
+ifneq (,$(filter $(TARGET),$(PMOD_TARGETS_REQUIRE_ETHERNET)))
+# Add Pmod Ethernet Module
+PMOD_MODULES += $(MOD_DIR)/pmod_ethernet_w_adapter/pmod_pins.csv
 endif
 PMOD_MODULES += $(MOD_DIR)/pmod_hub75/pmod_pins.csv
+PMOD_MODULES += $(MOD_DIR)/pmod_hub75_2/pmod_pins.csv
+
+# Check if the target contains audio subsystem
+ifneq (,$(filter $(TARGET),$(TARGETS_HAS_AUDIO)))
+USE_AUDIO := $(ENABLE_AUDIO)
+endif
 
 # Elaborate Chisel sources
 $(ETHERNET_VIDEO_CORE_SRC): $(CHISEL_DESIGN_SRCS)
-	cd $(ROOT_DIR) && sbt "project fpga_samples; runMain system.ElaborateEthernetVideoSystem $(dir $(abspath $@)) 36000000"
+	cd $(ROOT_DIR) && sbt "project fpga_samples; runMain system.ElaborateEthernetVideoSystem $(dir $(abspath $@)) 36000000 $(USE_AUDIO) $(ETHERNET_STREAM_WIDTH_BITS) 4 false"
 
 ifeq ($(USE_PMOD),1)
 # Generate CST file from template.

@@ -16,6 +16,8 @@ struct Cli {
     test_pattern: bool,
     #[arg(long, default_value = "false")]
     clear: bool,
+    #[arg(long, default_value = "false")]
+    rgb332: bool,
 }
 
 fn rgb888_to_565(r: u8, g: u8, b: u8) -> u16 {
@@ -23,6 +25,12 @@ fn rgb888_to_565(r: u8, g: u8, b: u8) -> u16 {
                      | ((g >> 2) as u16) << 5
                      | ((b >> 3) as u16) << 0;
     pixel565
+}
+fn rgb888_to_332(r: u8, g: u8, b: u8) -> u8 {
+    let pixel332 = (r >> 5) << 5
+                     | (g >> 5) << 2
+                     | (b >> 6) << 0;
+    pixel332
 }
 
 fn main() -> anyhow::Result<()> {
@@ -32,9 +40,10 @@ fn main() -> anyhow::Result<()> {
     socket.set_read_timeout(Some(Duration::from_millis(100)))?;
     let (sender, receiver) = std::sync::mpsc::channel();
 
+    let bytes_per_pixel = if args.rgb332 { 1 } else { 2 };
     let frame_pixels = args.width as usize * args.height as usize;
     const HEADER_SIZE: usize = 2;
-    let frame_bytes = frame_pixels * 2;
+    let frame_bytes = frame_pixels * bytes_per_pixel;
     let packet_payload_size = 1024;
     let packet_size = HEADER_SIZE + packet_payload_size;
     let number_of_packets = (frame_bytes + packet_payload_size - 1) / packet_payload_size;
@@ -57,13 +66,17 @@ fn main() -> anyhow::Result<()> {
                     } else {
                         let line = ((i / (args.width as usize)) & 0xff) as u8;
                         let pixel_value = counter.wrapping_add(line).wrapping_mul(4);
-                        let value = rgb888_to_565(pixel_value, pixel_value, pixel_value);
+                        let value = if args.rgb332 { rgb888_to_332(pixel_value, pixel_value, pixel_value) as u16 } else { rgb888_to_565(pixel_value, pixel_value, pixel_value) };
                         value
                     };
-                    let packet_index = i * 2 / packet_payload_size;
+                    let packet_index = i * bytes_per_pixel / packet_payload_size;
                     let payload_offset = HEADER_SIZE * (packet_index + 1);
-                    buf[payload_offset + i * 2] = (value & 0xff) as u8;
-                    buf[payload_offset + i * 2 + 1] = (value >> 8) as u8;
+                    if bytes_per_pixel == 2 {
+                        buf[payload_offset + i * 2] = (value & 0xff) as u8;
+                        buf[payload_offset + i * 2 + 1] = (value >> 8) as u8;
+                    } else {
+                        buf[payload_offset + i] = (value & 0xff) as u8;
+                    }
                 }
                 // Set the header for each packet
                 for packet_index in 0..number_of_packets {
@@ -96,11 +109,19 @@ fn main() -> anyhow::Result<()> {
                 }
                 let mut buf = buffer_acquire.recv().unwrap();
                 for i in 0..frame_pixels {
-                    let packet_index = i * 2 / packet_payload_size;
+                    let packet_index = i * bytes_per_pixel / packet_payload_size;
                     let payload_offset = HEADER_SIZE * (packet_index + 1);
-                    let value = rgb888_to_565(input_buffer[i*3 + 0], input_buffer[i*3 + 1], input_buffer[i*3 + 2]);
-                    buf[payload_offset + i * 2] = (value & 0xff) as u8;
-                    buf[payload_offset + i * 2 + 1] = (value >> 8) as u8;
+                    let value = if bytes_per_pixel == 2 { 
+                        rgb888_to_565(input_buffer[i*3 + 0], input_buffer[i*3 + 1], input_buffer[i*3 + 2])
+                    } else {
+                        rgb888_to_332(input_buffer[i*3 + 0], input_buffer[i*3 + 1], input_buffer[i*3 + 2]) as u16
+                    };
+                    if bytes_per_pixel == 2 {
+                        buf[payload_offset + i * 2] = (value & 0xff) as u8;
+                        buf[payload_offset + i * 2 + 1] = (value >> 8) as u8;
+                    } else {
+                        buf[payload_offset + i] = (value & 0xff) as u8;
+                    }
                 }
                 // Set the header for each packet
                 for packet_index in 0..number_of_packets {
