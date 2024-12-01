@@ -1,0 +1,3 @@
+signal_name,pmod_pin
+msmp_tx,pmod0_2
+msmp_rx,pmod0_3
