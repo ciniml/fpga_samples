@@ -39,6 +39,9 @@ add_file -type verilog [file normalize ${SRC_DIR}/reset_seq.sv]
 if {${TARGET} == "tangprimer25k"} {
     add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_pll_27/gowin_pll_27.v]
     add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_pll/gowin_pll.v]
+} elseif  {${TARGET} == "kiwinano4k"} {
+    add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_pllvr_dvi/gowin_pllvr_dvi.v]
+    add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_pllvr_ser/gowin_pllvr_ser.v]
 } else {
     add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_rpll_dvi/gowin_rpll_dvi.v]
     add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_rpll_ser/gowin_rpll_ser.v]
