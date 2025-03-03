@@ -1,0 +1,38 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2025.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file axi_stream.veryl
+ * @brief AXI4 Stream interface
+ */
+
+
+interface axi4s #(
+    param DATA_WIDTH: u32 = 8,
+    param HAS_TLAST: bit = 0,
+) {
+    var aclk:    clock;
+    var aresetn: reset;
+
+    var tdata: logic<DATA_WIDTH>;
+    var tvalid: logic;
+    var tready: logic;
+    
+    var tlast: logic;
+
+    modport master {
+        tdata:  output,
+        tvalid: output,
+        tready: input,
+        tlast:  output,
+    }
+
+    modport slave {
+        tdata:  input,
+        tvalid: input,
+        tready: output,
+        tlast:  input,
+    }
+}
