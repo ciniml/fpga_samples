@@ -1,0 +1,192 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2021.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+
+// SPI Slave module.
+// # Clock Domain
+// This module operates in two clock domains: the main clock domain and the SPI clock domain.
+// 'a is the main clock domain and 'spi_pos and 'spi_neg is the SPI clock domain.
+// The expected SPI mode is SPI mode 0, which means that latch at the rising edge of SCK, shift at the falling edge of SCK.
+pub module spi_slave::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> #(
+    param IDLE_SEND_DATA: logic<SPI_WIDTH> = '1,
+) (
+    r#clock: input clock,
+    r#reset: input reset,
+    
+    spi_cs:    input  'spi_pos reset_async_high,
+    spi_sck:   input  'spi_pos clock,
+    spi_miso:  output 'spi_neg logic,
+    spi_mosi:  input  'spi_pos logic,
+    
+    // Receive Irrevocable equivalent (line 26: val receive = Irrevocable(SPIData()))
+    axis_receive: modport axi4s_if::<SPI_WIDTH, 1'b0, 1>::master,
+    
+    // Send Irrevocable equivalent (line 27: val send = Flipped(Irrevocable(UInt(8.W))))
+    axis_send: modport axi4s_if::<SPI_WIDTH, 1'b0, 1>::slave,
+) {
+    inst fifo_in: axi4s_if::<SPI_WIDTH, 1'b0, 1>;
+    inst fifo: axi4s_fifo::<5, SPI_WIDTH, 1'b0, 1, axi4s_if::<SPI_WIDTH, 1'b0, 1>> (
+        r#clock,
+        r#reset,
+        data_in: fifo_in,
+        data_out: axis_receive,
+    );
+
+    type spi_word_t = logic<SPI_WIDTH>;
+
+
+    var spi_shift_in_reg: 'spi_pos spi_word_t;
+    var spi_sck_pos: 'spi_pos clock_posedge;
+    var spi_sck_neg: 'spi_neg clock_negedge;
+    var spi_cs_neg_domain: 'spi_neg reset_async_high;
+    assign spi_sck_pos = spi_sck as clock_posedge;
+    unsafe(cdc) {
+        assign spi_sck_neg = spi_sck as clock_negedge;
+        assign spi_cs_neg_domain = spi_cs;
+    }
+
+    // SPI Latch process
+    var spi_counter_pos: 'spi_pos spi_word_t;
+    var spi_in_after_cs_assert: 'spi_pos logic;
+    var spi_in_data: 'spi_pos spi_word_t;
+    var spi_in_first: 'spi_pos logic;
+    var spi_in_req: 'spi_pos logic;
+    var spi_in_ack: logic;
+    var spi_in_ack_sync: 'spi_pos logic;
+    unsafe(cdc) {
+        inst spi_in_ack_sync_inst: synchronizer_m #(WIDTH: 1, STAGES: 2) (i_clk: spi_sck_pos, i_rst: spi_cs, i_d: spi_in_ack, o_d: spi_in_ack_sync);
+    }
+    always_ff(spi_sck_pos, spi_cs) {
+        if_reset {
+            spi_counter_pos[msb] = 1'b1;
+            spi_counter_pos[msb-1:0] = '0;
+            spi_shift_in_reg = '0;
+            spi_in_data = '0;
+            spi_in_first = 0;
+            spi_in_after_cs_assert = 1;
+            spi_in_req = 0;
+        } else {
+            let spi_shift_in_reg_next: spi_word_t = {spi_shift_in_reg[msb-1:0], spi_mosi};
+
+            // Shift (rotate) right the counter
+            spi_counter_pos = {spi_counter_pos[0], spi_counter_pos[msb:1]};
+            
+            if spi_in_ack_sync {
+                spi_in_req = 0;
+            }
+            spi_shift_in_reg = spi_shift_in_reg_next; // Shift in from the LSB side, which means MSB first.
+            if spi_counter_pos[0] {
+                spi_in_data = spi_shift_in_reg_next;
+                spi_in_after_cs_assert = 0;
+                spi_in_first = spi_in_after_cs_assert;
+                spi_in_req = 1;
+            }
+        }
+    }
+
+    var spi_counter_neg: 'spi_neg spi_word_t;
+    var spi_shift_out_reg: 'spi_neg spi_word_t;
+    var spi_out_data: spi_word_t;
+    var spi_out_data_sync: 'spi_neg spi_word_t;
+    var spi_out_req: logic;
+    var spi_out_req_sync: 'spi_neg logic;   // Synchronized spi_out_req
+    var spi_out_ack: 'spi_neg logic;
+    assign spi_miso = spi_shift_out_reg[msb];
+    unsafe(cdc) {
+        inst spi_out_req_sync_inst: synchronizer_m #(WIDTH: 1, STAGES: 2) (i_clk: spi_sck_neg, i_rst: spi_cs, i_d: spi_out_req, o_d: spi_out_req_sync);
+        assign spi_out_data_sync = spi_out_data; // Actually, spi_out_data is not synchronized by synchronizer. spi_out_data must be stable when spi_out_req_sync is asserted.
+    }
+    always_ff(spi_sck_neg, spi_cs_neg_domain) {
+        if_reset {
+            // Reset the counter to all 0 except the MSB.
+            spi_counter_neg[msb] = 1'b1;
+            spi_counter_neg[msb-1:0] = '0;
+            spi_shift_out_reg = (IDLE_SEND_DATA as spi_word_t);
+            spi_out_ack = 0;
+        } else {
+            // Shift (rotate) right the counter 
+            spi_counter_neg = {spi_counter_neg[0], spi_counter_neg[msb:1]};
+            spi_shift_out_reg = {spi_shift_out_reg[msb-1:0], 1'b0};
+            if spi_counter_neg[0] { // Last clock cycle of the SPI word transfer
+                spi_shift_out_reg = if spi_out_req_sync ? spi_out_data_sync : (IDLE_SEND_DATA as spi_word_t);
+                spi_out_ack = 1'b1;
+            }
+            if spi_counter_neg[msb/2] {
+                // deassert the SPI out ack signal at the half of SPI word transfer.
+                spi_out_ack = 1'b0;
+            }
+        }
+    }
+
+    var spi_in_req_sync: logic;
+    var spi_in_req_sync_prev: logic;
+    var spi_in_data_sync: spi_word_t;
+    var spi_in_first_sync: logic;
+    var spi_out_ack_sync: logic;
+    var spi_out_ack_sync_prev: logic;
+    unsafe(cdc) {
+        inst spi_in_req_sync_inst: synchronizer_m #(WIDTH: 1, STAGES: 2) (i_clk: spi_sck_pos, i_rst: spi_cs, i_d: spi_in_req, o_d: spi_in_req_sync);
+        inst spi_out_ack_sync_inst: synchronizer_m #(WIDTH: 1, STAGES: 2) (i_clk: spi_sck_neg, i_rst: spi_cs, i_d: spi_out_ack, o_d: spi_out_ack_sync);
+        assign spi_in_data_sync = spi_in_data;
+        assign spi_in_first_sync = spi_in_first;
+    }
+    // Req/Ack signal edge detection.
+    always_ff(r#clock, r#reset) {
+        if_reset {
+            spi_in_req_sync_prev = 0;
+            spi_out_ack_sync_prev = 0;
+        } else {
+            spi_in_req_sync_prev = spi_in_req_sync;
+            spi_out_ack_sync_prev = spi_out_ack_sync;
+        }
+    }
+
+    var receive_valid: logic;
+    var receive_data: spi_word_t;
+    var receive_first: logic;
+    var send_ready: logic;
+    always_comb {
+        fifo_in.tvalid = receive_valid;
+        fifo_in.tdata = receive_data;
+        fifo_in.tuser = receive_first;
+        axis_send.tready = send_ready;
+    }
+
+    always_ff(r#clock, r#reset) {
+        if_reset {
+            receive_valid = 0;
+            receive_data = 0;
+            receive_first = 0;
+            send_ready = 0;
+            spi_out_req = 0;
+            spi_out_data = 0;
+            spi_in_ack = 0;
+        } else {
+            if receive_valid && fifo_in.tready {
+                receive_valid = 0;
+            }
+
+            if !spi_in_req_sync_prev && spi_in_req_sync && (!receive_valid || fifo_in.tready) {
+                receive_valid = 1;
+                receive_data = spi_in_data_sync;
+                receive_first = spi_in_first_sync;
+            }
+
+            if !spi_out_ack_sync_prev && spi_out_ack_sync {
+                spi_out_req = 0;
+            }
+
+            if !spi_out_req || (!spi_out_ack_sync_prev && spi_out_ack_sync) {
+                send_ready = 1;
+            }
+
+            if axis_send.tvalid && send_ready {
+                send_ready = 0;
+                spi_out_data = axis_send.tdata;
+                spi_out_req = 1;
+            }
+        }
+    }
+}
