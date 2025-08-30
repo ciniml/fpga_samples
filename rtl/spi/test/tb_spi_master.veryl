@@ -1,0 +1,338 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2025.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_spi_master.veryl
+ * @brief Test bench for SPI master module.
+ */
+
+
+embed (inline) sv{{{
+`timescale 1ns/1ps
+
+module tb #(
+    parameter string TEST_MODE = "single_frame",
+    parameter int VALID_RATE = 8,
+    parameter int READY_RATE = 8,
+    parameter int TIMEOUT_CYCLES = 1000
+)();
+    logic clock /*verilator clocker*/;
+    logic reset;
+
+    // SPI interface
+    logic spi_cs;
+    logic spi_sck;
+    logic spi_miso;
+    logic spi_mosi;
+
+    // AXI4 Stream interfaces
+    logic [7:0] axis_send_tdata;
+    logic       axis_send_tlast;
+    logic       axis_send_tvalid;
+    logic       axis_send_tready;
+    
+    logic [7:0] axis_receive_tdata;
+    logic       axis_receive_tuser;
+    logic       axis_receive_tvalid;
+    logic       axis_receive_tready;
+
+    // DUT instantiation
+    spi_spi_master_dut dut (
+        .clock(clock),
+        .reset(!reset),
+        .spi_cs(spi_cs),
+        .spi_sck(spi_sck),
+        .spi_miso(spi_miso),
+        .spi_mosi(spi_mosi),
+        .axis_receive_tdata(axis_receive_tdata),
+        .axis_receive_tuser(axis_receive_tuser),
+        .axis_receive_tvalid(axis_receive_tvalid),
+        .axis_receive_tready(axis_receive_tready),
+        .axis_send_tdata(axis_send_tdata),
+        .axis_send_tlast(axis_send_tlast),
+        .axis_send_tvalid(axis_send_tvalid),
+        .axis_send_tready(axis_send_tready)
+    );
+
+    // Test variables
+    int timeout_counter = 0;
+    int send_index = 0;
+    int miso_pattern_index = 0;
+    int receive_index = 0;
+    logic test_complete = 0;
+    
+    // Test patterns
+    logic [7:0] test_send_data[];
+    logic test_send_tlast[];
+    logic [7:0] test_miso_data[];
+    logic [7:0] expected_receive_data[];
+    logic expected_receive_tuser[];
+    
+    // SPI signal monitoring
+    logic [7:0] spi_mosi_shift_reg;
+    logic [7:0] spi_miso_shift_reg;
+    
+    // Initialize test patterns based on test mode
+    initial begin
+        case (TEST_MODE)
+            "single_frame": begin
+                test_send_data = '{8'hA5};
+                test_send_tlast = '{1'b1};
+                test_miso_data = '{8'h5A};
+                expected_receive_data = '{8'h5A};
+                expected_receive_tuser = '{1'b1};
+                $display("Test mode: single_frame");
+            end
+            "multi_byte_frame": begin
+                test_send_data = '{8'hAA, 8'hBB, 8'hCC};
+                test_send_tlast = '{1'b0, 1'b0, 1'b1};
+                test_miso_data = '{8'h11, 8'h22, 8'h33};
+                expected_receive_data = '{8'h11, 8'h22, 8'h33};
+                expected_receive_tuser = '{1'b1, 1'b0, 1'b0};
+                $display("Test mode: multi_byte_frame");
+            end
+            "multiple_frames": begin
+                test_send_data = '{8'h10, 8'h20, 8'h30, 8'h40};
+                test_send_tlast = '{1'b1, 1'b1, 1'b0, 1'b1};
+                test_miso_data = '{8'h01, 8'h02, 8'h03, 8'h04};
+                expected_receive_data = '{8'h01, 8'h02, 8'h03, 8'h04};
+                expected_receive_tuser = '{1'b1, 1'b0, 1'b0, 1'b0};
+                $display("Test mode: multiple_frames");
+            end
+            default: begin
+                test_send_data = '{8'hA5};
+                test_send_tlast = '{1'b1};
+                test_miso_data = '{8'h5A};
+                expected_receive_data = '{8'h5A};
+                expected_receive_tuser = '{1'b1};
+                $display("Test mode: default (single_frame)");
+            end
+        endcase
+        $display("Test data prepared: %0d bytes to send", test_send_data.size());
+    end
+
+    // MISO pattern generation - shift data out during SPI clock
+    int spi_miso_bit_counter = 0;
+    always_ff @(negedge spi_cs) begin
+        $display("T=%0t: Starting MISO transmission of 0x%02h", $time, test_miso_data[miso_pattern_index]);
+    end
+    always_ff @(negedge spi_sck or posedge spi_cs) begin
+        if( spi_cs ) begin
+            spi_miso_bit_counter <= 0;
+            spi_miso_shift_reg <= test_miso_data[miso_pattern_index];
+        end
+        else begin
+            spi_miso_shift_reg <= spi_miso_shift_reg << 1;
+            spi_miso_bit_counter <= spi_miso_bit_counter + 1;
+            if( spi_miso_bit_counter == 7) begin
+                spi_miso_bit_counter <= 0;
+                if (miso_pattern_index + 1 < test_miso_data.size()) begin
+                    miso_pattern_index <= miso_pattern_index + 1;
+                    $display("T=%0t: Starting MISO transmission of 0x%02h", $time, test_miso_data[miso_pattern_index + 1]);
+                    spi_miso_shift_reg <= test_miso_data[miso_pattern_index + 1];
+                end
+            end
+        end
+    end
+    
+    assign spi_miso = spi_cs ? 1'b0 : spi_miso_shift_reg[7];
+    
+    logic axis_send_tready_reg;
+    always_ff @(posedge clock) begin
+        axis_send_tready_reg = axis_send_tready;
+    end
+
+    // AXI4 Stream send data driver
+    always_ff @(negedge clock) begin
+        if (reset) begin
+            axis_send_tvalid <= 1'b0;
+            axis_send_tdata <= 8'h00;
+            axis_send_tlast <= 1'b0;
+            send_index <= 0;
+        end else begin
+            if (axis_send_tvalid && axis_send_tready_reg) begin
+                // Transaction completed
+                axis_send_tvalid <= 1'b0;
+            end
+            
+            if (!axis_send_tvalid || axis_send_tready_reg) begin
+                // Can start new transaction
+                if (send_index < test_send_data.size()) begin
+                    if ($urandom_range(0, 10) < VALID_RATE) begin
+                        send_index <= send_index + 1;
+                        axis_send_tvalid <= 1'b1;
+                        axis_send_tdata <= test_send_data[send_index];
+                        axis_send_tlast <= test_send_tlast[send_index];
+                        $display("T=%0t: Sent data[%0d]: 0x%02h, tlast=%b", $time, send_index, test_send_data[send_index], test_send_tlast[send_index]);
+                    end
+                end else if (send_index >= test_send_data.size() && receive_index >= expected_receive_data.size()) begin
+                    test_complete <= 1'b1;
+                end
+            end
+        end
+    end
+
+    // AXI4 Stream receive data ready driver
+    always_ff @(negedge clock) begin
+        if (reset) begin
+            axis_receive_tready <= 1'b0;
+        end else begin
+            axis_receive_tready <= $urandom_range(0, 10) < READY_RATE;
+        end
+    end
+
+    // AXI4 Stream receive data checker
+    always_ff @(posedge clock) begin
+        if (reset) begin
+            receive_index <= 0;
+        end else begin
+            if (receive_index < expected_receive_data.size()) begin
+                if (axis_receive_tvalid && axis_receive_tready) begin
+                    $display("T=%0t: Received data[%0d]: 0x%02h, tuser=%b", $time, receive_index, axis_receive_tdata, axis_receive_tuser);
+                    
+                    if (axis_receive_tdata != expected_receive_data[receive_index]) begin
+                        $error("Data mismatch at index %0d: expected 0x%02h, got 0x%02h", 
+                               receive_index, expected_receive_data[receive_index], axis_receive_tdata);
+                    end
+                    if (axis_receive_tuser != expected_receive_tuser[receive_index]) begin
+                        $error("TUSER mismatch at index %0d: expected %b, got %b", 
+                               receive_index, expected_receive_tuser[receive_index], axis_receive_tuser);
+                    end
+                    receive_index <= receive_index + 1;
+                end
+            end
+        end
+    end
+
+    always_ff @(negedge spi_cs) begin
+        $display("T=%0t: SPI CS asserted (frame start)", $time);
+    end
+    always_ff @(posedge spi_cs) begin
+        $display("T=%0t: SPI CS deasserted (frame end)", $time);
+    end
+
+    // SPI signal monitoring and verification
+    int spi_mosi_bit_counter = 0;
+    always_ff @(posedge spi_sck or posedge spi_cs) begin
+        if (spi_cs) begin
+            spi_mosi_bit_counter <= 0;
+        end
+        else begin
+            // Monitor MOSI data on SCK rising edge
+            spi_mosi_shift_reg <= {spi_mosi_shift_reg[6:0], spi_mosi};
+            $display("T=%0t: SPI bit received: %b (shift_reg=0x%02h)", $time, spi_mosi, {spi_mosi_shift_reg[6:0], spi_mosi});
+            spi_mosi_bit_counter <= spi_mosi_bit_counter + 1;
+            if( spi_mosi_bit_counter == 7) begin
+                $display("T=%0t: SPI word received: 0x%02h", $time, {spi_mosi_shift_reg[6:0], spi_mosi});
+                spi_mosi_bit_counter <= 0;
+            end
+        end
+    end
+
+    // Timeout counter
+    always_ff @(posedge clock) begin
+        if (reset) begin
+            timeout_counter <= 0;
+        end else begin
+            timeout_counter <= timeout_counter + 1;
+        end
+    end
+    
+    // Clock generation (5ns period = 100MHz)
+    always #5 clock = ~clock;
+    
+    initial begin
+        clock = 0;
+        $dumpfile("trace.fst");
+        $dumpvars(0, tb);
+
+        // Reset sequence
+        reset = 1'b1;
+        repeat(4) @(negedge clock);
+        reset = 1'b0;
+        $display("T=%0t: Reset released", $time);
+
+        // Wait for test completion or timeout
+        while (!test_complete && timeout_counter < TIMEOUT_CYCLES) begin
+            @(posedge clock);
+        end
+        
+        if (timeout_counter >= TIMEOUT_CYCLES) begin
+            $error("Test timeout after %0d cycles", TIMEOUT_CYCLES);
+        end else begin
+            $display("Test completed successfully after %0d cycles", timeout_counter);
+        end
+        
+        // Additional cycles to observe final behavior
+        repeat(20) @(posedge clock);
+        $finish;
+    end
+endmodule
+}}}
+
+module spi_master_dut (
+  r#clock: input clock,
+  r#reset: input reset,
+
+  spi_cs:    output      logic,
+  spi_sck:   output      logic,
+  spi_miso:  input  'spi logic,
+  spi_mosi:  output      logic,
+
+  axis_receive_tvalid:  output logic,
+  axis_receive_tready:  input  logic,
+  axis_receive_tdata:   output logic<8>,
+  axis_receive_tuser:   output logic,
+
+  axis_send_tvalid:     input  logic,
+  axis_send_tready:     output logic,
+  axis_send_tdata:      input  logic<8>,
+  axis_send_tlast:      input  logic,
+){
+
+  inst axis_receive: axi4s::axi4s_if::<8, false, 1>;
+  inst axis_send:    axi4s::axi4s_if::<8, true, 0>;
+  always_comb {
+    axis_receive_tvalid = axis_receive.tvalid;
+    axis_receive.tready = axis_receive_tready;
+    axis_receive_tdata  = axis_receive.tdata;
+    axis_receive_tuser  = axis_receive.tuser[0];
+
+    axis_send.tvalid = axis_send_tvalid;
+    axis_send_tready = axis_send.tready;
+    axis_send.tdata  = axis_send_tdata;
+    axis_send.tlast  = axis_send_tlast;
+  }
+  inst spi_master_inst: spi_master::<test_synchronizer, 8> (
+    r#clock,
+    r#reset,
+    spi_cs,
+    spi_sck,
+    spi_miso,
+    spi_mosi,
+    axis_receive,
+    axis_send,
+  );
+}
+
+// Test case: Single byte frame
+module tb_single_frame() {
+    inst tb_inst: $sv::tb #(TEST_MODE: "single_frame", VALID_RATE: 10, READY_RATE: 10, TIMEOUT_CYCLES: 500) ();
+}
+
+// Test case: Multi-byte frame
+module tb_multi_byte_frame() {
+    inst tb_inst: $sv::tb #(TEST_MODE: "multi_byte_frame", VALID_RATE: 8, READY_RATE: 8, TIMEOUT_CYCLES: 1000) ();
+}
+
+// Test case: Multiple frames
+module tb_multiple_frames() {
+    inst tb_inst: $sv::tb #(TEST_MODE: "multiple_frames", VALID_RATE: 9, READY_RATE: 7, TIMEOUT_CYCLES: 1500) ();
+}
+
+// Default test case (single frame)
+module tb_default() {
+    inst tb_inst: $sv::tb #(TEST_MODE: "single_frame", VALID_RATE: 8, READY_RATE: 8, TIMEOUT_CYCLES: 500) ();
+}

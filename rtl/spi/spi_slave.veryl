@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSL-1.0
-// Copyright Kenta Ida 2021.
+// Copyright Kenta Ida 2025.
 // Distributed under the Boost Software License, Version 1.0.
 //    (See accompanying file LICENSE_1_0.txt or copy at
 //          https://www.boost.org/LICENSE_1_0.txt)
@@ -21,13 +21,13 @@ pub module spi_slave::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> #
     spi_mosi:  input  'spi_pos logic,
     
     // Receive Irrevocable equivalent (line 26: val receive = Irrevocable(SPIData()))
-    axis_receive: modport axi4s_if::<SPI_WIDTH, 1'b0, 1>::master,
+    axis_receive: modport axi4s::axi4s_if::<SPI_WIDTH, false, 1>::master,
     
     // Send Irrevocable equivalent (line 27: val send = Flipped(Irrevocable(UInt(8.W))))
-    axis_send: modport axi4s_if::<SPI_WIDTH, 1'b0, 1>::slave,
+    axis_send: modport axi4s::axi4s_if::<SPI_WIDTH, false, 1>::slave,
 ) {
-    inst fifo_in: axi4s_if::<SPI_WIDTH, 1'b0, 1>;
-    inst fifo: axi4s_fifo::<5, SPI_WIDTH, 1'b0, 1, axi4s_if::<SPI_WIDTH, 1'b0, 1>> (
+    inst fifo_in: axi4s::axi4s_if::<SPI_WIDTH, false, 1>;
+    inst fifo: axi4s::axi4s_fifo::<5, SPI_WIDTH, false, 1, axi4s::axi4s_if::<SPI_WIDTH, false, 1>> (
         r#clock,
         r#reset,
         data_in: fifo_in,

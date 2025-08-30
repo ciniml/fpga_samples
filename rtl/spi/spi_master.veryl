@@ -1,0 +1,166 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2025.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+
+// SPI Master module.
+pub module spi_master::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> (
+    r#clock: input clock,
+    r#reset: input reset,
+    
+    spi_cs:    output           logic,
+    spi_sck:   output           logic,
+    spi_miso:  input    'spi    logic,
+    spi_mosi:  output           logic,
+    
+    axis_receive: modport axi4s::axi4s_if::<SPI_WIDTH, false, 1>::master,
+    axis_send: modport axi4s::axi4s_if::<SPI_WIDTH, true, 0>::slave,
+) {
+    type spi_word_t = logic<SPI_WIDTH>;
+
+    enum state_t {
+        RESET,
+        IDLE,
+        ASSERT_CS,
+        TRANSFER,
+        PAUSE,
+        WAIT_LAST_BIT_SYNC_1,
+        WAIT_LAST_BIT_SYNC_2,
+    }
+
+    var state: state_t;
+    var spi_out_data: spi_word_t;
+    var spi_out_last: logic;
+    var spi_in_data: spi_word_t;
+    var spi_counter: spi_word_t;
+    var spi_miso_sync: logic;
+    
+    var receive_in_frame: logic;
+    var receive_first: logic;
+    var receive_valid: logic;
+    var receive_data: spi_word_t;
+
+    unsafe(cdc) {
+        inst spi_miso_sync_inst: synchronizer_m #(WIDTH: 1, STAGES: 2) (i_clk: r#clock, i_rst: r#reset, i_d: spi_miso, o_d: spi_miso_sync);
+    }
+    
+    always_comb {
+        axis_receive.tvalid = receive_valid;
+        axis_receive.tdata = receive_data;
+        axis_receive.tuser[0] = receive_first;
+        axis_receive.tlast = 0;
+        
+        case state {
+            state_t::IDLE: {
+                axis_send.tready = 1;
+            }
+            state_t::TRANSFER: {
+                axis_send.tready = spi_sck && spi_counter[0] && !spi_out_last;
+            }
+            state_t::PAUSE: {
+                axis_send.tready = 1;
+            }
+            default: {
+                axis_send.tready = 0;
+            }
+        }
+
+        spi_mosi = spi_out_data[msb];
+    }
+
+    always_ff(r#clock, r#reset) {
+        if_reset {
+            state = state_t::RESET;
+            spi_cs = true;
+            spi_sck = 0;
+            spi_in_data = '0;
+            spi_out_data = '0;
+            spi_counter[msb] = 1'b1;
+            spi_counter[msb-1:0] = '0;
+
+            receive_valid = 0;
+            receive_data = '0;
+            receive_first = 1;
+            receive_in_frame = 0;
+        } else {
+            if receive_valid && axis_receive.tready {
+                receive_valid = 0;
+                receive_first = 0;
+            }
+
+            case state {
+                state_t::RESET: {
+                    state = state_t::IDLE;
+                }
+                state_t::IDLE: {
+                    spi_counter = {1'b1, 1'b0 repeat (SPI_WIDTH - 1)};
+                    if axis_send.tvalid {
+                        spi_out_data = axis_send.tdata;
+                        spi_out_last = axis_send.tlast;
+                        spi_cs = false;
+                        receive_first = 1;
+                        receive_in_frame = 0;
+                        state = state_t::ASSERT_CS;
+                    }
+                }
+                state_t::ASSERT_CS: {
+                    state = state_t::TRANSFER;
+                }
+                state_t::TRANSFER: {
+                    spi_sck = !spi_sck;
+                    if( !spi_sck ) {    // rising edge. sample MISO.
+                        spi_in_data = {spi_in_data[msb-1:0], spi_miso_sync};
+                        if spi_counter[msb-1] {
+                            if receive_in_frame {   // check if in-frame
+                                receive_valid = 1;
+                                if !receive_valid || !axis_receive.tready {
+                                    receive_data = spi_in_data;
+                                }
+                            }
+                            receive_in_frame = 1;   // mark as in-frame.
+                        }
+                    } else {    // falling edge. update MOSI
+                        spi_counter = {spi_counter[0], spi_counter[msb:1]};
+                        spi_out_data = {spi_out_data[msb-1:0], 1'b0};
+                        if spi_counter[0] {
+                            if spi_out_last {
+                                // End of transmission.
+                                state = state_t::WAIT_LAST_BIT_SYNC_1;
+                            } else if axis_send.tvalid {
+                                // Send next word.
+                                spi_out_data = axis_send.tdata;
+                                spi_out_last = axis_send.tlast;
+                            } else {
+                                // No data to send. Pause transmission.
+                                state = state_t::PAUSE;
+                            }
+                        }
+                    }
+                }
+                state_t::PAUSE: {
+                    if axis_send.tvalid {
+                        spi_out_data = axis_send.tdata;
+                        spi_out_last = axis_send.tlast;
+                        state = state_t::TRANSFER;
+                    }
+                }
+                state_t::WAIT_LAST_BIT_SYNC_1: { // Wait for the last MISO bit (1)
+                    spi_cs = 1;
+                    spi_in_data = {spi_in_data[msb-1:0], spi_miso_sync};
+                    state = state_t::WAIT_LAST_BIT_SYNC_2;
+                }
+                state_t::WAIT_LAST_BIT_SYNC_2: { // Wait for the last MISO bit (2)
+                    receive_valid = 1;
+                    if !receive_valid || !axis_receive.tready {
+                        receive_data = spi_in_data;
+                    }
+                    state = state_t::IDLE;
+                }
+                default: {
+                    state = state_t::IDLE;
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,67 @@
+
+module spi_slave_dut (
+  r#clock: input clock,
+  r#reset: input reset,
+
+  spi_cs:    input  'spi_pos reset_async_high,
+  spi_sck:   input  'spi_pos clock,
+  spi_miso:  output 'spi_neg logic,
+  spi_mosi:  input  'spi_pos logic,
+  
+  // Receive Irrevocable equivalent (line 26: val receive = Irrevocable(SPIData()))
+  axis_receive: modport axi4s::axi4s_if::<8, false, 1>::master,
+  
+  // Send Irrevocable equivalent (line 27: val send = Flipped(Irrevocable(UInt(8.W))))
+  axis_send: modport axi4s::axi4s_if::<8, false, 1>::slave,
+){
+  inst spi_slave_inst: spi_slave::<test_synchronizer, 8> (
+    r#clock,
+    r#reset,
+    spi_cs,
+    spi_sck,
+    spi_miso,
+    spi_mosi,
+    axis_receive,
+    axis_send,
+  );
+}
+
+
+#[test(test_spi_slave)]
+embed (inline) sv{{{
+module test_spi_slave();
+
+  axi4s___axi4s_if__8__false__1 axis_receive();
+  axi4s___axi4s_if__8__false__1 axis_send();
+
+  logic clock = 0;
+  logic reset_n = 0;
+
+  // Clock generation (5[ns]*2 = 10[ns] period)
+  always_ff #(5) begin
+    clock = ~clock;
+  end
+
+  logic spi_miso;
+  logic spi_mosi;
+  logic spi_sck;
+  logic spi_cs;
+
+  spi_spi_slave_dut spi_slave_dut_inst (
+    .clock        (clock       ),
+    .reset        (reset_n   ),
+    .spi_cs       (spi_cs      ),
+    .spi_sck      (spi_sck     ),
+    .spi_miso     (spi_miso    ),
+    .spi_mosi     (spi_mosi    ),
+    .axis_receive (axis_receive),
+    .axis_send    (axis_send   )
+  );
+
+  initial begin
+    repeat(2) @(posedge clock);
+    reset_n = 1;
+    assert (0) else $error("error");
+  end
+endmodule
+}}}

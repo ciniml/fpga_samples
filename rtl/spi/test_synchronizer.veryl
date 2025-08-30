@@ -1,0 +1,30 @@
+pub module test_synchronizer for $std::synchronizer #(
+  param WIDTH: u32 = 8,
+  param STAGES: u32 = 2,
+) (
+  i_rst: input 'd reset,
+  i_clk: input 'd clock,
+  i_d: input 's logic<WIDTH>,
+  o_d: output 'd logic<WIDTH>,
+) {
+  var sync: 'd logic<WIDTH>[STAGES];
+  unsafe(cdc) {
+    always_ff(i_clk, i_rst) {
+      if_reset {
+        sync[0] = '0;
+      } else {
+        sync[0] = i_d;
+      }
+    }
+  }
+  for i in 1..STAGES :sync_block {
+    always_ff(i_clk, i_rst) {
+      if_reset {
+        sync[i] = '0;
+      } else {
+        sync[i] = sync[i-1];
+      }
+    }
+  }
+  assign o_d = sync[STAGES-1];
+}
