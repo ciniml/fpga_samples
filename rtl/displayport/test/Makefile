@@ -6,7 +6,12 @@ TESTCASES_tb_aux_ch_tx := default
 MODULES_tb_aux_ch := ../src/aux_ch_tx.sv ../src/aux_ch_rx.sv
 TESTCASES_tb_aux_ch := default
 
-TESTBENCHES := tb_aux_ch_tx tb_aux_ch
+#MODULES_tb_aux_ch_subsystem := ../src/aux_ch_tx.sv ../src/aux_ch_rx.sv ../src/aux_ch_peripheral.sv ../src/aux_ch_subsystem.sv ../../../external/picorv32/picorv32.v
+MODULES_tb_aux_ch_subsystem := ../src/aux_ch_tx.sv ../src/aux_ch_rx.sv ../src/aux_ch_peripheral.sv ../src/aux_ch_subsystem.sv ../src/stream_memory_access.sv ../../../external/learn-fpga/FemtoRV/RTL/PROCESSOR/femtorv32_gracilis.v
+DEPENDS_tb_aux_ch_subsystem := sw-rs/bootrom-rs.hex
+TESTCASES_tb_aux_ch_subsystem := default
+
+TESTBENCHES := tb_aux_ch_tx tb_aux_ch tb_aux_ch_subsystem
 VERILATOR := verilator
 #VERILATOR := docker run -it -e CCACHE_DIR=/tmp/ccache -v `realpath ${PWD}/../..`:`realpath ${PWD}/../..` -v ${PWD}:/work --user $(id -u):$(id -g) verilator/verilator:latest
 
@@ -22,13 +27,19 @@ clean:
 $(MODULES_tb_aux_ch_tx): $(wildcard ../src/*.veryl)
 	cd ..; veryl build
 
+sw/bootrom.hex: sw/bootrom.c sw/link.ld sw/Makefile
+	cd sw; make
+
+sw-rs/bootrom-rs.hex: $(wildcard sw-rs/src/*.rs) sw-rs/link.ld sw-rs/Makefile
+	cd sw-rs; make
+
 define testbench-rule
 test-$1-all: $(addprefix test-$1-, $(TESTCASES_$1))
 	@echo "Done."
 endef
 
 define testcase-rule
-run-$1-$2/obj_dir/test_bin: $1.sv $(MODULES_$1)
+run-$1-$2/obj_dir/test_bin: $1.sv $(MODULES_$1) $(DEPENDS_$1)
 	$(info Compiling $1 $2)
 	mkdir -p run-$1-$2
 	cd run-$1-$2; $(VERILATOR) --binary --top-module tb_$2 --assert --trace-fst --trace-params --trace-structs --trace-underscore $(abspath $1.sv) $(foreach module,$(MODULES_$1),$(abspath $(module))) -o test_bin

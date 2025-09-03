@@ -9,3 +9,11 @@ test_run_dir
 .bsp
 .jvmopts
 .vscode
+
+*.log
+*.jou
+*.bin
+*.scala_
+
+/src
+node_modules

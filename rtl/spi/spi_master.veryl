@@ -76,6 +76,7 @@ pub module spi_master::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> 
             spi_sck = 0;
             spi_in_data = '0;
             spi_out_data = '0;
+            spi_out_last = 0;
             spi_counter[msb] = 1'b1;
             spi_counter[msb-1:0] = '0;
 

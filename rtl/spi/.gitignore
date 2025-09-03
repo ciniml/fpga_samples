@@ -1,3 +1,6 @@
 *.sv
 *.sv.map
 *._
+*.f
+.build
+test/run-*

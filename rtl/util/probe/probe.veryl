@@ -20,7 +20,7 @@ pub module embedded_probe #(
     trigger: input logic,
     triggered: output logic,
 
-    data_out: modport axi4s::master,    
+    data_out: modport axi4s_if::<8, 1, 0>::master,    
 ) {
     type data_t = logic<WIDTH>;
     type index_t = logic<$clog2(BUFFER_DEPTH)>;

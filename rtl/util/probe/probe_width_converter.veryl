@@ -15,8 +15,8 @@ pub module probe_width_converter #(
     r#clock:     input clock,
     aresetn: input reset,
 
-    data_in: modport axi4s::slave,
-    data_out: modport axi4s::master,    
+    data_in: modport axi4s_if::<8, 1, 0>::slave,
+    data_out: modport axi4s_if::<8, 1, 0>::master,
 ) {
     const NUMBER_OF_PHASES: u32 = (WIDTH + 6) / 7;
     const INPUT_WIDTH_WITH_PADDING: u32 = NUMBER_OF_PHASES * 7;

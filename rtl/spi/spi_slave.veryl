@@ -56,7 +56,7 @@ pub module spi_slave::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> #
     var spi_in_ack: logic;
     var spi_in_ack_sync: 'spi_pos logic;
     unsafe(cdc) {
-        inst spi_in_ack_sync_inst: synchronizer_m #(WIDTH: 1, STAGES: 2) (i_clk: spi_sck_pos, i_rst: spi_cs, i_d: spi_in_ack, o_d: spi_in_ack_sync);
+        inst spi_in_ack_sync_inst: test_synchronizer_posedge_async_high #(WIDTH: 1, STAGES: 2) (i_clk: spi_sck_pos, i_rst: spi_cs, i_d: spi_in_ack, o_d: spi_in_ack_sync);
     }
     always_ff(spi_sck_pos, spi_cs) {
         if_reset {
@@ -95,7 +95,7 @@ pub module spi_slave::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> #
     var spi_out_ack: 'spi_neg logic;
     assign spi_miso = spi_shift_out_reg[msb];
     unsafe(cdc) {
-        inst spi_out_req_sync_inst: synchronizer_m #(WIDTH: 1, STAGES: 2) (i_clk: spi_sck_neg, i_rst: spi_cs, i_d: spi_out_req, o_d: spi_out_req_sync);
+        inst spi_out_req_sync_inst: test_synchronizer_negedge_async_high #(WIDTH: 1, STAGES: 2) (i_clk: spi_sck_neg, i_rst: spi_cs_neg_domain, i_d: spi_out_req, o_d: spi_out_req_sync);
         assign spi_out_data_sync = spi_out_data; // Actually, spi_out_data is not synchronized by synchronizer. spi_out_data must be stable when spi_out_req_sync is asserted.
     }
     always_ff(spi_sck_neg, spi_cs_neg_domain) {
@@ -127,8 +127,8 @@ pub module spi_slave::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> #
     var spi_out_ack_sync: logic;
     var spi_out_ack_sync_prev: logic;
     unsafe(cdc) {
-        inst spi_in_req_sync_inst: synchronizer_m #(WIDTH: 1, STAGES: 2) (i_clk: spi_sck_pos, i_rst: spi_cs, i_d: spi_in_req, o_d: spi_in_req_sync);
-        inst spi_out_ack_sync_inst: synchronizer_m #(WIDTH: 1, STAGES: 2) (i_clk: spi_sck_neg, i_rst: spi_cs, i_d: spi_out_ack, o_d: spi_out_ack_sync);
+        inst spi_in_req_sync_inst: synchronizer_m #(WIDTH: 1, STAGES: 2) (i_clk: r#clock, i_rst: r#reset, i_d: spi_in_req, o_d: spi_in_req_sync);
+        inst spi_out_ack_sync_inst: synchronizer_m #(WIDTH: 1, STAGES: 2) (i_clk: r#clock, i_rst: r#reset, i_d: spi_out_ack, o_d: spi_out_ack_sync);
         assign spi_in_data_sync = spi_in_data;
         assign spi_in_first_sync = spi_in_first;
     }
@@ -168,10 +168,15 @@ pub module spi_slave::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> #
                 receive_valid = 0;
             }
 
+            if !spi_in_req_sync {
+                spi_in_ack = 0;
+            }
+
             if !spi_in_req_sync_prev && spi_in_req_sync && (!receive_valid || fifo_in.tready) {
                 receive_valid = 1;
                 receive_data = spi_in_data_sync;
                 receive_first = spi_in_first_sync;
+                spi_in_ack = 1;
             }
 
             if !spi_out_ack_sync_prev && spi_out_ack_sync {

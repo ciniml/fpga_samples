@@ -9,30 +9,70 @@
  */
 
 
-interface axi4s #(
-    param DATA_WIDTH: u32 = 8,
-    param HAS_TLAST: bit = 0,
-) {
-    var aclk:    clock;
-    var aresetn: reset;
+pub proto interface axi4s_proto {
+    const DATA_WIDTH: u32;
+    const HAS_TLAST: bit;
+    const USER_WIDTH: u32;
 
     var tdata: logic<DATA_WIDTH>;
     var tvalid: logic;
     var tready: logic;
-    
+
     var tlast: logic;
+    var tuser: logic<if USER_WIDTH == 0 ? 1 : USER_WIDTH >;
+
+    function transaction() -> logic;
+    function last() -> logic;
 
     modport master {
         tdata:  output,
         tvalid: output,
         tready: input,
         tlast:  output,
+        tuser:  output,
     }
 
     modport slave {
-        tdata:  input,
-        tvalid: input,
-        tready: output,
-        tlast:  input,
+        ..converse(master)
+    }
+
+    modport monitor {
+        ..input
+    }
+}
+
+pub interface axi4s_if::<WIDTH: u32 = 8, LAST: bool = false, USER: u32 = 0> for axi4s_proto {
+    const DATA_WIDTH: u32 = WIDTH;
+    const HAS_TLAST: bit = LAST;
+    const USER_WIDTH: u32 = USER;
+
+    var tdata: logic<DATA_WIDTH>;
+    var tvalid: logic;
+    var tready: logic;
+    
+    var tlast: logic;
+    var tuser: logic<if USER_WIDTH == 0 ? 1 : USER_WIDTH>;
+
+    function transaction() -> logic {
+        return tvalid && tready;
+    }
+    function last() -> logic {
+        return if HAS_TLAST ? tlast : 1'b0;
+    }
+
+    modport master {
+        tdata:  output,
+        tvalid: output,
+        tready: input,
+        tlast:  output,
+        tuser:  output,
+    }
+
+    modport slave {
+        ..converse(master)
+    }
+
+    modport monitor {
+        ..input
     }
 }

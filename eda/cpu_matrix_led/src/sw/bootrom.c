@@ -78,13 +78,23 @@ void __attribute__((noreturn)) main(void)
     uint32_t led_out = 1;
     uint32_t pattern_index = 0;
     const uint32_t clock_hz = *REG_CLOCK_HZ;
+    uint32_t check_patterns[2] = {0, 0};
     while(1) {
         *REG_LED = led_out;
-        *REG_MATRIX_0 = patterns[pattern_index][0];
-        *REG_MATRIX_1 = patterns[pattern_index][1];
+        // *REG_MATRIX_0 = patterns[pattern_index][0];
+        // *REG_MATRIX_1 = patterns[pattern_index][1];
+        if( check_patterns[0] == 0 && check_patterns[1] == 0 ) {
+            check_patterns[0] = 1;
+        } else {
+            check_patterns[1] <<= 1;
+            check_patterns[1] |= (check_patterns[0] & 0x80000000) ? 1 : 0;
+            check_patterns[0] <<= 1;
+        }
+        *REG_MATRIX_0 = check_patterns[0];
+        *REG_MATRIX_1 = check_patterns[1];
         pattern_index ^= 1;
         uint64_t start = read_cycle();
-        while(read_cycle() - start < clock_hz);
+        while(read_cycle() - start < clock_hz/10);
         led_out = (led_out << 1) | ((led_out >> 7) & 1);        
     }
 }

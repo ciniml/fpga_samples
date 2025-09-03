@@ -3,14 +3,11 @@
 <Project>
     <Template>FPGA</Template>
     <Version>5</Version>
-    <Device name="GW1N-1" pn="GW1N-LV1QN48C6/I5">gw1n1-004</Device>
+    <Device name="GW5A-25B" pn="GW5A-LV25MG121NC1/I0">gw5a25b-003</Device>
     <FileList>
-        <File path="../../rtl/uart/uartsystem.v" type="file.verilog" enable="0"/>
+        <File path="src/top.sv" type="file.verilog" enable="1"/>
         <File path="../../rtl/uart/uart_rx.sv" type="file.verilog" enable="1"/>
-        <File path="../../rtl/uart/uart_system.sv" type="file.verilog" enable="1"/>
         <File path="../../rtl/uart/uart_tx.sv" type="file.verilog" enable="1"/>
-        <File path="src/runber.cst" type="file.cst" enable="0"/>
-        <File path="src/tangnano.cst" type="file.cst" enable="1"/>
-        <File path="src/uart.rao" type="file.gao" enable="0"/>
+        <File path="src/tangprimer25k.cst" type="file.cst" enable="1"/>
     </FileList>
 </Project>

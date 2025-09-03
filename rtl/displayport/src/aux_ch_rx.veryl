@@ -25,18 +25,20 @@ pub module aux_ch_rx #(
     // AUX_CH input
     aux_ch_in:        input logic,
 ) {
-    local CLOCK_COUNT_MAX: u32 = (CLOCK_HZ * 5 / MANCHESTER_CLOCK_HZ / 2) - 1;   // Max clock counter value
-    local CLOCK_COUNT_VARIANCE: u32 = (CLOCK_HZ / MANCHESTER_CLOCK_HZ) / 10;
-
+    local CLOCK_COUNT_MAX: u32 = (CLOCK_HZ / MANCHESTER_CLOCK_HZ) - 1;   // Max clock counter value
     type clock_counter_t = logic<$clog2(CLOCK_COUNT_MAX + 1)>;
     type U32 = u32;
     var clock_counter: clock_counter_t;
 
-    local CLOCK_COUNT_HALF: clock_counter_t = ((CLOCK_HZ / MANCHESTER_CLOCK_HZ) / 2) as clock_counter_t;
-    local CLOCK_COUNT_HALF_RANGE_L: clock_counter_t = (((CLOCK_COUNT_HALF) as U32) - CLOCK_COUNT_VARIANCE) as clock_counter_t;
-    local CLOCK_COUNT_HALF_RANGE_H: clock_counter_t = (((CLOCK_COUNT_HALF) as U32) + CLOCK_COUNT_VARIANCE) as clock_counter_t;
+    function rounded_clock_count(clock_hz: input u32, target_clock_hz: input u32) -> clock_counter_t {
+        let clock_count: u32 = ((clock_hz + target_clock_hz/2 - 1) / target_clock_hz);
+        return (if clock_count == 0 { 0 } else { clock_count - 1 }) as clock_counter_t;
+    }
 
-    var clock_half_count: clock_counter_t;
+    local CLOCK_COUNT_HALF: clock_counter_t = rounded_clock_count(CLOCK_HZ * 1, MANCHESTER_CLOCK_HZ * 2);
+    local CLOCK_COUNT_1_4 : clock_counter_t = rounded_clock_count(CLOCK_HZ * 1, MANCHESTER_CLOCK_HZ * 4);
+    local CLOCK_COUNT_3_4 : clock_counter_t = rounded_clock_count(CLOCK_HZ * 3, MANCHESTER_CLOCK_HZ * 4);
+
     var symbol_buffer: logic<16>;
     var next_valid: logic;
     var next_buffer: logic<8>;
@@ -55,7 +57,6 @@ pub module aux_ch_rx #(
     always_ff (clock, aresetn) {
         if_reset {
             clock_counter = 0;
-            clock_half_count = 0;
             
             symbol_buffer = 0;
             symbol_counter = 0;
@@ -81,33 +82,28 @@ pub module aux_ch_rx #(
 
             case state {
                 State::IDLE: {
-                    let base_clock_half_count: clock_counter_t = if clock_half_count == 0 { CLOCK_COUNT_HALF } else { clock_half_count };
-                    let clock_max: clock_counter_t = if base_clock_half_count <: (CLOCK_COUNT_MAX / 2) as clock_counter_t { base_clock_half_count * 2 + 1 } else { CLOCK_COUNT_MAX as clock_counter_t };
-                    let locked: logic = 1; //CLOCK_COUNT_HALF_RANGE_L <= clock_half_count && clock_half_count <= CLOCK_COUNT_HALF_RANGE_H;
-                    let sync_end: logic = symbol_buffer[7:0] == 8'b11110000;
+                    let clock_max: clock_counter_t = CLOCK_COUNT_HALF * 2 + 1;
+                    let sync_end: logic = symbol_buffer[15:0] == 16'b01010101_11110000; // SYNC last 4 symbols + SYNC_END HHLL
 
                     next_valid = 0;
 
                     if aux_ch_in_prev != aux_ch_in {
                         clock_counter = 0;
-                        if clock_counter <= CLOCK_COUNT_HALF_RANGE_H {
-                            clock_half_count = ((base_clock_half_count + clock_counter + (1 as clock_counter_t)) / (2 as clock_counter_t)) as clock_counter_t;
-                        }
-                        if locked && sync_end { // SYNC end
+                        if sync_end { // SYNC end
                             // Must be at the edge of the first `1` bit.
                             symbol_counter = 0;
                             state = State::RECEIVE;
                         }
                     }
-                    if clock_counter == (clock_half_count >> 1) as clock_counter_t {
+                    if clock_counter == CLOCK_COUNT_1_4 {
                         symbol_buffer = {symbol_buffer[14:0], aux_ch_in};
                     }
-                    if clock_counter == (clock_half_count + ((clock_half_count + 1 as clock_counter_t) >> 1)) as clock_counter_t {
+                    if clock_counter == CLOCK_COUNT_3_4 {
                         symbol_buffer = {symbol_buffer[14:0], aux_ch_in};
                     }
-                    if clock_counter == clock_max {
+                    if clock_counter == CLOCK_COUNT_MAX as clock_counter_t {
                         clock_counter = 0;
-                        if locked && sync_end { // SYNC end
+                        if sync_end { // SYNC end
                             // Must be at the edge of the first `0` or `1` bit.
                             symbol_counter = 0;
                             state = State::RECEIVE;
@@ -119,10 +115,10 @@ pub module aux_ch_rx #(
                         // Resync to the edge.
                         clock_counter = 0;
                     }
-                    if clock_counter == ((clock_half_count * 2) + 1) as clock_counter_t {
+                    if clock_counter == CLOCK_COUNT_MAX as clock_counter_t {
                         clock_counter = 0;
                     }
-                    let is_sample_point: logic = clock_counter == (clock_half_count >> 1) as clock_counter_t || clock_counter == (clock_half_count + ((clock_half_count + 1 as clock_counter_t) >> 1)) as clock_counter_t;   // Sample at 1/4 or 3/4 of the clock period.
+                    let is_sample_point: logic = clock_counter == CLOCK_COUNT_1_4 || clock_counter == CLOCK_COUNT_3_4;   // Sample at 1/4 or 3/4 of the clock period.
                     
                     if is_sample_point {
                         let next_symbol_buffer: logic<16> = {symbol_buffer[14:0], aux_ch_in};

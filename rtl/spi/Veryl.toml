@@ -1,0 +1,16 @@
+[project]
+name = "spi"
+version = "0.1.0"
+authors = ["Kenta IDA <fuga@fugafuga.org>"]
+license = "BSL-1.0"
+
+[build]
+clock_type = "posedge"
+reset_type = "sync_low"
+target = { type = "source" }
+
+[dependencies]
+axi4s = {path = "../interfaces/axi4s"}
+
+# [test.verilator]
+# compile_args = ["--top", "test_spi_master"]

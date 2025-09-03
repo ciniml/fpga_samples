@@ -3,7 +3,10 @@
 MODULES_tb_spi_master := ../spi_master.sv ../test_synchronizer.sv ../dependencies/axi4s/axi_stream.sv ../dependencies/axi4s/axi4s_fifo.sv
 TESTCASES_tb_spi_master := default multi_byte_frame
 
-TESTBENCHES := tb_spi_master
+MODULES_tb_spi_slave := ../spi_slave.sv ../test_synchronizer.sv ../dependencies/axi4s/axi_stream.sv ../dependencies/axi4s/axi4s_fifo.sv
+TESTCASES_tb_spi_slave := slave_default slave_multi_byte_frame slave_multiple_frames
+
+TESTBENCHES := tb_spi_master tb_spi_slave
 VERILATOR := verilator
 #VERILATOR := docker run -it -e CCACHE_DIR=/tmp/ccache -v `realpath ${PWD}/../..`:`realpath ${PWD}/../..` -v ${PWD}:/work --user $(id -u):$(id -g) verilator/verilator:latest
 
