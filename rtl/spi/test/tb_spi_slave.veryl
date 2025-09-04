@@ -16,7 +16,12 @@ module tb #(
     parameter string TEST_MODE = "single_frame",
     parameter int VALID_RATE = 8,
     parameter int READY_RATE = 8,
-    parameter int TIMEOUT_CYCLES = 1000
+    parameter int TIMEOUT_CYCLES = 1000,
+    parameter int SPI_CLK_HALF_PERIOD_NS = 25,    // Default 20MHz (50ns period)
+    parameter int SPI_CLK_PHASE_OFFSET_NS = 0,     // Phase offset from main clock
+    parameter int CS_ASSERT_AFTER_WAIT_NS = 50,    // Wait after CS assert
+    parameter int CS_DEASSERT_BEFORE_WAIT_NS = 50, // Wait before CS deassert  
+    parameter int INTER_TRANSACTION_DELAY_NS = 100 // Delay between transactions
 )();
     logic clock /*verilator clocker*/;
     logic reset;
@@ -162,10 +167,14 @@ module tb #(
         $display("Test data prepared: %0d transactions", transaction_count);
     end
 
-    // SPI Clock generation
+    // SPI Clock generation with parameterized timing
     logic spi_sck_inner;
-    always begin
-        #25 spi_sck_inner = ~spi_sck_inner;  // 20MHz SPI clock (50ns period)
+    initial spi_sck_inner = 0;
+    initial begin
+        #(SPI_CLK_PHASE_OFFSET_NS); // Apply phase offset
+        forever begin
+            #(SPI_CLK_HALF_PERIOD_NS) spi_sck_inner = ~spi_sck_inner;
+        end
     end
     assign spi_sck = spi_sck_inner && spi_sck_enable;
 
@@ -182,6 +191,7 @@ module tb #(
         spi_miso_shift_reg = 8'h00;
         
         // Enable SCK and perform 8-bit transfer
+        @(negedge spi_sck_inner);
         spi_sck_enable = 1;
         
         for (int bit_idx = 0; bit_idx < 8; bit_idx++) begin
@@ -222,7 +232,7 @@ module tb #(
         
         // Assert CS
         spi_cs = 0;
-        #50;
+        #(CS_ASSERT_AFTER_WAIT_NS);  // CS assert-after wait
 
         // Transfer all words
         for (int word_idx = 0; word_idx < word_count; word_idx++) begin
@@ -230,14 +240,14 @@ module tb #(
         end
         
         // Deassert CS
-        #50;
+        #(CS_DEASSERT_BEFORE_WAIT_NS); // CS deassert-before wait
         spi_cs = 1;
         spi_mosi = 0;
         spi_transaction_active = 0;
         
         $display("T=%0t: SPI transaction complete", $time);
         
-        #100; // Inter-transaction delay
+        #(INTER_TRANSACTION_DELAY_NS); // Inter-transaction delay
     endtask
 
     // SPI Master driver process
@@ -439,4 +449,108 @@ module tb_slave_multiple_frames() {
 // Default test case (single frame)
 module tb_slave_default() {
     inst tb_slave_inst: $sv::tb #(TEST_MODE: "single_frame", VALID_RATE: 8, READY_RATE: 8, TIMEOUT_CYCLES: 2000) ();
+}
+
+// Test cases with different SPI frequencies near main clock (100MHz)
+// Test case: 50MHz SPI clock (half_period=10ns, phase_offset=2ns)
+module tb_slave_multiple_frames_50mhz() {
+    inst tb_slave_inst: $sv::tb #(
+        TEST_MODE: "multiple_frames", 
+        VALID_RATE: 9, 
+        READY_RATE: 7, 
+        TIMEOUT_CYCLES: 4000,
+        SPI_CLK_HALF_PERIOD_NS: 10,    // 50MHz SPI clock
+        SPI_CLK_PHASE_OFFSET_NS: 2,    // 2ns phase offset
+        CS_ASSERT_AFTER_WAIT_NS: 30,   // Shorter timing for fast clock
+        CS_DEASSERT_BEFORE_WAIT_NS: 30,
+        INTER_TRANSACTION_DELAY_NS: 80
+    ) ();
+}
+
+module tb_slave_multiple_frames_100mhz() {
+    inst tb_slave_inst: $sv::tb #(
+        TEST_MODE: "multiple_frames", 
+        VALID_RATE: 9, 
+        READY_RATE: 7, 
+        TIMEOUT_CYCLES: 4000,
+        SPI_CLK_HALF_PERIOD_NS: 5,     // 100MHz SPI clock
+        SPI_CLK_PHASE_OFFSET_NS: 0,    // 0ns phase offset
+        CS_ASSERT_AFTER_WAIT_NS: 30,   // Shorter timing for fast clock
+        CS_DEASSERT_BEFORE_WAIT_NS: 30,
+        INTER_TRANSACTION_DELAY_NS: 80
+    ) ();
+}
+
+module tb_slave_multiple_frames_100mhz_90() {
+    inst tb_slave_inst: $sv::tb #(
+        TEST_MODE: "multiple_frames", 
+        VALID_RATE: 9, 
+        READY_RATE: 7, 
+        TIMEOUT_CYCLES: 4000,
+        SPI_CLK_HALF_PERIOD_NS: 5,     // 100MHz SPI clock
+        SPI_CLK_PHASE_OFFSET_NS: 2,    // 2ns phase offset (<90°)
+        CS_ASSERT_AFTER_WAIT_NS: 30,   // Shorter timing for fast clock
+        CS_DEASSERT_BEFORE_WAIT_NS: 30,
+        INTER_TRANSACTION_DELAY_NS: 80
+    ) ();
+}
+
+
+module tb_slave_multiple_frames_100mhz_180() {
+    inst tb_slave_inst: $sv::tb #(
+        TEST_MODE: "multiple_frames", 
+        VALID_RATE: 9, 
+        READY_RATE: 7, 
+        TIMEOUT_CYCLES: 4000,
+        SPI_CLK_HALF_PERIOD_NS: 5,     // 100MHz SPI clock
+        SPI_CLK_PHASE_OFFSET_NS: 5,    // 5ns phase offset (180°)
+        CS_ASSERT_AFTER_WAIT_NS: 30,   // Shorter timing for fast clock
+        CS_DEASSERT_BEFORE_WAIT_NS: 30,
+        INTER_TRANSACTION_DELAY_NS: 80
+    ) ();
+}
+
+// Test case: 33MHz SPI clock (half_period=15ns, phase_offset=3ns)
+module tb_slave_multiple_frames_33mhz() {
+    inst tb_slave_inst: $sv::tb #(
+        TEST_MODE: "multiple_frames", 
+        VALID_RATE: 9, 
+        READY_RATE: 7, 
+        TIMEOUT_CYCLES: 4000,
+        SPI_CLK_HALF_PERIOD_NS: 15,    // 33MHz SPI clock
+        SPI_CLK_PHASE_OFFSET_NS: 3,    // 3ns phase offset
+        CS_ASSERT_AFTER_WAIT_NS: 40,   
+        CS_DEASSERT_BEFORE_WAIT_NS: 40,
+        INTER_TRANSACTION_DELAY_NS: 90
+    ) ();
+}
+
+// Test case: 25MHz SPI clock (half_period=20ns, phase_offset=1ns)
+module tb_slave_multiple_frames_25mhz() {
+    inst tb_slave_inst: $sv::tb #(
+        TEST_MODE: "multiple_frames", 
+        VALID_RATE: 9, 
+        READY_RATE: 7, 
+        TIMEOUT_CYCLES: 4000,
+        SPI_CLK_HALF_PERIOD_NS: 20,    // 25MHz SPI clock
+        SPI_CLK_PHASE_OFFSET_NS: 1,    // 1ns phase offset
+        CS_ASSERT_AFTER_WAIT_NS: 45,   
+        CS_DEASSERT_BEFORE_WAIT_NS: 45,
+        INTER_TRANSACTION_DELAY_NS: 95
+    ) ();
+}
+
+// Test case: 20MHz SPI clock (half_period=25ns, phase_offset=4ns) - original default
+module tb_slave_multiple_frames_20mhz() {
+    inst tb_slave_inst: $sv::tb #(
+        TEST_MODE: "multiple_frames", 
+        VALID_RATE: 9, 
+        READY_RATE: 7, 
+        TIMEOUT_CYCLES: 4000,
+        SPI_CLK_HALF_PERIOD_NS: 25,    // 20MHz SPI clock (original default)
+        SPI_CLK_PHASE_OFFSET_NS: 4,    // 4ns phase offset
+        CS_ASSERT_AFTER_WAIT_NS: 50,   // Original timing
+        CS_DEASSERT_BEFORE_WAIT_NS: 50,
+        INTER_TRANSACTION_DELAY_NS: 100
+    ) ();
 }
