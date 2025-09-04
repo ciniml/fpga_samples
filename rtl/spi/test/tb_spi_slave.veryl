@@ -16,12 +16,14 @@ module tb #(
     parameter string TEST_MODE = "single_frame",
     parameter int VALID_RATE = 8,
     parameter int READY_RATE = 8,
-    parameter int TIMEOUT_CYCLES = 1000,
+    parameter int MAX_TRANSACTIONS = 100,
+    parameter int MAX_WORDS_PER_TRANSACTION = 8,
     parameter int SPI_CLK_HALF_PERIOD_NS = 25,    // Default 20MHz (50ns period)
     parameter int SPI_CLK_PHASE_OFFSET_NS = 0,     // Phase offset from main clock
     parameter int CS_ASSERT_AFTER_WAIT_NS = 50,    // Wait after CS assert
     parameter int CS_DEASSERT_BEFORE_WAIT_NS = 50, // Wait before CS deassert  
-    parameter int INTER_TRANSACTION_DELAY_NS = 100 // Delay between transactions
+    parameter int INTER_TRANSACTION_DELAY_NS = 100, // Delay between transactions
+    parameter int TIMEOUT_CYCLES = MAX_TRANSACTIONS * ((MAX_WORDS_PER_TRANSACTION*SPI_CLK_HALF_PERIOD_NS*2) + CS_ASSERT_AFTER_WAIT_NS + CS_DEASSERT_BEFORE_WAIT_NS + INTER_TRANSACTION_DELAY_NS) * 11 / 10
 )();
     logic clock /*verilator clocker*/;
     logic reset;
@@ -66,9 +68,11 @@ module tb #(
     int receive_index = 0;
     logic test_complete = 0;
     
-    // Maximum test configuration
-    parameter int MAX_TRANSACTIONS = 4;
-    parameter int MAX_WORDS_PER_TRANSACTION = 8;
+    // Variables for random data generation
+    int total_words;
+    int word_idx;
+    int send_idx;
+    int miso_idx;
     
     // Test patterns
     logic [7:0] test_mosi_data[];
@@ -129,24 +133,70 @@ module tb #(
                 $display("Test mode: multi_byte_frame");
             end
             "multiple_frames": begin
-                test_mosi_data = '{8'h10, 8'h20, 8'h30, 8'h40};
-                test_send_data = '{8'h01, 8'h02, 8'h03, 8'h04};
-                expected_receive_data = '{8'h10, 8'h20, 8'h30, 8'h40};
-                expected_receive_tuser = '{1'b1, 1'b0, 1'b1, 1'b0};
-                expected_miso_data = '{8'hff, 8'h01, 8'h02, 8'h03, 8'h04};
-                // Transaction format: multiple frames
-                transaction_count = 2;
-                transaction_word_count[0] = 2;
-                transaction_word_count[1] = 2;
-                transaction_mosi_data[0][0] = 8'h10;
-                transaction_mosi_data[0][1] = 8'h20;
-                transaction_miso_data[0][0] = 8'hff;
-                transaction_miso_data[0][1] = 8'h01;
-                transaction_mosi_data[1][0] = 8'h30;
-                transaction_mosi_data[1][1] = 8'h40;
-                transaction_miso_data[1][0] = 8'hff;
-                transaction_miso_data[1][1] = 8'h03;
-                $display("Test mode: multiple_frames");
+                // Generate random test data
+                transaction_count = $urandom_range(1, MAX_TRANSACTIONS);
+                $display("Generated %0d random transactions", transaction_count);
+                
+                // Initialize all arrays to prevent X values
+                for (int i = 0; i < MAX_TRANSACTIONS; i++) begin
+                    transaction_word_count[i] = 0;
+                    for (int j = 0; j < MAX_WORDS_PER_TRANSACTION; j++) begin
+                        transaction_mosi_data[i][j] = 8'h00;
+                        transaction_miso_data[i][j] = 8'h00;
+                    end
+                end
+                
+                // Generate random transaction data
+                total_words = 0;
+                for (int i = 0; i < transaction_count; i++) begin
+                    transaction_word_count[i] = $urandom_range(1, MAX_WORDS_PER_TRANSACTION);
+                    $display("Transaction %0d: %0d words", i, transaction_word_count[i]);
+                    
+                    for (int j = 0; j < transaction_word_count[i]; j++) begin
+                        transaction_mosi_data[i][j] = 8'($urandom());
+                        // First word of each transaction gets 0xFF response, others get random
+                        transaction_miso_data[i][j] = (j == 0) ? 8'hFF : 8'($urandom());
+                        $display("  Word %0d: MOSI=0x%02h, MISO=0x%02h", j, 
+                                transaction_mosi_data[i][j], transaction_miso_data[i][j]);
+                    end
+                    total_words += transaction_word_count[i];
+                end
+                
+                // Create dynamic arrays for legacy test data format
+                test_mosi_data = new[total_words];
+                test_send_data = new[total_words-transaction_count]; // Exclude first word of each transaction
+                expected_receive_data = new[total_words];
+                expected_receive_tuser = new[total_words];
+                expected_miso_data = new[total_words+transaction_count]; // Include initial 0xFF for each transaction
+                
+                // Fill the arrays
+                word_idx = 0;
+                send_idx = 0;
+                miso_idx = 0;
+                
+                for (int i = 0; i < transaction_count; i++) begin
+                    // First MISO response is always 0xFF at start of transaction
+                    expected_miso_data[miso_idx++] = 8'hFF;
+                    
+                    for (int j = 0; j < transaction_word_count[i]; j++) begin
+                        test_mosi_data[word_idx] = transaction_mosi_data[i][j];
+                        expected_receive_data[word_idx] = transaction_mosi_data[i][j];
+                        expected_receive_tuser[word_idx] = (j == 0) ? 1'b1 : 1'b0;
+                        
+                        // Send data (MISO responses) - skip first word of each transaction
+                        if (j > 0) begin
+                            test_send_data[send_idx] = transaction_miso_data[i][j];
+                            expected_miso_data[miso_idx] = transaction_miso_data[i][j];
+                            send_idx++;
+                            miso_idx++;
+                        end
+                        
+                        word_idx++;
+                    end
+                end
+                
+                $display("Test mode: multiple_frames (random data)");
+                $display("Total words: %0d, Send data size: %0d", total_words, test_send_data.size());
             end
             default: begin
                 test_mosi_data = '{8'hA5, 8'h5A};
@@ -443,7 +493,7 @@ module tb_slave_multi_byte_frame() {
 
 // Test case: Multiple frames
 module tb_slave_multiple_frames() {
-    inst tb_slave_inst: $sv::tb #(TEST_MODE: "multiple_frames", VALID_RATE: 9, READY_RATE: 7, TIMEOUT_CYCLES: 4000) ();
+    inst tb_slave_inst: $sv::tb #(TEST_MODE: "multiple_frames", VALID_RATE: 9, READY_RATE: 7) ();
 }
 
 // Default test case (single frame)
@@ -458,7 +508,6 @@ module tb_slave_multiple_frames_50mhz() {
         TEST_MODE: "multiple_frames", 
         VALID_RATE: 9, 
         READY_RATE: 7, 
-        TIMEOUT_CYCLES: 4000,
         SPI_CLK_HALF_PERIOD_NS: 10,    // 50MHz SPI clock
         SPI_CLK_PHASE_OFFSET_NS: 2,    // 2ns phase offset
         CS_ASSERT_AFTER_WAIT_NS: 30,   // Shorter timing for fast clock
@@ -472,7 +521,6 @@ module tb_slave_multiple_frames_100mhz() {
         TEST_MODE: "multiple_frames", 
         VALID_RATE: 9, 
         READY_RATE: 7, 
-        TIMEOUT_CYCLES: 4000,
         SPI_CLK_HALF_PERIOD_NS: 5,     // 100MHz SPI clock
         SPI_CLK_PHASE_OFFSET_NS: 0,    // 0ns phase offset
         CS_ASSERT_AFTER_WAIT_NS: 30,   // Shorter timing for fast clock
@@ -486,7 +534,6 @@ module tb_slave_multiple_frames_100mhz_90() {
         TEST_MODE: "multiple_frames", 
         VALID_RATE: 9, 
         READY_RATE: 7, 
-        TIMEOUT_CYCLES: 4000,
         SPI_CLK_HALF_PERIOD_NS: 5,     // 100MHz SPI clock
         SPI_CLK_PHASE_OFFSET_NS: 2,    // 2ns phase offset (<90°)
         CS_ASSERT_AFTER_WAIT_NS: 30,   // Shorter timing for fast clock
@@ -501,7 +548,6 @@ module tb_slave_multiple_frames_100mhz_180() {
         TEST_MODE: "multiple_frames", 
         VALID_RATE: 9, 
         READY_RATE: 7, 
-        TIMEOUT_CYCLES: 4000,
         SPI_CLK_HALF_PERIOD_NS: 5,     // 100MHz SPI clock
         SPI_CLK_PHASE_OFFSET_NS: 5,    // 5ns phase offset (180°)
         CS_ASSERT_AFTER_WAIT_NS: 30,   // Shorter timing for fast clock
@@ -516,7 +562,6 @@ module tb_slave_multiple_frames_33mhz() {
         TEST_MODE: "multiple_frames", 
         VALID_RATE: 9, 
         READY_RATE: 7, 
-        TIMEOUT_CYCLES: 4000,
         SPI_CLK_HALF_PERIOD_NS: 15,    // 33MHz SPI clock
         SPI_CLK_PHASE_OFFSET_NS: 3,    // 3ns phase offset
         CS_ASSERT_AFTER_WAIT_NS: 40,   
@@ -531,7 +576,6 @@ module tb_slave_multiple_frames_25mhz() {
         TEST_MODE: "multiple_frames", 
         VALID_RATE: 9, 
         READY_RATE: 7, 
-        TIMEOUT_CYCLES: 4000,
         SPI_CLK_HALF_PERIOD_NS: 20,    // 25MHz SPI clock
         SPI_CLK_PHASE_OFFSET_NS: 1,    // 1ns phase offset
         CS_ASSERT_AFTER_WAIT_NS: 45,   
@@ -546,7 +590,6 @@ module tb_slave_multiple_frames_20mhz() {
         TEST_MODE: "multiple_frames", 
         VALID_RATE: 9, 
         READY_RATE: 7, 
-        TIMEOUT_CYCLES: 4000,
         SPI_CLK_HALF_PERIOD_NS: 25,    // 20MHz SPI clock (original default)
         SPI_CLK_PHASE_OFFSET_NS: 4,    // 4ns phase offset
         CS_ASSERT_AFTER_WAIT_NS: 50,   // Original timing
