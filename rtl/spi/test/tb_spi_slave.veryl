@@ -75,7 +75,6 @@ module tb #(
     int miso_idx;
     
     // Test patterns
-    logic [7:0] test_mosi_data[];
     logic [7:0] test_send_data[];
     logic [7:0] expected_receive_data[];
     logic expected_receive_tuser[];
@@ -99,7 +98,6 @@ module tb #(
     initial begin
         case (TEST_MODE)
             "single_frame": begin
-                test_mosi_data = '{8'hA5, 8'h5A};
                 test_send_data = '{8'h5A, 8'hA5};
                 expected_receive_data = '{8'hA5};
                 expected_receive_tuser = '{1'b1};
@@ -114,7 +112,6 @@ module tb #(
                 $display("Test mode: single_frame");
             end
             "multi_byte_frame": begin
-                test_mosi_data = '{8'hAA, 8'hBB, 8'hCC};
                 test_send_data = '{8'h11, 8'h22, 8'h33};
                 expected_receive_data = '{8'hAA, 8'hBB, 8'hCC};
                 expected_receive_tuser = '{1'b1, 1'b0, 1'b0};
@@ -159,7 +156,6 @@ module tb #(
                 end
                 
                 // Create dynamic arrays for legacy test data format
-                test_mosi_data = new[total_words];
                 test_send_data = new[total_words];
                 expected_receive_data = new[total_words];
                 expected_receive_tuser = new[total_words];
@@ -172,7 +168,6 @@ module tb #(
                 
                 for (int i = 0; i < transaction_count; i++) begin
                     for (int j = 0; j < transaction_word_count[i]; j++) begin
-                        test_mosi_data[word_idx] = transaction_mosi_data[i][j];
                         expected_receive_data[word_idx] = transaction_mosi_data[i][j];
                         expected_receive_tuser[word_idx] = (j == 0) ? 1'b1 : 1'b0;
                         
@@ -192,7 +187,6 @@ module tb #(
                 $display("Total words: %0d, Send data size: %0d", total_words, test_send_data.size());
             end
             default: begin
-                test_mosi_data = '{8'hA5, 8'h5A};
                 test_send_data = '{8'h5A};
                 expected_receive_data = '{8'hA5};
                 expected_receive_tuser = '{1'b1};
