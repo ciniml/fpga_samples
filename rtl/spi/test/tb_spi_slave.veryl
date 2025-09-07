@@ -100,7 +100,7 @@ module tb #(
         case (TEST_MODE)
             "single_frame": begin
                 test_mosi_data = '{8'hA5, 8'h5A};
-                test_send_data = '{8'h5A};
+                test_send_data = '{8'h5A, 8'hA5};
                 expected_receive_data = '{8'hA5};
                 expected_receive_tuser = '{1'b1};
                 expected_miso_data = '{8'hff, 8'h5A};
@@ -109,8 +109,8 @@ module tb #(
                 transaction_word_count[0] = 2;
                 transaction_mosi_data[0][0] = 8'hA5;
                 transaction_mosi_data[0][1] = 8'h5A;
-                transaction_miso_data[0][0] = 8'hff;
-                transaction_miso_data[0][1] = 8'h5A;
+                transaction_miso_data[0][0] = 8'h5A;
+                transaction_miso_data[0][1] = 8'hA5;
                 $display("Test mode: single_frame");
             end
             "multi_byte_frame": begin
@@ -121,15 +121,13 @@ module tb #(
                 expected_miso_data = '{8'hff, 8'h11, 8'h22, 8'h33};
                 // Transaction format: single frame with 4 words
                 transaction_count = 1;
-                transaction_word_count[0] = 4;
+                transaction_word_count[0] = 3;
                 transaction_mosi_data[0][0] = 8'hAA;
                 transaction_mosi_data[0][1] = 8'hBB;
                 transaction_mosi_data[0][2] = 8'hCC;
-                transaction_mosi_data[0][3] = 8'h00;
-                transaction_miso_data[0][0] = 8'hff;
-                transaction_miso_data[0][1] = 8'h11;
-                transaction_miso_data[0][2] = 8'h22;
-                transaction_miso_data[0][3] = 8'h33;
+                transaction_miso_data[0][0] = 8'h11;
+                transaction_miso_data[0][1] = 8'h22;
+                transaction_miso_data[0][2] = 8'h33;
                 $display("Test mode: multi_byte_frame");
             end
             "multiple_frames": begin
@@ -154,8 +152,6 @@ module tb #(
                     
                     for (int j = 0; j < transaction_word_count[i]; j++) begin
                         transaction_mosi_data[i][j] = 8'($urandom());
-                        // First word of each transaction gets 0xFF response, others get random
-                        transaction_miso_data[i][j] = (j == 0) ? 8'hFF : 8'($urandom());
                         $display("  Word %0d: MOSI=0x%02h, MISO=0x%02h", j, 
                                 transaction_mosi_data[i][j], transaction_miso_data[i][j]);
                     end
@@ -164,10 +160,10 @@ module tb #(
                 
                 // Create dynamic arrays for legacy test data format
                 test_mosi_data = new[total_words];
-                test_send_data = new[total_words-transaction_count]; // Exclude first word of each transaction
+                test_send_data = new[total_words];
                 expected_receive_data = new[total_words];
                 expected_receive_tuser = new[total_words];
-                expected_miso_data = new[total_words+transaction_count]; // Include initial 0xFF for each transaction
+                expected_miso_data = new[total_words];
                 
                 // Fill the arrays
                 word_idx = 0;
@@ -175,9 +171,6 @@ module tb #(
                 miso_idx = 0;
                 
                 for (int i = 0; i < transaction_count; i++) begin
-                    // First MISO response is always 0xFF at start of transaction
-                    expected_miso_data[miso_idx++] = 8'hFF;
-                    
                     for (int j = 0; j < transaction_word_count[i]; j++) begin
                         test_mosi_data[word_idx] = transaction_mosi_data[i][j];
                         expected_receive_data[word_idx] = transaction_mosi_data[i][j];

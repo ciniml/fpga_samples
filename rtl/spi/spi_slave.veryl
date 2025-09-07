@@ -92,12 +92,21 @@ pub module spi_slave::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> #
     var spi_out_data_sync: 'spi_neg spi_word_t;
     var spi_out_req: logic;
     var spi_out_req_sync: 'spi_neg logic;   // Synchronized spi_out_req
+    var spi_out_req_unsafe: 'spi_neg logic; // spi_out_req with no synchronization, just casted to 'spi_neg clock domain. UNSAFE.
     var spi_out_ack: 'spi_neg logic;
     var spi_out_first_transfer: 'spi_neg logic; // Is the first transfer of a transaction?
-    assign spi_miso = spi_shift_out_reg[msb];
+    
     unsafe(cdc) {
         inst spi_out_req_sync_inst: test_synchronizer_negedge_async_high #(WIDTH: 1, STAGES: 2) (i_clk: spi_sck_neg, i_rst: spi_cs_neg_domain, i_d: spi_out_req, o_d: spi_out_req_sync);
         assign spi_out_data_sync = spi_out_data; // Actually, spi_out_data is not synchronized by synchronizer. spi_out_data must be stable when spi_out_req_sync is asserted.
+        assign spi_out_req_unsafe = spi_out_req;
+    }
+    always_comb {
+        let first_word: spi_word_t = if spi_out_req_unsafe ? spi_out_data_sync : (IDLE_SEND_DATA as spi_word_t);
+        spi_miso = spi_shift_out_reg[msb];
+        if spi_out_first_transfer && spi_counter_neg[msb] { // If this is the first transfer and the first (MSB) bit, output the first word data.
+            spi_miso = first_word[msb];
+        }
     }
     always_ff(spi_sck_neg, spi_cs_neg_domain) {
         if_reset {
@@ -111,15 +120,24 @@ pub module spi_slave::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> #
             // Shift (rotate) right the counter 
             spi_counter_neg = {spi_counter_neg[0], spi_counter_neg[msb:1]};
             spi_shift_out_reg = {spi_shift_out_reg[msb-1:0], 1'b0};
+
+
             if spi_counter_neg[0] { // Last clock cycle of the SPI word transfer
                 spi_shift_out_reg = if spi_out_req_sync ? spi_out_data_sync : (IDLE_SEND_DATA as spi_word_t);
                 spi_out_first_transfer = 0;
+            }
+            if spi_out_first_transfer && spi_counter_neg[msb] {
+                // If this is the first bit of a transaction, update the shift register with the requested data with 1 bit shifted left.
+                // Note that the MSB of the first word will be set by the combinational of MOSI.
+                // The spi_out_req_unsafe signal must be stable at this point.
+                let first_word: spi_word_t = if spi_out_req_unsafe ? spi_out_data_sync : (IDLE_SEND_DATA as spi_word_t);
+                spi_shift_out_reg = {first_word[msb-1:0], 1'b0};
             }
             if spi_counter_neg[msb/2] {
                 // deassert the SPI out ack signal at the half of SPI word transfer.
                 spi_out_ack = 1'b0;
             }
-            if spi_counter_neg[msb] && !spi_out_first_transfer {
+            if spi_counter_neg[msb] && (if spi_out_first_transfer ? spi_out_req_unsafe : spi_out_req_sync) {
                 // If this is not the first transfer, assert the SPI out ack signal to indicate the data is consumed.
                 spi_out_ack = 1'b1;
             }
