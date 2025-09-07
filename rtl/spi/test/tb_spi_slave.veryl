@@ -64,7 +64,6 @@ module tb #(
     // Test variables
     int timeout_counter = 0;
     int send_index = 0;
-    int mosi_pattern_index = 0;
     int receive_index = 0;
     logic test_complete = 0;
     
@@ -88,10 +87,8 @@ module tb #(
     
     // SPI master control variables
     logic spi_transaction_active = 0;
-    int spi_bit_counter = 0;
     logic [7:0] spi_mosi_shift_reg;
     logic [7:0] spi_miso_shift_reg;
-    int spi_transaction_index = 0;
     logic spi_sck_enable = 0;
     
     // Initialize test patterns based on test mode
