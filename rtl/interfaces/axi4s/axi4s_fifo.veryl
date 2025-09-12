@@ -1,0 +1,57 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2025.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file axi4s_fifo.veryl
+ * @brief Simple AXI4-Stream FIFO.
+ */
+
+pub module axi4s_fifo::<DEPTH_BITS: u32, WIDTH: u32, LAST: bool, USER: u32, BUS_IF: axi4s_proto = axi4s_if::<WIDTH, LAST, USER>> (
+    r#clock: input clock,
+    r#reset: input reset,
+
+    data_in: modport BUS_IF::slave,
+    data_out: modport BUS_IF::master,
+) {
+    const LAST_BITS: u32 = if LAST ? 1 : 0;
+    const DATA_BITS: u32 = WIDTH + LAST_BITS + USER;
+    const LAST_OFFSET: u32 = WIDTH;
+    const USER_OFFSET: u32 = LAST_OFFSET + LAST_BITS;
+
+    type index_t = logic<DEPTH_BITS+1>;
+    type data_t = logic<DATA_BITS>;
+
+    var index_r: index_t;
+    var index_w: index_t;
+
+    var memory: data_t[2**DEPTH_BITS];
+
+    always_comb {
+        data_in.tready = index_r[DEPTH_BITS] == index_w[DEPTH_BITS] || index_r[DEPTH_BITS-1:0] != index_w[DEPTH_BITS-1:0];
+        data_out.tvalid = index_r != index_w;
+        data_out.tdata = memory[index_r[DEPTH_BITS-1:0]][WIDTH-1:0];
+        data_out.tlast = if LAST ? memory[index_r[DEPTH_BITS-1:0]][LAST_OFFSET] : 1'b0;
+        data_out.tuser = if USER == 0 ? 1'b0 : memory[index_r[DEPTH_BITS-1:0]][USER_OFFSET +: USER];
+    }
+
+    always_ff(r#clock, r#reset) {
+        if_reset {
+            index_r = 0;
+            index_w = 0;
+            // Note: memory array intentionally not reset for better synthesis results
+            // The FIFO behavior is controlled by read/write indices
+            memory = '{default: '0};
+        } else {
+            index_w = if data_in.tvalid && data_in.tready ? index_w + 1 : index_w;
+            index_r = if data_out.tvalid && data_out.tready ? index_r + 1 : index_r;
+            if data_in.tvalid && data_in.tready {
+                memory[index_w[DEPTH_BITS-1:0]][WIDTH-1:0] = data_in.tdata;
+                memory[index_w[DEPTH_BITS-1:0]][LAST_OFFSET] = if LAST ? data_in.tlast : 1'b0;
+                memory[index_w[DEPTH_BITS-1:0]][USER_OFFSET +: USER] = if USER == 0 ? 1'b0 : data_in.tuser;
+            }
+        }
+    }
+
+}
