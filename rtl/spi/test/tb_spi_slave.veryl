@@ -453,7 +453,7 @@ module tb_spi_slave_dut (
     axis_send_tready = axis_send_slave.tready;
     axis_send_slave.tdata  = axis_send_tdata;
   }
-  inst spi_slave_inst_tb: spi_slave::<test_synchronizer, 8> (
+  inst spi_slave_inst_tb: spi_slave::<sync::gen_synchronizer, 8> (
     r#clock,
     r#reset,
     spi_cs,

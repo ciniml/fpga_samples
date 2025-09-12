@@ -56,7 +56,7 @@ pub module spi_slave::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> #
     var spi_in_ack: logic;
     var spi_in_ack_sync: 'spi_pos logic;
     unsafe(cdc) {
-        inst spi_in_ack_sync_inst: test_synchronizer_posedge_async_high #(WIDTH: 1, STAGES: 2) (i_clk: spi_sck_pos, i_rst: spi_cs, i_d: spi_in_ack, o_d: spi_in_ack_sync);
+        inst spi_in_ack_sync_inst: sync::gen_synchronizer_posedge_async_high #(WIDTH: 1, STAGES: 2) (i_clk: spi_sck_pos, i_rst: spi_cs, i_d: spi_in_ack, o_d: spi_in_ack_sync);
     }
     always_ff(spi_sck_pos, spi_cs) {
         if_reset {
@@ -97,7 +97,7 @@ pub module spi_slave::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> #
     var spi_out_first_transfer: 'spi_neg logic; // Is the first transfer of a transaction?
     
     unsafe(cdc) {
-        inst spi_out_req_sync_inst: test_synchronizer_negedge_async_high #(WIDTH: 1, STAGES: 2) (i_clk: spi_sck_neg, i_rst: spi_cs_neg_domain, i_d: spi_out_req, o_d: spi_out_req_sync);
+        inst spi_out_req_sync_inst: sync::gen_synchronizer_negedge_async_high #(WIDTH: 1, STAGES: 2) (i_clk: spi_sck_neg, i_rst: spi_cs_neg_domain, i_d: spi_out_req, o_d: spi_out_req_sync);
         assign spi_out_data_sync = spi_out_data; // Actually, spi_out_data is not synchronized by synchronizer. spi_out_data must be stable when spi_out_req_sync is asserted.
         assign spi_out_req_unsafe = spi_out_req;
     }

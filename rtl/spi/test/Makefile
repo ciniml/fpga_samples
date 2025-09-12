@@ -1,9 +1,9 @@
 .PHONY: all clean compile test view
 
-MODULES_tb_spi_master := ../spi_master.sv ../test_synchronizer.sv ../dependencies/axi4s/axi_stream.sv ../dependencies/axi4s/axi4s_fifo.sv
+MODULES_tb_spi_master := ../spi_master.sv ../dependencies/sync/synchronizer.sv ../dependencies/axi4s/axi_stream.sv ../dependencies/axi4s/axi4s_fifo.sv
 TESTCASES_tb_spi_master := default multi_byte_frame
 
-MODULES_tb_spi_slave := ../spi_slave.sv ../test_synchronizer.sv ../dependencies/axi4s/axi_stream.sv ../dependencies/axi4s/axi4s_fifo.sv
+MODULES_tb_spi_slave := ../spi_slave.sv ../dependencies/sync/synchronizer.sv ../dependencies/axi4s/axi_stream.sv ../dependencies/axi4s/axi4s_fifo.sv
 TESTCASES_tb_spi_slave := slave_default slave_multi_byte_frame slave_multiple_frames slave_multiple_frames_100mhz slave_multiple_frames_100mhz_90 slave_multiple_frames_100mhz_180 slave_multiple_frames_50mhz slave_multiple_frames_33mhz slave_multiple_frames_25mhz slave_multiple_frames_20mhz 
 
 TESTBENCHES := tb_spi_master tb_spi_slave

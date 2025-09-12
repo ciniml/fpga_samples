@@ -1,4 +1,4 @@
-pub module test_synchronizer for $std::synchronizer #(
+pub module gen_synchronizer for $std::synchronizer #(
   param WIDTH: u32 = 8,
   param STAGES: u32 = 2,
 ) (
@@ -29,7 +29,7 @@ pub module test_synchronizer for $std::synchronizer #(
   assign o_d = sync[STAGES-1];
 }
 
-pub module test_synchronizer_posedge_async_high #(
+pub module gen_synchronizer_posedge_async_high #(
   param WIDTH: u32 = 8,
   param STAGES: u32 = 2,
 ) (
@@ -60,7 +60,7 @@ pub module test_synchronizer_posedge_async_high #(
   assign o_d = sync[STAGES-1];
 }
 
-pub module test_synchronizer_negedge_async_high #(
+pub module gen_synchronizer_negedge_async_high #(
   param WIDTH: u32 = 8,
   param STAGES: u32 = 2,
 ) (

@@ -305,7 +305,7 @@ module spi_master_dut (
     axis_send.tdata  = axis_send_tdata;
     axis_send.tlast  = axis_send_tlast;
   }
-  inst spi_master_inst: spi_master::<test_synchronizer, 8> (
+  inst spi_master_inst: spi_master::<sync::gen_synchronizer, 8> (
     r#clock,
     r#reset,
     spi_cs,

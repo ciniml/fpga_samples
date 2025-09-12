@@ -11,6 +11,7 @@ target = { type = "source" }
 
 [dependencies]
 axi4s = {path = "../interfaces/axi4s"}
+sync = {path = "../sync"}
 
 # [test.verilator]
 # compile_args = ["--top", "test_spi_master"]
