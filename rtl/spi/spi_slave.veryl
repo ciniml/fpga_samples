@@ -20,10 +20,10 @@ pub module spi_slave::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> #
     spi_miso:  output 'spi_neg logic,
     spi_mosi:  input  'spi_pos logic,
     
-    // Receive Irrevocable equivalent (line 26: val receive = Irrevocable(SPIData()))
+    // SPI receive stream from MOSI
     axis_receive: modport axi4s::axi4s_if::<SPI_WIDTH, false, 1>::master,
     
-    // Send Irrevocable equivalent (line 27: val send = Flipped(Irrevocable(UInt(8.W))))
+    // SPI send stream to MISO
     axis_send: modport axi4s::axi4s_if::<SPI_WIDTH, false, 1>::slave,
 ) {
     inst fifo_in: axi4s::axi4s_if::<SPI_WIDTH, false, 1>;
