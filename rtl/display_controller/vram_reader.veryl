@@ -1,0 +1,143 @@
+embed (inline) sv{{{
+`timescale 1ns/1ps
+}}}
+
+package vram_reader_pkg {
+  struct vram_reader_cmd_t {
+    x: u16,
+    y: u16,
+    w_minus_1: u16,
+    h_minus_1: u16,
+  }
+}
+
+pub module vram_reader #(
+  param SCREEN_WIDTH: u32 = 320,
+  param SCREEN_HEIGHT: u32 = 240,
+  param PIXEL_BITS: u32 = 8,
+) (
+  r#clock: input clock,
+  r#reset: input reset,
+
+  // Command interface
+  axis_command_in: modport axi4s::axi4s_if::<64, false, 0>::slave,
+  axis_data_out: modport axi4s::axi4s_if::<32, true, 1>::master,
+
+  // VRAM interface
+  vram_read: modport vram_read_if::master,
+) {
+  // State
+  enum state_t {
+    IDLE,
+    CALCULATE_OFFSET,
+    TRANSFER,
+  }
+  var state: state_t;
+ 
+  type width_t = logic<$clog2(SCREEN_WIDTH-1)>;
+  type height_t = logic<$clog2(SCREEN_HEIGHT-1)>;
+  type num_pixels_t = logic<$clog2(SCREEN_WIDTH*SCREEN_HEIGHT-1)>;
+  type pixel_t = logic<PIXEL_BITS>;
+
+  var x_count: width_t;
+  var y_count: height_t;
+  var command: vram_reader_pkg::vram_reader_cmd_t;
+
+  var data_out_valid: logic;
+  var data_out_data: pixel_t;
+  var data_out_last: logic;
+  var data_out_sof: logic;
+
+  var read_address: num_pixels_t;
+  var line_address: num_pixels_t;
+  var read_en: logic;
+
+  always_comb {
+    axis_data_out.tvalid = data_out_valid;
+    axis_data_out.tdata[31:PIXEL_BITS] = '0;
+    axis_data_out.tdata[PIXEL_BITS-1:0] = data_out_data;
+    axis_data_out.tlast = data_out_last;
+    axis_data_out.tuser[0] = data_out_sof;
+    vram_read.addr = read_address;
+    vram_read.en = read_en;
+
+    case state {
+      state_t::IDLE: {
+        axis_command_in.tready = 1;
+      }
+      default: {
+        axis_command_in.tready = 0;
+      }
+    }
+  }
+
+  always_ff(r#clock, r#reset) {
+    if_reset {
+      state = state_t::IDLE;
+      x_count = 0;
+      y_count = 0;
+
+      read_address = 0;
+      read_en = 0;
+
+      data_out_valid = 0;
+      data_out_data = 0;
+      data_out_sof = 0;
+      data_out_last = 0;
+    }
+    else {
+      if data_out_valid && axis_data_out.tready {
+        data_out_valid = 0;
+      }
+
+      case state {
+        state_t::IDLE: {
+          if axis_command_in.tvalid {
+            let new_command: vram_reader_pkg::vram_reader_cmd_t = axis_command_in.tdata as vram_reader_pkg::vram_reader_cmd_t;
+            read_address = (new_command.y * SCREEN_WIDTH) as num_pixels_t;
+            command = new_command;
+            state = state_t::CALCULATE_OFFSET;
+          }
+        }
+        state_t::CALCULATE_OFFSET: {
+          read_address = read_address + (command.x as num_pixels_t);
+          line_address = read_address + (command.x as num_pixels_t);
+          read_en = 1;
+          x_count = 0;
+          y_count = 0;
+          data_out_sof = 1;
+          data_out_last = command.w_minus_1 == 0;
+          state = state_t::TRANSFER;
+        }
+        state_t::TRANSFER: {
+          if !data_out_valid || axis_data_out.tready {
+            data_out_valid = 1;
+            data_out_data = vram_read.data as pixel_t;
+            data_out_last = x_count == command.w_minus_1 as width_t;
+            data_out_sof = data_out_sof && x_count == 0;
+
+            if x_count == command.w_minus_1 as width_t {
+              x_count = 0;
+              if y_count == command.h_minus_1 as height_t {
+                read_en = 0;
+                state = state_t::IDLE;
+              } else {
+                read_address = line_address + (SCREEN_WIDTH as num_pixels_t);
+                line_address = line_address + (SCREEN_WIDTH as num_pixels_t);
+                y_count = y_count + 1;
+              }
+            } else {
+              read_address = read_address + 1;
+              x_count = x_count + 1;
+            }
+            
+          }
+        }
+        default: {
+          // Handle unexpected states
+          state = state_t::IDLE;
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,59 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2025.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file axi_stream.veryl
+ * @brief AXI4 Stream interface
+ */
+
+pub interface vram_read_if #(
+    param SCREEN_WIDTH: u32 = 320,
+    param SCREEN_HEIGHT: u32 = 240,
+) {
+    const NUMBER_OF_PIXELS: u32 = SCREEN_WIDTH * SCREEN_HEIGHT;
+    const NUMBER_OF_ADDRESS_BITS: u32 = $clog2(NUMBER_OF_PIXELS-1);
+    var addr: logic<NUMBER_OF_ADDRESS_BITS>;
+    var en:   logic;
+    var data: logic<8>;
+
+    modport master {
+        addr: output,
+        en: output,
+        data: input,
+    }
+
+    modport slave {
+        ..converse(master)
+    }
+
+    modport monitor {
+        ..input
+    }
+}
+
+pub interface vram_write_if #(
+    param SCREEN_WIDTH: u32 = 320,
+    param SCREEN_HEIGHT: u32 = 240,
+) {
+    const NUMBER_OF_PIXELS: u32 = SCREEN_WIDTH * SCREEN_HEIGHT;
+    const NUMBER_OF_ADDRESS_BITS: u32 = $clog2(NUMBER_OF_PIXELS-1);
+    var addr: logic<NUMBER_OF_ADDRESS_BITS>;
+    var en:   logic;
+    var data: logic<8>;
+
+    modport master {
+        addr: output,
+        en: output,
+        data: output,
+    }
+
+    modport slave {
+        ..converse(master)
+    }
+
+    modport monitor {
+        ..input
+    }
+}

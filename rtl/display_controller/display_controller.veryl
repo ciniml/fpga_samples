@@ -1,0 +1,108 @@
+pub module display_controller #(
+  param SCREEN_WIDTH: u32 = 320,
+  param SCREEN_HEIGHT: u32 = 240,
+  
+) (
+  r#clock: input clock,
+  r#reset: input reset,
+
+  // Command interface
+  axis_command_in: modport axi4s::axi4s_if::<8, false, 1>::master,
+  axis_command_out: modport axi4s::axi4s_if::<8, false, 1>::slave,
+
+  // VRAM interface
+  vram_read_addr: output logic<$clog2(SCREEN_WIDTH*SCREEN_HEIGHT-1)>,
+  vram_read_en: output logic,
+  vram_read_data: input logic<8>,
+  vram_write_addr: output logic<$clog2(SCREEN_WIDTH*SCREEN_HEIGHT-1)>,
+  vram_write_en: output logic,
+  vram_write_data: output logic<8>, 
+) {
+  // State
+  enum state_t {
+    IDLE,
+    START_COMMAND,
+    RECEIVE_PARAMETERS,
+    PRE_EXECUTE_COMMAND,
+    EXECUTE_COMMAND,
+    POST_EXECUTE_COMMAND,
+  }
+  var state: state_t;
+  var discarding: bool;
+
+  type width_t = logic<$clog2(SCREEN_WIDTH-1)>;
+  type height_t = logic<$clog2(SCREEN_HEIGHT-1)>;
+  type num_pixels_t = logic<$clog2(SCREEN_WIDTH*SCREEN_HEIGHT-1)>;
+
+  // Command and parameter buffer
+  var command: logic<8>;
+  const MAX_PARAMETER_WORDS: u32 = 8;
+  var parameters: logic<8>[MAX_PARAMETER_WORDS];
+  var parameter_index: logic<$clog2(MAX_PARAMETER_WORDS-1)>;
+  var last_parameter_index_expected: logic<$clog2(MAX_PARAMETER_WORDS-1)>;
+
+  // Parameter parser functions
+  function get_width() -> width_t {
+    return parameters[0];
+  }
+  function get_height() -> height_t {
+    return parameters[1];
+  }
+  function get_number_of_pixels() -> num_pixels_t {
+    return get_width() * get_height();
+  }
+
+  // Pixel transfer control
+  var pixel_index: num_pixels_t;
+  var pixel_fill_color: logic<8>;
+
+  always_ff(r#clock, r#reset) {
+    if_reset {
+      state = state_t::IDLE;
+      parameter_index = 0;
+      discarding = false;
+      last_parameter_index_expected = 0;
+      pixel_index = 0;
+    }
+    else {
+      case state {
+        state_t::IDLE: {
+          if axis_command_in.tvalid {
+            if axis_command_in.tuser[0] || !discarding {  // Start of frame or not discarding, 
+              command = axis_command_in.tdata;
+              state = state_t::START_COMMAND;
+              discarding = false;
+            }
+          }
+        }
+        state_t::START_COMMAND: {
+          state = state_t::RECEIVE_PARAMETERS;  // By default, the next state is RECEIVE_PARAMETERS.
+          case command {
+            default: {
+              state = state_t::IDLE;
+              discarding = true;
+            }
+          }
+        }
+        state_t::RECEIVE_PARAMETERS: {
+          if axis_command_in.tvalid {
+            parameters[parameter_index] = axis_command_in.tdata;
+            parameter_index = parameter_index + 1;
+            if parameter_index == last_parameter_index_expected {
+              state = state_t::PRE_EXECUTE_COMMAND;
+            }
+          }
+        }
+        state_t::PRE_EXECUTE_COMMAND: {
+
+        }
+        state_t::EXECUTE_COMMAND: {
+
+        }
+        state_t::POST_EXECUTE_COMMAND: {
+
+        }
+      }
+    }
+  }
+}
