@@ -3,14 +3,20 @@ embed (inline) sv{{{
 }}}
 
 package vram_reader_pkg {
+  /**
+   * VRAM reader command structure.
+   */
   struct vram_reader_cmd_t {
-    x: u16,
-    y: u16,
-    w_minus_1: u16,
-    h_minus_1: u16,
+    x: u16,         // X coordinate of the upper-left pixel of the rectangle area to read
+    y: u16,         // Y coordinate of the upper-left pixel of the rectangle area to read
+    w_minus_1: u16, // Width of the region to read (minus 1) e.g. 0 means 1 pixel wide
+    h_minus_1: u16, // Height of the region to read (minus 1) e.g. 0 means 1 pixel tall
   }
 }
 
+/**
+ * VRAM reader module, aka video DMA, which reads pixel data in a rectangular area.
+ */
 pub module vram_reader #(
   param SCREEN_WIDTH: u32 = 320,
   param SCREEN_HEIGHT: u32 = 240,
@@ -28,9 +34,9 @@ pub module vram_reader #(
 ) {
   // State
   enum state_t {
-    IDLE,
-    CALCULATE_OFFSET,
-    TRANSFER,
+    IDLE,             // IDLE
+    CALCULATE_OFFSET, // prepare offset address
+    TRANSFER,         // transfer pixel data
   }
   var state: state_t;
  
@@ -39,20 +45,21 @@ pub module vram_reader #(
   type num_pixels_t = logic<$clog2(SCREEN_WIDTH*SCREEN_HEIGHT-1)>;
   type pixel_t = logic<PIXEL_BITS>;
 
-  var x_count: width_t;
-  var y_count: height_t;
-  var command: vram_reader_pkg::vram_reader_cmd_t;
+  var x_count: width_t;   // number of pixels transferred in current line
+  var y_count: height_t;  // number of lines transferred
+  var command: vram_reader_pkg::vram_reader_cmd_t;  // current read command
 
-  var data_out_valid: logic;
-  var data_out_data: pixel_t;
-  var data_out_last: logic;
-  var data_out_sof: logic;
+  var data_out_valid: logic;  // output data valid signal
+  var data_out_data: pixel_t; // output pixel data
+  var data_out_last: logic;   // output last signal asserted when the last pixel of current line is transferred
+  var data_out_sof: logic;    // output start-of-frame signal asserted when the first pixel of current area is transferred
 
-  var read_address: num_pixels_t;
-  var line_address: num_pixels_t;
-  var read_en: logic;
+  var read_address: num_pixels_t; // current read address
+  var line_address: num_pixels_t; // current line address, stored for calculating next line address.
+  var read_en: logic; // VRAM read enable signal
 
   always_comb {
+    // Assign interface output signals.
     axis_data_out.tvalid = data_out_valid;
     axis_data_out.tdata[31:PIXEL_BITS] = '0;
     axis_data_out.tdata[PIXEL_BITS-1:0] = data_out_data;
@@ -60,10 +67,10 @@ pub module vram_reader #(
     axis_data_out.tuser[0] = data_out_sof;
     vram_read.addr = read_address;
     vram_read.en = read_en;
-
+ 
     case state {
       state_t::IDLE: {
-        axis_command_in.tready = 1;
+        axis_command_in.tready = 1; // Accept incoming commands only when IDLE
       }
       default: {
         axis_command_in.tready = 0;
@@ -84,53 +91,51 @@ pub module vram_reader #(
       data_out_data = 0;
       data_out_sof = 0;
       data_out_last = 0;
-    }
-    else {
-      if data_out_valid && axis_data_out.tready {
+    } else {
+      if data_out_valid && axis_data_out.tready { // Clear output valid signal when stream handshake completes.
         data_out_valid = 0;
       }
 
       case state {
         state_t::IDLE: {
-          if axis_command_in.tvalid {
+          if axis_command_in.tvalid { // A new command is received
             let new_command: vram_reader_pkg::vram_reader_cmd_t = axis_command_in.tdata as vram_reader_pkg::vram_reader_cmd_t;
-            read_address = (new_command.y * SCREEN_WIDTH) as num_pixels_t;
+            read_address = (new_command.y * SCREEN_WIDTH) as num_pixels_t;  // calculate the address of the left-most pixel of the line.
             command = new_command;
             state = state_t::CALCULATE_OFFSET;
           }
         }
         state_t::CALCULATE_OFFSET: {
-          read_address = read_address + (command.x as num_pixels_t);
-          line_address = read_address + (command.x as num_pixels_t);
+          read_address = read_address + (command.x as num_pixels_t);  // Add x coordinate to read address to calculate the start address
+          line_address = read_address + (command.x as num_pixels_t);  // Store the current line address, used for calculating the next line address
           read_en = 1;
           x_count = 0;
           y_count = 0;
-          data_out_sof = 1;
-          data_out_last = command.w_minus_1 == 0;
+          data_out_sof = 1; // Assert the start-of-frame signal
+          data_out_last = command.w_minus_1 == 0; // If the transfer width is 1, assert the last signal at this timing.
           state = state_t::TRANSFER;
         }
         state_t::TRANSFER: {
-          if !data_out_valid || axis_data_out.tready {
+          if !data_out_valid || axis_data_out.tready {  // Can output the next pixel.
             data_out_valid = 1;
             data_out_data = vram_read.data as pixel_t;
-            data_out_last = x_count == command.w_minus_1 as width_t;
-            data_out_sof = data_out_sof && x_count == 0;
+            data_out_last = x_count == command.w_minus_1 as width_t;  // Assert last signal when this is the last pixel of this line.
+            data_out_sof = data_out_sof && x_count == 0;              // Clear the start-of-frame signal when not the first pixel.
 
-            if x_count == command.w_minus_1 as width_t {
-              x_count = 0;
-              if y_count == command.h_minus_1 as height_t {
+            if x_count == command.w_minus_1 as width_t {  // This is the last pixel of the line.
+              x_count = 0;                                // Reset x_count for the next line.
+              if y_count == command.h_minus_1 as height_t { // This is the last pixel of the last line.
                 read_en = 0;
-                state = state_t::IDLE;
+                state = state_t::IDLE;  // Go back to IDLE state
               } else {
-                read_address = line_address + (SCREEN_WIDTH as num_pixels_t);
-                line_address = line_address + (SCREEN_WIDTH as num_pixels_t);
+                read_address = line_address + (SCREEN_WIDTH as num_pixels_t); // Calculate the address of the first pixel of the next line.
+                line_address = line_address + (SCREEN_WIDTH as num_pixels_t); // Update line_address for the next line.
                 y_count = y_count + 1;
               }
             } else {
-              read_address = read_address + 1;
-              x_count = x_count + 1;
+              read_address = read_address + 1;  // Calculate the next address.
+              x_count = x_count + 1;            // Increment X counter.
             }
-            
           }
         }
         default: {
