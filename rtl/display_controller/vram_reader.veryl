@@ -83,6 +83,8 @@ pub module vram_reader #(
       state = state_t::IDLE;
       x_count = 0;
       y_count = 0;
+      command = '0;  // Reset command structure
+      line_address = 0;
 
       read_address = 0;
       read_en = 0;

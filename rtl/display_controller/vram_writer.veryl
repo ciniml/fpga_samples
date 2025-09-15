@@ -86,6 +86,9 @@ pub module vram_writer #(
       state = state_t::IDLE;
       x_count = 0;
       y_count = 0;
+      command = '0;  // Reset command structure
+      write_address_next = 0;
+      line_address = 0;
 
       write_address = 0;
       write_en = 0;
