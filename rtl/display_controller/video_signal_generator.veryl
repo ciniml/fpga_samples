@@ -23,6 +23,8 @@ pub module video_signal_generator #(
     param BACK_PORCH_V: u32 = 18,
     param FRONT_PORCH_V: u32 = 4,
     param PULSE_WIDTH_V: u32 = 4,
+    param MULTIPLIER_H: u32 = 1,
+    param MULTIPLIER_V: u32 = 1,
 ) (
     r#clock: input clock,
     r#reset: input reset,
@@ -45,9 +47,14 @@ pub module video_signal_generator #(
     const H_COUNT_BITS: u32 = $clog2(TOTAL_H);
     const V_COUNT_BITS: u32 = $clog2(TOTAL_V);
     const PIXEL_COUNT_BITS: u32 = $clog2(SCREEN_WIDTH);
+    const MULTIPLIER_H_BITS: u32 = if MULTIPLIER_H <= 1 ? 1 : $clog2(MULTIPLIER_H);
+    const MULTIPLIER_V_BITS: u32 = if MULTIPLIER_V <= 1 ? 1 : $clog2(MULTIPLIER_V);
+    
     type pixel_count_t = logic<PIXEL_COUNT_BITS>;
     type h_count_t = logic<H_COUNT_BITS>;
     type v_count_t = logic<V_COUNT_BITS>;
+    type multiplier_h_t = logic<MULTIPLIER_H_BITS>;
+    type multiplier_v_t = logic<MULTIPLIER_V_BITS>;
 
     // State definitions
     enum state_t {
@@ -67,9 +74,9 @@ pub module video_signal_generator #(
     var inactive_counter_h: h_count_t;
     var inactive_counter_v: v_count_t;
 
-    // Multiplier counters (simplified to single pixel replication)
-    var multiplier_h: logic<1>;
-    var multiplier_v: logic<1>;
+    // Multiplier counters
+    var multiplier_h: multiplier_h_t;
+    var multiplier_v: multiplier_v_t;
     
     // Pixel data and control
     var pixel_data_internal: logic<8>;
@@ -86,10 +93,17 @@ pub module video_signal_generator #(
     var hsync_reg: logic;
     var vsync_reg: logic;
     
-    // Pixel buffer for horizontal line storage
-    var multiplier_buffer: logic<8>[SCREEN_WIDTH];
-    var next_active_counter_h: logic<PIXEL_COUNT_BITS>;
+    // Pixel buffer for horizontal line storage (input line size)
+    const INPUT_WIDTH: u32 = SCREEN_WIDTH / MULTIPLIER_H;
+    const INPUT_WIDTH_BITS: u32 = $clog2(INPUT_WIDTH);
+    type input_pixel_count_t = logic<INPUT_WIDTH_BITS>;
+    
+    var multiplier_buffer: logic<8>[INPUT_WIDTH];
+    var next_active_counter_h: pixel_count_t;
     var pixel_from_buffer: logic<8>;
+    
+    // Input pixel counter
+    var input_pixel_counter_h: input_pixel_count_t;
     
     // RGB332 to RGB conversion function
     function rgb332_to_rgb(rgb332: input logic<8>) -> logic<PIXEL_BITS * 3> {
@@ -110,9 +124,14 @@ pub module video_signal_generator #(
         // Default values
         advance_v = 1'b0;
         next_frame = 1'b0;
-        data_ready = !data_in_sync_reg && !data.tuser[0];  // Not in sync and not start of frame
+        data_ready = 1'b0;
         
-        if state_h == state_t::ACTIVE && state_v == state_t::ACTIVE && multiplier_v == 0 && multiplier_h == 0 {
+        // Data ready when we need new pixel data:
+        // - In active area (both H and V)
+        // - First line of vertical multiplication (multiplier_v == 0) 
+        // - First pixel of horizontal multiplication (multiplier_h == 0)
+        // - Not start of frame (unless we want to accept start of frame)
+        if (state_h == state_t::ACTIVE) && (state_v == state_t::ACTIVE) && (multiplier_v == '0) && (multiplier_h == '0) {
             data_ready = 1'b1;
         }
 
@@ -151,6 +170,7 @@ pub module video_signal_generator #(
             inactive_counter_v = '0;
             multiplier_h = '0;
             multiplier_v = '0;
+            input_pixel_counter_h = '0;
             
             // Initialize data
             pixel_data_internal = '0;
@@ -166,7 +186,9 @@ pub module video_signal_generator #(
             pixel_from_buffer = '0;
         } else {
             // Buffer pixel data for next clock cycle
-            pixel_from_buffer = multiplier_buffer[next_active_counter_h];
+            // Calculate input pixel index for next cycle
+            let next_input_pixel_h: input_pixel_count_t = (next_active_counter_h / (MULTIPLIER_H as pixel_count_t)) as input_pixel_count_t;
+            pixel_from_buffer = multiplier_buffer[next_input_pixel_h];
             
             // Horizontal state machine
             case state_h {
@@ -177,6 +199,7 @@ pub module video_signal_generator #(
                         inactive_counter_h = '0;
                     }
                     multiplier_h = '0;  // Reset multiplier counter
+                    input_pixel_counter_h = '0;  // Reset input pixel counter
                 }
                 
                 state_t::BACK: {
@@ -196,23 +219,37 @@ pub module video_signal_generator #(
                     
                     // Active area pixel handling
                     if state_v == state_t::ACTIVE {
-                        if multiplier_v == '0 {  // Not vertical multiplication
-                            // Update multiplier counter (simplified to single pixel)
+                        if multiplier_v == '0 {  // First line of vertical multiplication
+                            // Update horizontal multiplier counter
                             multiplier_h = multiplier_h + 1;
-                            if multiplier_h == '0 {  // Always true for single pixel
+                            if multiplier_h == (MULTIPLIER_H - 1) as multiplier_h_t {
                                 multiplier_h = '0;
                             }
                             
-                            if multiplier_h == '0 {  // First pixel of multiplication
-                                let pixel_data_rgb332: logic<PIXEL_BITS> = if data.tvalid && data_in_sync_reg ? data.tdata[7:0] : '0;
-                                data_in_sync_reg = data.tvalid;  // Data stream is in sync if valid
-                                multiplier_buffer[active_counter_h] = pixel_data_rgb332;
+                            if multiplier_h == '0 {  // First pixel of horizontal multiplication
+                                let pixel_data_rgb332: logic<8> = if data.tvalid && data_ready ? data.tdata[7:0] : '0;
+                                if data_ready {
+                                    data_in_sync_reg = data.tvalid;  // Data stream is in sync if we're ready and valid
+                                }
+                                // Store in buffer at input pixel position
+                                multiplier_buffer[input_pixel_counter_h] = pixel_data_rgb332;
                                 pixel_data_internal = pixel_data_rgb332;
-                            } else {  // Not first pixel of multiplication
-                                multiplier_buffer[active_counter_h] = pixel_data_internal;
+                            } else {  // Not first pixel of horizontal multiplication
+                                // Reuse the same pixel data from buffer
+                                pixel_data_internal = multiplier_buffer[input_pixel_counter_h];
+                            }
+                            
+                            // Advance input pixel counter when horizontal multiplier cycle completes
+                            if multiplier_h == (MULTIPLIER_H - 1) as multiplier_h_t {
+                                input_pixel_counter_h = input_pixel_counter_h + 1;
+                                if input_pixel_counter_h == (INPUT_WIDTH - 1) as input_pixel_count_t {
+                                    input_pixel_counter_h = '0;
+                                }
                             }
                         } else {  // Vertical multiplication - load from buffer
-                            pixel_data_internal = pixel_from_buffer;
+                            // Calculate input pixel index for current position
+                            let current_input_pixel_h: input_pixel_count_t = (active_counter_h / (MULTIPLIER_H as pixel_count_t)) as input_pixel_count_t;
+                            pixel_data_internal = multiplier_buffer[current_input_pixel_h];
                         }
                     }
                 }
@@ -259,7 +296,7 @@ pub module video_signal_generator #(
                         }
                         
                         multiplier_v = multiplier_v + 1;
-                        if multiplier_v == '0 {  // Always true for single line
+                        if multiplier_v == (MULTIPLIER_V - 1) as multiplier_v_t {
                             multiplier_v = '0;
                         }
                     }

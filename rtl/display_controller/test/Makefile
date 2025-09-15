@@ -7,7 +7,7 @@ MODULES_tb_vram_writer := ../vram_writer.sv ../vram_if.sv ../dependencies/axi4s/
 TESTCASES_tb_vram_writer := vram_writer_default vram_writer_single_pixel vram_writer_single_line vram_writer_rectangle vram_writer_multiple_commands vram_writer_small_screen
 
 MODULES_tb_video_signal_generator := ../video_signal_generator.sv ../video_io_if.sv ../dependencies/axi4s/axi_stream.sv
-TESTCASES_tb_video_signal_generator := video_signal_generator_default video_signal_generator_basic_timing video_signal_generator_sync_behavior video_signal_generator_frame_timing
+TESTCASES_tb_video_signal_generator := video_signal_generator_default video_signal_generator_basic_timing video_signal_generator_sync_behavior video_signal_generator_frame_timing video_signal_generator_multiplier_2x2 video_signal_generator_multiplier_h3
 
 TESTBENCHES := tb_vram_reader tb_vram_writer tb_video_signal_generator
 VERILATOR := verilator
