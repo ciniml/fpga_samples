@@ -1,0 +1,289 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2025.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+
+/**
+ * @file video_signal_generator.veryl
+ * @brief Video signal generator with RGB332 input and configurable RGB output
+ */
+
+pub module video_signal_generator #(
+    param SCREEN_WIDTH: u32 = 320,
+    param SCREEN_HEIGHT: u32 = 240,
+    param PIXEL_BITS: u32 = 8,
+) (
+    r#clock: input clock,
+    r#reset: input reset,
+    
+    // Video output interface
+    video: modport video_io_if::master,
+    
+    // Data input (AXI4S) - RGB332 format
+    data: modport axi4s::axi4s_if::<32, true, 1>::slave,
+    
+    // Status output
+    data_in_sync: output logic,
+) {
+    // Video timing parameters for 320x240 @ 60Hz
+    // These are fixed for this implementation
+    const BACK_PORCH_H: u32 = 68;
+    const FRONT_PORCH_H: u32 = 18;
+    const PULSE_WIDTH_H: u32 = 30;
+    const BACK_PORCH_V: u32 = 18;
+    const FRONT_PORCH_V: u32 = 4;
+    const PULSE_WIDTH_V: u32 = 4;
+    
+    const TOTAL_H: u32 = SCREEN_WIDTH + BACK_PORCH_H + FRONT_PORCH_H + PULSE_WIDTH_H;
+    const TOTAL_V: u32 = SCREEN_HEIGHT + BACK_PORCH_V + FRONT_PORCH_V + PULSE_WIDTH_V;
+    
+    // Counter bit widths
+    const H_COUNT_BITS: u32 = $clog2(TOTAL_H);
+    const V_COUNT_BITS: u32 = $clog2(TOTAL_V);
+    const PIXEL_COUNT_BITS: u32 = $clog2(SCREEN_WIDTH);
+    
+    // State definitions
+    enum state_t {
+        SYNC,
+        BACK,
+        ACTIVE,
+        FRONT,
+    }
+    
+    // State variables
+    var state_h: state_t;
+    var state_v: state_t;
+    
+    // Counters
+    var active_counter_h: logic<PIXEL_COUNT_BITS>;
+    var active_counter_v: logic<PIXEL_COUNT_BITS>;
+    var inactive_counter_h: logic<H_COUNT_BITS>;
+    var inactive_counter_v: logic<V_COUNT_BITS>;
+    
+    // Multiplier counters (simplified to single pixel replication)
+    var multiplier_h: logic<1>;
+    var multiplier_v: logic<1>;
+    
+    // Pixel data and control
+    var pixel_data_rgb332: logic<8>;
+    var pixel_data_internal: logic<8>;
+    var data_in_sync_reg: logic;
+    var data_ready: logic;
+    
+    // Video timing control signals
+    var advance_v: logic;
+    var next_frame: logic;
+    
+    // Output registers for timing
+    var data_enable: logic;
+    var data_enable_reg: logic;
+    var hsync_reg: logic;
+    var vsync_reg: logic;
+    
+    // Pixel buffer for horizontal line storage
+    var multiplier_buffer: logic<8>[SCREEN_WIDTH];
+    var next_active_counter_h: logic<PIXEL_COUNT_BITS>;
+    var pixel_from_buffer: logic<8>;
+    
+    // RGB332 to RGB conversion function
+    function rgb332_to_rgb(rgb332: input logic<8>) -> logic<PIXEL_BITS * 3> {
+        let r3: logic<3> = rgb332[7:5];
+        let g3: logic<3> = rgb332[4:2];
+        let b2: logic<2> = rgb332[1:0];
+        
+        // Expand to full bit width
+        let r_full: logic<PIXEL_BITS> = {r3, r3[2:2-PIXEL_BITS+4]};
+        let g_full: logic<PIXEL_BITS> = {g3, g3[2:2-PIXEL_BITS+4]};
+        let b_full: logic<PIXEL_BITS> = {b2, b2, b2[1:1-PIXEL_BITS+3]};
+        
+        return {r_full, g_full, b_full};
+    }
+    
+    // Combinational logic
+    always_comb {
+        // Default values
+        advance_v = 1'b0;
+        next_frame = 1'b0;
+        data_ready = !data_in_sync_reg && !data.tuser[0];  // Not in sync and not start of frame
+        
+        // Calculate next horizontal counter for buffer read
+        if active_counter_h == (SCREEN_WIDTH - 1) {
+            next_active_counter_h = '0;
+        } else {
+            next_active_counter_h = active_counter_h + 1;
+        }
+        
+        // Data enable generation
+        data_enable = (state_h == state_t::ACTIVE) && (state_v == state_t::ACTIVE);
+        
+        // Advance vertical state machine when horizontal front porch ends
+        if (state_h == state_t::FRONT) && (inactive_counter_h == (FRONT_PORCH_H - 1)) {
+            advance_v = 1'b1;
+        }
+        
+        // Signal next frame when vertical front porch ends
+        if (state_v == state_t::FRONT) && advance_v && (inactive_counter_v == (FRONT_PORCH_V - 1)) {
+            next_frame = 1'b1;
+        }
+    }
+    
+    // Sequential logic
+    always_ff (r#clock, r#reset) {
+        if_reset {
+            // Initialize state machines
+            state_h = state_t::SYNC;
+            state_v = state_t::SYNC;
+            
+            // Initialize counters
+            active_counter_h = '0;
+            active_counter_v = '0;
+            inactive_counter_h = '0;
+            inactive_counter_v = '0;
+            multiplier_h = '0;
+            multiplier_v = '0;
+            
+            // Initialize data
+            pixel_data_internal = '0;
+            pixel_data_rgb332 = '0;
+            data_in_sync_reg = 1'b0;
+            
+            // advance_v and next_frame are combinational signals, not registered
+            
+            // Initialize buffer (memory arrays typically don't need explicit reset)
+            // multiplier_buffer initialization is intentionally omitted
+            
+            // Initialize output registers
+            data_enable_reg = 1'b0;
+            hsync_reg = 1'b1;  // Idle high
+            vsync_reg = 1'b1;  // Idle high
+            pixel_from_buffer = '0;
+        } else {
+            // Buffer pixel data for next clock cycle
+            pixel_from_buffer = multiplier_buffer[next_active_counter_h];
+            
+            // Horizontal state machine
+            case state_h {
+                state_t::SYNC: {
+                    inactive_counter_h = inactive_counter_h + 1;
+                    if inactive_counter_h == (PULSE_WIDTH_H - 1) {
+                        state_h = state_t::BACK;
+                        inactive_counter_h = '0;
+                    }
+                    multiplier_h = '0;  // Reset multiplier counter
+                }
+                
+                state_t::BACK: {
+                    inactive_counter_h = inactive_counter_h + 1;
+                    if inactive_counter_h == (BACK_PORCH_H - 1) {
+                        state_h = state_t::ACTIVE;
+                        inactive_counter_h = '0;
+                    }
+                }
+                
+                state_t::ACTIVE: {
+                    active_counter_h = active_counter_h + 1;
+                    if active_counter_h == (SCREEN_WIDTH - 1) {
+                        state_h = state_t::FRONT;
+                        active_counter_h = '0;
+                    }
+                    
+                    // Active area pixel handling
+                    if state_v == state_t::ACTIVE {
+                        if multiplier_v == '0 {  // Not vertical multiplication
+                            // Update multiplier counter (simplified to single pixel)
+                            multiplier_h = multiplier_h + 1;
+                            if multiplier_h == '0 {  // Always true for single pixel
+                                multiplier_h = '0;
+                            }
+                            
+                            if multiplier_h == '0 {  // First pixel of multiplication
+                                pixel_data_rgb332 = if data.tvalid && data_in_sync_reg ? data.tdata[7:0] : '0;
+                                data_in_sync_reg = data.tvalid;  // Data stream is in sync if valid
+                                multiplier_buffer[active_counter_h] = pixel_data_rgb332;
+                                pixel_data_internal = pixel_data_rgb332;
+                            } else {  // Not first pixel of multiplication
+                                multiplier_buffer[active_counter_h] = pixel_data_internal;
+                            }
+                        } else {  // Vertical multiplication - load from buffer
+                            pixel_data_internal = pixel_from_buffer;
+                        }
+                    }
+                }
+                
+                state_t::FRONT: {
+                    inactive_counter_h = inactive_counter_h + 1;
+                    if inactive_counter_h == (FRONT_PORCH_H - 1) {
+                        state_h = state_t::SYNC;
+                        inactive_counter_h = '0;
+                        // advance_v is now computed combinationally
+                    }
+                }
+            }
+            
+            // Vertical state machine
+            case state_v {
+                state_t::SYNC: {
+                    if advance_v {
+                        inactive_counter_v = inactive_counter_v + 1;
+                        if inactive_counter_v == (PULSE_WIDTH_V - 1) {
+                            state_v = state_t::BACK;
+                            inactive_counter_v = '0;
+                        }
+                        multiplier_v = '0;  // Reset multiplier
+                    }
+                }
+                
+                state_t::BACK: {
+                    if advance_v {
+                        inactive_counter_v = inactive_counter_v + 1;
+                        if inactive_counter_v == (BACK_PORCH_V - 1) {
+                            state_v = state_t::ACTIVE;
+                            inactive_counter_v = '0;
+                        }
+                    }
+                }
+                
+                state_t::ACTIVE: {
+                    if advance_v {
+                        active_counter_v = active_counter_v + 1;
+                        if active_counter_v == (SCREEN_HEIGHT - 1) {
+                            state_v = state_t::FRONT;
+                            active_counter_v = '0;
+                        }
+                        
+                        multiplier_v = multiplier_v + 1;
+                        if multiplier_v == '0 {  // Always true for single line
+                            multiplier_v = '0;
+                        }
+                    }
+                }
+                
+                state_t::FRONT: {
+                    if advance_v {
+                        inactive_counter_v = inactive_counter_v + 1;
+                        if inactive_counter_v == (FRONT_PORCH_V - 1) {
+                            state_v = state_t::SYNC;
+                            inactive_counter_v = '0;
+                            // next_frame is now computed combinationally
+                        }
+                    }
+                }
+            }
+            
+            // Register output timing signals
+            data_enable_reg = data_enable;
+            hsync_reg = state_h == state_t::SYNC;
+            vsync_reg = state_v == state_t::SYNC;
+        }
+    }
+    
+    // Output assignments
+    assign video.hsync = hsync_reg;
+    assign video.vsync = vsync_reg;
+    assign video.data_enable = data_enable_reg;
+    assign video.pixel_data = if data_enable_reg ? rgb332_to_rgb(pixel_data_internal) : '0;
+    
+    assign data_in_sync = data_in_sync_reg;
+    assign data.tready = data_ready;
+}
