@@ -3,7 +3,10 @@
 MODULES_tb_vram_reader := ../vram_reader.sv ../vram_if.sv ../dependencies/axi4s/axi_stream.sv
 TESTCASES_tb_vram_reader := vram_reader_default vram_reader_single_pixel vram_reader_single_line vram_reader_rectangle vram_reader_multiple_commands vram_reader_small_screen
 
-TESTBENCHES := tb_vram_reader
+MODULES_tb_vram_writer := ../vram_writer.sv ../vram_if.sv ../dependencies/axi4s/axi_stream.sv
+TESTCASES_tb_vram_writer := vram_writer_default vram_writer_single_pixel vram_writer_single_line vram_writer_rectangle vram_writer_multiple_commands vram_writer_small_screen
+
+TESTBENCHES := tb_vram_reader tb_vram_writer
 VERILATOR := verilator
 #VERILATOR := docker run -it -e CCACHE_DIR=/tmp/ccache -v `realpath ${PWD}/../..`:`realpath ${PWD}/../..` -v ${PWD}:/work --user $(id -u):$(id -g) verilator/verilator:latest
 
