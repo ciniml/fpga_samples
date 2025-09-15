@@ -93,17 +93,9 @@ pub module video_signal_generator #(
     var hsync_reg: logic;
     var vsync_reg: logic;
     
-    // Pixel buffer for horizontal line storage (input line size)
-    const INPUT_WIDTH: u32 = SCREEN_WIDTH / MULTIPLIER_H;
-    const INPUT_WIDTH_BITS: u32 = $clog2(INPUT_WIDTH);
-    type input_pixel_count_t = logic<INPUT_WIDTH_BITS>;
-    
-    var multiplier_buffer: logic<8>[INPUT_WIDTH];
+    var multiplier_buffer: logic<8>[SCREEN_WIDTH];
     var next_active_counter_h: pixel_count_t;
     var pixel_from_buffer: logic<8>;
-    
-    // Input pixel counter
-    var input_pixel_counter_h: input_pixel_count_t;
     
     // RGB332 to RGB conversion function
     function rgb332_to_rgb(rgb332: input logic<8>) -> logic<PIXEL_BITS * 3> {
@@ -170,7 +162,6 @@ pub module video_signal_generator #(
             inactive_counter_v = '0;
             multiplier_h = '0;
             multiplier_v = '0;
-            input_pixel_counter_h = '0;
             
             // Initialize data
             pixel_data_internal = '0;
@@ -187,8 +178,7 @@ pub module video_signal_generator #(
         } else {
             // Buffer pixel data for next clock cycle
             // Calculate input pixel index for next cycle
-            let next_input_pixel_h: input_pixel_count_t = (next_active_counter_h / (MULTIPLIER_H as pixel_count_t)) as input_pixel_count_t;
-            pixel_from_buffer = multiplier_buffer[next_input_pixel_h];
+            pixel_from_buffer = multiplier_buffer[next_active_counter_h];
             
             // Horizontal state machine
             case state_h {
@@ -199,7 +189,6 @@ pub module video_signal_generator #(
                         inactive_counter_h = '0;
                     }
                     multiplier_h = '0;  // Reset multiplier counter
-                    input_pixel_counter_h = '0;  // Reset input pixel counter
                 }
                 
                 state_t::BACK: {
@@ -232,24 +221,14 @@ pub module video_signal_generator #(
                                     data_in_sync_reg = data.tvalid;  // Data stream is in sync if we're ready and valid
                                 }
                                 // Store in buffer at input pixel position
-                                multiplier_buffer[input_pixel_counter_h] = pixel_data_rgb332;
+                                multiplier_buffer[active_counter_h] = pixel_data_rgb332;
                                 pixel_data_internal = pixel_data_rgb332;
                             } else {  // Not first pixel of horizontal multiplication
                                 // Reuse the same pixel data from buffer
-                                pixel_data_internal = multiplier_buffer[input_pixel_counter_h];
-                            }
-                            
-                            // Advance input pixel counter when horizontal multiplier cycle completes
-                            if multiplier_h == (MULTIPLIER_H - 1) as multiplier_h_t {
-                                input_pixel_counter_h = input_pixel_counter_h + 1;
-                                if input_pixel_counter_h == (INPUT_WIDTH - 1) as input_pixel_count_t {
-                                    input_pixel_counter_h = '0;
-                                }
+                                multiplier_buffer[active_counter_h] = pixel_data_internal;
                             }
                         } else {  // Vertical multiplication - load from buffer
-                            // Calculate input pixel index for current position
-                            let current_input_pixel_h: input_pixel_count_t = (active_counter_h / (MULTIPLIER_H as pixel_count_t)) as input_pixel_count_t;
-                            pixel_data_internal = multiplier_buffer[current_input_pixel_h];
+                            pixel_data_internal = pixel_from_buffer;
                         }
                     }
                 }
