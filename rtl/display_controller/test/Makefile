@@ -6,7 +6,10 @@ TESTCASES_tb_vram_reader := vram_reader_default vram_reader_single_pixel vram_re
 MODULES_tb_vram_writer := ../vram_writer.sv ../vram_if.sv ../dependencies/axi4s/axi_stream.sv
 TESTCASES_tb_vram_writer := vram_writer_default vram_writer_single_pixel vram_writer_single_line vram_writer_rectangle vram_writer_multiple_commands vram_writer_small_screen
 
-TESTBENCHES := tb_vram_reader tb_vram_writer
+MODULES_tb_video_signal_generator := ../video_signal_generator.sv ../video_io_if.sv ../dependencies/axi4s/axi_stream.sv
+TESTCASES_tb_video_signal_generator := video_signal_generator_default video_signal_generator_basic_timing video_signal_generator_sync_behavior video_signal_generator_frame_timing
+
+TESTBENCHES := tb_vram_reader tb_vram_writer tb_video_signal_generator
 VERILATOR := verilator
 #VERILATOR := docker run -it -e CCACHE_DIR=/tmp/ccache -v `realpath ${PWD}/../..`:`realpath ${PWD}/../..` -v ${PWD}:/work --user $(id -u):$(id -g) verilator/verilator:latest
 
@@ -32,7 +35,7 @@ define testcase-rule
 run-$1-$2/obj_dir/test_bin: $1.sv $(MODULES_$1)
 	$(info Compiling $1 $2)
 	mkdir -p run-$1-$2
-	cd run-$1-$2; $(VERILATOR) --binary --top-module display_controller_tb_$2 --assert --trace-fst --trace-params --trace-structs --trace-underscore $(foreach module,$(MODULES_$1),$(abspath $(module))) $(abspath $1.sv) -o test_bin
+	cd run-$1-$2; $(VERILATOR) --binary --top-module display_controller_tb_$2 --assert --trace-fst --trace-params --trace-structs --trace-underscore  $(foreach module,$(MODULES_$1),$(abspath $(module))) $(abspath $1.sv) -o test_bin
 
 compile-$1-$2: run-$1-$2/obj_dir/test_bin
 

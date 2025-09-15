@@ -9,10 +9,20 @@
  * @brief Video signal generator with RGB332 input and configurable RGB output
  */
 
+embed (inline) sv{{{
+`timescale 1ns/1ps
+}}}
+
 pub module video_signal_generator #(
     param SCREEN_WIDTH: u32 = 320,
     param SCREEN_HEIGHT: u32 = 240,
     param PIXEL_BITS: u32 = 8,
+    param BACK_PORCH_H: u32 = 68,
+    param FRONT_PORCH_H: u32 = 18,
+    param PULSE_WIDTH_H: u32 = 30,
+    param BACK_PORCH_V: u32 = 18,
+    param FRONT_PORCH_V: u32 = 4,
+    param PULSE_WIDTH_V: u32 = 4,
 ) (
     r#clock: input clock,
     r#reset: input reset,
@@ -27,14 +37,7 @@ pub module video_signal_generator #(
     data_in_sync: output logic,
 ) {
     // Video timing parameters for 320x240 @ 60Hz
-    // These are fixed for this implementation
-    const BACK_PORCH_H: u32 = 68;
-    const FRONT_PORCH_H: u32 = 18;
-    const PULSE_WIDTH_H: u32 = 30;
-    const BACK_PORCH_V: u32 = 18;
-    const FRONT_PORCH_V: u32 = 4;
-    const PULSE_WIDTH_V: u32 = 4;
-    
+    // These are fixed for this implementation    
     const TOTAL_H: u32 = SCREEN_WIDTH + BACK_PORCH_H + FRONT_PORCH_H + PULSE_WIDTH_H;
     const TOTAL_V: u32 = SCREEN_HEIGHT + BACK_PORCH_V + FRONT_PORCH_V + PULSE_WIDTH_V;
     
@@ -42,7 +45,10 @@ pub module video_signal_generator #(
     const H_COUNT_BITS: u32 = $clog2(TOTAL_H);
     const V_COUNT_BITS: u32 = $clog2(TOTAL_V);
     const PIXEL_COUNT_BITS: u32 = $clog2(SCREEN_WIDTH);
-    
+    type pixel_count_t = logic<PIXEL_COUNT_BITS>;
+    type h_count_t = logic<H_COUNT_BITS>;
+    type v_count_t = logic<V_COUNT_BITS>;
+
     // State definitions
     enum state_t {
         SYNC,
@@ -56,17 +62,16 @@ pub module video_signal_generator #(
     var state_v: state_t;
     
     // Counters
-    var active_counter_h: logic<PIXEL_COUNT_BITS>;
-    var active_counter_v: logic<PIXEL_COUNT_BITS>;
-    var inactive_counter_h: logic<H_COUNT_BITS>;
-    var inactive_counter_v: logic<V_COUNT_BITS>;
-    
+    var active_counter_h: pixel_count_t;
+    var active_counter_v: pixel_count_t;
+    var inactive_counter_h: h_count_t;
+    var inactive_counter_v: v_count_t;
+
     // Multiplier counters (simplified to single pixel replication)
     var multiplier_h: logic<1>;
     var multiplier_v: logic<1>;
     
     // Pixel data and control
-    var pixel_data_rgb332: logic<8>;
     var pixel_data_internal: logic<8>;
     var data_in_sync_reg: logic;
     var data_ready: logic;
@@ -93,9 +98,9 @@ pub module video_signal_generator #(
         let b2: logic<2> = rgb332[1:0];
         
         // Expand to full bit width
-        let r_full: logic<PIXEL_BITS> = {r3, r3[2:2-PIXEL_BITS+4]};
-        let g_full: logic<PIXEL_BITS> = {g3, g3[2:2-PIXEL_BITS+4]};
-        let b_full: logic<PIXEL_BITS> = {b2, b2, b2[1:1-PIXEL_BITS+3]};
+        let r_full: logic<PIXEL_BITS> = {r3, r3, r3[msb:msb-1]};
+        let g_full: logic<PIXEL_BITS> = {g3, g3, g3[msb:msb-1]};
+        let b_full: logic<PIXEL_BITS> = {b2, b2, b2, b2};
         
         return {r_full, g_full, b_full};
     }
@@ -107,8 +112,12 @@ pub module video_signal_generator #(
         next_frame = 1'b0;
         data_ready = !data_in_sync_reg && !data.tuser[0];  // Not in sync and not start of frame
         
+        if state_h == state_t::ACTIVE && state_v == state_t::ACTIVE && multiplier_v == 0 && multiplier_h == 0 {
+            data_ready = 1'b1;
+        }
+
         // Calculate next horizontal counter for buffer read
-        if active_counter_h == (SCREEN_WIDTH - 1) {
+        if active_counter_h == (SCREEN_WIDTH - 1) as pixel_count_t {
             next_active_counter_h = '0;
         } else {
             next_active_counter_h = active_counter_h + 1;
@@ -118,12 +127,12 @@ pub module video_signal_generator #(
         data_enable = (state_h == state_t::ACTIVE) && (state_v == state_t::ACTIVE);
         
         // Advance vertical state machine when horizontal front porch ends
-        if (state_h == state_t::FRONT) && (inactive_counter_h == (FRONT_PORCH_H - 1)) {
+        if (state_h == state_t::FRONT) && (inactive_counter_h == (FRONT_PORCH_H - 1) as h_count_t) {
             advance_v = 1'b1;
         }
         
         // Signal next frame when vertical front porch ends
-        if (state_v == state_t::FRONT) && advance_v && (inactive_counter_v == (FRONT_PORCH_V - 1)) {
+        if (state_v == state_t::FRONT) && advance_v && (inactive_counter_v == (FRONT_PORCH_V - 1) as v_count_t) {
             next_frame = 1'b1;
         }
     }
@@ -145,10 +154,7 @@ pub module video_signal_generator #(
             
             // Initialize data
             pixel_data_internal = '0;
-            pixel_data_rgb332 = '0;
             data_in_sync_reg = 1'b0;
-            
-            // advance_v and next_frame are combinational signals, not registered
             
             // Initialize buffer (memory arrays typically don't need explicit reset)
             // multiplier_buffer initialization is intentionally omitted
@@ -166,7 +172,7 @@ pub module video_signal_generator #(
             case state_h {
                 state_t::SYNC: {
                     inactive_counter_h = inactive_counter_h + 1;
-                    if inactive_counter_h == (PULSE_WIDTH_H - 1) {
+                    if inactive_counter_h == (PULSE_WIDTH_H - 1) as h_count_t {
                         state_h = state_t::BACK;
                         inactive_counter_h = '0;
                     }
@@ -175,7 +181,7 @@ pub module video_signal_generator #(
                 
                 state_t::BACK: {
                     inactive_counter_h = inactive_counter_h + 1;
-                    if inactive_counter_h == (BACK_PORCH_H - 1) {
+                    if inactive_counter_h == (BACK_PORCH_H - 1) as h_count_t {
                         state_h = state_t::ACTIVE;
                         inactive_counter_h = '0;
                     }
@@ -183,7 +189,7 @@ pub module video_signal_generator #(
                 
                 state_t::ACTIVE: {
                     active_counter_h = active_counter_h + 1;
-                    if active_counter_h == (SCREEN_WIDTH - 1) {
+                    if active_counter_h == (SCREEN_WIDTH - 1) as pixel_count_t {
                         state_h = state_t::FRONT;
                         active_counter_h = '0;
                     }
@@ -198,7 +204,7 @@ pub module video_signal_generator #(
                             }
                             
                             if multiplier_h == '0 {  // First pixel of multiplication
-                                pixel_data_rgb332 = if data.tvalid && data_in_sync_reg ? data.tdata[7:0] : '0;
+                                let pixel_data_rgb332: logic<PIXEL_BITS> = if data.tvalid && data_in_sync_reg ? data.tdata[7:0] : '0;
                                 data_in_sync_reg = data.tvalid;  // Data stream is in sync if valid
                                 multiplier_buffer[active_counter_h] = pixel_data_rgb332;
                                 pixel_data_internal = pixel_data_rgb332;
@@ -213,7 +219,7 @@ pub module video_signal_generator #(
                 
                 state_t::FRONT: {
                     inactive_counter_h = inactive_counter_h + 1;
-                    if inactive_counter_h == (FRONT_PORCH_H - 1) {
+                    if inactive_counter_h == (FRONT_PORCH_H - 1) as h_count_t {
                         state_h = state_t::SYNC;
                         inactive_counter_h = '0;
                         // advance_v is now computed combinationally
@@ -226,7 +232,7 @@ pub module video_signal_generator #(
                 state_t::SYNC: {
                     if advance_v {
                         inactive_counter_v = inactive_counter_v + 1;
-                        if inactive_counter_v == (PULSE_WIDTH_V - 1) {
+                        if inactive_counter_v == (PULSE_WIDTH_V - 1) as v_count_t {
                             state_v = state_t::BACK;
                             inactive_counter_v = '0;
                         }
@@ -237,7 +243,7 @@ pub module video_signal_generator #(
                 state_t::BACK: {
                     if advance_v {
                         inactive_counter_v = inactive_counter_v + 1;
-                        if inactive_counter_v == (BACK_PORCH_V - 1) {
+                        if inactive_counter_v == (BACK_PORCH_V - 1) as v_count_t {
                             state_v = state_t::ACTIVE;
                             inactive_counter_v = '0;
                         }
@@ -247,7 +253,7 @@ pub module video_signal_generator #(
                 state_t::ACTIVE: {
                     if advance_v {
                         active_counter_v = active_counter_v + 1;
-                        if active_counter_v == (SCREEN_HEIGHT - 1) {
+                        if active_counter_v == (SCREEN_HEIGHT - 1) as pixel_count_t {
                             state_v = state_t::FRONT;
                             active_counter_v = '0;
                         }
@@ -262,7 +268,7 @@ pub module video_signal_generator #(
                 state_t::FRONT: {
                     if advance_v {
                         inactive_counter_v = inactive_counter_v + 1;
-                        if inactive_counter_v == (FRONT_PORCH_V - 1) {
+                        if inactive_counter_v == (FRONT_PORCH_V - 1) as v_count_t {
                             state_v = state_t::SYNC;
                             inactive_counter_v = '0;
                             // next_frame is now computed combinationally

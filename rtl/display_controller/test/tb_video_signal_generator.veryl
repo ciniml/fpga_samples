@@ -1,0 +1,421 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2025.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_video_signal_generator.veryl
+ * @brief Test bench for video signal generator module.
+ */
+
+embed (inline) sv{{{
+`timescale 1ns/1ps
+
+module tb #(
+    parameter string TEST_MODE = "basic_timing",
+    parameter int SCREEN_WIDTH = 320,
+    parameter int SCREEN_HEIGHT = 240,
+    parameter int BACK_PORCH_H = 68,
+    parameter int FRONT_PORCH_H = 18,
+    parameter int PULSE_WIDTH_H = 30,
+    parameter int BACK_PORCH_V = 18,
+    parameter int FRONT_PORCH_V = 4,
+    parameter int PULSE_WIDTH_V = 4,
+    parameter int PIXEL_BITS = 8,
+    parameter int READY_RATE = 8,
+    parameter int TIMEOUT_CYCLES = 100000
+)();
+    logic clock /*verilator clocker*/;
+    logic reset_n = 0;
+
+    // Data input interface (AXI4S) - RGB332 format
+    logic [31:0] axis_data_tdata;
+    logic        axis_data_tvalid;
+    logic        axis_data_tready;
+    logic        axis_data_tlast;
+    logic        axis_data_tuser;
+    
+    // Video output interface
+    logic [PIXEL_BITS*3-1:0] video_pixel_data;
+    logic                    video_hsync;
+    logic                    video_vsync;
+    logic                    video_data_enable;
+    
+    // Status output
+    logic data_in_sync;
+
+    // interfaces
+    \{ axi4s::axi4s_if::<32, true, 1> \} axis_data_in ();
+    \{ video_io_if \} #(
+        .PIXEL_BITS(PIXEL_BITS)
+    ) video_out ();
+
+    // DUT instantiation
+    \{ video_signal_generator \} #(
+        .SCREEN_WIDTH(SCREEN_WIDTH),
+        .SCREEN_HEIGHT(SCREEN_HEIGHT),
+        .PIXEL_BITS(PIXEL_BITS),
+        .BACK_PORCH_H(BACK_PORCH_H),
+        .FRONT_PORCH_H(FRONT_PORCH_H),
+        .PULSE_WIDTH_H(PULSE_WIDTH_H),
+        .BACK_PORCH_V(BACK_PORCH_V),
+        .FRONT_PORCH_V(FRONT_PORCH_V),
+        .PULSE_WIDTH_V(PULSE_WIDTH_V)
+    ) dut (
+        .clock(clock),
+        .reset(reset_n),
+        .data(axis_data_in),
+        .video(video_out),
+        .data_in_sync(data_in_sync)
+    );
+
+    // interface signal connection
+    always_comb begin
+        axis_data_in.tdata = axis_data_tdata;
+        axis_data_in.tvalid = axis_data_tvalid;
+        axis_data_in.tlast = axis_data_tlast;
+        axis_data_in.tuser[0] = axis_data_tuser;
+        axis_data_tready = axis_data_in.tready;
+
+        video_pixel_data = video_out.pixel_data;
+        video_hsync = video_out.hsync;
+        video_vsync = video_out.vsync;
+        video_data_enable = video_out.data_enable;
+    end
+    
+    localparam int TOTAL_H = SCREEN_WIDTH + BACK_PORCH_H + FRONT_PORCH_H + PULSE_WIDTH_H;
+    localparam int TOTAL_V = SCREEN_HEIGHT + BACK_PORCH_V + FRONT_PORCH_V + PULSE_WIDTH_V;
+
+    // Test variables
+    int timeout_counter = 0;
+    int pixel_counter = 0;
+    int line_counter = 0;
+    int frame_counter = 0;
+    logic test_complete = 0;
+    
+    // Timing verification counters
+    int hsync_count = 0;
+    int vsync_count = 0;
+    int data_enable_count = 0;
+    int hsync_period = 0;
+    int vsync_period = 0;
+    int last_hsync_time = 0;
+    int last_vsync_time = 0;
+    
+    // Test patterns for different modes
+    logic [7:0] test_pattern_rgb332[];
+    logic [PIXEL_BITS*3-1:0] expected_rgb[];
+    int pattern_size = 0;
+    int pattern_index = 0;
+    
+    // RGB332 to RGB conversion function (simplified version)
+    function automatic logic [PIXEL_BITS*3-1:0] rgb332_to_rgb(logic [7:0] rgb332);
+        logic [2:0] r3 = rgb332[7:5];
+        logic [2:0] g3 = rgb332[4:2];
+        logic [1:0] b2 = rgb332[1:0];
+        
+        // Simple expansion by replicating MSBs
+        logic [PIXEL_BITS-1:0] r_full, g_full, b_full;
+        r_full = {r3, r3, r3[2:1]};
+        g_full = {g3, g3, g3[2:1]};
+        b_full = {b2, b2, b2, b2};
+
+        return {r_full, g_full, b_full};
+    endfunction
+
+    // Initialize test patterns
+    initial begin
+        case (TEST_MODE)
+            "basic_timing": begin
+                // No pixel data needed, just test timing
+                pattern_size = 0;
+                $display("Test mode: basic_timing - testing video timing signals only");
+            end
+            "frame_timing": begin
+                // Test complete frame timing
+                pattern_size = SCREEN_WIDTH * SCREEN_HEIGHT; // Full frame
+                test_pattern_rgb332 = new[pattern_size];
+                expected_rgb = new[pattern_size];
+                
+                for (int i = 0; i < pattern_size; i++) begin
+                    // Create a simple pattern: row gradient
+                    automatic int row = i / SCREEN_WIDTH;
+                    automatic int col = i % SCREEN_WIDTH;
+                    test_pattern_rgb332[i] = 8'(row ^ col);
+                    expected_rgb[i] = rgb332_to_rgb(test_pattern_rgb332[i]);
+                end
+                
+                $display("Test mode: frame_timing - testing full frame (%0d pixels)", pattern_size);
+            end
+            default: begin
+                pattern_size = 4;
+                test_pattern_rgb332 = new[pattern_size];
+                expected_rgb = new[pattern_size];
+                
+                test_pattern_rgb332[0] = 8'h00;
+                test_pattern_rgb332[1] = 8'hFF;
+                test_pattern_rgb332[2] = 8'h92;
+                test_pattern_rgb332[3] = 8'h49;
+                
+                for (int i = 0; i < pattern_size; i++) begin
+                    expected_rgb[i] = rgb332_to_rgb(test_pattern_rgb332[i]);
+                end
+                
+                $display("Test mode: default - testing basic patterns");
+            end
+        endcase
+    end
+
+    // Data driver process
+    initial begin
+        axis_data_tvalid = 1'b0;
+        axis_data_tdata = 32'h0;
+        axis_data_tlast = 1'b0;
+        axis_data_tuser = 1'b0;
+        pattern_index = 0;
+        
+        // Wait for reset_n deassertion
+        wait(reset_n);
+        @(posedge clock);
+        
+        if (pattern_size > 0) begin
+            // Send pixel data
+            for (int i = 0; i < pattern_size; i++) begin
+                @(negedge clock);
+                // Set up data
+                axis_data_tdata[7:0] = test_pattern_rgb332[i];
+                axis_data_tdata[31:8] = 24'h0; // Unused bits
+                axis_data_tvalid = 1'b1;
+                
+                // Set SOF for first pixel
+                axis_data_tuser = (i == 0) ? 1'b1 : 1'b0;
+                
+                // Set tlast for end of line
+                axis_data_tlast = ((i % SCREEN_WIDTH) == (SCREEN_WIDTH - 1)) ? 1'b1 : 1'b0;
+                
+                $display("T=%0t: Sending pixel[%0d]: RGB332=0x%02h, SOF=%b, tlast=%b", 
+                         $time, i, test_pattern_rgb332[i], axis_data_tuser, axis_data_tlast);
+                
+                // Wait for data to be accepted
+                @(posedge clock);
+                while (!axis_data_tready) @(posedge clock);
+                
+                pattern_index++;
+            end
+            
+            @(negedge clock);
+            axis_data_tvalid = 1'b0;
+            $display("T=%0t: All pixel data sent", $time);
+        end
+        
+        // Wait for multiple frames to complete
+        if (TEST_MODE == "frame_timing") begin
+            wait(frame_counter >= 2);
+        end else begin
+            wait(frame_counter >= 1);
+        end
+        
+        test_complete = 1;
+    end
+
+    // Video timing monitor
+    logic prev_hsync = 1'b1;
+    logic prev_vsync = 1'b1;
+    logic prev_data_enable = 1'b0;
+    
+    always_ff @(posedge clock) begin
+        if (!reset_n) begin
+            hsync_count <= 0;
+            vsync_count <= 0;
+            data_enable_count <= 0;
+            line_counter <= 0;
+            frame_counter <= 0;
+            pixel_counter <= 0;
+            last_hsync_time <= 0;
+            last_vsync_time <= 0;
+            hsync_period <= 0;
+            vsync_period <= 0;
+        end else begin
+            prev_hsync <= video_hsync;
+            prev_vsync <= video_vsync;
+            prev_data_enable <= video_data_enable;
+            
+            // Count hsync falling edges
+            if (prev_hsync && !video_hsync) begin
+                hsync_count <= hsync_count + 1;
+                hsync_period <= timeout_counter - last_hsync_time;
+                last_hsync_time <= timeout_counter;
+                line_counter <= line_counter + 1;
+                pixel_counter <= 0;
+                
+                $display("T=%0t: HSYNC #%0d, period=%0d cycles", $time, hsync_count, hsync_period);
+                
+                // Verify hsync period after the first few
+                if (hsync_count > 5 && hsync_period != TOTAL_H) begin
+                    $error("HSYNC period mismatch: expected %0d, got %0d", TOTAL_H, hsync_period);
+                end
+            end
+            
+            // Count vsync falling edges  
+            if (prev_vsync && !video_vsync) begin
+                vsync_count <= vsync_count + 1;
+                vsync_period <= timeout_counter - last_vsync_time;
+                last_vsync_time <= timeout_counter;
+                frame_counter <= frame_counter + 1;
+                line_counter <= 0;
+                
+                $display("T=%0t: VSYNC #%0d, period=%0d cycles", $time, vsync_count, vsync_period);
+                
+                // Verify vsync period after the first few
+                if (vsync_count > 2 && vsync_period != (TOTAL_H * TOTAL_V)) begin
+                    $error("VSYNC period mismatch: expected %0d, got %0d", TOTAL_H * TOTAL_V, vsync_period);
+                end
+            end
+            
+            // Count data enable assertions
+            if (video_data_enable) begin
+                automatic int expected_pixel_in_line;
+                automatic int expected_line_in_frame;
+                
+                data_enable_count <= data_enable_count + 1;
+                pixel_counter <= pixel_counter + 1;
+                
+                // Check if we're in the expected active area
+                expected_pixel_in_line = pixel_counter % TOTAL_H;
+                expected_line_in_frame = line_counter % TOTAL_V;
+
+                if (expected_pixel_in_line >= SCREEN_WIDTH + PULSE_WIDTH_H + BACK_PORCH_H || expected_line_in_frame >= SCREEN_HEIGHT + PULSE_WIDTH_V + BACK_PORCH_V) begin
+                    $error("T=%0t: data_enable asserted outside active area: pixel=%0d/%0d, line=%0d/%0d",
+                           $time, expected_pixel_in_line, SCREEN_WIDTH + PULSE_WIDTH_H + BACK_PORCH_H, expected_line_in_frame, SCREEN_HEIGHT + PULSE_WIDTH_V + BACK_PORCH_V);
+                end
+            end
+        end
+    end
+
+    // Pixel data checker (for modes that send data)
+    int received_pixel_count = 0;
+    logic error_data_mismatch = 0;
+    always_ff @(posedge clock) begin
+        if (!reset_n) begin
+            received_pixel_count <= 0;
+        end else begin
+            if (video_data_enable && pattern_size > 0) begin
+                if (received_pixel_count < pattern_size) begin
+                    automatic logic [PIXEL_BITS*3-1:0] expected;
+                    
+                    expected = expected_rgb[received_pixel_count % pattern_size];
+                    
+                    $display("T=%0t: Received pixel[%0d]: RGB=0x%06h (expected=0x%06h)", 
+                             $time, received_pixel_count, video_pixel_data, expected);
+                    
+                    if (video_pixel_data != expected) begin
+                        $warning("Pixel data mismatch at index %0d: expected 0x%06h, got 0x%06h", 
+                               received_pixel_count, expected, video_pixel_data);
+                        error_data_mismatch = 1;
+                    end
+                end
+                
+                received_pixel_count <= received_pixel_count + 1;
+            end
+        end
+    end
+
+    // Timeout counter
+    always_ff @(posedge clock) begin
+        if (!reset_n) begin
+            timeout_counter <= 0;
+        end else begin
+            timeout_counter <= timeout_counter + 1;
+        end
+    end
+    
+    // Clock generation (10ns period = 100MHz)
+    always #5 clock = ~clock;
+    
+    initial begin
+        clock = 0;
+        $dumpfile("trace.fst");
+        $dumpvars(0, tb);
+
+        // Reset sequence
+        reset_n = 1'b0;
+        repeat(4) @(negedge clock);
+        reset_n = 1'b1;
+        $display("T=%0t: Reset released", $time);
+
+        // Wait for test completion or timeout
+        while (!test_complete && !error_data_mismatch && timeout_counter < TIMEOUT_CYCLES) begin
+            @(posedge clock);
+        end
+        
+        if (timeout_counter >= TIMEOUT_CYCLES) begin
+            $error("Test timeout after %0d cycles", TIMEOUT_CYCLES);
+        end else if (!error_data_mismatch) begin
+            $display("Test completed successfully after %0d cycles", timeout_counter);
+            $display("Statistics:");
+            $display("  Frames: %0d", frame_counter);
+            $display("  Lines: %0d", line_counter);  
+            $display("  HSYNC pulses: %0d", hsync_count);
+            $display("  VSYNC pulses: %0d", vsync_count);
+            $display("  Data enable cycles: %0d", data_enable_count);
+            if (pattern_size > 0) begin
+                $display("  Pixels sent: %0d", pattern_index);
+                $display("  Pixels received: %0d", received_pixel_count);
+            end
+        end
+        
+        // Additional cycles to observe final behavior
+        repeat(100) @(posedge clock);
+        if( error_data_mismatch ) $error("Test failed: pixel data mismatch detected");
+        $finish;
+    end
+endmodule
+}}}
+
+// Test case: Basic timing without pixel data
+module tb_video_signal_generator_basic_timing() {
+    inst tb_inst: $sv::tb #(
+        TEST_MODE: "basic_timing", 
+        SCREEN_WIDTH: 320, 
+        SCREEN_HEIGHT: 240,
+        PIXEL_BITS: 8,
+        READY_RATE: 10, 
+        TIMEOUT_CYCLES: 50000
+    ) ();
+}
+
+// Test case: Data synchronization behavior
+module tb_video_signal_generator_sync_behavior() {
+    inst tb_inst: $sv::tb #(
+        TEST_MODE: "frame_timing", 
+        SCREEN_WIDTH: 16, 
+        SCREEN_HEIGHT: 2,
+        PIXEL_BITS: 8,
+        READY_RATE: 7, 
+        TIMEOUT_CYCLES: 320*2*20*2
+    ) ();
+}
+
+// Test case: Complete frame timing
+module tb_video_signal_generator_frame_timing() {
+    inst tb_inst: $sv::tb #(
+        TEST_MODE: "frame_timing", 
+        SCREEN_WIDTH: 64, 
+        SCREEN_HEIGHT: 48,
+        PIXEL_BITS: 8,
+        READY_RATE: 9, 
+        TIMEOUT_CYCLES: 100000
+    ) ();
+}
+
+// Default test case
+module tb_video_signal_generator_default() {
+    inst tb_inst: $sv::tb #(
+        TEST_MODE: "basic_timing", 
+        SCREEN_WIDTH: 320, 
+        SCREEN_HEIGHT: 240,
+        PIXEL_BITS: 8,
+        READY_RATE: 8, 
+        TIMEOUT_CYCLES: 50000
+    ) ();
+}
