@@ -1,0 +1,109 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2025.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file axi_stream_mux.veryl
+ * @brief AXI4 Stream Multiplexer
+ */
+
+/**
+ * Unsafe demultiplexer of AXI4 Stream which may violate TVALID constraints.
+ */
+pub module axi4s_unsafe_demux::<WIDTH: u32 = 8, LAST: bool = false, USER: u32 = 0> #(
+    param N: u32 = 2,
+)(
+    r#clock: input clock,
+    r#reset: input reset,
+    
+    port_in: modport axi4s_if::<WIDTH, LAST, USER>::slave,
+    port_out: modport axi4s_if::<WIDTH, LAST, USER>::master[N],
+    select: input logic<$clog2(N+1)>,
+) {
+    type select_t = logic<$clog2(N+1)>;
+
+    always_comb {
+        port_in.tready = 0;
+
+        for i: u32 in 0..N {
+            port_out[i].tvalid = select == i as select_t && port_in.tvalid;
+            port_out[i].tdata = port_in.tdata;
+            port_out[i].tlast = port_in.tlast;
+            port_out[i].tuser = port_in.tuser;
+
+            if select == i as select_t {
+                port_in.tready = port_out[i].tready;
+            }
+        }
+    }
+}
+
+/**
+ * AXI4 Stream Demultiplexer
+ * Select a channel for output.
+ */
+pub module axi4s_demux::<WIDTH: u32 = 8, LAST: bool = false, USER: u32 = 0> #(
+    param N: u32 = 2,
+)(
+    r#clock: input clock,
+    r#reset: input reset,
+    
+    port_in: modport axi4s_if::<WIDTH, LAST, USER>::slave,
+    port_out: modport axi4s_if::<WIDTH, LAST, USER>::master[N],
+    select: input logic<$clog2(N+1)>,   // Select signal. 0 <= select < N: select the `select` channel for output. `select` == N: disable output.
+) {
+    type select_t = logic<$clog2(N+1)>;
+    type data_t = logic<WIDTH>;
+    type user_t = logic<USER>;
+
+    // Internal buffers for each channel.
+    var data: data_t[N];
+    var last: logic[N];
+    var user: user_t[N];
+    var valid: logic[N];
+    var ready: logic[N];
+
+    always_comb {
+        port_in.tready = 0;
+
+        for i: select_t in 0..N {
+            // Connect internal buffers to output ports
+            ready[i] = port_out[i].tready;
+            port_out[i].tvalid = valid[i];
+            port_out[i].tdata = data[i];
+            port_out[i].tlast = last[i];
+            port_out[i].tuser = user[i];
+
+            if select == i {
+                // Can accept a new data if the selected channel can consume it, (internal buffer is empty or the output is ready)
+                port_in.tready = !valid[i] || ready[i];
+            }
+        }
+    }
+
+    always_ff(r#clock, r#reset) {
+        if_reset {
+            for i: select_t in 0..N {
+                valid[i] = 0;
+                data[i] = '0;
+                last[i] = 0;
+                user[i] = '0;
+            }
+        }
+        else {
+            for i: select_t in 0..N {
+                if valid[i] && ready[i] {   // Clear TVALID if the current transfer completes.
+                    valid[i] = 0;
+                }
+                if select == i && port_in.tvalid && port_in.tready {
+                    // Consume a new data and transfer it to the current channel.
+                    valid[i] = 1;
+                    data[i] = port_in.tdata;
+                    last[i] = port_in.tlast;
+                    user[i] = port_in.tuser;
+                }
+            }
+        }
+    }
+}

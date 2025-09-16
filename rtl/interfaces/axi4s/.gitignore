@@ -3,3 +3,4 @@ dependencies
 *.sv
 *.map
 Veryl.lock
+.build

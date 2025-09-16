@@ -1,0 +1,98 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2025.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file axi_stream_mux.veryl
+ * @brief AXI4 Stream Multiplexer
+ */
+
+/**
+ * Unsafe multiplexer of AXI4 Stream which may violate TVALID constraints.
+ */
+pub module axi4s_unsafe_mux::<WIDTH: u32 = 8, LAST: bool = false, USER: u32 = 0> #(
+    param N: u32 = 2,
+)(
+    r#clock: input clock,
+    r#reset: input reset,
+    
+    port_in: modport axi4s_if::<WIDTH, LAST, USER>::slave[N],
+    port_out: modport axi4s_if::<WIDTH, LAST, USER>::master,
+    select: input logic<$clog2(N+1)>,
+) {
+    type select_t = logic<$clog2(N+1)>;
+
+    always_comb {
+        port_out.tvalid = 0;
+        port_out.tdata = '0;
+        port_out.tlast = 0;
+        port_out.tuser = '0;
+
+        for i: u32 in 0..N {
+            port_in[i].tready = select == i as select_t && port_out.tready;
+            if select == i as select_t {
+                port_out.tvalid = port_in[i].tvalid;
+                port_out.tdata = port_in[i].tdata;
+                port_out.tlast = port_in[i].tlast;
+                port_out.tuser = port_in[i].tuser;
+            }
+        }
+    }
+}
+
+/**
+ * AXI4 Stream Multiplexer
+ * Select a channel for input.
+ */
+pub module axi4s_mux::<WIDTH: u32 = 8, LAST: bool = false, USER: u32 = 0> #(
+    param N: u32 = 2,
+)(
+    r#clock: input clock,
+    r#reset: input reset,
+    
+    port_in: modport axi4s_if::<WIDTH, LAST, USER>::slave[N],
+    port_out: modport axi4s_if::<WIDTH, LAST, USER>::master,
+    select: input logic<$clog2(N+1)>,
+) {
+    type select_t = logic<$clog2(N+1)>;
+
+    // internal buffer.
+    var data: logic<WIDTH>;
+    var last: logic;
+    var user: logic<USER>;
+    var valid: logic;
+    var ready: logic;
+
+    always_comb {
+        port_out.tvalid = valid;
+        port_out.tdata = data;
+        port_out.tlast = last;
+        port_out.tuser = user;
+        ready = port_out.tready;
+        
+        for i: u32 in 0..N {
+            port_in[i].tready = select == i as select_t && (!valid || ready);
+        }
+    }
+
+    always_ff(r#clock, r#reset) {
+        if_reset {
+            valid = 0;
+            data = '0;
+            last = 0;
+            user = '0;
+        }
+        else {
+            if valid && ready {
+                valid = 0;
+            }
+            if port_in[select].tvalid && (!valid || ready) {
+                valid = 1;
+                data = port_in[select].tdata;
+                last = port_in[select].tlast;
+                user = port_in[select].tuser;
+            }
+        }
+    }
+}

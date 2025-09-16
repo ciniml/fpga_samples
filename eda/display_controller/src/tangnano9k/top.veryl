@@ -93,12 +93,7 @@ module top(
   //   video_data,
   // );
   
-  // interfaces
-  inst axis_data_in: axi4s::axi4s_if::<32, true, 1> ();
-  inst video_out: display_controller::video_io_if #(
-      PIXEL_BITS: 8,
-  ) ();
-
+  
   var clock_dvi_as_clock: '_ clock;
   var reset_dvi_as_reset: '_ reset;
   unsafe(cdc) {
@@ -106,54 +101,72 @@ module top(
     assign clock_dvi_as_clock = clock_dvi;
   }
 
-  var axis_data_in_valid: logic;
-  var axis_data_in_ready: logic;
-  var axis_data_in_data: logic<8>;
-  var axis_data_in_last: logic;
-  var axis_data_in_sof: logic;
+  const SCREEN_WIDTH: u32 = 1280/8;
+  const SCREEN_HEIGHT: u32 = 720/8;
 
-  var h_counter: u16;
-  var v_counter: u16;
-  always_ff (clock_dvi_as_clock, reset_dvi_as_reset) {
-    if_reset {
-      axis_data_in_valid = 0;
-      axis_data_in_data = 0;
-      axis_data_in_last = 0;
-      axis_data_in_sof = 0;
-      h_counter = 0;
-      v_counter = 0;
-    } else {
-      if axis_data_in_valid && axis_data_in_ready {
-        axis_data_in_valid = 0;
-      }
-      if !axis_data_in_valid || axis_data_in_ready {
-        axis_data_in_valid = 1;
-        axis_data_in_last = 0;
-        axis_data_in_sof = h_counter == 0 && v_counter == 0;
-        //axis_data_in_data = (h_counter ^ v_counter) & 8'hff;
-        axis_data_in_data = h_counter[7:0];
+  // interfaces
+  inst vram_reader_cmd: axi4s::axi4s_if::<64, false, 0> ();
+  inst axis_data_in: axi4s::axi4s_if::<32, true, 1> ();
+  inst video_out: display_controller::video_io_if #(
+      PIXEL_BITS: 8,
+  ) ();
+  inst vram_read: display_controller::vram_read_if #(
+      SCREEN_WIDTH,
+      SCREEN_HEIGHT,
+  ) ();
 
-        if h_counter == 320 - 1 {
-          axis_data_in_last = 1;
-          h_counter = 0;
-          if v_counter == 180 - 1 {
-            v_counter = 0;
-          } else {
-            v_counter = v_counter + 1;
-          }
-        } else {
-          h_counter = h_counter + 1;
-        }
+  var vram: logic<8>[SCREEN_WIDTH*SCREEN_HEIGHT];
+  function set_vram_element(value: input u8, value_out: output u8) {
+    value_out = value;
+  }
+  initial {
+    for y: u32 in 0..SCREEN_HEIGHT {
+      for x: u32 in 0..SCREEN_WIDTH {
+        let i: u32 = y * SCREEN_WIDTH + x;
+        let v: u8 = x[7:0] ^ y[7:0];
+        set_vram_element(v, vram[i]);
       }
     }
   }
 
+  var vram_data: logic<8>;
+  always_ff (clock_dvi_as_clock, reset_dvi_as_reset) {
+    if_reset {
+      vram_data = '0;
+    }
+    else {
+      if vram_read.en {
+        vram_data = vram[vram_read.addr];
+      }
+    }
+  }
+
+  inst vram_reader_inst: display_controller::vram_reader #(
+      SCREEN_WIDTH: SCREEN_WIDTH,
+      SCREEN_HEIGHT: SCREEN_HEIGHT,
+      PIXEL_BITS: 8,
+  ) (
+    r#clock: clock_dvi_as_clock,
+    r#reset: reset_dvi_as_reset,
+    axis_command_in: vram_reader_cmd,
+    axis_data_out: axis_data_in,
+    vram_read: vram_read,
+  );
+
   always_comb {
-    axis_data_in.tvalid = axis_data_in_valid;
-    axis_data_in.tdata = axis_data_in_data;
-    axis_data_in.tlast = axis_data_in_last;
-    axis_data_in.tuser[0] = axis_data_in_sof;
-    axis_data_in_ready = axis_data_in.tready;
+    // Read full screen command.
+    let vram_reader_cmd_read_all: display_controller::vram_reader_pkg::vram_reader_cmd_t = display_controller::vram_reader_pkg::vram_reader_cmd_t'{
+      x: 0,
+      y: 0,
+      w_minus_1: (SCREEN_WIDTH - 1) as u16,
+      h_minus_1: (SCREEN_HEIGHT - 1) as u16,
+    };
+    vram_reader_cmd.tvalid = 1;
+    vram_reader_cmd.tdata = vram_reader_cmd_read_all as u32;
+    vram_reader_cmd.tlast = 0;
+    vram_reader_cmd.tuser = '0;
+
+    vram_read.data = vram_data;
 
     video_de = video_out.data_enable;
     video_hsync = video_out.hsync;
@@ -171,8 +184,8 @@ module top(
       BACK_PORCH_V: 20,
       FRONT_PORCH_V: 5,
       PULSE_WIDTH_V: 5,
-      MULTIPLIER_H: 4,
-      MULTIPLIER_V: 4
+      MULTIPLIER_H: 8,
+      MULTIPLIER_V: 8
   ) (
     r#clock: clock_dvi_as_clock,
     r#reset: reset_dvi_as_reset,

@@ -22,6 +22,7 @@ if {${TARGET} == "comprocboard_9k"} {
 if {${TARGET} == "tangnano9k"} {
     set_option -use_sspi_as_gpio 1
     set_option -top_module display_controller_tangnano9k_top
+    set_option -looplimit 20000
 }
 if {${TARGET} == "tangprimer20k"} {
     set_option -use_done_as_gpio 1
@@ -39,6 +40,8 @@ add_file -type verilog [file normalize ${SRC_DIR}/top.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/reset_seq.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/dependencies/display_controller/video_signal_generator.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/dependencies/display_controller/video_io_if.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/dependencies/display_controller/vram_if.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/dependencies/display_controller/vram_reader.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/dependencies/axi4s/axi_stream.sv]
 
 if {${TARGET} == "tangprimer25k"} {
