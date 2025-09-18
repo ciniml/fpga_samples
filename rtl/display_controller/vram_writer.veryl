@@ -31,6 +31,9 @@ pub module vram_writer #(
 
   // VRAM interface
   vram_write: modport vram_write_if::master,
+
+  // Complete signal
+  complete: output logic,
 ) {
   // State
   enum state_t {
@@ -93,6 +96,7 @@ pub module vram_writer #(
       write_address = 0;
       write_en = 0;
       write_data = 0;
+      complete = 0;
     } else {
       write_en = 0;  // By default, the write enable signal is deasserted.
 
@@ -103,6 +107,7 @@ pub module vram_writer #(
             write_address_next = (new_command.y * SCREEN_WIDTH) as num_pixels_t;  // calculate the address of the left-most pixel of the line.
             command = new_command;
             state = state_t::CALCULATE_OFFSET;
+            complete = 0;
           }
         }
         state_t::CALCULATE_OFFSET: {
@@ -122,6 +127,7 @@ pub module vram_writer #(
               x_count = 0;                                // Reset x_count for the next line.
               if y_count == command.h_minus_1 as height_t { // This is the last pixel of the last line.
                 state = state_t::IDLE;  // Go back to IDLE state
+                complete = 1; // Assert complete signal to indicate transfer is complete
               } else {
                 write_address_next = line_address + (SCREEN_WIDTH as num_pixels_t); // Calculate the address of the first pixel of the next line.
                 line_address = line_address + (SCREEN_WIDTH as num_pixels_t);  // Update line_address for the next line.

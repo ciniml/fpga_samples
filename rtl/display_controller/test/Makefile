@@ -9,7 +9,10 @@ TESTCASES_tb_vram_writer := vram_writer_default vram_writer_single_pixel vram_wr
 MODULES_tb_video_signal_generator := ../video_signal_generator.sv ../video_io_if.sv ../dependencies/axi4s/axi_stream.sv
 TESTCASES_tb_video_signal_generator := video_signal_generator_default video_signal_generator_basic_timing video_signal_generator_sync_behavior video_signal_generator_frame_timing video_signal_generator_multiplier_2x2 video_signal_generator_multiplier_h3
 
-TESTBENCHES := tb_vram_reader tb_vram_writer tb_video_signal_generator
+MODULES_tb_display_controller := ../vram_writer.sv ../vram_if.sv ../dependencies/axi4s/axi_stream.sv ../dependencies/axi4s/axi_stream_demux.sv ../dependencies/axi4s/axi_stream_mux.sv ../dependencies/std/selector/selector_pkg.sv ../dependencies/std/selector/demux.sv ../dependencies/std/selector/mux.sv ../display_controller.sv 
+TESTCASES_tb_display_controller := display_controller_default display_controller_version display_controller_fill_rect display_controller_write_pixel display_controller_multiple_commands display_controller_small_screen
+
+TESTBENCHES := tb_vram_reader tb_vram_writer tb_video_signal_generator tb_display_controller
 VERILATOR := verilator
 #VERILATOR := docker run -it -e CCACHE_DIR=/tmp/ccache -v `realpath ${PWD}/../..`:`realpath ${PWD}/../..` -v ${PWD}:/work --user $(id -u):$(id -g) verilator/verilator:latest
 

@@ -22,6 +22,22 @@ pub module axi4s_unsafe_mux::<WIDTH: u32 = 8, LAST: bool = false, USER: u32 = 0>
     select: input logic<$clog2(N+1)>,
 ) {
     type select_t = logic<$clog2(N+1)>;
+    type user_t = logic<if USER == 0 ? 1 : USER>;
+
+    var valid: logic[N];
+    var data: logic<WIDTH>[N];
+    var last: logic[N];
+    var user: user_t[N];
+
+    for i in 0..N: port_gen {
+        always_comb {
+            port_in[i].tready = select == i as select_t && port_out.tready;
+            valid[i] = port_in[i].tvalid;
+            data[i] = port_in[i].tdata;
+            last[i] = port_in[i].tlast;
+            user[i] = port_in[i].tuser;
+        }
+    }
 
     always_comb {
         port_out.tvalid = 0;
@@ -30,12 +46,11 @@ pub module axi4s_unsafe_mux::<WIDTH: u32 = 8, LAST: bool = false, USER: u32 = 0>
         port_out.tuser = '0;
 
         for i: u32 in 0..N {
-            port_in[i].tready = select == i as select_t && port_out.tready;
             if select == i as select_t {
-                port_out.tvalid = port_in[i].tvalid;
-                port_out.tdata = port_in[i].tdata;
-                port_out.tlast = port_in[i].tlast;
-                port_out.tuser = port_in[i].tuser;
+                port_out.tvalid = valid[i];
+                port_out.tdata = data[i];
+                port_out.tlast = last[i];
+                port_out.tuser = user[i];
             }
         }
     }

@@ -1,3 +1,18 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2025.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file display_controller.veryl
+ * @brief Simple display controller
+ */
+
+
+embed (inline) sv{{{
+`timescale 1ns/1ps
+}}}
+
 pub module display_controller #(
   param SCREEN_WIDTH: u32 = 320,
   param SCREEN_HEIGHT: u32 = 240,
@@ -7,16 +22,12 @@ pub module display_controller #(
   r#reset: input reset,
 
   // Command interface
-  axis_command_in: modport axi4s::axi4s_if::<8, false, 1>::master,
-  axis_command_out: modport axi4s::axi4s_if::<8, false, 1>::slave,
+  axis_command_in: modport axi4s::axi4s_if::<8, false, 1>::slave,
+  axis_command_out: modport axi4s::axi4s_if::<8, false, 1>::master,
 
   // VRAM interface
-  vram_read_addr: output logic<$clog2(SCREEN_WIDTH*SCREEN_HEIGHT-1)>,
-  vram_read_en: output logic,
-  vram_read_data: input logic<8>,
-  vram_write_addr: output logic<$clog2(SCREEN_WIDTH*SCREEN_HEIGHT-1)>,
-  vram_write_en: output logic,
-  vram_write_data: output logic<8>, 
+  vram_read: modport vram_read_if::master,
+  vram_write: modport vram_write_if::master,
 ) {
   // State
   enum state_t {
@@ -30,31 +41,121 @@ pub module display_controller #(
   var state: state_t;
   var discarding: bool;
 
-  type width_t = logic<$clog2(SCREEN_WIDTH-1)>;
-  type height_t = logic<$clog2(SCREEN_HEIGHT-1)>;
-  type num_pixels_t = logic<$clog2(SCREEN_WIDTH*SCREEN_HEIGHT-1)>;
+  type width_t = logic<$clog2(SCREEN_WIDTH + 1)>;
+  type height_t = logic<$clog2(SCREEN_HEIGHT + 1)>;
+  type num_pixels_t = logic<$clog2(SCREEN_WIDTH*SCREEN_HEIGHT + 1)>;
+
+  // Command stream demux
+  const COMMAND_STREAMS: u32 = 2;
+  const COMMAND_STREAM_COMMAND: logic<COMMAND_STREAMS> = 0;
+  const COMMAND_STREAM_PIXEL_DATA: logic<COMMAND_STREAMS> = 1;
+  inst command_stream: axi4s::axi4s_if::<8, false, 1>[COMMAND_STREAMS];
+  var select_command_stream: logic<$clog2(COMMAND_STREAMS+1)>;
+
+  inst command_demux_inst: axi4s::axi4s_unsafe_demux::<8, false, 1> #(
+    N: COMMAND_STREAMS,
+  )(
+    r#clock: r#clock,
+    r#reset: r#reset,
+    port_in: axis_command_in,
+    port_out: command_stream,
+    select: select_command_stream,
+  );
+
+  // Pixel stream mux
+  const PIXEL_STREAMS: u32 = 2;
+  const PIXEL_STREAM_FROM_COMMAND: logic<PIXEL_STREAMS> = 0;
+  const PIXEL_STREAM_FILL: logic<PIXEL_STREAMS> = 1;
+  inst pixel_stream_in: axi4s::axi4s_if::<8, false, 0>[PIXEL_STREAMS];
+  inst pixel_stream_out: axi4s::axi4s_if::<8, false, 0>;
+  inst vram_writer_data_in: axi4s::axi4s_if::<32, true, 1>;
+  var select_pixel_stream: logic<$clog2(PIXEL_STREAMS+1)>;
+  var fill_color: logic<8>;
+  inst pixel_stream_mux_inst: axi4s::axi4s_unsafe_mux::<8, false, 0> #(
+    N: PIXEL_STREAMS,
+  )(
+    r#clock: r#clock,
+    r#reset: r#reset,
+    port_in: pixel_stream_in,
+    port_out: pixel_stream_out,
+    select: select_pixel_stream,
+  );
+  always_comb {
+    // Pixel Stream 0: from command stream.
+    pixel_stream_in[PIXEL_STREAM_FROM_COMMAND].tvalid = command_stream[COMMAND_STREAM_PIXEL_DATA].tvalid;
+    pixel_stream_in[PIXEL_STREAM_FROM_COMMAND].tdata = command_stream[COMMAND_STREAM_PIXEL_DATA].tdata;
+    pixel_stream_in[PIXEL_STREAM_FROM_COMMAND].tlast = 0;
+    pixel_stream_in[PIXEL_STREAM_FROM_COMMAND].tuser = 0;
+    command_stream[COMMAND_STREAM_PIXEL_DATA].tready = pixel_stream_in[PIXEL_STREAM_FROM_COMMAND].tvalid;
+    // Pixel Stream 1: fill.
+    pixel_stream_in[PIXEL_STREAM_FILL].tvalid = 1;
+    pixel_stream_in[PIXEL_STREAM_FILL].tdata = fill_color;
+    pixel_stream_in[PIXEL_STREAM_FILL].tlast = 0;
+    pixel_stream_in[PIXEL_STREAM_FILL].tuser = 0;
+
+    // Pixel Stream Out -> VRAM Writer Data IN
+    vram_writer_data_in.tvalid = pixel_stream_out.tvalid;
+    vram_writer_data_in.tdata = {24'0, pixel_stream_out.tdata};
+    vram_writer_data_in.tlast = pixel_stream_out.tlast;
+    vram_writer_data_in.tuser = pixel_stream_out.tuser;
+  }
+
+  // VRAM writer to write pixel data from the pixel stream.
+  inst vram_writer_command_in: axi4s::axi4s_if::<64, false, 0>;
+  var vram_writer_complete: logic;
+  inst vram_writer_inst: vram_writer #(
+    SCREEN_WIDTH,
+    SCREEN_HEIGHT,
+  ) (
+    r#clock: r#clock,
+    r#reset: r#reset,
+    axis_command_in: vram_writer_command_in,
+    axis_data_in: vram_writer_data_in,
+    vram_write: vram_write,
+    complete: vram_writer_complete,
+  );
 
   // Command and parameter buffer
-  var command: logic<8>;
-  const MAX_PARAMETER_WORDS: u32 = 8;
-  var parameters: logic<8>[MAX_PARAMETER_WORDS];
-  var parameter_index: logic<$clog2(MAX_PARAMETER_WORDS-1)>;
-  var last_parameter_index_expected: logic<$clog2(MAX_PARAMETER_WORDS-1)>;
+  var command: u8;
+  const COMMAND_VERSION: u8 = 8'h10;
+  const COMMAND_FILL_RECT: u8 = 8'h20;
+  const COMMAND_WRITE_RAW: u8 = 8'h30;
+  const COMMAND_WRITE_PIXEL: u8 = 8'h40;
+  const MAX_PARAMETER_WORDS: u32 = 9;
+  type parameter_index_t = logic<$clog2(MAX_PARAMETER_WORDS)>;
+  var parameters: u8[MAX_PARAMETER_WORDS];
+  var parameter_index: parameter_index_t;
+  var last_parameter_index_expected: parameter_index_t;
 
   // Parameter parser functions
-  function get_width() -> width_t {
-    return parameters[0];
+  function get_x() -> width_t { // X parameter for FILL_RECT, WRITE_RAW, WRITE_PIXEL
+    return {parameters[0], parameters[1]} as width_t;
   }
-  function get_height() -> height_t {
-    return parameters[1];
+  function get_y() -> height_t {  // Y parameter for FILL_RECT, WRITE_RAW, WRITE_PIXEL
+    return {parameters[2], parameters[3]} as height_t;
   }
-  function get_number_of_pixels() -> num_pixels_t {
-    return get_width() * get_height();
+  function get_width_minus_1() -> width_t { // Width parameter for FILL_RECT, WRITE_RAW
+    return {parameters[4], parameters[5]} as width_t;
+  }
+  function get_height_minus_1() -> height_t { // Height parameter for FILL_RECT, WRITE_RAW
+    return {parameters[6], parameters[7]} as height_t;
+  }
+  function get_pixel_color() -> logic<8> { // Pixel color parameter for WRITE_PIXEL
+    return parameters[4];
+  }
+  function get_fill_color() -> logic<8> { // Fill color parameter for FILL_RECT
+    return parameters[8];
   }
 
   // Pixel transfer control
   var pixel_index: num_pixels_t;
-  var pixel_fill_color: logic<8>;
+
+  // Output transfer control
+  var output_counter: u32;
+
+  always_comb {
+    command_stream[COMMAND_STREAM_COMMAND].tready = inside state {state_t::IDLE, state_t::RECEIVE_PARAMETERS};
+  }
 
   always_ff(r#clock, r#reset) {
     if_reset {
@@ -62,45 +163,195 @@ pub module display_controller #(
       parameter_index = 0;
       discarding = false;
       last_parameter_index_expected = 0;
+      command = 0;
+      for i:u32 in 0..MAX_PARAMETER_WORDS {
+        parameters[i] = 0;
+      }
+
       pixel_index = 0;
+      fill_color = 0;
+      select_command_stream = COMMAND_STREAM_COMMAND;
+      select_pixel_stream = PIXEL_STREAM_FROM_COMMAND;
+
+      axis_command_out.tvalid = 0;
+      axis_command_out.tdata = 8'hff;
+      axis_command_out.tlast = 0;
+      axis_command_out.tuser = 0;
+
+      vram_writer_command_in.tvalid = 0;
+      vram_writer_command_in.tdata = 0;
+      vram_writer_command_in.tlast = 0;
+      vram_writer_command_in.tuser = 0;
+
+      output_counter = 0;
     }
     else {
+      if axis_command_out.tvalid && axis_command_out.tready {
+        axis_command_out.tvalid = 0;
+      }
+      if vram_writer_command_in.tvalid && vram_writer_command_in.tready {
+        vram_writer_command_in.tvalid = 0;
+      }
+
       case state {
         state_t::IDLE: {
-          if axis_command_in.tvalid {
-            if axis_command_in.tuser[0] || !discarding {  // Start of frame or not discarding, 
-              command = axis_command_in.tdata;
+          output_counter = 0;
+
+          if command_stream[COMMAND_STREAM_COMMAND].tvalid {
+            if command_stream[COMMAND_STREAM_COMMAND].tuser[0] || !discarding {  // Start of frame or not discarding, 
+              command = command_stream[COMMAND_STREAM_COMMAND].tdata;
               state = state_t::START_COMMAND;
+              parameter_index = 0;
               discarding = false;
             }
           }
         }
         state_t::START_COMMAND: {
           state = state_t::RECEIVE_PARAMETERS;  // By default, the next state is RECEIVE_PARAMETERS.
+            case command {
+              COMMAND_VERSION: {
+                last_parameter_index_expected = 0 as parameter_index_t;
+                state = state_t::PRE_EXECUTE_COMMAND; // No parameters, go to PRE_EXECUTE_COMMAND directly.
+              }
+              COMMAND_FILL_RECT: {
+                last_parameter_index_expected = 8 as parameter_index_t;
+              }
+              COMMAND_WRITE_RAW: {
+                last_parameter_index_expected = 8 as parameter_index_t;
+              }
+              COMMAND_WRITE_PIXEL: {
+                last_parameter_index_expected = 4 as parameter_index_t;
+              }
+              default: {
+                state = state_t::IDLE;
+                discarding = true;
+              }
+            }
+        }
+        state_t::RECEIVE_PARAMETERS: {
+          if command_stream[COMMAND_STREAM_COMMAND].tvalid {
+            if command_stream[COMMAND_STREAM_COMMAND].tuser[0] {
+              command = command_stream[COMMAND_STREAM_COMMAND].tdata;
+              state = state_t::START_COMMAND;
+            } else {
+              parameters[parameter_index] = command_stream[COMMAND_STREAM_COMMAND].tdata;
+              parameter_index = parameter_index + 1;
+              if parameter_index == last_parameter_index_expected {
+                state = state_t::PRE_EXECUTE_COMMAND;
+              }
+            }
+          }
+        }
+        state_t::PRE_EXECUTE_COMMAND: {
+          let width: width_t = get_width_minus_1();
+          let height: height_t = get_height_minus_1();
+          let x: width_t = get_x();
+          let y: height_t = get_y();
+
+          let x_out_of_range: bool = x >= SCREEN_WIDTH as width_t;
+          let y_out_of_range: bool = y >= SCREEN_HEIGHT as height_t;
+          let width_out_of_range: bool = x + width + 1 >= SCREEN_WIDTH as width_t;
+          let height_out_of_range: bool = y + height + 1 >= SCREEN_HEIGHT as height_t;
+
+          let has_coordinate: bool = inside command {COMMAND_FILL_RECT, COMMAND_WRITE_RAW, COMMAND_WRITE_PIXEL};
+          let has_area: bool = inside command {COMMAND_FILL_RECT, COMMAND_WRITE_RAW};
+
+          let invalid_parameters: bool = (has_coordinate && (x_out_of_range || y_out_of_range)) ||
+                                      (has_area && (width_out_of_range || height_out_of_range));
+          if invalid_parameters {
+            state = state_t::IDLE;
+          } else {
+            state = state_t::EXECUTE_COMMAND;
+          }
+        }
+        state_t::EXECUTE_COMMAND: {
+          if command != COMMAND_VERSION {
+            axis_command_out.tvalid = 1;
+            axis_command_out.tdata = 0;
+          }
+
           case command {
+            COMMAND_VERSION: {
+              if !axis_command_out.tvalid || axis_command_out.tready {
+                axis_command_out.tvalid = 1;
+                axis_command_out.tdata = case output_counter {
+                  0: 0,
+                  1: 8'h46, // ASCII 'F'
+                  2: 8'h30, // ASCII '0'
+                  3: 8'h31, // ASCII '1'
+                  default: 0
+                };
+                output_counter = output_counter + 1;
+                if output_counter == 3 {
+                  state = state_t::POST_EXECUTE_COMMAND;
+                }
+              }
+            }
+            COMMAND_FILL_RECT: {
+              fill_color = get_fill_color();
+              let vram_command: vram_writer_pkg::vram_writer_cmd_t = vram_writer_pkg::vram_writer_cmd_t'{
+                x: get_x() as u16,
+                y: get_y() as u16,
+                w_minus_1: get_width_minus_1() as u16,
+                h_minus_1: get_height_minus_1() as u16,
+              };
+              vram_writer_command_in.tvalid = 1;
+              vram_writer_command_in.tdata = vram_command as u64;
+              select_pixel_stream = PIXEL_STREAM_FILL;  // Select pixel stream to fill.
+              state = state_t::POST_EXECUTE_COMMAND;
+            }
+            COMMAND_WRITE_RAW: {
+              fill_color = get_fill_color();
+              let vram_command: vram_writer_pkg::vram_writer_cmd_t = vram_writer_pkg::vram_writer_cmd_t'{
+                x: get_x() as u16,
+                y: get_y() as u16,
+                w_minus_1: get_width_minus_1() as u16,
+                h_minus_1: get_height_minus_1() as u16,
+              };
+              vram_writer_command_in.tvalid = 1;
+              vram_writer_command_in.tdata = vram_command as u64;
+              select_pixel_stream = PIXEL_STREAM_FROM_COMMAND;  // Select pixel stream from command.
+              select_command_stream = COMMAND_STREAM_PIXEL_DATA; // Switch command stream to pixel data.
+              state = state_t::POST_EXECUTE_COMMAND;
+            }
+            COMMAND_WRITE_PIXEL: {
+              fill_color = get_pixel_color();
+              let vram_command: vram_writer_pkg::vram_writer_cmd_t = vram_writer_pkg::vram_writer_cmd_t'{
+                x: get_x() as u16,
+                y: get_y() as u16,
+                w_minus_1: 0, // 1 pixels
+                h_minus_1: 0, // 1 pixels
+              };
+              vram_writer_command_in.tvalid = 1;
+              vram_writer_command_in.tdata = vram_command as u64;
+              select_pixel_stream = PIXEL_STREAM_FILL;  // Select pixel stream to fill.
+              state = state_t::POST_EXECUTE_COMMAND;
+            }
             default: {
+              axis_command_out.tvalid = 0;
               state = state_t::IDLE;
               discarding = true;
             }
           }
         }
-        state_t::RECEIVE_PARAMETERS: {
-          if axis_command_in.tvalid {
-            parameters[parameter_index] = axis_command_in.tdata;
-            parameter_index = parameter_index + 1;
-            if parameter_index == last_parameter_index_expected {
-              state = state_t::PRE_EXECUTE_COMMAND;
+        state_t::POST_EXECUTE_COMMAND: {
+          let must_wait_vram_writer: bool = inside command {COMMAND_FILL_RECT, COMMAND_WRITE_RAW, COMMAND_WRITE_PIXEL};
+          if must_wait_vram_writer {
+            if vram_writer_complete {
+              axis_command_out.tvalid = 0;
+              select_pixel_stream = PIXEL_STREAM_FILL;
+              select_command_stream = COMMAND_STREAM_COMMAND;
+              state = state_t::IDLE;
             }
+          } else {
+              if command != COMMAND_VERSION {
+                axis_command_out.tvalid = 0;
+              }
+              state = state_t::IDLE;  // Just return to IDLE state.
           }
         }
-        state_t::PRE_EXECUTE_COMMAND: {
-
-        }
-        state_t::EXECUTE_COMMAND: {
-
-        }
-        state_t::POST_EXECUTE_COMMAND: {
-
+        default: {
+          state = state_t::IDLE;
         }
       }
     }

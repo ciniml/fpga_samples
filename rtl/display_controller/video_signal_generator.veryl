@@ -167,8 +167,10 @@ pub module video_signal_generator #(
             pixel_data_internal = '0;
             data_in_sync_reg = 1'b0;
             
-            // Initialize buffer (memory arrays typically don't need explicit reset)
-            // multiplier_buffer initialization is intentionally omitted
+            // Initialize buffer
+            for i:u32 in 0..SCREEN_WIDTH {
+                multiplier_buffer[i] = '0;
+            }
             
             // Initialize output registers
             data_enable_reg = 1'b0;

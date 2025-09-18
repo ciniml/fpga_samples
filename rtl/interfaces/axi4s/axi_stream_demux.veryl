@@ -22,19 +22,19 @@ pub module axi4s_unsafe_demux::<WIDTH: u32 = 8, LAST: bool = false, USER: u32 = 
     select: input logic<$clog2(N+1)>,
 ) {
     type select_t = logic<$clog2(N+1)>;
+    var ready_array: logic<N>;
 
     always_comb {
-        port_in.tready = 0;
+        port_in.tready = |ready_array;
+    }
 
-        for i: u32 in 0..N {
+    for i in 0..N: port_gen {
+        always_comb {
+            ready_array[i] = port_out[i].tready && select == i as select_t;
             port_out[i].tvalid = select == i as select_t && port_in.tvalid;
             port_out[i].tdata = port_in.tdata;
             port_out[i].tlast = port_in.tlast;
             port_out[i].tuser = port_in.tuser;
-
-            if select == i as select_t {
-                port_in.tready = port_out[i].tready;
-            }
         }
     }
 }

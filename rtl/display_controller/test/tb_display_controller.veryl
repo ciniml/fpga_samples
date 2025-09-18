@@ -1,0 +1,472 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2025.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_display_controller.veryl
+ * @brief Test bench for display controller module.
+ */
+
+embed (inline) sv{{{
+`timescale 1ns/1ps
+
+module tb #(
+    parameter string TEST_MODE = "version",
+    parameter int SCREEN_WIDTH = 320,
+    parameter int SCREEN_HEIGHT = 240,
+    parameter int PIXEL_BITS = 8,
+    parameter int VALID_RATE = 8,
+    parameter int MAX_TEST_COMMANDS = 10,
+    parameter int TIMEOUT_CYCLES = 10000
+)();
+    logic clock /*verilator clocker*/;
+    logic reset_n;
+
+    // Command input interface (AXI4-Stream)
+    logic [7:0]  axis_command_in_tdata;
+    logic        axis_command_in_tvalid;
+    logic        axis_command_in_tready;
+    logic        axis_command_in_tlast;
+    logic        axis_command_in_tuser;
+
+    // Command output interface (AXI4-Stream)
+    logic [7:0]  axis_command_out_tdata;
+    logic        axis_command_out_tvalid;
+    logic        axis_command_out_tready;
+    logic        axis_command_out_tlast;
+    logic        axis_command_out_tuser;
+
+    localparam int VRAM_ADDR_BITS = $clog2(SCREEN_WIDTH * SCREEN_HEIGHT - 1);
+    typedef logic[VRAM_ADDR_BITS-1:0] vram_addr_t;
+
+    // VRAM read interface
+    logic [VRAM_ADDR_BITS-1:0] vram_read_addr;
+    logic                      vram_read_en;
+    logic [PIXEL_BITS-1:0]     vram_read_data;
+
+    // VRAM write interface
+    logic [VRAM_ADDR_BITS-1:0] vram_write_addr;
+    logic                      vram_write_en;
+    logic [PIXEL_BITS-1:0]     vram_write_data;
+
+    // interfaces
+    \{ axi4s::axi4s_if::<8, false, 1> \} axis_command_in ();
+    \{ axi4s::axi4s_if::<8, false, 1> \} axis_command_out ();
+    \{ vram_read_if \} #(
+        .SCREEN_WIDTH(SCREEN_WIDTH),
+        .SCREEN_HEIGHT(SCREEN_HEIGHT)
+    ) vram_read ();
+    \{ vram_write_if \} #(
+        .SCREEN_WIDTH(SCREEN_WIDTH),
+        .SCREEN_HEIGHT(SCREEN_HEIGHT)
+    ) vram_write ();
+
+    // DUT instantiation
+    \{ display_controller \} #(
+        .SCREEN_WIDTH(SCREEN_WIDTH),
+        .SCREEN_HEIGHT(SCREEN_HEIGHT)
+    ) dut (
+        .clock(clock),
+        .reset(reset_n),
+        .axis_command_in(axis_command_in),
+        .axis_command_out(axis_command_out),
+        .vram_read(vram_read),
+        .vram_write(vram_write)
+    );
+
+    // interface signal connection
+    always_comb begin
+        axis_command_in.tdata = axis_command_in_tdata;
+        axis_command_in.tvalid = axis_command_in_tvalid;
+        axis_command_in_tready = axis_command_in.tready;
+        axis_command_in.tlast = axis_command_in_tlast;
+        axis_command_in.tuser[0] = axis_command_in_tuser;
+
+        axis_command_out_tdata = axis_command_out.tdata;
+        axis_command_out_tvalid = axis_command_out.tvalid;
+        axis_command_out.tready = axis_command_out_tready;
+        axis_command_out_tlast = axis_command_out.tlast;
+        axis_command_out_tuser = axis_command_out.tuser[0];
+
+        vram_read_addr = vram_read.addr;
+        vram_read_en = vram_read.en;
+        vram_read.data = vram_read_data;
+
+        vram_write_addr = vram_write.addr;
+        vram_write_en = vram_write.en;
+        vram_write_data = vram_write.data;
+    end
+
+    // VRAM memory model
+    logic [PIXEL_BITS-1:0] vram_memory [0:SCREEN_WIDTH*SCREEN_HEIGHT-1];
+
+    // VRAM read response (combinational)
+    always_comb begin
+        if (vram_read_en && vram_read_addr < vram_addr_t'(SCREEN_WIDTH * SCREEN_HEIGHT)) begin
+            vram_read_data = vram_memory[vram_read_addr];
+        end else begin
+            vram_read_data = {PIXEL_BITS{1'b0}};
+        end
+    end
+
+    // VRAM write access monitor and recording
+    logic [VRAM_ADDR_BITS-1:0] recorded_write_addr [];
+    logic [PIXEL_BITS-1:0]     recorded_write_data [];
+    int recorded_write_count = 0;
+
+    always_ff @(posedge clock) begin
+        if (!reset_n) begin
+            recorded_write_count <= 0;
+        end else begin
+            if (vram_write_en) begin
+                if (vram_write_addr < vram_addr_t'(SCREEN_WIDTH * SCREEN_HEIGHT)) begin
+                    $info("VRAM write: addr=%0h, data=%0h", vram_write_addr, vram_write_data);
+                    vram_memory[vram_write_addr] <= vram_write_data;
+                    recorded_write_addr = new[recorded_write_count + 1](recorded_write_addr);
+                    recorded_write_data = new[recorded_write_count + 1](recorded_write_data);
+                    recorded_write_addr[recorded_write_count] = vram_write_addr;
+                    recorded_write_data[recorded_write_count] = vram_write_data;
+                    recorded_write_count <= recorded_write_count + 1;
+                end else begin
+                    $warning("VRAM write error: out of range - addr=%0h, data=%0h", vram_write_addr, vram_write_data);
+                end
+            end
+        end
+    end
+
+    // Test variables
+    int timeout_counter = 0;
+    int command_index = 0;
+    int send_index = 0;
+    int receive_index = 0;
+    logic test_complete = 0;
+    logic command_generation_complete = 0;
+
+    // Test patterns
+    logic [7:0] test_commands[];
+    logic test_command_sof[];
+    logic [7:0] expected_response[];
+    int test_command_count;
+    int expected_response_count;
+
+    // Initialize VRAM memory with test pattern
+    initial begin
+        for (int i = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i++) begin
+            automatic int x = i % SCREEN_WIDTH;
+            automatic int y = i / SCREEN_WIDTH;
+            vram_memory[i] = 8'((y * SCREEN_WIDTH + x) & ((1 << PIXEL_BITS) - 1));
+        end
+        $display("VRAM initialized with test pattern");
+    end
+
+    // Initialize recording arrays
+    initial begin
+        recorded_write_addr = new[0];
+        recorded_write_data = new[0];
+        $display("Write access recording initialized");
+    end
+
+    // Initialize test patterns based on test mode
+    initial begin
+        case (TEST_MODE)
+            "version": begin
+                test_command_count = 1;
+                test_commands = new[1];
+                test_command_sof = new[1];
+
+                test_commands[0] = 8'h10; // COMMAND_VERSION
+                test_command_sof[0] = 1'b1;
+
+                expected_response_count = 4;
+                expected_response = new[4];
+                expected_response[0] = 8'h00;
+                expected_response[1] = 8'h46; // ASCII 'F'
+                expected_response[2] = 8'h30; // ASCII '0'
+                expected_response[3] = 8'h31; // ASCII '1'
+
+                $display("Test mode: version");
+            end
+            "fill_rect": begin
+                test_command_count = 10;
+                test_commands = new[10];
+                test_command_sof = new[10];
+
+                // COMMAND_FILL_RECT: x=10, y=20, w=4, h=3, color=0xAB
+                test_commands[0] = 8'h20; test_command_sof[0] = 1'b1; // COMMAND_FILL_RECT
+                test_commands[1] = 8'h00; test_command_sof[1] = 1'b0; // x[15:8]
+                test_commands[2] = 8'h0A; test_command_sof[2] = 1'b0; // x[7:0] = 10
+                test_commands[3] = 8'h00; test_command_sof[3] = 1'b0; // y[15:8]
+                test_commands[4] = 8'h14; test_command_sof[4] = 1'b0; // y[7:0] = 20
+                test_commands[5] = 8'h00; test_command_sof[5] = 1'b0; // w[15:8]
+                test_commands[6] = 8'h03; test_command_sof[6] = 1'b0; // w[7:0] = 3 (4-1)
+                test_commands[7] = 8'h00; test_command_sof[7] = 1'b0; // h[15:8]
+                test_commands[8] = 8'h02; test_command_sof[8] = 1'b0; // h[7:0] = 2 (3-1)
+                test_commands[9] = 8'hAB; test_command_sof[9] = 1'b0; // color = 0xAB
+
+                expected_response_count = 1;
+                expected_response = new[1];
+                expected_response[0] = 8'h00; // Response for completion
+
+                $display("Test mode: fill_rect (x=10, y=20, w=4, h=3, color=0xAB)");
+            end
+            "write_pixel": begin
+                test_command_count = 6;
+                test_commands = new[6];
+                test_command_sof = new[6];
+
+                // COMMAND_WRITE_PIXEL: x=50, y=60, color=0xCD
+                test_commands[0] = 8'h40; test_command_sof[0] = 1'b1; // COMMAND_WRITE_PIXEL
+                test_commands[1] = 8'h00; test_command_sof[1] = 1'b0; // x[15:8]
+                test_commands[2] = 8'h32; test_command_sof[2] = 1'b0; // x[7:0] = 50
+                test_commands[3] = 8'h00; test_command_sof[3] = 1'b0; // y[15:8]
+                test_commands[4] = 8'h3C; test_command_sof[4] = 1'b0; // y[7:0] = 60
+                test_commands[5] = 8'hCD; test_command_sof[5] = 1'b0; // color = 0xCD
+
+                expected_response_count = 1;
+                expected_response = new[1];
+                expected_response[0] = 8'h00; // Response for completion
+
+                $display("Test mode: write_pixel (x=50, y=60, color=0xCD)");
+            end
+            "multiple_commands": begin
+                test_command_count = 11;
+                test_commands = new[11];
+                test_command_sof = new[11];
+
+                // First command: VERSION
+                test_commands[0] = 8'h10; test_command_sof[0] = 1'b1; // COMMAND_VERSION
+
+                // Second command: WRITE_PIXEL
+                test_commands[1] = 8'h40; test_command_sof[1] = 1'b1; // COMMAND_WRITE_PIXEL
+                test_commands[2] = 8'h00; test_command_sof[2] = 1'b0; // x[15:8]
+                test_commands[3] = 8'h05; test_command_sof[3] = 1'b0; // x[7:0] = 5
+                test_commands[4] = 8'h00; test_command_sof[4] = 1'b0; // y[15:8]
+                test_commands[5] = 8'h07; test_command_sof[5] = 1'b0; // y[7:0] = 7
+                test_commands[6] = 8'h55; test_command_sof[6] = 1'b0; // color = 0x55
+
+                // Third command: FILL_RECT (small)
+                test_commands[7] = 8'h20; test_command_sof[7] = 1'b1; // COMMAND_FILL_RECT
+                test_commands[8] = 8'h00; test_command_sof[8] = 1'b0; // x[15:8]
+                test_commands[9] = 8'h64; test_command_sof[9] = 1'b0; // x[7:0] = 100
+                test_commands[10] = 8'h00; test_command_sof[10] = 1'b0; // y[15:8] (incomplete for timeout test)
+
+                expected_response_count = 5;
+                expected_response = new[5];
+                expected_response[0] = 8'h00; // VERSION response start
+                expected_response[1] = 8'h46; // ASCII 'F'
+                expected_response[2] = 8'h30; // ASCII '0'
+                expected_response[3] = 8'h31; // ASCII '1'
+                expected_response[4] = 8'h00; // WRITE_PIXEL completion
+
+                $display("Test mode: multiple_commands");
+            end
+            default: begin
+                test_command_count = 1;
+                test_commands = new[1];
+                test_command_sof = new[1];
+
+                test_commands[0] = 8'h10; // COMMAND_VERSION
+                test_command_sof[0] = 1'b1;
+
+                expected_response_count = 4;
+                expected_response = new[4];
+                expected_response[0] = 8'h00;
+                expected_response[1] = 8'h46; // ASCII 'F'
+                expected_response[2] = 8'h30; // ASCII '0'
+                expected_response[3] = 8'h31; // ASCII '1'
+
+                $display("Test mode: default (version)");
+            end
+        endcase
+        $display("Test data prepared: %0d commands, %0d expected responses", test_command_count, expected_response_count);
+    end
+
+    // Command driver process
+    initial begin
+        axis_command_in_tvalid = 1'b0;
+        axis_command_in_tdata = 8'h0;
+        axis_command_in_tlast = 1'b0;
+        axis_command_in_tuser = 1'b0;
+        command_index = 0;
+        send_index = 0;
+        command_generation_complete = 1'b0;
+
+        // Wait for reset_n deassertion
+        wait(reset_n);
+        repeat(10) @(posedge clock);
+
+        // Send commands
+        for (int i = 0; i < test_command_count; i++) begin
+            @(negedge clock);
+
+            axis_command_in_tdata = test_commands[i];
+            axis_command_in_tvalid = 1'b1;
+            axis_command_in_tuser = test_command_sof[i];
+            axis_command_in_tlast = 1'b0;
+
+            $display("T=%0t: Sending command byte %0d: 0x%02h, sof=%b",
+                     $time, i, test_commands[i], test_command_sof[i]);
+
+            // Wait for command to be accepted
+            @(posedge clock);
+            while (!axis_command_in_tready) @(posedge clock);
+            @(negedge clock);
+            axis_command_in_tvalid = 1'b0;
+            axis_command_in_tuser = 1'b0;
+
+            // Small delay between command bytes
+            repeat(2) @(posedge clock);
+        end
+
+        command_generation_complete = 1'b1;
+        $display("Command generation completed");
+
+        // Wait for all responses to be received or timeout
+        while (receive_index < expected_response_count && timeout_counter < TIMEOUT_CYCLES) begin
+            @(posedge clock);
+        end
+
+        // Additional cycles for completion
+        repeat(50) @(posedge clock);
+
+        test_complete = 1;
+    end
+
+    // Response ready driver (with random ready)
+    always_ff @(negedge clock) begin
+        if (!reset_n) begin
+            axis_command_out_tready <= 1'b0;
+        end else begin
+            axis_command_out_tready <= $urandom_range(0, 10) < VALID_RATE;
+        end
+    end
+
+    // Response checker
+    always_ff @(posedge clock) begin
+        if (!reset_n) begin
+            receive_index <= 0;
+        end else begin
+            if (receive_index < expected_response_count) begin
+                if (axis_command_out_tvalid && axis_command_out_tready) begin
+                    $display("T=%0t: Received response[%0d]: 0x%02h, tlast=%b, sof=%b",
+                             $time, receive_index, axis_command_out_tdata, axis_command_out_tlast, axis_command_out_tuser);
+
+                    // Check response data
+                    if (axis_command_out_tdata != expected_response[receive_index]) begin
+                        $error("Response mismatch at index %0d: expected 0x%02h, got 0x%02h",
+                               receive_index, expected_response[receive_index], axis_command_out_tdata);
+                    end
+
+                    receive_index <= receive_index + 1;
+                end
+            end
+        end
+    end
+
+    // Timeout counter
+    always_ff @(posedge clock) begin
+        if (!reset_n) begin
+            timeout_counter <= 0;
+        end else begin
+            timeout_counter <= timeout_counter + 1;
+        end
+    end
+
+    // Clock generation (10ns period = 100MHz)
+    always #5 clock = ~clock;
+
+    initial begin
+        clock = 0;
+        $dumpfile("trace.fst");
+        $dumpvars(0, tb);
+
+        // Reset sequence
+        reset_n = 1'b0;
+        repeat(4) @(negedge clock);
+        reset_n = 1'b1;
+        $display("T=%0t: Reset released", $time);
+
+        // Wait for test completion or timeout
+        while (!test_complete && timeout_counter < TIMEOUT_CYCLES) begin
+            @(posedge clock);
+        end
+
+        if (timeout_counter >= TIMEOUT_CYCLES) begin
+            $error("Test timeout after %0d cycles", TIMEOUT_CYCLES);
+        end else begin
+            $display("Test completed successfully after %0d cycles", timeout_counter);
+        end
+
+        // Additional cycles to observe final behavior
+        repeat(50) @(posedge clock);
+        $finish;
+    end
+endmodule
+}}}
+
+// Test case: Version command
+module tb_display_controller_version() {
+    inst tb_inst: $sv::tb #(
+        TEST_MODE: "version",
+        SCREEN_WIDTH: 320,
+        SCREEN_HEIGHT: 240,
+        VALID_RATE: 10,
+        TIMEOUT_CYCLES: 1000
+    ) ();
+}
+
+// Test case: Fill rectangle command
+module tb_display_controller_fill_rect() {
+    inst tb_inst: $sv::tb #(
+        TEST_MODE: "fill_rect",
+        SCREEN_WIDTH: 320,
+        SCREEN_HEIGHT: 240,
+        VALID_RATE: 8,
+        TIMEOUT_CYCLES: 2000
+    ) ();
+}
+
+// Test case: Write pixel command
+module tb_display_controller_write_pixel() {
+    inst tb_inst: $sv::tb #(
+        TEST_MODE: "write_pixel",
+        SCREEN_WIDTH: 320,
+        SCREEN_HEIGHT: 240,
+        VALID_RATE: 9,
+        TIMEOUT_CYCLES: 1500
+    ) ();
+}
+
+// Test case: Multiple commands
+module tb_display_controller_multiple_commands() {
+    inst tb_inst: $sv::tb #(
+        TEST_MODE: "multiple_commands",
+        SCREEN_WIDTH: 320,
+        SCREEN_HEIGHT: 240,
+        VALID_RATE: 7,
+        TIMEOUT_CYCLES: 3000
+    ) ();
+}
+
+// Default test case
+module tb_display_controller_default() {
+    inst tb_inst: $sv::tb #(
+        TEST_MODE: "version",
+        SCREEN_WIDTH: 320,
+        SCREEN_HEIGHT: 240,
+        VALID_RATE: 8,
+        TIMEOUT_CYCLES: 1000
+    ) ();
+}
+
+// Test case with different screen size
+module tb_display_controller_small_screen() {
+    inst tb_inst: $sv::tb #(
+        TEST_MODE: "fill_rect",
+        SCREEN_WIDTH: 64,
+        SCREEN_HEIGHT: 48,
+        VALID_RATE: 8,
+        TIMEOUT_CYCLES: 2000
+    ) ();
+}
