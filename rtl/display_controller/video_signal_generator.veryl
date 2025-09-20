@@ -166,12 +166,7 @@ pub module video_signal_generator #(
             // Initialize data
             pixel_data_internal = '0;
             data_in_sync_reg = 1'b0;
-            
-            // Initialize buffer
-            for i:u32 in 0..SCREEN_WIDTH {
-                multiplier_buffer[i] = '0;
-            }
-            
+                        
             // Initialize output registers
             data_enable_reg = 1'b0;
             hsync_reg = 1'b1;  // Idle high

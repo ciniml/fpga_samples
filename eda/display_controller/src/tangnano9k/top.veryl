@@ -22,6 +22,9 @@ module top(
     // DVI
     tmds_clk_p: output logic,
     tmds_data_p: output logic<3>,
+
+    // Debug out
+    debug_out: output logic<6>,
 ) {
   var clock_dvi: logic ;
   var pll_lock: logic ;
@@ -114,6 +117,10 @@ module top(
       SCREEN_WIDTH,
       SCREEN_HEIGHT,
   ) ();
+  inst vram_write: display_controller::vram_write_if #(
+      SCREEN_WIDTH,
+      SCREEN_HEIGHT,
+  ) ();
 
   var vram: logic<8>[SCREEN_WIDTH*SCREEN_HEIGHT];
   function set_vram_element(value: input u8, value_out: output u8) {
@@ -140,10 +147,109 @@ module top(
       }
     }
   }
+  always_ff (clock_dvi_as_clock, reset_dvi_as_reset) {
+    if_reset {
+    }
+    else {
+      if vram_write.en {
+        vram[vram_write.addr] = vram_write.data;
+      }
+    }
+  }
 
+  // Display Controller instance.
+  inst axis_command_in: axi4s::axi4s_if::<8, false, 1> ();
+  inst axis_command_out: axi4s::axi4s_if::<8, false, 1> ();
+  enum command_state_t {
+    IDLE,
+    WAIT_VSYNC,
+    COMMAND,
+    PARAMETER_X_H,
+    PARAMETER_X_L,
+    PARAMETER_Y_H,
+    PARAMETER_Y_L,
+    PARAMETER_W_H,
+    PARAMETER_W_L,
+    PARAMETER_H_H,
+    PARAMETER_H_L,
+    PARAMETER_FILL_COLOR,
+  }
+  var command_state: command_state_t;
+  var fill_color: logic<8>;
+  var frame_counter: u32;
+  always_comb {
+    axis_command_out.tready = 1;
+  }
+  always_ff(clock_dvi_as_clock, reset_dvi_as_reset) {
+    if_reset {
+      command_state = command_state_t::IDLE;
+      axis_command_in.tvalid = 0;
+      axis_command_in.tdata = 0;
+      axis_command_in.tlast = 0;
+      axis_command_in.tuser[0] = 0;
+      frame_counter = 0;
+    } else {
+      if axis_command_in.tvalid && axis_command_in.tready {
+        axis_command_in.tvalid = 0;
+      }
+      if !axis_command_in.tvalid || axis_command_in.tready {
+        axis_command_in.tvalid = outside command_state {command_state_t::IDLE, command_state_t::WAIT_VSYNC};
+        axis_command_in.tuser[0] = command_state == command_state_t::COMMAND;
+        axis_command_in.tdata = case command_state {
+          command_state_t::COMMAND: 8'h20,  // FILL_RECT
+          command_state_t::PARAMETER_X_H: 8'h00,
+          command_state_t::PARAMETER_X_L: 8'h00,
+          command_state_t::PARAMETER_Y_H: 8'h00,
+          command_state_t::PARAMETER_Y_L: 8'h00,
+          command_state_t::PARAMETER_W_H: ((SCREEN_WIDTH-1) >> 8) as u8,
+          command_state_t::PARAMETER_W_L: (SCREEN_WIDTH-1) as u8,
+          command_state_t::PARAMETER_H_H: ((SCREEN_HEIGHT-1) >> 8) as u8,
+          command_state_t::PARAMETER_H_L: (SCREEN_HEIGHT-1) as u8,
+          command_state_t::PARAMETER_FILL_COLOR: fill_color,
+          default: 8'h00,
+        };
+        command_state = case command_state {
+          command_state_t::IDLE: if !video_out.vsync ? command_state_t::WAIT_VSYNC : command_state_t::IDLE,
+          command_state_t::WAIT_VSYNC: if video_out.vsync ? (if frame_counter == 15-1 ? command_state_t::COMMAND : command_state_t::IDLE) : command_state_t::WAIT_VSYNC,
+          command_state_t::COMMAND: command_state_t::PARAMETER_X_H,
+          command_state_t::PARAMETER_X_H: command_state_t::PARAMETER_X_L,
+          command_state_t::PARAMETER_X_L: command_state_t::PARAMETER_Y_H,
+          command_state_t::PARAMETER_Y_H: command_state_t::PARAMETER_Y_L,
+          command_state_t::PARAMETER_Y_L: command_state_t::PARAMETER_W_H,
+          command_state_t::PARAMETER_W_H: command_state_t::PARAMETER_W_L,
+          command_state_t::PARAMETER_W_L: command_state_t::PARAMETER_H_H,
+          command_state_t::PARAMETER_H_H: command_state_t::PARAMETER_H_L,
+          command_state_t::PARAMETER_H_L: command_state_t::PARAMETER_FILL_COLOR,
+          command_state_t::PARAMETER_FILL_COLOR: command_state_t::IDLE,
+          default: command_state_t::IDLE,
+        };
+        if command_state == command_state_t::WAIT_VSYNC && video_out.vsync {
+          frame_counter = frame_counter + 1;
+          if frame_counter == 15-1 {
+            frame_counter = 0;
+          }
+        }
+        if command_state == command_state_t::PARAMETER_FILL_COLOR {
+          fill_color = fill_color + 1;
+        }
+      }
+    }
+  }
+
+  inst display_controller_inst: display_controller::display_controller #(
+      SCREEN_WIDTH,
+      SCREEN_HEIGHT,
+  ) (
+      r#clock: clock_dvi_as_clock,
+      r#reset: reset_dvi_as_reset,
+      axis_command_in: axis_command_in,
+      axis_command_out: axis_command_out,
+      vram_write,
+  );
+  
   inst vram_reader_inst: display_controller::vram_reader #(
-      SCREEN_WIDTH: SCREEN_WIDTH,
-      SCREEN_HEIGHT: SCREEN_HEIGHT,
+      SCREEN_WIDTH,
+      SCREEN_HEIGHT,
       PIXEL_BITS: 8,
   ) (
     r#clock: clock_dvi_as_clock,
@@ -284,4 +390,13 @@ module top(
     RESET: reset_dvi,
   );
 
+  // Debug out
+  always_comb {
+    debug_out[0] = r#clock;
+    debug_out[1] = axis_command_in.tvalid;
+    debug_out[2] = axis_command_in.tready;
+    debug_out[3] = vram_write.en;
+    debug_out[4] = 0;
+    debug_out[5] = 0;
+  }
 }

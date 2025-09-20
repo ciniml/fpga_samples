@@ -26,7 +26,6 @@ pub module display_controller #(
   axis_command_out: modport axi4s::axi4s_if::<8, false, 1>::master,
 
   // VRAM interface
-  vram_read: modport vram_read_if::master,
   vram_write: modport vram_write_if::master,
 ) {
   // State
@@ -250,8 +249,8 @@ pub module display_controller #(
 
           let x_out_of_range: bool = x >= SCREEN_WIDTH as width_t;
           let y_out_of_range: bool = y >= SCREEN_HEIGHT as height_t;
-          let width_out_of_range: bool = x + width + 1 >= SCREEN_WIDTH as width_t;
-          let height_out_of_range: bool = y + height + 1 >= SCREEN_HEIGHT as height_t;
+          let width_out_of_range: bool = x + width >= SCREEN_WIDTH as width_t;
+          let height_out_of_range: bool = y + height >= SCREEN_HEIGHT as height_t;
 
           let has_coordinate: bool = inside command {COMMAND_FILL_RECT, COMMAND_WRITE_RAW, COMMAND_WRITE_PIXEL};
           let has_area: bool = inside command {COMMAND_FILL_RECT, COMMAND_WRITE_RAW};

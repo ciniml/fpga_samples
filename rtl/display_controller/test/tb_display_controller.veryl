@@ -40,11 +40,6 @@ module tb #(
     localparam int VRAM_ADDR_BITS = $clog2(SCREEN_WIDTH * SCREEN_HEIGHT - 1);
     typedef logic[VRAM_ADDR_BITS-1:0] vram_addr_t;
 
-    // VRAM read interface
-    logic [VRAM_ADDR_BITS-1:0] vram_read_addr;
-    logic                      vram_read_en;
-    logic [PIXEL_BITS-1:0]     vram_read_data;
-
     // VRAM write interface
     logic [VRAM_ADDR_BITS-1:0] vram_write_addr;
     logic                      vram_write_en;
@@ -53,10 +48,6 @@ module tb #(
     // interfaces
     \{ axi4s::axi4s_if::<8, false, 1> \} axis_command_in ();
     \{ axi4s::axi4s_if::<8, false, 1> \} axis_command_out ();
-    \{ vram_read_if \} #(
-        .SCREEN_WIDTH(SCREEN_WIDTH),
-        .SCREEN_HEIGHT(SCREEN_HEIGHT)
-    ) vram_read ();
     \{ vram_write_if \} #(
         .SCREEN_WIDTH(SCREEN_WIDTH),
         .SCREEN_HEIGHT(SCREEN_HEIGHT)
@@ -71,7 +62,6 @@ module tb #(
         .reset(reset_n),
         .axis_command_in(axis_command_in),
         .axis_command_out(axis_command_out),
-        .vram_read(vram_read),
         .vram_write(vram_write)
     );
 
@@ -89,10 +79,6 @@ module tb #(
         axis_command_out_tlast = axis_command_out.tlast;
         axis_command_out_tuser = axis_command_out.tuser[0];
 
-        vram_read_addr = vram_read.addr;
-        vram_read_en = vram_read.en;
-        vram_read.data = vram_read_data;
-
         vram_write_addr = vram_write.addr;
         vram_write_en = vram_write.en;
         vram_write_data = vram_write.data;
@@ -100,15 +86,6 @@ module tb #(
 
     // VRAM memory model
     logic [PIXEL_BITS-1:0] vram_memory [0:SCREEN_WIDTH*SCREEN_HEIGHT-1];
-
-    // VRAM read response (combinational)
-    always_comb begin
-        if (vram_read_en && vram_read_addr < vram_addr_t'(SCREEN_WIDTH * SCREEN_HEIGHT)) begin
-            vram_read_data = vram_memory[vram_read_addr];
-        end else begin
-            vram_read_data = {PIXEL_BITS{1'b0}};
-        end
-    end
 
     // VRAM write access monitor and recording
     logic [VRAM_ADDR_BITS-1:0] recorded_write_addr [];

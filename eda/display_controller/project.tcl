@@ -4,8 +4,10 @@ set TARGET        [lindex $argv 2]
 set DEVICE_FAMILY [lindex $argv 3]
 set DEVICE_PART   [lindex $argv 4]
 set PROJECT_NAME  [lindex $argv 5]
-# Additional args
 
+#create_project -name ${PROJECT_NAME} -pn ${DEVICE_PART} -device_version {C}
+
+# Additional args
 set_option -output_base_name ${PROJECT_NAME}
 set_device -name $DEVICE_FAMILY $DEVICE_PART
 
@@ -42,7 +44,12 @@ add_file -type verilog [file normalize ${SRC_DIR}/dependencies/display_controlle
 add_file -type verilog [file normalize ${SRC_DIR}/dependencies/display_controller/video_io_if.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/dependencies/display_controller/vram_if.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/dependencies/display_controller/vram_reader.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/dependencies/display_controller/vram_writer.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/dependencies/display_controller/display_controller.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/dependencies/axi4s/axi_stream.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/dependencies/axi4s/axi_stream_demux.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/dependencies/axi4s/axi_stream_mux.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/dependencies/std/lfsr/lfsr_galois.sv]
 
 if {${TARGET} == "tangprimer25k"} {
     add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_pll_27/gowin_pll_27.v]
