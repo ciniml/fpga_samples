@@ -206,6 +206,36 @@ module tb #(
 
                 $display("Test mode: write_pixel (x=50, y=60, color=0xCD)");
             end
+            "write_raw": begin
+                test_command_count = 15;
+                test_commands = new[15];
+                test_command_sof = new[15];
+
+                // COMMAND_WRITE_RAW: x=5, y=10, w=3, h=2, followed by 6 pixel data bytes
+                test_commands[0] = 8'h30; test_command_sof[0] = 1'b1; // COMMAND_WRITE_RAW
+                test_commands[1] = 8'h00; test_command_sof[1] = 1'b0; // x[15:8]
+                test_commands[2] = 8'h05; test_command_sof[2] = 1'b0; // x[7:0] = 5
+                test_commands[3] = 8'h00; test_command_sof[3] = 1'b0; // y[15:8]
+                test_commands[4] = 8'h0A; test_command_sof[4] = 1'b0; // y[7:0] = 10
+                test_commands[5] = 8'h00; test_command_sof[5] = 1'b0; // w[15:8]
+                test_commands[6] = 8'h02; test_command_sof[6] = 1'b0; // w[7:0] = 2 (3-1)
+                test_commands[7] = 8'h00; test_command_sof[7] = 1'b0; // h[15:8]
+                test_commands[8] = 8'h01; test_command_sof[8] = 1'b0; // h[7:0] = 1 (2-1)
+
+                // Pixel data: 6 bytes for 3x2 area
+                test_commands[9] = 8'hAA; test_command_sof[9] = 1'b0; // Pixel (5,10)
+                test_commands[10] = 8'hBB; test_command_sof[10] = 1'b0; // Pixel (6,10)
+                test_commands[11] = 8'hCC; test_command_sof[11] = 1'b0; // Pixel (7,10)
+                test_commands[12] = 8'hDD; test_command_sof[12] = 1'b0; // Pixel (5,11)
+                test_commands[13] = 8'hEE; test_command_sof[13] = 1'b0; // Pixel (6,11)
+                test_commands[14] = 8'hFF; test_command_sof[14] = 1'b0; // Pixel (7,11)
+
+                expected_response_count = 1;
+                expected_response = new[1];
+                expected_response[0] = 8'h00; // Response for completion
+
+                $display("Test mode: write_raw (x=5, y=10, w=3, h=2, 6 pixels)");
+            end
             "multiple_commands": begin
                 test_command_count = 11;
                 test_commands = new[11];
@@ -434,6 +464,17 @@ module tb_display_controller_default() {
         SCREEN_HEIGHT: 240,
         VALID_RATE: 8,
         TIMEOUT_CYCLES: 1000
+    ) ();
+}
+
+// Test case: Write raw pixel data
+module tb_display_controller_write_raw() {
+    inst tb_inst: $sv::tb #(
+        TEST_MODE: "write_raw",
+        SCREEN_WIDTH: 320,
+        SCREEN_HEIGHT: 240,
+        VALID_RATE: 8,
+        TIMEOUT_CYCLES: 2000
     ) ();
 }
 

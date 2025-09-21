@@ -99,6 +99,7 @@ pub module vram_writer #(
       complete = 0;
     } else {
       write_en = 0;  // By default, the write enable signal is deasserted.
+      complete = 0;  // The complete signal is asserted at most one clock cycle.
 
       case state {
         state_t::IDLE: {
@@ -107,7 +108,6 @@ pub module vram_writer #(
             write_address_next = (new_command.y * SCREEN_WIDTH) as num_pixels_t;  // calculate the address of the left-most pixel of the line.
             command = new_command;
             state = state_t::CALCULATE_OFFSET;
-            complete = 0;
           }
         }
         state_t::CALCULATE_OFFSET: {

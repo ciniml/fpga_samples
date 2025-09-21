@@ -1,8 +1,8 @@
 [General]
 ipc_version=4
-file=gowin_rpll_ser
-module=gowin_rpll_ser
-target_device=gw1nr9c-004
+file=gowin_rpll_main
+module=gowin_rpll_main
+target_device=gw1nr9c-019
 type=clock_rpll
 version=1.0
 
@@ -14,7 +14,7 @@ CLKOUTD=false
 CLKOUTP=false
 CLKOUT_BYPASS=false
 CLKOUT_DIVIDE_DYN=true
-CLKOUT_FREQ=371.25
+CLKOUT_FREQ=54
 CLKOUT_TOLERANCE=0
 DYNAMIC=true
 LANG=0

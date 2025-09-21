@@ -27,6 +27,9 @@ pub module display_controller #(
 
   // VRAM interface
   vram_write: modport vram_write_if::master,
+
+  // Debug signals,
+  debug_signals: output logic<2> = _,
 ) {
   // State
   enum state_t {
@@ -46,8 +49,8 @@ pub module display_controller #(
 
   // Command stream demux
   const COMMAND_STREAMS: u32 = 2;
-  const COMMAND_STREAM_COMMAND: logic<COMMAND_STREAMS> = 0;
-  const COMMAND_STREAM_PIXEL_DATA: logic<COMMAND_STREAMS> = 1;
+  const COMMAND_STREAM_COMMAND: logic<$clog2(COMMAND_STREAMS+1)> = 0;
+  const COMMAND_STREAM_PIXEL_DATA: logic<$clog2(COMMAND_STREAMS+1)> = 1;
   inst command_stream: axi4s::axi4s_if::<8, false, 1>[COMMAND_STREAMS];
   var select_command_stream: logic<$clog2(COMMAND_STREAMS+1)>;
 
@@ -63,8 +66,8 @@ pub module display_controller #(
 
   // Pixel stream mux
   const PIXEL_STREAMS: u32 = 2;
-  const PIXEL_STREAM_FROM_COMMAND: logic<PIXEL_STREAMS> = 0;
-  const PIXEL_STREAM_FILL: logic<PIXEL_STREAMS> = 1;
+  const PIXEL_STREAM_FROM_COMMAND: logic<$clog2(PIXEL_STREAMS+1)> = 0;
+  const PIXEL_STREAM_FILL: logic<$clog2(PIXEL_STREAMS+1)> = 1;
   inst pixel_stream_in: axi4s::axi4s_if::<8, false, 0>[PIXEL_STREAMS];
   inst pixel_stream_out: axi4s::axi4s_if::<8, false, 0>;
   inst vram_writer_data_in: axi4s::axi4s_if::<32, true, 1>;
@@ -85,7 +88,7 @@ pub module display_controller #(
     pixel_stream_in[PIXEL_STREAM_FROM_COMMAND].tdata = command_stream[COMMAND_STREAM_PIXEL_DATA].tdata;
     pixel_stream_in[PIXEL_STREAM_FROM_COMMAND].tlast = 0;
     pixel_stream_in[PIXEL_STREAM_FROM_COMMAND].tuser = 0;
-    command_stream[COMMAND_STREAM_PIXEL_DATA].tready = pixel_stream_in[PIXEL_STREAM_FROM_COMMAND].tvalid;
+    command_stream[COMMAND_STREAM_PIXEL_DATA].tready = pixel_stream_in[PIXEL_STREAM_FROM_COMMAND].tready;
     // Pixel Stream 1: fill.
     pixel_stream_in[PIXEL_STREAM_FILL].tvalid = 1;
     pixel_stream_in[PIXEL_STREAM_FILL].tdata = fill_color;
@@ -97,6 +100,10 @@ pub module display_controller #(
     vram_writer_data_in.tdata = {24'0, pixel_stream_out.tdata};
     vram_writer_data_in.tlast = pixel_stream_out.tlast;
     vram_writer_data_in.tuser = pixel_stream_out.tuser;
+    pixel_stream_out.tready = vram_writer_data_in.tready;
+
+    debug_signals[0] = select_pixel_stream[0];
+    debug_signals[1] = select_command_stream[0];
   }
 
   // VRAM writer to write pixel data from the pixel stream.
@@ -216,7 +223,7 @@ pub module display_controller #(
                 last_parameter_index_expected = 8 as parameter_index_t;
               }
               COMMAND_WRITE_RAW: {
-                last_parameter_index_expected = 8 as parameter_index_t;
+                last_parameter_index_expected = 7 as parameter_index_t;
               }
               COMMAND_WRITE_PIXEL: {
                 last_parameter_index_expected = 4 as parameter_index_t;
@@ -232,6 +239,8 @@ pub module display_controller #(
             if command_stream[COMMAND_STREAM_COMMAND].tuser[0] {
               command = command_stream[COMMAND_STREAM_COMMAND].tdata;
               state = state_t::START_COMMAND;
+              parameter_index = 0;
+              discarding = false;
             } else {
               parameters[parameter_index] = command_stream[COMMAND_STREAM_COMMAND].tdata;
               parameter_index = parameter_index + 1;
@@ -266,7 +275,7 @@ pub module display_controller #(
         state_t::EXECUTE_COMMAND: {
           if command != COMMAND_VERSION {
             axis_command_out.tvalid = 1;
-            axis_command_out.tdata = 0;
+            axis_command_out.tdata = command;
           }
 
           case command {
@@ -300,7 +309,7 @@ pub module display_controller #(
               state = state_t::POST_EXECUTE_COMMAND;
             }
             COMMAND_WRITE_RAW: {
-              fill_color = get_fill_color();
+              fill_color = '0;
               let vram_command: vram_writer_pkg::vram_writer_cmd_t = vram_writer_pkg::vram_writer_cmd_t'{
                 x: get_x() as u16,
                 y: get_y() as u16,

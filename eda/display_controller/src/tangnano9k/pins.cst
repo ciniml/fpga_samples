@@ -81,6 +81,15 @@ IO_PORT "led[5]" IO_TYPE=LVCMOS18;
 //IO_PORT "lcd_rw" IO_TYPE=LVCMOS33
 //IO_PORT "lcd_e" IO_TYPE=LVCMOS33
 
+IO_LOC "spi_miso" 51
+IO_LOC "spi_mosi" 53
+IO_LOC "spi_sck"  54
+IO_LOC "spi_cs"   55
+IO_PORT "spi_miso" IO_TYPE=LVCMOS33
+IO_PORT "spi_mosi" IO_TYPE=LVCMOS33
+IO_PORT "spi_sck"  IO_TYPE=LVCMOS33
+IO_PORT "spi_cs"   IO_TYPE=LVCMOS33
+
 IO_LOC "debug_out[5]" 27
 IO_LOC "debug_out[4]" 26
 IO_LOC "debug_out[3]" 25

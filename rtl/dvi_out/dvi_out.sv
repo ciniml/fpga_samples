@@ -34,7 +34,7 @@ typedef struct packed {
     logic [26:0] data;
 } video_reg_t;
 
-localparam VIDEO_REGS_DEPTH = 1;
+localparam VIDEO_REGS_DEPTH = 2;
 
 function automatic logic [1:0] popCount2(input logic [1:0] in);
     popCount2 = {1'b0, in[0]} + {1'b0, in[1]};

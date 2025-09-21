@@ -6,7 +6,7 @@ RTL_DIR ?= $(ROOT_DIR)/rtl
 
 PROJECT_ADDITIONAL_ARGS := $(abspath src/cq_logo.hex)
 
-SRCS := src/$(TARGET)/pins.cst $(wildcard src/$(TARGET)/*.cst) $(wildcard src/$(TARGET)/*.sdc) $(wildcard src/$(TARGET)/*.sv) project.tcl $(RTL_DIR)/dvi_out/dvi_out.sv $(RTL_DIR)/video/test_pattern_generator.sv
+SRCS := src/$(TARGET)/pins.cst $(wildcard src/$(TARGET)/*.cst) $(wildcard src/$(TARGET)/*.sdc) src/$(TARGET)/top.veryl src/$(TARGET)/top.sv $(wildcard ../../rtl/display_controller/*.veryl) project.tcl $(RTL_DIR)/dvi_out/dvi_out.sv $(RTL_DIR)/video/test_pattern_generator.sv
 
 PMOD_PORT_OFFSET ?= 0
 PMOD_TARGETS := tangprimer25k
@@ -20,7 +20,7 @@ endif
 
 include ../build_gowin.mk
 
-src/$(TARGET)/top.sv: src/$(TARGET)/top.veryl
+src/$(TARGET)/top.sv: src/$(TARGET)/top.veryl $(wildcard ../../rtl/display_controller/*.veryl)
 	cd src/$(TARGET) && veryl build
 
 PMOD_MODULES += $(MOD_DIR)/sipeed/pmod_dvi/pmod_pins.csv

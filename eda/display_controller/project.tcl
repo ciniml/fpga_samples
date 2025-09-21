@@ -15,8 +15,8 @@ set_option -verilog_std sysv2017
 set_option -vhdl_std vhd2008
 set_option -print_all_synthesis_warning 1
 set_option -top_module top
-# set_option -place_option 1
-# set_option -route_option 2
+set_option -place_option 1
+set_option -route_option 2
 
 if {${TARGET} == "comprocboard_9k"} {
     set_option -use_sspi_as_gpio 1
@@ -40,6 +40,8 @@ add_file -type verilog [file normalize ${RTL_DIR}/dvi_out/dvi_out.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/video/test_pattern_generator.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/top.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/reset_seq.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/dependencies/spi/spi_slave.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/dependencies/sync/synchronizer.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/dependencies/display_controller/video_signal_generator.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/dependencies/display_controller/video_io_if.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/dependencies/display_controller/vram_if.sv]
@@ -49,6 +51,7 @@ add_file -type verilog [file normalize ${SRC_DIR}/dependencies/display_controlle
 add_file -type verilog [file normalize ${SRC_DIR}/dependencies/axi4s/axi_stream.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/dependencies/axi4s/axi_stream_demux.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/dependencies/axi4s/axi_stream_mux.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/dependencies/axi4s/axi4s_fifo.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/dependencies/std/lfsr/lfsr_galois.sv]
 
 if {${TARGET} == "tangprimer25k"} {
@@ -58,7 +61,8 @@ if {${TARGET} == "tangprimer25k"} {
     add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_pllvr_dvi/gowin_pllvr_dvi.v]
     add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_pllvr_ser/gowin_pllvr_ser.v]
 } else {
-    add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_rpll_dvi/gowin_rpll_dvi.v]
+    add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_rpll_main/gowin_rpll_main.v]
+    add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_clkdiv_dvi/gowin_clkdiv_dvi.v]
     add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_rpll_ser/gowin_rpll_ser.v]
 }
 
