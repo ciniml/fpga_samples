@@ -10,41 +10,40 @@
 // 'aはメインクロックドメイン、'spi_posと'spi_negはSPIクロックドメインです
 // 期待されるSPIモードはSPIモード0で、これはSCKの立ち上がりエッジでラッチし、立ち下がりエッジでシフトすることを意味します
 pub module spi_slave::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> #(
-    param IDLE_SEND_DATA: logic<SPI_WIDTH> = '1,
+    param IDLE_SEND_DATA: logic<SPI_WIDTH> = '1,  // アイドル時に送信するデータ
 ) (
-    r#clock: input clock,
-    r#reset: input reset,
-    
-    spi_cs:    input  'spi_pos reset_async_high,
-    spi_sck:   input  'spi_pos clock,
-    spi_miso:  output 'spi_neg logic,
-    spi_mosi:  input  'spi_pos logic,
-    
-    // SPI receive stream from MOSI
-    axis_receive: modport axi4s::axi4s_if::<SPI_WIDTH, false, 1>::master,
-    
-    // SPI send stream to MISO
-    axis_send: modport axi4s::axi4s_if::<SPI_WIDTH, false, 1>::slave,
+    r#clock: input clock,      // システムクロック
+    r#reset: input reset,      // システムリセット
+
+    spi_cs:    input  'spi_pos reset_async_high,  // SPIチップセレクト信号（アクティブLow）
+    spi_sck:   input  'spi_pos clock,             // SPIクロック信号
+    spi_miso:  output 'spi_neg logic,             // SPIデータ出力（スレーブからマスターへ）
+    spi_mosi:  input  'spi_pos logic,             // SPIデータ入力（マスターからスレーブへ）
+
+    // MOSIからのSPI受信ストリーム
+    axis_receive: modport axi4s::axi4s_if::<SPI_WIDTH, false, 1>::master,  // 受信データストリーム
+
+    // MISOへのSPI送信ストリーム
+    axis_send: modport axi4s::axi4s_if::<SPI_WIDTH, false, 1>::slave,      // 送信データストリーム
 ) {
-    inst fifo_in: axi4s::axi4s_if::<SPI_WIDTH, false, 1>;
-    inst fifo: axi4s::axi4s_fifo::<5, SPI_WIDTH, false, 1, axi4s::axi4s_if::<SPI_WIDTH, false, 1>> (
+    inst fifo_in: axi4s::axi4s_if::<SPI_WIDTH, false, 1>;  // FIFO入力インターフェース
+    inst fifo: axi4s::axi4s_fifo::<5, SPI_WIDTH, false, 1, axi4s::axi4s_if::<SPI_WIDTH, false, 1>> (  // 受信データ用FIFO
         r#clock,
         r#reset,
         data_in: fifo_in,
         data_out: axis_receive,
     );
 
-    type spi_word_t = logic<SPI_WIDTH>;
+    type spi_word_t = logic<SPI_WIDTH>;  // SPIワード型定義
 
-
-    var spi_shift_in_reg: 'spi_pos spi_word_t;
-    var spi_sck_pos: 'spi_pos clock_posedge;
-    var spi_sck_neg: 'spi_neg clock_negedge;
-    var spi_cs_neg_domain: 'spi_neg reset_async_high;
-    assign spi_sck_pos = spi_sck as clock_posedge;
-    unsafe(cdc) {
-        assign spi_sck_neg = spi_sck as clock_negedge;
-        assign spi_cs_neg_domain = spi_cs;
+    var spi_shift_in_reg: 'spi_pos spi_word_t;            // 入力シフトレジスタ
+    var spi_sck_pos: 'spi_pos clock_posedge;              // SCKポジティブエッジクロック
+    var spi_sck_neg: 'spi_neg clock_negedge;              // SCKネガティブエッジクロック
+    var spi_cs_neg_domain: 'spi_neg reset_async_high;     // ネガティブエッジドメイン用CS信号
+    assign spi_sck_pos = spi_sck as clock_posedge;        // SCKをポジティブエッジクロックとして割り当て
+    unsafe(cdc) {  // クロックドメイン跨ぎの危険な操作
+        assign spi_sck_neg = spi_sck as clock_negedge;    // SCKをネガティブエッジクロックとして割り当て
+        assign spi_cs_neg_domain = spi_cs;                // CS信号をネガティブドメインに割り当て
     }
 
     // SPI Latch process

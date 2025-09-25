@@ -6,67 +6,66 @@
 
 // SPIマスターモジュール
 pub module spi_master::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> (
-    r#clock: input clock,
-    r#reset: input reset,
-    
-    spi_cs:    output           logic,
-    spi_sck:   output           logic,
-    spi_miso:  input    'spi    logic,
-    spi_mosi:  output           logic,
-    
-    axis_receive: modport axi4s::axi4s_if::<SPI_WIDTH, false, 1>::master,
-    axis_send: modport axi4s::axi4s_if::<SPI_WIDTH, true, 0>::slave,
-) {
-    type spi_word_t = logic<SPI_WIDTH>;
+    r#clock: input clock,      // システムクロック
+    r#reset: input reset,      // システムリセット
 
-    enum state_t {
-        RESET,
-        IDLE,
-        ASSERT_CS,
-        TRANSFER,
-        PAUSE,
-        WAIT_LAST_BIT_SYNC_1,
-        WAIT_LAST_BIT_SYNC_2,
+    spi_cs:    output           logic,  // SPIチップセレクト出力
+    spi_sck:   output           logic,  // SPIクロック出力
+    spi_miso:  input    'spi    logic,  // SPIデータ入力（スレーブからマスターへ）
+    spi_mosi:  output           logic,  // SPIデータ出力（マスターからスレーブへ）
+
+    axis_receive: modport axi4s::axi4s_if::<SPI_WIDTH, false, 1>::master,  // 受信データストリーム
+    axis_send: modport axi4s::axi4s_if::<SPI_WIDTH, true, 0>::slave,       // 送信データストリーム
+) {
+    type spi_word_t = logic<SPI_WIDTH>;  // SPIワード型定義
+
+    enum state_t {               // ステートマシンの状態定義
+        RESET,                   // リセット状態
+        IDLE,                    // アイドル状態
+        ASSERT_CS,               // チップセレクトアサート状態
+        TRANSFER,                // データ転送状態
+        PAUSE,                   // 一時停止状態
+        WAIT_LAST_BIT_SYNC_1,    // 最後のビット同期待ち状態1
+        WAIT_LAST_BIT_SYNC_2,    // 最後のビット同期待ち状態2
     }
 
-    var state: state_t;
-    var spi_out_data: spi_word_t;
-    var spi_out_last: logic;
-    var spi_in_data: spi_word_t;
-    var spi_counter: spi_word_t;
-    var spi_miso_sync: logic;
-    
-    var receive_in_frame: logic;
-    var receive_first: logic;
-    var receive_valid: logic;
-    var receive_data: spi_word_t;
+    var state: state_t;              // 現在の状態
+    var spi_out_data: spi_word_t;    // 送信データレジスタ
+    var spi_out_last: logic;         // 最後のデータフラグ
+    var spi_in_data: spi_word_t;     // 受信データレジスタ
+    var spi_counter: spi_word_t;     // ビットカウンター
+    var spi_miso_sync: logic;        // 同期化されたMISO信号
 
-    unsafe(cdc) {
+    var receive_in_frame: logic;       // フレーム内受信フラグ
+    var receive_first: logic;          // 最初の受信データフラグ
+    var receive_valid: logic;          // 受信データ有効フラグ
+    var receive_data: spi_word_t;      // 受信データ
+
+    unsafe(cdc) {  // クロックドメイン跨ぎの同期化処理
         inst spi_miso_sync_inst: synchronizer_m #(WIDTH: 1, STAGES: 2) (i_clk: r#clock, i_rst: r#reset, i_d: spi_miso, o_d: spi_miso_sync);
     }
-    
-    always_comb {
-        axis_receive.tvalid = receive_valid;
-        axis_receive.tdata = receive_data;
-        axis_receive.tuser[0] = receive_first;
-        axis_receive.tlast = 0;
-        
-        case state {
-            state_t::IDLE: {
-                axis_send.tready = 1;
+
+    always_comb {  // 組み合わせロジック
+        axis_receive.tvalid = receive_valid;    // 受信データ有効信号
+        axis_receive.tdata = receive_data;      // 受信データ
+        axis_receive.tuser[0] = receive_first;  // フレーム開始フラグ
+        axis_receive.tlast = 0;                 // 常に0（未使用）
+        case state {  // 状態に応じたtreadyの制御
+            state_t::IDLE: {        // アイドル状態
+                axis_send.tready = 1;  // 送信データを受け付け可能
             }
-            state_t::TRANSFER: {
-                axis_send.tready = spi_sck && spi_counter[0] && !spi_out_last;
+            state_t::TRANSFER: {    // 転送状態
+                axis_send.tready = spi_sck && spi_counter[0] && !spi_out_last;  // 条件が整った時のみ受け付け
             }
-            state_t::PAUSE: {
-                axis_send.tready = 1;
+            state_t::PAUSE: {       // 一時停止状態
+                axis_send.tready = 1;  // 送信データを受け付け可能
             }
-            default: {
-                axis_send.tready = 0;
+            default: {              // その他の状態
+                axis_send.tready = 0;  // 送信データを受け付けない
             }
         }
 
-        spi_mosi = spi_out_data[msb];
+        spi_mosi = spi_out_data[msb];  // 送信データのMSBをMOSIに出力
     }
 
     always_ff(r#clock, r#reset) {

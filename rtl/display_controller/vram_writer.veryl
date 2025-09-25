@@ -7,10 +7,10 @@ package vram_writer_pkg {
    * VRAMライターコマンド構造
    */
   struct vram_writer_cmd_t {
-    x: u16,         // X coordinate of the upper-left pixel of the rectangle area to write
-    y: u16,         // Y coordinate of the upper-left pixel of the rectangle area to write
-    w_minus_1: u16, // Width of the region to write (minus 1) e.g. 0 means 1 pixel wide
-    h_minus_1: u16, // Height of the region to write (minus 1) e.g. 0 means 1 pixel tall
+    x: u16,         // 書き込み矩形領域の左上ピクセルX座標
+    y: u16,         // 書き込み矩形領域の左上ピクセルY座標
+    w_minus_1: u16, // 書き込み領域の幅（-1）例：0=1ピクセル幅
+    h_minus_1: u16, // 書き込み領域の高さ（-1）例：0=1ピクセル高
   }
 }
 
@@ -22,41 +22,41 @@ pub module vram_writer #(
   param SCREEN_HEIGHT: u32 = 240,
   param PIXEL_BITS: u32 = 8,
 ) (
-  r#clock: input clock,
-  r#reset: input reset,
+  r#clock: input clock,     // システムクロック
+  r#reset: input reset,     // システムリセット
 
-  // Command interface
-  axis_command_in: modport axi4s::axi4s_if::<64, false, 0>::slave,
-  axis_data_in: modport axi4s::axi4s_if::<32, true, 1>::slave,
+  // コマンドインターフェース
+  axis_command_in: modport axi4s::axi4s_if::<64, false, 0>::slave,  // コマンド入力ストリーム
+  axis_data_in: modport axi4s::axi4s_if::<32, true, 1>::slave,      // データ入力ストリーム
 
-  // VRAM interface
-  vram_write: modport vram_write_if::master,
+  // VRAMインターフェース
+  vram_write: modport vram_write_if::master,  // VRAM書き込みインターフェース
 
-  // Complete signal
-  complete: output logic,
+  // 完了信号
+  complete: output logic,   // 書き込み完了信号
 ) {
-  // State
+  // 状態定義
   enum state_t {
-    IDLE,             // IDLE
-    CALCULATE_OFFSET, // prepare offset address
-    TRANSFER,         // transfer pixel data
+    IDLE,             // アイドル状態
+    CALCULATE_OFFSET, // オフセットアドレス計算状態
+    TRANSFER,         // ピクセルデータ転送状態
   }
-  var state: state_t;
- 
-  type width_t = logic<$clog2(SCREEN_WIDTH-1)>;
-  type height_t = logic<$clog2(SCREEN_HEIGHT-1)>;
-  type num_pixels_t = logic<$clog2(SCREEN_WIDTH*SCREEN_HEIGHT-1)>;
-  type pixel_t = logic<PIXEL_BITS>;
+  var state: state_t;  // 現在の状態
 
-  var x_count: width_t;   // number of pixels transferred in current line
-  var y_count: height_t;  // number of lines transferred
-  var command: vram_writer_pkg::vram_writer_cmd_t;  // current write command
+  type width_t = logic<$clog2(SCREEN_WIDTH-1)>;        // 幅型定義
+  type height_t = logic<$clog2(SCREEN_HEIGHT-1)>;      // 高さ型定義
+  type num_pixels_t = logic<$clog2(SCREEN_WIDTH*SCREEN_HEIGHT-1)>;  // ピクセル数型定義
+  type pixel_t = logic<PIXEL_BITS>;  // ピクセル型定義
 
-  var write_address: num_pixels_t; // current write address
-  var write_address_next: num_pixels_t; // next write address
-  var line_address: num_pixels_t;  // current line address, stored for calculating next line address.
-  var write_en: logic;             // VRAM write enable signal
-  var write_data: pixel_t;         // VRAM write data
+  var x_count: width_t;   // 現在の行で転送したピクセル数
+  var y_count: height_t;  // 転送した行数
+  var command: vram_writer_pkg::vram_writer_cmd_t;  // 現在の書き込みコマンド
+
+  var write_address: num_pixels_t;      // 現在の書き込みアドレス
+  var write_address_next: num_pixels_t; // 次の書き込みアドレス
+  var line_address: num_pixels_t;       // 現在の行アドレス（次の行アドレス計算用）
+  var write_en: logic;                  // VRAM書き込み有効信号
+  var write_data: pixel_t;              // VRAM書き込みデータ
 
   always_comb {
     // Assign interface output signals.

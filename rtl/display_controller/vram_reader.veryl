@@ -7,10 +7,10 @@ package vram_reader_pkg {
    * VRAMリーダーコマンド構造
    */
   struct vram_reader_cmd_t {
-    x: u16,         // X coordinate of the upper-left pixel of the rectangle area to read
-    y: u16,         // Y coordinate of the upper-left pixel of the rectangle area to read
-    w_minus_1: u16, // Width of the region to read (minus 1) e.g. 0 means 1 pixel wide
-    h_minus_1: u16, // Height of the region to read (minus 1) e.g. 0 means 1 pixel tall
+    x: u16,         // 読み取り矩形領域の左上ピクセルX座標
+    y: u16,         // 読み取り矩形領域の左上ピクセルY座標
+    w_minus_1: u16, // 読み取り領域の幅（-1）例：0=1ピクセル幅
+    h_minus_1: u16, // 読み取り領域の高さ（-1）例：0=1ピクセル高
   }
 }
 
@@ -22,41 +22,41 @@ pub module vram_reader #(
   param SCREEN_HEIGHT: u32 = 240,
   param PIXEL_BITS: u32 = 8,
 ) (
-  r#clock: input clock,
-  r#reset: input reset,
+  r#clock: input clock,     // システムクロック
+  r#reset: input reset,     // システムリセット
 
-  // Command interface
-  axis_command_in: modport axi4s::axi4s_if::<64, false, 0>::slave,
-  axis_data_out: modport axi4s::axi4s_if::<32, true, 1>::master,
+  // コマンドインターフェース
+  axis_command_in: modport axi4s::axi4s_if::<64, false, 0>::slave,   // コマンド入力ストリーム
+  axis_data_out: modport axi4s::axi4s_if::<32, true, 1>::master,     // データ出力ストリーム
 
-  // VRAM interface
-  vram_read: modport vram_read_if::master,
+  // VRAMインターフェース
+  vram_read: modport vram_read_if::master,   // VRAM読み取りインターフェース
 ) {
-  // State
+  // 状態定義
   enum state_t {
-    IDLE,             // IDLE
-    CALCULATE_OFFSET, // prepare offset address
-    TRANSFER,         // transfer pixel data
+    IDLE,             // アイドル状態
+    CALCULATE_OFFSET, // オフセットアドレス計算状態
+    TRANSFER,         // ピクセルデータ転送状態
   }
-  var state: state_t;
- 
-  type width_t = logic<$clog2(SCREEN_WIDTH-1)>;
-  type height_t = logic<$clog2(SCREEN_HEIGHT-1)>;
-  type num_pixels_t = logic<$clog2(SCREEN_WIDTH*SCREEN_HEIGHT-1)>;
-  type pixel_t = logic<PIXEL_BITS>;
+  var state: state_t;  // 現在の状態
 
-  var x_count: width_t;   // number of pixels transferred in current line
-  var y_count: height_t;  // number of lines transferred
-  var command: vram_reader_pkg::vram_reader_cmd_t;  // current read command
+  type width_t = logic<$clog2(SCREEN_WIDTH-1)>;        // 幅型定義
+  type height_t = logic<$clog2(SCREEN_HEIGHT-1)>;      // 高さ型定義
+  type num_pixels_t = logic<$clog2(SCREEN_WIDTH*SCREEN_HEIGHT-1)>;  // ピクセル数型定義
+  type pixel_t = logic<PIXEL_BITS>;  // ピクセル型定義
 
-  var data_out_valid: logic;  // output data valid signal
-  var data_out_data: pixel_t; // output pixel data
-  var data_out_last: logic;   // output last signal asserted when the last pixel of current line is transferred
-  var data_out_sof: logic;    // output start-of-frame signal asserted when the first pixel of current area is transferred
+  var x_count: width_t;   // 現在の行で転送したピクセル数
+  var y_count: height_t;  // 転送した行数
+  var command: vram_reader_pkg::vram_reader_cmd_t;  // 現在の読み取りコマンド
 
-  var read_address: num_pixels_t; // current read address
-  var line_address: num_pixels_t; // current line address, stored for calculating next line address.
-  var read_en: logic; // VRAM read enable signal
+  var data_out_valid: logic;  // 出力データ有効信号
+  var data_out_data: pixel_t; // 出力ピクセルデータ
+  var data_out_last: logic;   // 現在の行の最後のピクセル転送時にアサートされる信号
+  var data_out_sof: logic;    // 現在の領域の最初のピクセル転送時にアサートされるフレーム開始信号
+
+  var read_address: num_pixels_t; // 現在の読み取りアドレス
+  var line_address: num_pixels_t; // 現在の行アドレス（次の行アドレス計算用）
+  var read_en: logic; // VRAM読み取り有効信号
 
   always_comb {
     // Assign interface output signals.

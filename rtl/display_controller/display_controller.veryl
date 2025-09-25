@@ -14,38 +14,38 @@ embed (inline) sv{{{
 }}}
 
 pub module display_controller #(
-  param SCREEN_WIDTH: u32 = 320,
-  param SCREEN_HEIGHT: u32 = 240,
-  
+  param SCREEN_WIDTH: u32 = 320,   // 画面幅
+  param SCREEN_HEIGHT: u32 = 240,  // 画面高さ
+
 ) (
-  r#clock: input clock,
-  r#reset: input reset,
+  r#clock: input clock,    // システムクロック
+  r#reset: input reset,    // システムリセット
 
-  // Command interface
-  axis_command_in: modport axi4s::axi4s_if::<8, false, 1>::slave,
-  axis_command_out: modport axi4s::axi4s_if::<8, false, 1>::master,
+  // コマンドインターフェース
+  axis_command_in: modport axi4s::axi4s_if::<8, false, 1>::slave,   // コマンド入力ストリーム
+  axis_command_out: modport axi4s::axi4s_if::<8, false, 1>::master, // コマンド出力ストリーム
 
-  // VRAM interface
-  vram_write: modport vram_write_if::master,
+  // VRAMインターフェース
+  vram_write: modport vram_write_if::master,  // VRAM書き込みインターフェース
 
-  // Debug signals,
-  debug_signals: output logic<2> = _,
+  // デバッグ信号
+  debug_signals: output logic<2> = _,  // デバッグ用出力信号
 ) {
-  // State
+  // 状態定義
   enum state_t {
-    IDLE,
-    START_COMMAND,
-    RECEIVE_PARAMETERS,
-    PRE_EXECUTE_COMMAND,
-    EXECUTE_COMMAND,
-    POST_EXECUTE_COMMAND,
+    IDLE,                   // アイドル状態
+    START_COMMAND,          // コマンド開始状態
+    RECEIVE_PARAMETERS,     // パラメータ受信状態
+    PRE_EXECUTE_COMMAND,    // コマンド実行前処理状態
+    EXECUTE_COMMAND,        // コマンド実行状態
+    POST_EXECUTE_COMMAND,   // コマンド実行後処理状態
   }
-  var state: state_t;
-  var discarding: bool;
+  var state: state_t;        // 現在の状態
+  var discarding: bool;      // データ破棄フラグ
 
-  type width_t = logic<$clog2(SCREEN_WIDTH + 1)>;
-  type height_t = logic<$clog2(SCREEN_HEIGHT + 1)>;
-  type num_pixels_t = logic<$clog2(SCREEN_WIDTH*SCREEN_HEIGHT + 1)>;
+  type width_t = logic<$clog2(SCREEN_WIDTH + 1)>;         // 幅型定義
+  type height_t = logic<$clog2(SCREEN_HEIGHT + 1)>;       // 高さ型定義
+  type num_pixels_t = logic<$clog2(SCREEN_WIDTH*SCREEN_HEIGHT + 1)>;  // ピクセル数型定義
 
   // Command stream demux
   const COMMAND_STREAMS: u32 = 2;

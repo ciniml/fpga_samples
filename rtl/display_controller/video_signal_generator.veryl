@@ -14,34 +14,34 @@ embed (inline) sv{{{
 }}}
 
 pub module video_signal_generator #(
-    param SCREEN_WIDTH: u32 = 320,
-    param SCREEN_HEIGHT: u32 = 240,
-    param PIXEL_BITS: u32 = 8,
-    param BACK_PORCH_H: u32 = 68,
-    param FRONT_PORCH_H: u32 = 18,
-    param PULSE_WIDTH_H: u32 = 30,
-    param BACK_PORCH_V: u32 = 18,
-    param FRONT_PORCH_V: u32 = 4,
-    param PULSE_WIDTH_V: u32 = 4,
-    param MULTIPLIER_H: u32 = 1,
-    param MULTIPLIER_V: u32 = 1,
+    param SCREEN_WIDTH: u32 = 320,     // 画面幅
+    param SCREEN_HEIGHT: u32 = 240,    // 画面高さ
+    param PIXEL_BITS: u32 = 8,         // ピクセルあたりのビット数
+    param BACK_PORCH_H: u32 = 68,      // 水平バックポーチ
+    param FRONT_PORCH_H: u32 = 18,     // 水平フロントポーチ
+    param PULSE_WIDTH_H: u32 = 30,     // 水平同期パルス幅
+    param BACK_PORCH_V: u32 = 18,      // 垂直バックポーチ
+    param FRONT_PORCH_V: u32 = 4,      // 垂直フロントポーチ
+    param PULSE_WIDTH_V: u32 = 4,      // 垂直同期パルス幅
+    param MULTIPLIER_H: u32 = 1,       // 水平倍率
+    param MULTIPLIER_V: u32 = 1,       // 垂直倍率
 ) (
-    r#clock: input clock,
-    r#reset: input reset,
-    
-    // Video output interface
-    video: modport video_io_if::master,
-    
-    // Data input (AXI4S) - RGB332 format
-    data: modport axi4s::axi4s_if::<32, true, 1>::slave,
-    
-    // Status output
-    data_in_sync: output logic,
+    r#clock: input clock,    // システムクロック
+    r#reset: input reset,    // システムリセット
+
+    // 映像出力インターフェース
+    video: modport video_io_if::master,  // 映像出力信号
+
+    // データ入力（AXI4S）- RGB332フォーマット
+    data: modport axi4s::axi4s_if::<32, true, 1>::slave,  // 入力ピクセルデータストリーム
+
+    // ステータス出力
+    data_in_sync: output logic,  // データ同期状態信号
 ) {
-    // Video timing parameters for 320x240 @ 60Hz
-    // These are fixed for this implementation    
-    const TOTAL_H: u32 = SCREEN_WIDTH + BACK_PORCH_H + FRONT_PORCH_H + PULSE_WIDTH_H;
-    const TOTAL_V: u32 = SCREEN_HEIGHT + BACK_PORCH_V + FRONT_PORCH_V + PULSE_WIDTH_V;
+    // 320x240 @ 60Hz用の映像タイミングパラメータ
+    // この実装では固定値
+    const TOTAL_H: u32 = SCREEN_WIDTH + BACK_PORCH_H + FRONT_PORCH_H + PULSE_WIDTH_H;  // 水平総ピクセル数
+    const TOTAL_V: u32 = SCREEN_HEIGHT + BACK_PORCH_V + FRONT_PORCH_V + PULSE_WIDTH_V; // 垂直総ライン数
     
     // Counter bit widths
     const H_COUNT_BITS: u32 = $clog2(TOTAL_H);

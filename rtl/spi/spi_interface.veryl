@@ -9,22 +9,22 @@
  */
 
 pub interface spi_interface {
-    var miso: logic;
-    var mosi: logic;
-    var cs:  '_ reset;
-    var sck: '_ clock;
+    var miso: logic;        // Master In Slave Out信号
+    var mosi: logic;        // Master Out Slave In信号
+    var cs:  '_ reset;      // チップセレクト信号（アクティブLow）
+    var sck: '_ clock;      // SPIクロック信号
 
-    modport master {
-        miso: input,
-        mosi: output,
-        cs:   output,
-        sck:  output,
+    modport master {        // マスター側のポート定義
+        miso: input,        // MISOを入力として使用
+        mosi: output,       // MOSIを出力として使用
+        cs:   output,       // CSを出力として使用
+        sck:  output,       // SCKを出力として使用
     }
 
-    modport slave {
-        miso: output,
-        mosi: input,
-        cs:   input,
-        sck:  input,
+    modport slave {         // スレーブ側のポート定義
+        miso: output,       // MISOを出力として使用
+        mosi: input,        // MOSIを入力として使用
+        cs:   input,        // CSを入力として使用
+        sck:  input,        // SCKを入力として使用
     }
 }
