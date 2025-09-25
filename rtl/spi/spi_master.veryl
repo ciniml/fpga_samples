@@ -4,7 +4,7 @@
 //    (See accompanying file LICENSE_1_0.txt or copy at
 //          https://www.boost.org/LICENSE_1_0.txt)
 
-// SPI Master module.
+// SPIマスターモジュール
 pub module spi_master::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> (
     r#clock: input clock,
     r#reset: input reset,

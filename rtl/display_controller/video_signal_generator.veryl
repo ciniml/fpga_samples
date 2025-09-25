@@ -6,7 +6,7 @@
 
 /**
  * @file video_signal_generator.veryl
- * @brief Video signal generator with RGB332 input and configurable RGB output
+ * @brief RGB332入力と設定可能なRGB出力を持つ映像信号ジェネレーター
  */
 
 embed (inline) sv{{{

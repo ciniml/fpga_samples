@@ -4,7 +4,7 @@ embed (inline) sv{{{
 
 package vram_reader_pkg {
   /**
-   * VRAM reader command structure.
+   * VRAMリーダーコマンド構造
    */
   struct vram_reader_cmd_t {
     x: u16,         // X coordinate of the upper-left pixel of the rectangle area to read
@@ -15,7 +15,7 @@ package vram_reader_pkg {
 }
 
 /**
- * VRAM reader module, aka video DMA, which reads pixel data in a rectangular area.
+ * VRAMリーダーモジュール（ビデオDMAとも呼ばれる）。矩形領域のピクセルデータを読み取る。
  */
 pub module vram_reader #(
   param SCREEN_WIDTH: u32 = 320,

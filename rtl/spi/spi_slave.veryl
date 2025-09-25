@@ -4,11 +4,11 @@
 //    (See accompanying file LICENSE_1_0.txt or copy at
 //          https://www.boost.org/LICENSE_1_0.txt)
 
-// SPI Slave module.
-// # Clock Domain
-// This module operates in two clock domains: the main clock domain and the SPI clock domain.
-// 'a is the main clock domain and 'spi_pos and 'spi_neg is the SPI clock domain.
-// The expected SPI mode is SPI mode 0, which means that latch at the rising edge of SCK, shift at the falling edge of SCK.
+// SPIスレーブモジュール
+// # クロックドメイン
+// このモジュールは2つのクロックドメインで動作します：メインクロックドメインとSPIクロックドメイン
+// 'aはメインクロックドメイン、'spi_posと'spi_negはSPIクロックドメインです
+// 期待されるSPIモードはSPIモード0で、これはSCKの立ち上がりエッジでラッチし、立ち下がりエッジでシフトすることを意味します
 pub module spi_slave::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> #(
     param IDLE_SEND_DATA: logic<SPI_WIDTH> = '1,
 ) (

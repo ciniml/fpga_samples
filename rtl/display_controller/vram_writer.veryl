@@ -4,7 +4,7 @@ embed (inline) sv{{{
 
 package vram_writer_pkg {
   /**
-   * VRAM writer command structure.
+   * VRAMライターコマンド構造
    */
   struct vram_writer_cmd_t {
     x: u16,         // X coordinate of the upper-left pixel of the rectangle area to write
@@ -15,7 +15,7 @@ package vram_writer_pkg {
 }
 
 /**
- * VRAM writer module, aka video DMA, which writes pixel data to a rectangular area.
+ * VRAMライターモジュール（ビデオDMAとも呼ばれる）。矩形領域にピクセルデータを書き込む。
  */
 pub module vram_writer #(
   param SCREEN_WIDTH: u32 = 320,
