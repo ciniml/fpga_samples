@@ -138,25 +138,25 @@ module tb #(
             "frame_timing": begin
                 automatic int output_pattern_size, input_width, input_height;
                 automatic int row, col;
-                
+
                 // Test complete frame timing
                 // Input data size is reduced by multiplier factors
                 input_width = SCREEN_WIDTH / MULTIPLIER_H;
                 input_height = SCREEN_HEIGHT / MULTIPLIER_V;
                 pattern_size = input_width * input_height; // Input frame size
                 test_pattern_rgb332 = new[pattern_size];
-                
+
                 // Output pattern size is the active area (SCREEN_WIDTH x SCREEN_HEIGHT)
                 output_pattern_size = SCREEN_WIDTH * SCREEN_HEIGHT;
                 expected_rgb = new[output_pattern_size];
-                
+
                 for (int i = 0; i < pattern_size; i++) begin
                     // Create a simple pattern: row gradient for input data
                     row = i / input_width;
                     col = i % input_width;
                     test_pattern_rgb332[i] = 8'(row ^ col);
                 end
-                
+
                 // Generate expected output pattern with multiplier support
                 // Each input pixel appears MULTIPLIER_H * MULTIPLIER_V times in output
                 for (int out_idx = 0; out_idx < output_pattern_size; out_idx++) begin
@@ -164,18 +164,67 @@ module tb #(
                     // Calculate output pixel position
                     out_row = out_idx / SCREEN_WIDTH;
                     out_col = out_idx % SCREEN_WIDTH;
-                    
+
                     // Map back to input pixel position
                     in_row = out_row / MULTIPLIER_V;
                     in_col = out_col / MULTIPLIER_H;
                     in_idx = in_row * input_width + in_col;
-                    
+
                     // Use the corresponding input pixel
                     expected_rgb[out_idx] = rgb332_to_rgb(test_pattern_rgb332[in_idx]);
                 end
-                
-                $display("Test mode: frame_timing - input: %0dx%0d=%0d pixels, output: %0dx%0d=%0d pixels, multiplier: %0dx%0d", 
+
+                $display("Test mode: frame_timing - input: %0dx%0d=%0d pixels, output: %0dx%0d=%0d pixels, multiplier: %0dx%0d",
                          input_width, input_height, pattern_size, SCREEN_WIDTH, SCREEN_HEIGHT, output_pattern_size, MULTIPLIER_H, MULTIPLIER_V);
+            end
+            "tuser_skip_test": begin
+                automatic int output_pattern_size, input_width, input_height;
+                automatic int row, col;
+
+                // Test TUSER skip functionality with extra pixels without TUSER assertion
+                input_width = SCREEN_WIDTH / MULTIPLIER_H;
+                input_height = SCREEN_HEIGHT / MULTIPLIER_V;
+                // Add 4 extra pixels that should be skipped (no TUSER assertion)
+                pattern_size = 4 + (input_width * input_height);
+                test_pattern_rgb332 = new[pattern_size];
+
+                // Output pattern size is the active area (SCREEN_WIDTH x SCREEN_HEIGHT)
+                output_pattern_size = SCREEN_WIDTH * SCREEN_HEIGHT;
+                expected_rgb = new[output_pattern_size];
+
+                // First 4 pixels are dummy pixels (should be skipped)
+                test_pattern_rgb332[0] = 8'hAA; // Dummy pattern - should not appear in output
+                test_pattern_rgb332[1] = 8'h55;
+                test_pattern_rgb332[2] = 8'hCC;
+                test_pattern_rgb332[3] = 8'h33;
+
+                // Actual frame data starts from index 4
+                for (int i = 4; i < pattern_size; i++) begin
+                    // Create a simple pattern: row gradient for input data
+                    row = (i - 4) / input_width;
+                    col = (i - 4) % input_width;
+                    test_pattern_rgb332[i] = 8'(row ^ col);
+                end
+
+                // Generate expected output pattern with multiplier support
+                // Output should match the actual frame data (starting from index 4), not the dummy data
+                for (int out_idx = 0; out_idx < output_pattern_size; out_idx++) begin
+                    automatic int out_row, out_col, in_row, in_col, in_idx;
+                    // Calculate output pixel position
+                    out_row = out_idx / SCREEN_WIDTH;
+                    out_col = out_idx % SCREEN_WIDTH;
+
+                    // Map back to input pixel position (in actual frame data, not dummy data)
+                    in_row = out_row / MULTIPLIER_V;
+                    in_col = out_col / MULTIPLIER_H;
+                    in_idx = in_row * input_width + in_col + 4; // +4 to skip dummy pixels
+
+                    // Use the corresponding input pixel
+                    expected_rgb[out_idx] = rgb332_to_rgb(test_pattern_rgb332[in_idx]);
+                end
+
+                $display("Test mode: tuser_skip_test - input: 4 dummy + %0dx%0d=%0d pixels, output: %0dx%0d=%0d pixels, multiplier: %0dx%0d",
+                         input_width, input_height, pattern_size-4, SCREEN_WIDTH, SCREEN_HEIGHT, output_pattern_size, MULTIPLIER_H, MULTIPLIER_V);
             end
             default: begin
                 pattern_size = 4;
@@ -218,22 +267,41 @@ module tb #(
                 axis_data_tdata[7:0] = test_pattern_rgb332[i];
                 axis_data_tdata[31:8] = 24'h0; // Unused bits
                 axis_data_tvalid = 1'b1;
-                
-                // Set SOF for first pixel
-                axis_data_tuser = (i == 0) ? 1'b1 : 1'b0;
-                
-                // Set tlast for end of line (based on input width for multiplier cases)
-                effective_width = (TEST_MODE == "frame_timing" && (MULTIPLIER_H > 1 || MULTIPLIER_V > 1)) ? 
-                                               (SCREEN_WIDTH / MULTIPLIER_H) : SCREEN_WIDTH;
-                axis_data_tlast = ((i % effective_width) == (effective_width - 1)) ? 1'b1 : 1'b0;
-                
-                $display("T=%0t: Sending pixel[%0d]: RGB332=0x%02h, SOF=%b, tlast=%b", 
+
+                // Set SOF (TUSER) based on test mode
+                if (TEST_MODE == "tuser_skip_test") begin
+                    // For tuser_skip_test: TUSER is asserted only for the 5th pixel (i == 4), which starts actual frame data
+                    axis_data_tuser = (i == 4) ? 1'b1 : 1'b0;
+                end else begin
+                    // For other modes: TUSER is asserted for first pixel
+                    axis_data_tuser = (i == 0) ? 1'b1 : 1'b0;
+                end
+
+                // Set tlast for end of line
+                if (TEST_MODE == "tuser_skip_test") begin
+                    // For tuser_skip_test: tlast calculation should consider dummy pixels
+                    effective_width = (MULTIPLIER_H > 1 || MULTIPLIER_V > 1) ? (SCREEN_WIDTH / MULTIPLIER_H) : SCREEN_WIDTH;
+                    if (i < 4) begin
+                        // Dummy pixels: no tlast assertion
+                        axis_data_tlast = 1'b0;
+                    end else begin
+                        // Actual frame data: tlast every effective_width pixels starting from i=4
+                        axis_data_tlast = (((i - 4) % effective_width) == (effective_width - 1)) ? 1'b1 : 1'b0;
+                    end
+                end else begin
+                    // For other modes: standard tlast calculation
+                    effective_width = (TEST_MODE == "frame_timing" && (MULTIPLIER_H > 1 || MULTIPLIER_V > 1)) ?
+                                                   (SCREEN_WIDTH / MULTIPLIER_H) : SCREEN_WIDTH;
+                    axis_data_tlast = ((i % effective_width) == (effective_width - 1)) ? 1'b1 : 1'b0;
+                end
+
+                $display("T=%0t: Sending pixel[%0d]: RGB332=0x%02h, SOF=%b, tlast=%b",
                          $time, i, test_pattern_rgb332[i], axis_data_tuser, axis_data_tlast);
-                
+
                 // Wait for data to be accepted
                 @(posedge clock);
                 while (!axis_data_tready) @(posedge clock);
-                
+
                 pattern_index++;
             end
             
@@ -474,14 +542,26 @@ module tb_video_signal_generator_multiplier_h3() {
     ) ();
 }
 
+// Test case: TUSER skip functionality
+module tb_video_signal_generator_tuser_skip() {
+    inst tb_inst: $sv::tb #(
+        TEST_MODE: "tuser_skip_test",
+        SCREEN_WIDTH: 8,
+        SCREEN_HEIGHT: 4,
+        PIXEL_BITS: 8,
+        READY_RATE: 8,
+        TIMEOUT_CYCLES: 20000
+    ) ();
+}
+
 // Default test case
 module tb_video_signal_generator_default() {
     inst tb_inst: $sv::tb #(
-        TEST_MODE: "basic_timing", 
-        SCREEN_WIDTH: 320, 
+        TEST_MODE: "basic_timing",
+        SCREEN_WIDTH: 320,
         SCREEN_HEIGHT: 240,
         PIXEL_BITS: 8,
-        READY_RATE: 8, 
+        READY_RATE: 8,
         TIMEOUT_CYCLES: 50000
     ) ();
 }
