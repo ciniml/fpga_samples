@@ -116,13 +116,13 @@ pub module video_signal_generator #(
         // Default values
         advance_v = 1'b0;
         next_frame = 1'b0;
-        data_ready = 1'b0;
-        
+
         // Data ready when we need new pixel data:
+        // - Data not in sync and not SOF (TUSER[0]) is asserted (to skip the data and seek to next SOF.)
         // - In active area (both H and V)
         // - First line of vertical multiplication (multiplier_v == 0) 
         // - First pixel of horizontal multiplication (multiplier_h == 0)
-        // - Not start of frame (unless we want to accept start of frame)
+        data_ready = !data_in_sync_reg && !data.tuser[0];
         if (state_h == state_t::ACTIVE) && (state_v == state_t::ACTIVE) && (multiplier_v == '0) && (multiplier_h == '0) {
             data_ready = 1'b1;
         }

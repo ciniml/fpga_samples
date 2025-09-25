@@ -45,6 +45,9 @@ module tb #(
     logic                      vram_en;
     logic [PIXEL_BITS-1:0]     vram_data;
 
+    // Complete
+    logic complete;
+
     // interfaces
     \{ axi4s::axi4s_if::<64, false, 0> \} axis_command_in ();
     \{ axi4s::axi4s_if::<32, true, 1> \} axis_data_in ();
@@ -63,7 +66,8 @@ module tb #(
         .reset(reset_n),
         .axis_command_in(axis_command_in),
         .axis_data_in(axis_data_in),
-        .vram_write(vram_write)
+        .vram_write(vram_write),
+        .complete(complete)
     );
 
     // interface signal connection

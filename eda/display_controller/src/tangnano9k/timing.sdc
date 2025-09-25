@@ -1,5 +1,5 @@
 // timing.sdc
-// Copyright 20202522 Kenta IDA
+// Copyright 2025 Kenta IDA
 // Distributed under the Boost Software License, Version 1.0.
 //    (See accompanying file LICENSE_1_0.txt or copy at
 //          http://www.boost.org/LICENSE_1_0.txt)
@@ -14,3 +14,6 @@ create_clock -name spi_sck -period 12.5 -waveform {0 6.25} [get_ports {spi_sck}]
 create_generated_clock -name clock_dvi -source [get_ports {clock}] -divide_by 20 -multiply_by 55  [get_nets {clock_dvi}]
 
 set_clock_groups -asynchronous -group [get_clocks {spi_sck}]
+set_input_delay  -clock spi_sck -max 0.5 -min 0.2  [get_ports {spi_mosi}]
+set_input_delay  -clock spi_sck -max 0.5 -min 0.2  [get_ports {spi_cs}]
+# set_output_delay -clock spi_sck -max 3.0 -min 0.2  [get_ports {spi_miso}]

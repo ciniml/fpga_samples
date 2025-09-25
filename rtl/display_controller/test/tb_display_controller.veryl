@@ -45,6 +45,9 @@ module tb #(
     logic                      vram_write_en;
     logic [PIXEL_BITS-1:0]     vram_write_data;
 
+    // Debug signals
+    logic [1:0] debug_signals;
+
     // interfaces
     \{ axi4s::axi4s_if::<8, false, 1> \} axis_command_in ();
     \{ axi4s::axi4s_if::<8, false, 1> \} axis_command_out ();
@@ -62,7 +65,8 @@ module tb #(
         .reset(reset_n),
         .axis_command_in(axis_command_in),
         .axis_command_out(axis_command_out),
-        .vram_write(vram_write)
+        .vram_write(vram_write),
+        .debug_signals(debug_signals)
     );
 
     // interface signal connection
@@ -183,7 +187,7 @@ module tb #(
 
                 expected_response_count = 1;
                 expected_response = new[1];
-                expected_response[0] = 8'h00; // Response for completion
+                expected_response[0] = 8'h20; // Response for completion (Last command number)
 
                 $display("Test mode: fill_rect (x=10, y=20, w=4, h=3, color=0xAB)");
             end
@@ -202,7 +206,7 @@ module tb #(
 
                 expected_response_count = 1;
                 expected_response = new[1];
-                expected_response[0] = 8'h00; // Response for completion
+                expected_response[0] = 8'h40; // Response for completion
 
                 $display("Test mode: write_pixel (x=50, y=60, color=0xCD)");
             end
@@ -232,7 +236,7 @@ module tb #(
 
                 expected_response_count = 1;
                 expected_response = new[1];
-                expected_response[0] = 8'h00; // Response for completion
+                expected_response[0] = 8'h30; // Response for completion
 
                 $display("Test mode: write_raw (x=5, y=10, w=3, h=2, 6 pixels)");
             end
@@ -264,7 +268,7 @@ module tb #(
                 expected_response[1] = 8'h46; // ASCII 'F'
                 expected_response[2] = 8'h30; // ASCII '0'
                 expected_response[3] = 8'h31; // ASCII '1'
-                expected_response[4] = 8'h00; // WRITE_PIXEL completion
+                expected_response[4] = 8'h40; // WRITE_PIXEL completion
 
                 $display("Test mode: multiple_commands");
             end

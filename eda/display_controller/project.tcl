@@ -5,7 +5,7 @@ set DEVICE_FAMILY [lindex $argv 3]
 set DEVICE_PART   [lindex $argv 4]
 set PROJECT_NAME  [lindex $argv 5]
 
-#create_project -name ${PROJECT_NAME} -pn ${DEVICE_PART} -device_version {C}
+#create_project -name ${PROJECT_NAME} -pn ${DEVICE_PART} -device_version {C} -force
 
 # Additional args
 set_option -output_base_name ${PROJECT_NAME}

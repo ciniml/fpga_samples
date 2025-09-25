@@ -72,7 +72,7 @@ int main() {
     stdio_init_all();
 
     // Enable SPI at 80 MHz and connect to GPIOs
-    spi_init(spi_default, 1000 * 1000 * 80);
+    spi_init(spi_default, 1000 * 1000 * 60);
     gpio_set_function(PICO_DEFAULT_SPI_RX_PIN, GPIO_FUNC_SPI);
     gpio_init(PICO_DEFAULT_SPI_CSN_PIN);
     gpio_set_dir(PICO_DEFAULT_SPI_CSN_PIN, GPIO_OUT);
@@ -133,6 +133,20 @@ int main() {
 
         transfer_spi_with_dma(txbuf, rxbuf, command_length);
         sleep_ms(1);
+        
+        // WRITE_PIXEL
+        x = rand() % SCREEN_WIDTH;
+        y = rand() % SCREEN_HEIGHT;
+        color = rand() & 0xff;
+        txbuf[command_length++] = 0x40;
+        txbuf[command_length++] = ((x + 90) >> 8);
+        txbuf[command_length++] = ((x + 90) & 0xff);
+        txbuf[command_length++] = (y >> 8);
+        txbuf[command_length++] = (y & 0xff);
+        txbuf[command_length++] = color;
+
+        transfer_spi_with_dma(txbuf, rxbuf, command_length);
+        sleep_us(10);
     }
     
     return 0;

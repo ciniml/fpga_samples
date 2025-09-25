@@ -55,6 +55,7 @@ pub module spi_slave::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> #
     var spi_in_req: 'spi_pos logic;
     var spi_in_ack: logic;
     var spi_in_ack_sync: 'spi_pos logic;
+    var spi_in_ack_sync_prev: 'spi_pos logic;
     unsafe(cdc) {
         inst spi_in_ack_sync_inst: sync::gen_synchronizer_posedge_async_high #(WIDTH: 1, STAGES: 2) (i_clk: spi_sck_pos, i_rst: spi_cs, i_d: spi_in_ack, o_d: spi_in_ack_sync);
     }
@@ -63,17 +64,19 @@ pub module spi_slave::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> #
             spi_counter_pos[msb] = 1'b1;
             spi_counter_pos[msb-1:0] = '0;
             spi_shift_in_reg = '0;
-            spi_in_data = '0;
-            spi_in_first = 0;
+            //spi_in_data = '0; // spi_in_data and spi_in_first MUST NOT be modified by reset.
+            //spi_in_first = 0; // /
             spi_in_after_cs_assert = 1;
             spi_in_req = 0;
+            spi_in_ack_sync_prev = 0;
         } else {
+            spi_in_ack_sync_prev = spi_in_ack_sync;
             let spi_shift_in_reg_next: spi_word_t = {spi_shift_in_reg[msb-1:0], spi_mosi};
-
+            
             // Shift (rotate) right the counter
             spi_counter_pos = {spi_counter_pos[0], spi_counter_pos[msb:1]};
             
-            if spi_in_ack_sync {
+            if spi_in_ack_sync && !spi_in_ack_sync_prev {
                 spi_in_req = 0;
             }
             spi_shift_in_reg = spi_shift_in_reg_next; // Shift in from the LSB side, which means MSB first.
