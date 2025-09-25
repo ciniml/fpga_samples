@@ -15,7 +15,7 @@ pub module spi_slave::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> #
     r#clock: input clock,      // システムクロック
     r#reset: input reset,      // システムリセット
 
-    spi_cs:    input  'spi_pos reset_async_high,  // SPIチップセレクト信号（アクティブLow）
+    spi_cs:    input  'spi_pos reset_async_high,  // SPIチップセレクト信号（負論理）
     spi_sck:   input  'spi_pos clock,             // SPIクロック信号
     spi_miso:  output 'spi_neg logic,             // SPIデータ出力（スレーブからマスターへ）
     spi_mosi:  input  'spi_pos logic,             // SPIデータ入力（マスターからスレーブへ）
@@ -41,124 +41,124 @@ pub module spi_slave::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> #
     var spi_sck_neg: 'spi_neg clock_negedge;              // SCKネガティブエッジクロック
     var spi_cs_neg_domain: 'spi_neg reset_async_high;     // ネガティブエッジドメイン用CS信号
     assign spi_sck_pos = spi_sck as clock_posedge;        // SCKをポジティブエッジクロックとして割り当て
-    unsafe(cdc) {  // クロックドメイン跨ぎの危険な操作
+    unsafe(cdc) {
         assign spi_sck_neg = spi_sck as clock_negedge;    // SCKをネガティブエッジクロックとして割り当て
         assign spi_cs_neg_domain = spi_cs;                // CS信号をネガティブドメインに割り当て
     }
 
-    // SPI Latch process
-    var spi_counter_pos: 'spi_pos spi_word_t;
-    var spi_in_after_cs_assert: 'spi_pos logic;
-    var spi_in_data: 'spi_pos spi_word_t;
-    var spi_in_first: 'spi_pos logic;
-    var spi_in_req: 'spi_pos logic;
-    var spi_in_ack: logic;
-    var spi_in_ack_sync: 'spi_pos logic;
-    var spi_in_ack_sync_prev: 'spi_pos logic;
+    // SPI入力(MOSI) ラッチ プロセス
+    var spi_counter_pos: 'spi_pos spi_word_t;   // SPI入力プロセスのカウンタ
+    var spi_in_after_cs_assert: 'spi_pos logic; // CSアサート直後のワード？
+    var spi_in_data: 'spi_pos spi_word_t;       // SPI入力データ (内部回路受け渡し用)
+    var spi_in_first: 'spi_pos logic;           // 先頭ワードフラグ (内部回路受け渡し用)
+    var spi_in_req: 'spi_pos logic;             // 内部回路へのSPI入力データ処理要求
+    var spi_in_ack: logic;                      // 内部回路からのSPI入力データ受理
+    var spi_in_ack_sync: 'spi_pos logic;        // SCK同期済みSPI入力データ受理
+    var spi_in_ack_sync_prev: 'spi_pos logic;   // 1クロック前のSCK同期済みSPI入力データ受理
     unsafe(cdc) {
+        // spi_in_ackの同期用シンクロナイザ・モジュール (2段FF)
         inst spi_in_ack_sync_inst: sync::gen_synchronizer_posedge_async_high #(WIDTH: 1, STAGES: 2) (i_clk: spi_sck_pos, i_rst: spi_cs, i_d: spi_in_ack, o_d: spi_in_ack_sync);
     }
     always_ff(spi_sck_pos, spi_cs) {
-        if_reset {
-            spi_counter_pos[msb] = 1'b1;
-            spi_counter_pos[msb-1:0] = '0;
-            spi_shift_in_reg = '0;
-            //spi_in_data = '0; // spi_in_data and spi_in_first MUST NOT be modified by reset.
+        if_reset {  // 非同期リセット (CSがハイになった)
+            spi_counter_pos[msb] = 1'b1;    // カウンタの最上位ビットだけ1で初期化
+            spi_counter_pos[msb-1:0] = '0;  // /
+            spi_shift_in_reg = '0;          // シフトレジスタをクリア
+            //spi_in_data = '0; // spi_in_dataとspi_in_firstはリセット中も内部回路で読まれるのでリセットしない
             //spi_in_first = 0; // /
-            spi_in_after_cs_assert = 1;
+            spi_in_after_cs_assert = 1; // CSアサート直後フラグを立てておく
             spi_in_req = 0;
             spi_in_ack_sync_prev = 0;
         } else {
-            spi_in_ack_sync_prev = spi_in_ack_sync;
-            let spi_shift_in_reg_next: spi_word_t = {spi_shift_in_reg[msb-1:0], spi_mosi};
+            spi_in_ack_sync_prev = spi_in_ack_sync; // 前のSPI入力データ受理信号を保持
+            let spi_shift_in_reg_next: spi_word_t = {spi_shift_in_reg[msb-1:0], spi_mosi}; // このサイクルで更新した結果のシフトレジスタの内容
             
-            // Shift (rotate) right the counter
-            spi_counter_pos = {spi_counter_pos[0], spi_counter_pos[msb:1]};
+            spi_counter_pos = {spi_counter_pos[0], spi_counter_pos[msb:1]}; // カウンタを右ローテート
             
-            if spi_in_ack_sync && !spi_in_ack_sync_prev {
+            if spi_in_ack_sync && !spi_in_ack_sync_prev { // 受理信号の立ち上がりエッジで要求をクリア
                 spi_in_req = 0;
             }
-            spi_shift_in_reg = spi_shift_in_reg_next; // Shift in from the LSB side, which means MSB first.
-            if spi_counter_pos[0] {
-                spi_in_data = spi_shift_in_reg_next;
-                spi_in_after_cs_assert = 0;
-                spi_in_first = spi_in_after_cs_assert;
-                spi_in_req = 1;
+            spi_shift_in_reg = spi_shift_in_reg_next; // シフトレジスタを次のサイクルの内容で更新
+            if spi_counter_pos[0] { // ワードの最後のビット？
+                spi_in_data = spi_shift_in_reg_next;    // 内部回路受け渡し用のSPIデータ入力に受信データをセット
+                spi_in_after_cs_assert = 0;             // CSの先頭ワードフラグをクリア
+                spi_in_first = spi_in_after_cs_assert;  // CSの先頭ワードなら先頭ワードフラグをセット
+                spi_in_req = 1;                         // 受信データ処理要求
             }
         }
     }
 
-    var spi_counter_neg: 'spi_neg spi_word_t;
-    var spi_shift_out_reg: 'spi_neg spi_word_t;
-    var spi_out_data: spi_word_t;
+    var spi_counter_neg: 'spi_neg spi_word_t;   // SPI出力プロセスのカウンタ
+    var spi_shift_out_reg: 'spi_neg spi_word_t; // SPI出力シフトレジスタ
+    var spi_out_data: spi_word_t;               // SPI出力データ (内部回路から受け取り用)
     var spi_out_data_sync: 'spi_neg spi_word_t;
-    var spi_out_req: logic;
-    var spi_out_req_sync: 'spi_neg logic;   // Synchronized spi_out_req
-    var spi_out_req_unsafe: 'spi_neg logic; // spi_out_req with no synchronization, just casted to 'spi_neg clock domain. UNSAFE.
-    var spi_out_ack: 'spi_neg logic;
-    var spi_out_first_transfer: 'spi_neg logic; // Is the first transfer of a transaction?
-    
+    var spi_out_req: logic;                     // 内部回路からのSPIデータ出力要求
+    var spi_out_req_sync: 'spi_neg logic;       // SCK同期済みSPIデータ出力要求
+    var spi_out_req_unsafe: 'spi_neg logic;     // SPIデータ出力要求 (同期化されていない)
+    var spi_out_ack: 'spi_neg logic;            // 内部回路へのSPIデータ出力受理
+    var spi_out_first_transfer: 'spi_neg logic; // 最初の転送フラグ
+
     unsafe(cdc) {
+        // SCK同期済みSPIデータ出力要求の同期用シンクロナイザ・モジュール (2段FF)
         inst spi_out_req_sync_inst: sync::gen_synchronizer_negedge_async_high #(WIDTH: 1, STAGES: 2) (i_clk: spi_sck_neg, i_rst: spi_cs_neg_domain, i_d: spi_out_req, o_d: spi_out_req_sync);
-        assign spi_out_data_sync = spi_out_data; // Actually, spi_out_data is not synchronized by synchronizer. spi_out_data must be stable when spi_out_req_sync is asserted.
+        assign spi_out_data_sync = spi_out_data;
         assign spi_out_req_unsafe = spi_out_req;
     }
     always_comb {
         let first_word: spi_word_t = if spi_out_req_unsafe ? spi_out_data_sync : (IDLE_SEND_DATA as spi_word_t);
-        spi_miso = spi_shift_out_reg[msb];
-        if spi_out_first_transfer && spi_counter_neg[msb] { // If this is the first transfer and the first (MSB) bit, output the first word data.
+        spi_miso = spi_shift_out_reg[msb];  // MISOにはシフトレジスタのMSBを出力
+         // CSアサート後の最初の転送で最上位ビットのときはまだSCKが一度も入力されていない状態なので、
+         // シフトレジスタからでなく内部回路からの出力データのから直接MSBを出力
+        if spi_out_first_transfer && spi_counter_neg[msb] {
             spi_miso = first_word[msb];
         }
     }
     always_ff(spi_sck_neg, spi_cs_neg_domain) {
         if_reset {
-            // Reset the counter to all 0 except the MSB.
-            spi_counter_neg[msb] = 1'b1;
-            spi_counter_neg[msb-1:0] = '0;
-            spi_shift_out_reg = (IDLE_SEND_DATA as spi_word_t);
+            spi_counter_neg[msb] = 1'b1;    // カウンタを最上位ビットだけ1で初期化
+            spi_counter_neg[msb-1:0] = '0;  // /
+            spi_shift_out_reg = (IDLE_SEND_DATA as spi_word_t); // シフトレジスタをアイドルデータで初期化
             spi_out_ack = 0;
-            spi_out_first_transfer = 1;
+            spi_out_first_transfer = 1; // リセット中は最初の転送フラグを立てておく
         } else {
-            // Shift (rotate) right the counter 
-            spi_counter_neg = {spi_counter_neg[0], spi_counter_neg[msb:1]};
-            spi_shift_out_reg = {spi_shift_out_reg[msb-1:0], 1'b0};
+            spi_counter_neg = {spi_counter_neg[0], spi_counter_neg[msb:1]}; // カウンタを右ローテート
+            spi_shift_out_reg = {spi_shift_out_reg[msb-1:0], 1'b0}; // シフトレジスタを左シフト
 
-
-            if spi_counter_neg[0] { // Last clock cycle of the SPI word transfer
-                spi_shift_out_reg = if spi_out_req_sync ? spi_out_data_sync : (IDLE_SEND_DATA as spi_word_t);
-                spi_out_first_transfer = 0;
+            if spi_counter_neg[0] { // ワードの最後のビット？
+                spi_shift_out_reg = if spi_out_req_sync ? spi_out_data_sync : (IDLE_SEND_DATA as spi_word_t); // 内部回路からのデータがあればシフトレジスタを更新
+                spi_out_first_transfer = 0; // 最初のワード転送フラグをクリア
             }
-            if spi_out_first_transfer && spi_counter_neg[msb] {
-                // If this is the first bit of a transaction, update the shift register with the requested data with 1 bit shifted left.
-                // Note that the MSB of the first word will be set by the combinational of MOSI.
-                // The spi_out_req_unsafe signal must be stable at this point.
+            if spi_out_first_transfer && spi_counter_neg[msb] { // 最初のワードの最初のビット？
+                // CSアサート後の最初のワードの最初のビットの場合、シフトレジスタを内部回路からのデータを1ビット左シフトした内容で更新します。
+                // MSBは前述の組み合わせロジックで直接MISOに出力されるため、シフトレジスタにはセットしません。
+                // この時点でspi_out_req_unsafe信号は安定している必要があります。
                 let first_word: spi_word_t = if spi_out_req_unsafe ? spi_out_data_sync : (IDLE_SEND_DATA as spi_word_t);
                 spi_shift_out_reg = {first_word[msb-1:0], 1'b0};
             }
-            if spi_counter_neg[msb/2] {
-                // deassert the SPI out ack signal at the half of SPI word transfer.
+            if spi_counter_neg[msb/2] { // ワードの半分のビットで受理信号をクリアする
                 spi_out_ack = 1'b0;
             }
             if spi_counter_neg[msb] && (if spi_out_first_transfer ? spi_out_req_unsafe : spi_out_req_sync) {
-                // If this is not the first transfer, assert the SPI out ack signal to indicate the data is consumed.
+                // ワードの最初のビットで、データ出力要求があるなら、受理信号をアサートする
                 spi_out_ack = 1'b1;
             }
         }
     }
 
-    var spi_in_req_sync: logic;
-    var spi_in_req_sync_prev: logic;
+    var spi_in_req_sync: logic;        // 内部クロック同期済みデータ入力要求
+    var spi_in_req_sync_prev: logic;   // 内部クロック同期済みデータ入力要求の前の状態
     var spi_in_data_sync: spi_word_t;
-    var spi_in_first_sync: logic;
-    var spi_out_ack_sync: logic;
-    var spi_out_ack_sync_prev: logic;
+    var spi_in_first_sync: logic;      // 内部クロック同期済み先頭ワードフラグ
+    var spi_out_ack_sync: logic;       // 内部クロック同期済みデータ出力受理信号
+    var spi_out_ack_sync_prev: logic;  // 内部クロック同期済みデータ出力受理信号の前の状態
     unsafe(cdc) {
+        // spi_in_reqとspi_out_ackの同期用シンクロナイザ・モジュール (2段FF)
         inst spi_in_req_sync_inst: synchronizer_m #(WIDTH: 1, STAGES: 2) (i_clk: r#clock, i_rst: r#reset, i_d: spi_in_req, o_d: spi_in_req_sync);
         inst spi_out_ack_sync_inst: synchronizer_m #(WIDTH: 1, STAGES: 2) (i_clk: r#clock, i_rst: r#reset, i_d: spi_out_ack, o_d: spi_out_ack_sync);
         assign spi_in_data_sync = spi_in_data;
         assign spi_in_first_sync = spi_in_first;
     }
-    // Req/Ack signal edge detection.
+    // 入力要求信号と出力受理信号の前の状態を更新 (エッジ検出用)
     always_ff(r#clock, r#reset) {
         if_reset {
             spi_in_req_sync_prev = 0;
@@ -169,15 +169,15 @@ pub module spi_slave::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> #
         }
     }
 
-    var receive_valid: logic;
-    var receive_data: spi_word_t;
-    var receive_first: logic;
-    var send_ready: logic;
+    var receive_valid: logic;       // 受信データの出力ストリームのVALID
+    var receive_data: spi_word_t;   // 受信データの出力ストリームのデータ
+    var receive_first: logic;       // 受信データの出力ストリームの先頭フラグ
+    var send_ready: logic;          // 送信データの入力ストリームのREADY
     always_comb {
-        fifo_in.tvalid = receive_valid;
-        fifo_in.tdata = receive_data;
-        fifo_in.tuser = receive_first;
-        axis_send.tready = send_ready;
+        fifo_in.tvalid = receive_valid; // 受信データのVALIDを受信データFIFOのVALIDに接続
+        fifo_in.tdata = receive_data;   // 受信データのデータを受信データFIFOのデータに接続
+        fifo_in.tuser = receive_first;  // 受信データの先頭フラグを受信データFIFOのTUSERに接続
+        axis_send.tready = send_ready;  // 送信データの入力ストリームのREADYを接続
     }
 
     always_ff(r#clock, r#reset) {
@@ -191,29 +191,29 @@ pub module spi_slave::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> #
             spi_in_ack = 0;
         } else {
             if receive_valid && fifo_in.tready {
-                receive_valid = 0;
+                receive_valid = 0;  // VALID&&READYが成立したら受信データのVALIDをクリア
             }
 
-            if !spi_in_req_sync {
+            if !spi_in_req_sync {   // データ入力要求がデアサートされたら対応する受理信号をクリア
                 spi_in_ack = 0;
             }
 
-            if !spi_in_req_sync_prev && spi_in_req_sync && (!receive_valid || fifo_in.tready) {
+            if !spi_in_req_sync_prev && spi_in_req_sync && (!receive_valid || fifo_in.tready) { // データ入力要求の立ち上がりを検出したらFIFOにデータを投入
                 receive_valid = 1;
                 receive_data = spi_in_data_sync;
                 receive_first = spi_in_first_sync;
-                spi_in_ack = 1;
+                spi_in_ack = 1; // データ入力要求に対する受理信号をアサート
             }
 
-            if !spi_out_ack_sync_prev && spi_out_ack_sync {
+            if !spi_out_ack_sync_prev && spi_out_ack_sync { // データ出力受理信号の立ち上がりを検出したら要求信号をクリア
                 spi_out_req = 0;
             }
 
-            if !spi_out_req || (!spi_out_ack_sync_prev && spi_out_ack_sync) {
+            if !spi_out_req || (!spi_out_ack_sync_prev && spi_out_ack_sync) { // データ出力要求をまだ出していないか、受理応答の立ち上がりを検出したら送信データを受けつける
                 send_ready = 1;
             }
 
-            if axis_send.tvalid && send_ready {
+            if axis_send.tvalid && send_ready { // 送信データが用意できているならデータを取得して送信要求信号をアサート
                 send_ready = 0;
                 spi_out_data = axis_send.tdata;
                 spi_out_req = 1;
