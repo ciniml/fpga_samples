@@ -18,47 +18,38 @@
 
 static constexpr std::size_t BUFFER_SIZE = 16384;
 
-static void transfer_spi_with_dma(const void* txbuf, void* rxbuf, std::size_t transfer_length) {
-    
-    // Grab some unused dma channels
-    const uint dma_tx = dma_claim_unused_channel(true);
-    const uint dma_rx = dma_claim_unused_channel(true);
+static void transfer_spi_with_dma(const void *txbuf, void *rxbuf, std::size_t transfer_length)
+{
+    uint dma_tx = dma_claim_unused_channel(true);
+    uint dma_rx = dma_claim_unused_channel(true);
 
     gpio_put(PICO_DEFAULT_SPI_CSN_PIN, 0);
-
-    // We set the outbound DMA to transfer from a memory buffer to the SPI transmit FIFO paced by the SPI TX FIFO DREQ
-    // The default is for the read address to increment every element (in this case 1 byte = DMA_SIZE_8)
-    // and for the write address to remain unchanged.
 
     dma_channel_config c = dma_channel_get_default_config(dma_tx);
     channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
     channel_config_set_dreq(&c, spi_get_dreq(spi_default, true));
     dma_channel_configure(dma_tx, &c,
-                        &spi_get_hw(spi_default)->dr, // write address
-                        txbuf, // read address
-                        transfer_length, // element count (each element is of size transfer_data_size)
-                        false); // don't start yet
+                          &spi_get_hw(spi_default)->dr, // write address
+                          txbuf,                        // read address
+                          transfer_length,              // element count
+                          false);                       // don't start yet
 
-    // We set the inbound DMA to transfer from the SPI receive FIFO to a memory buffer paced by the SPI RX FIFO DREQ
-    // We configure the read address to remain unchanged for each element, but the write
-    // address to increment (so data is written throughout the buffer)
     c = dma_channel_get_default_config(dma_rx);
     channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
     channel_config_set_dreq(&c, spi_get_dreq(spi_default, false));
     channel_config_set_read_increment(&c, false);
     channel_config_set_write_increment(&c, true);
     dma_channel_configure(dma_rx, &c,
-                        rxbuf, // write address
-                        &spi_get_hw(spi_default)->dr, // read address
-                        transfer_length, // element count (each element is of size transfer_data_size)
-                        false); // don't start yet
+                          rxbuf,                        // write address
+                          &spi_get_hw(spi_default)->dr, // read address
+                          transfer_length,              // element count
+                          false);                       // don't start yet
 
-
-    // start them exactly simultaneously to avoid races (in extreme cases the FIFO could overflow)
     dma_start_channel_mask((1u << dma_tx) | (1u << dma_rx));
     dma_channel_wait_for_finish_blocking(dma_rx);
-    if (dma_channel_is_busy(dma_tx)) {
-        panic("RX completed before TX");
+    if (dma_channel_is_busy(dma_tx))
+    {
+        return;
     }
 
     gpio_put(PICO_DEFAULT_SPI_CSN_PIN, 1);
@@ -67,29 +58,32 @@ static void transfer_spi_with_dma(const void* txbuf, void* rxbuf, std::size_t tr
     dma_channel_unclaim(dma_rx);
 }
 
-int main() {
-    // Enable UART so we can print status output
+int main()
+{
     stdio_init_all();
 
     // Enable SPI at 80 MHz and connect to GPIOs
-    spi_init(spi_default, 1000 * 1000 * 60);
+    spi_init(spi_default, 1000 * 1000 * 1);
     gpio_set_function(PICO_DEFAULT_SPI_RX_PIN, GPIO_FUNC_SPI);
     gpio_init(PICO_DEFAULT_SPI_CSN_PIN);
     gpio_set_dir(PICO_DEFAULT_SPI_CSN_PIN, GPIO_OUT);
     gpio_put(PICO_DEFAULT_SPI_CSN_PIN, 1);
 
+    const uint RESPONSE_OK_PIN = 20;
+    gpio_init(RESPONSE_OK_PIN);
+    gpio_set_dir(RESPONSE_OK_PIN, GPIO_OUT);
+    gpio_put(RESPONSE_OK_PIN, 0);
 
     gpio_set_function(PICO_DEFAULT_SPI_SCK_PIN, GPIO_FUNC_SPI);
     gpio_set_function(PICO_DEFAULT_SPI_TX_PIN, GPIO_FUNC_SPI);
-    // Make the SPI pins available to picotool
     bi_decl(bi_3pins_with_func(PICO_DEFAULT_SPI_RX_PIN, PICO_DEFAULT_SPI_TX_PIN, PICO_DEFAULT_SPI_SCK_PIN, GPIO_FUNC_SPI));
-    // Make the CS pin available to picotool
     bi_decl(bi_1pin_with_name(PICO_DEFAULT_SPI_CSN_PIN, "SPI CS"));
 
     static uint8_t txbuf[BUFFER_SIZE];
     static uint8_t rxbuf[BUFFER_SIZE];
 
-    while(true) {
+    while (true)
+    {
         std::size_t command_length = 0;
         constexpr std::size_t SCREEN_WIDTH = 70;
         constexpr std::size_t SCREEN_HEIGHT = 90;
@@ -110,8 +104,12 @@ int main() {
         txbuf[command_length++] = (h >> 8);
         txbuf[command_length++] = (h & 0xff);
         txbuf[command_length++] = color;
+        txbuf[command_length++] = 0xff; // dummy for receive response.
+        txbuf[command_length++] = 0xff; // dummy for receive response.
 
+        gpio_put(RESPONSE_OK_PIN, 0);
         transfer_spi_with_dma(txbuf, rxbuf, command_length);
+        gpio_put(RESPONSE_OK_PIN, rxbuf[command_length - 1] == 0x20 ? 1 : 0);
         sleep_ms(1);
 
         command_length = 0;
@@ -129,12 +127,14 @@ int main() {
         txbuf[command_length++] = (h >> 8);
         txbuf[command_length++] = (h & 0xff);
         std::memcpy(&txbuf[command_length], ___fuga_300px_90h_rgb332_bin, sizeof(___fuga_300px_90h_rgb332_bin));
-        command_length += sizeof(___fuga_300px_90h_rgb332_bin);
 
-        transfer_spi_with_dma(txbuf, rxbuf, command_length);
+        gpio_put(RESPONSE_OK_PIN, 0);
+        transfer_spi_with_dma(txbuf, rxbuf, command_length + sizeof(___fuga_300px_90h_rgb332_bin));
+        gpio_put(RESPONSE_OK_PIN, rxbuf[command_length-1] == 0x30 ? 1 : 0);
         sleep_ms(1);
-        
+
         // WRITE_PIXEL
+        command_length = 0;
         x = rand() % SCREEN_WIDTH;
         y = rand() % SCREEN_HEIGHT;
         color = rand() & 0xff;
@@ -144,10 +144,14 @@ int main() {
         txbuf[command_length++] = (y >> 8);
         txbuf[command_length++] = (y & 0xff);
         txbuf[command_length++] = color;
+        txbuf[command_length++] = 0xff; // dummy for receive response.
+        txbuf[command_length++] = 0xff; // dummy for receive response.
 
+        gpio_put(RESPONSE_OK_PIN, 0);
         transfer_spi_with_dma(txbuf, rxbuf, command_length);
+        gpio_put(RESPONSE_OK_PIN, rxbuf[command_length - 1] == 0x40 ? 1 : 0);
         sleep_us(10);
     }
-    
+
     return 0;
 }
