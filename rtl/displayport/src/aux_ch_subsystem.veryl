@@ -1,0 +1,342 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2024.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file aux_ch_subsystem.veryl
+ * @brief DisplayPort AUX_CH Subsystem
+ */
+
+pub module aux_ch_subsystem #(
+    param CLOCK_HZ: u32 = 32'd100_000_000,  // Clock frequency (default = 100MHz)
+    param MANCHESTER_CLOCK_HZ: u32 = 32'd1_000_000,  // Manchester clock frequency (default = 1MHz)
+    param PRECHARGE_CYCLES: u32 = 32'd16,   // Number of precharge cycles
+    param BUFFER_SIZE: u32 = 256,           // Buffer size
+    param DEBUG_OUT: bit = 0,               // Enable debug output messages
+    param PROCESSOR_ID: u32 = 32'h01234567, // Processor ID
+    param PROCESSOR_ROM_SIZE: u32 = 8192,   // Processor ROM size (default = 8kB)
+    param PROCESSOR_RAM_SIZE: u32 = 8192,   // Processor RAM size (default = 8kB)
+    param PROCESSOR_ROM_FILE: string = "",  // Processor ROM file
+    local REGISTER_COUNT: u32 = 32,         // Number of registers
+) (
+    clock:   input logic,
+    aresetn: input logic,
+
+    // AUX_CH input
+    aux_ch_in:        input logic,
+    // AUX_CH output
+    aux_ch_out:        output logic,
+    aux_ch_out_enable: output logic,
+
+    // CPU output
+    cpu_io_out: output logic<32>,
+
+    // Serial input
+    saxis_serial_in_tvalid: input  logic,
+    saxis_serial_in_tready: output logic,
+    saxis_serial_in_tdata : input  logic<8>,
+
+    // Serial output
+    maxis_serial_out_tvalid: output logic,
+    maxis_serial_out_tready: input  logic,
+    maxis_serial_out_tdata : output logic<8>,
+) {
+    type U32 = logic<32>;
+    
+    local PROCESSOR_ROM_ADDRESS_WIDTH: u32 = $clog2(PROCESSOR_ROM_SIZE/4);  // プロセッサのROMアドレス幅
+    type rom_address_t = logic<PROCESSOR_ROM_ADDRESS_WIDTH>;
+    var processor_rom: logic<32>[PROCESSOR_ROM_SIZE/4];  // プロセッサのプログラムメモリ
+    local PROCESSOR_RAM_ADDRESS_WIDTH: u32 = $clog2(PROCESSOR_RAM_SIZE/4);  // プロセッサのRAMアドレス幅
+    type ram_address_t = logic<PROCESSOR_RAM_ADDRESS_WIDTH>;
+    var processor_ram: logic<32>[PROCESSOR_RAM_SIZE/4];  // プロセッサのメモリ
+
+    initial {
+        if (PROCESSOR_ROM_FILE != "") {
+            $readmemh(PROCESSOR_ROM_FILE, processor_rom);
+        }
+    }
+
+    // PicoRV32 メモリインターフェース信号
+    var mem_addr : logic<32>;
+    var mem_wdata: logic<32>;
+    var mem_wmask: logic<4>;
+    var mem_rdata: logic<32>;
+    var mem_rstrb: logic;
+    var mem_rbusy: logic;
+    var mem_wbusy: logic;
+
+    var interrupt_request: logic;
+    var processor_reset: logic;
+
+    // FemtoRV32のインスタンス
+    inst femtorv_inst: $sv::FemtoRV32 #(
+        RESET_ADDR: 32'h8000_0000,  // リセットアドレス = 32'h8000_0000
+        ADDR_WIDTH: 32,
+    ) (
+        clk:    clock,    // クロック
+        reset:  aresetn && !processor_reset,  // リセット
+        mem_addr,
+        mem_wdata,
+        mem_wmask,
+        mem_rdata,
+        mem_rstrb,
+        mem_rbusy,
+        mem_wbusy,
+        interrupt_request,
+    );
+    
+    always_comb {
+        mem_wbusy = 0;
+        interrupt_request = 0;
+    }
+
+    var mem_read: logic;
+    assign mem_read = mem_wmask == '0;
+
+    local IBUS_MEM_SPACE: logic<4> = 4'h8;   // 命令メモリ空間   : 32'h8000_0000 ~ 32'h8fff_ffff
+    local DBUS_MEM_SPACE: logic<4> = 4'h2;   // データメモリ空間 : 32'h2000_0000 ~ 32'h2fff_ffff
+    local REG_MEM_SPACE : logic<4> = 4'h4;   // レジスタメモリ空間: 32'h4000_0000 ~ 32'h4fff_ffff
+    local REG_SPACE_SYSTEM: logic<12> = 12'h000;  // システムレジスタ
+    local REG_SPACE_AUX_CH: logic<12> = 12'h001;  // AUX_CHレジスタ
+    local REG_SYSTEM_ID      : logic<14> = 14'h0000;  // IDレジスタ
+    local REG_SYSTEM_CLOCK_HZ: logic<14> = 14'h0001;  // クロック周波数レジスタ
+    local REG_SYSTEM_OUT     : logic<14> = 14'h0002;  // OUTレジスタ
+    local REG_SYSTEM_SERIAL_OUT: logic<14> = 14'h0003;  // SERIAL_OUTレジスタ
+
+    var mem_space: logic<4>;
+    var is_mem_space_ibus: logic;
+    var is_mem_space_dbus: logic;
+    var is_mem_space_reg: logic;
+    always_comb {
+        mem_space = mem_addr[31:28];
+        is_mem_space_ibus = (mem_space == IBUS_MEM_SPACE);
+        is_mem_space_dbus = (mem_space == DBUS_MEM_SPACE);
+        is_mem_space_reg = (mem_space == REG_MEM_SPACE);
+    }
+
+    var reg_space: logic<12>;
+    always_comb {
+        reg_space = mem_addr[27:16];
+    }
+
+    var aux_ch_address: logic<9>;
+    var aux_ch_read_en: logic;
+    var aux_ch_read_data: logic<8>;
+    var aux_ch_write_en: logic;
+    var aux_ch_write_data: logic<8>;
+    var aux_ch_interrupt: logic;
+
+    inst aux_ch_inst: aux_ch_peripheral #(
+        CLOCK_HZ,
+        MANCHESTER_CLOCK_HZ,
+        PRECHARGE_CYCLES,
+        BUFFER_SIZE,
+        DEBUG_OUT,
+    ) (
+        clock,
+        aresetn,
+
+        mcu_address   : aux_ch_address,
+        mcu_read_en   : aux_ch_read_en,
+        mcu_read_data : aux_ch_read_data,
+        mcu_write_en  : aux_ch_write_en,
+        mcu_write_data: aux_ch_write_data,
+        mcu_interrupt : aux_ch_interrupt,
+
+        aux_ch_in,
+        aux_ch_out,
+        aux_ch_out_enable,
+    );
+
+    type aux_ch_address_t = logic<9>;
+    var mem_buffer: logic<32>;
+    always_comb {
+        let is_aux_ch_address: logic = (mem_addr[31:28] == REG_MEM_SPACE && mem_addr[27:16] == REG_SPACE_AUX_CH);
+        aux_ch_address = mem_addr[2 +: 9] as aux_ch_address_t;
+        aux_ch_read_en = mem_rstrb && is_aux_ch_address;
+        aux_ch_write_en = mem_wmask[0] && is_aux_ch_address;
+        aux_ch_write_data = mem_wdata[7:0];
+        mem_rbusy = 0;
+
+        mem_rdata = 0;
+        if is_mem_space_reg {
+            case reg_space {
+                REG_SPACE_SYSTEM: {
+                    case mem_addr[15:2] {
+                        REG_SYSTEM_ID: mem_rdata = PROCESSOR_ID;
+                        REG_SYSTEM_CLOCK_HZ: mem_rdata = CLOCK_HZ;
+                        REG_SYSTEM_OUT: mem_rdata = cpu_io_out;
+                        REG_SYSTEM_SERIAL_OUT: mem_rdata = {23'0, maxis_serial_out_tvalid, maxis_serial_out_tdata};
+                        default: mem_rdata = 0;
+                    }
+                }
+                REG_SPACE_AUX_CH: {
+                    mem_rdata = {24'0, aux_ch_read_data};
+                }
+                default: mem_rdata = 0;
+            }
+        }
+        if is_mem_space_ibus {
+            mem_rdata = mem_buffer;
+        }
+        if is_mem_space_dbus {
+            mem_rdata = mem_buffer;
+        }
+    }
+
+    always_ff (clock, aresetn) {
+        if_reset {
+            mem_buffer = 0;
+        } else {
+            if maxis_serial_out_tvalid && maxis_serial_out_tready {
+                maxis_serial_out_tvalid = 0;
+            }
+
+            if mem_rstrb {
+                mem_buffer = 0;
+                if is_mem_space_ibus {
+                    mem_buffer = processor_rom[mem_addr[2 +: PROCESSOR_ROM_ADDRESS_WIDTH]];
+                }
+                if is_mem_space_dbus {
+                    mem_buffer = processor_ram[mem_addr[2 +: PROCESSOR_RAM_ADDRESS_WIDTH]];
+                }
+            } else if mem_wmask != 0 {
+                let mask: logic<32> = {mem_wmask[3] repeat 8, mem_wmask[2] repeat 8, mem_wmask[1] repeat 8, mem_wmask[0] repeat 8};
+                let masked_data: logic<32> = mem_wdata & mask;
+                if is_mem_space_reg {
+                    case reg_space {
+                        REG_SPACE_SYSTEM: {
+                            case mem_addr[15:2] {
+                                REG_SYSTEM_OUT: cpu_io_out = (cpu_io_out & ~mask) | masked_data;
+                                REG_SYSTEM_SERIAL_OUT: {
+                                    if mem_wmask[0] && (!maxis_serial_out_tvalid || maxis_serial_out_tready) {
+                                        maxis_serial_out_tdata = mem_wdata[7:0];
+                                        maxis_serial_out_tvalid = 1;
+                                    }
+                                }
+                                default: {}
+                            }
+                        }
+                        REG_SPACE_AUX_CH: {
+                            // Nothing to do.
+                        }
+                        default: {}
+                    }
+                }
+                if is_mem_space_dbus {
+                    if mem_wmask[0] {
+                        processor_ram[mem_addr[2 +: PROCESSOR_RAM_ADDRESS_WIDTH]][ 7: 0] = mem_wdata[ 7: 0];
+                    }
+                    if mem_wmask[1] {
+                        processor_ram[mem_addr[2 +: PROCESSOR_RAM_ADDRESS_WIDTH]][15: 8] = mem_wdata[15: 8];
+                    }
+                    if mem_wmask[2] {
+                        processor_ram[mem_addr[2 +: PROCESSOR_RAM_ADDRESS_WIDTH]][23:16] = mem_wdata[23:16];
+                    }
+                    if mem_wmask[3] {
+                        processor_ram[mem_addr[2 +: PROCESSOR_RAM_ADDRESS_WIDTH]][31:24] = mem_wdata[31:24];
+                    }
+                }
+            }
+        }
+    }
+
+    // Memory I/O
+    var loader_mem_address: logic<32>;
+    var loader_mem_rreq   : logic;
+    var loader_mem_rdata  : logic<8>;
+    var loader_mem_wreq   : logic;
+    var loader_mem_wdata  : logic<8>;
+
+    // Serial output
+    var loader_maxis_serial_out_tvalid: logic;
+    var loader_maxis_serial_out_tready: logic;
+    var loader_maxis_serial_out_tdata : logic<8>;
+
+    // Serial input
+    var loader_saxis_serial_in_tvalid: logic;
+    var loader_saxis_serial_in_tready: logic;
+    var loader_saxis_serial_in_tdata : logic<8>;
+    
+    assign loader_maxis_serial_out_tready = 1;
+
+    inst loader_memory_access: stream_memory_access #(
+        ADDRESS_BITS: 32,
+    ) (
+        clock,
+        aresetn,
+
+        mem_address:loader_mem_address,
+        mem_rreq:   loader_mem_rreq,
+        mem_rdata:  loader_mem_rdata,
+        mem_wreq:   loader_mem_wreq,
+        mem_wdata:  loader_mem_wdata,
+
+        maxis_serial_out_tvalid: loader_maxis_serial_out_tvalid,
+        maxis_serial_out_tready: loader_maxis_serial_out_tready,
+        maxis_serial_out_tdata : loader_maxis_serial_out_tdata,
+
+        saxis_serial_in_tvalid: loader_saxis_serial_in_tvalid,
+        saxis_serial_in_tready: loader_saxis_serial_in_tready,
+        saxis_serial_in_tdata : loader_saxis_serial_in_tdata,
+    );
+
+    always_ff(clock, aresetn) {
+        if_reset {
+            processor_reset = 0;
+        } else {
+            if loader_mem_rreq {
+                case loader_mem_address[31:28] {
+                    IBUS_MEM_SPACE: {
+                        let loader_rom_rdata: logic<32> = processor_rom[loader_mem_address[2 +: PROCESSOR_ROM_ADDRESS_WIDTH]];
+                        case loader_mem_address[1:0] {
+                            2'd0: loader_mem_rdata = loader_rom_rdata[ 0 +: 8];
+                            2'd1: loader_mem_rdata = loader_rom_rdata[ 8 +: 8];
+                            2'd2: loader_mem_rdata = loader_rom_rdata[16 +: 8];
+                            2'd3: loader_mem_rdata = loader_rom_rdata[24 +: 8];
+                        }
+                    }
+                    DBUS_MEM_SPACE: {
+                        let loader_ram_rdata: logic<32> = processor_ram[loader_mem_address[2 +: PROCESSOR_RAM_ADDRESS_WIDTH]];
+                        case loader_mem_address[1:0] {
+                            2'd0: loader_mem_rdata = loader_ram_rdata[ 0 +: 8];
+                            2'd1: loader_mem_rdata = loader_ram_rdata[ 8 +: 8];
+                            2'd2: loader_mem_rdata = loader_ram_rdata[16 +: 8];
+                            2'd3: loader_mem_rdata = loader_ram_rdata[24 +: 8];
+                        }
+                    }
+                    default: loader_mem_rdata = 8'h00;
+                }
+            }
+            if loader_mem_wreq {
+                case loader_mem_address[31:28] {
+                    IBUS_MEM_SPACE: {
+                        let loader_rom_address: rom_address_t = loader_mem_address[2 +: PROCESSOR_ROM_ADDRESS_WIDTH];
+                        case loader_mem_address[1:0] {
+                            2'd0: processor_rom[loader_rom_address][ 0 +: 8] = loader_mem_wdata;
+                            2'd1: processor_rom[loader_rom_address][ 8 +: 8] = loader_mem_wdata;
+                            2'd2: processor_rom[loader_rom_address][16 +: 8] = loader_mem_wdata;
+                            2'd3: processor_rom[loader_rom_address][24 +: 8] = loader_mem_wdata;
+                        }
+                    }
+                    DBUS_MEM_SPACE: {
+                        let loader_ram_address: ram_address_t = loader_mem_address[2 +: PROCESSOR_RAM_ADDRESS_WIDTH];
+                        case loader_mem_address[1:0] {
+                            2'd0: processor_ram[loader_ram_address][ 0 +: 8] = loader_mem_wdata;
+                            2'd1: processor_ram[loader_ram_address][ 8 +: 8] = loader_mem_wdata;
+                            2'd2: processor_ram[loader_ram_address][16 +: 8] = loader_mem_wdata;
+                            2'd3: processor_ram[loader_ram_address][24 +: 8] = loader_mem_wdata;
+                        }
+                    }
+                    4'hf: {
+                        if loader_mem_address == 32'hffff_ffff {
+                            processor_reset = loader_mem_wdata[0];
+                        }
+                    }
+                    default: {}
+                }
+            }
+        }
+    }
+}

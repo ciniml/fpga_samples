@@ -1,0 +1,165 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2024.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file stream_memory_access.veryl
+ * @brief DisplayPort AUX_CH Subsystem
+ */
+
+pub module stream_memory_access #(
+    param ADDRESS_BITS: u32 = 20,  // 1MB
+) (
+    clock:   input logic,
+    aresetn: input logic,
+
+    // Memory I/O
+    mem_address: output logic<ADDRESS_BITS>,
+    mem_rreq   : output logic,
+    mem_rdata  : input  logic<8>,
+    mem_wreq   : output logic,
+    mem_wdata  : output logic<8>,
+
+    // Serial output
+    maxis_serial_out_tvalid: output logic,
+    maxis_serial_out_tready: input  logic,
+    maxis_serial_out_tdata : output logic<8>,
+
+    // Serial input
+    saxis_serial_in_tvalid: input  logic,
+    saxis_serial_in_tready: output logic,
+    saxis_serial_in_tdata : input  logic<8>,
+) {
+    local ADDRESS_BYTES: u32 = (ADDRESS_BITS + 7) / 8;
+    type address_t = logic<ADDRESS_BITS>;
+    type address_byte_counter_t = logic<$clog2(ADDRESS_BYTES)>;
+
+    enum State: logic<4> {
+        IDLE,
+        HEAD_1,
+        HEAD_2,
+        HEAD_3,
+        ADDRESS,
+        LENGTH,
+        READ_MEM,
+        WRITE_MEM,
+    }
+
+    var state: State;
+    var address: address_t;
+    var length: logic<8>;
+    var address_byte_counter: address_byte_counter_t;
+    var is_read: logic;
+    
+    always_comb {
+        saxis_serial_in_tready = case state {
+            State::IDLE:  1'b0,
+            State::READ_MEM: 1'b0, 
+            default: 1'b1,
+        };
+    }
+
+    always_ff(clock, aresetn) {
+        if_reset {
+            maxis_serial_out_tvalid = 0;
+            mem_rreq = 0;
+            mem_wreq = 0;
+            state = State::IDLE;
+        } else {
+            mem_rreq = 0;
+            mem_wreq = 0;
+            if maxis_serial_out_tvalid && maxis_serial_out_tready {
+                maxis_serial_out_tvalid = 0;
+            }
+
+            case state {
+                State::IDLE: {
+                    address_byte_counter = 0;
+                    length = 0;
+                    if saxis_serial_in_tvalid {
+                        if saxis_serial_in_tdata == 8'h5a {
+                            state = State::HEAD_1;
+                        } else {
+                            state = State::IDLE;
+                        }
+                    }
+                }
+                State::HEAD_1: {
+                    if saxis_serial_in_tvalid {
+                        if saxis_serial_in_tdata == 8'ha5 {
+                            state = State::HEAD_2;
+                        } else {
+                            state = State::IDLE;
+                        }
+                    }
+                }
+                State::HEAD_2: {
+                    if saxis_serial_in_tvalid {
+                        if saxis_serial_in_tdata == 8'h5b {
+                            state = State::HEAD_3;
+                        } else {
+                            state = State::IDLE;
+                        }
+                    }
+                }
+                State::HEAD_3: {
+                    if saxis_serial_in_tvalid {
+                        if (saxis_serial_in_tdata & 8'hfe) == 8'ha8 {
+                            is_read = saxis_serial_in_tdata[0];
+                            state = State::ADDRESS;
+                        } else {
+                            state = State::IDLE;
+                        }
+                    }
+                }
+                State::ADDRESS: {
+                    if saxis_serial_in_tvalid {
+                        address = {address[$bits(address)-1:8], saxis_serial_in_tdata};
+                        if address_byte_counter == (ADDRESS_BYTES - 1) as address_byte_counter_t {
+                            state = State::LENGTH;
+                        }
+                    }
+                }
+                State::LENGTH: {
+                    if saxis_serial_in_tvalid {
+                        length = saxis_serial_in_tdata;
+                        mem_address = address;
+                        if is_read {
+                            mem_rreq = 1;
+                            state = State::READ_MEM;
+                        } else {
+                            state = State::WRITE_MEM;
+                        }
+                    }
+                }
+                State::READ_MEM: {
+                    if !maxis_serial_out_tvalid || maxis_serial_out_tready {
+                        maxis_serial_out_tdata = mem_rdata;
+                        maxis_serial_out_tvalid = 1;
+                        length = length - 1;
+                        if length == 0 {
+                            state = State::IDLE;
+                        } else {
+                            mem_address = mem_address + 1;
+                            mem_rreq = 1;
+                        }
+                    }
+                }
+                State::WRITE_MEM: {
+                    if saxis_serial_in_tvalid {
+                        mem_wdata = saxis_serial_in_tdata;
+                        mem_wreq = 1;
+                        mem_address = address;
+                        address = address + 1;
+                        length = length - 1;
+                        if length == 0 {
+                            state = State::IDLE;
+                        }
+                    }
+                }
+                default: state = State::IDLE;
+            }
+        }
+    }
+}

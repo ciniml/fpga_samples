@@ -1,0 +1,146 @@
+{
+    "scopeName": "source.dslx",
+    "patterns": [
+        {
+            "include": "#expression"
+        }
+    ],
+    "repository": {
+        "expression": {
+            "patterns": [
+                {
+                    "include": "#letter"
+                }
+            ]
+        },
+        "attribute": {
+            "match": "#\\[\\s*test_proc\\s*\\]",
+            "name": "attribute"
+        },
+        "argument_list": {
+            "begin": "\\(",
+            "end": "\\)",
+            "beginCaptures": {},
+            "endCaptures": {},
+            "name": "arguments",
+            "patterns": [
+                {
+                    "include": "#argument_def"
+                }
+            ]
+        },
+        "argument_def": {
+            "match": "(\\b((\\w+)\\s*:\\s*(\\w+((\\s*<[^>]+>)|(\\s*\\[[^\\]]+\\])))\\s*,\\s*)*((\\w+)\\s*:\\s*(\\w+((\\s*<[^>]+>)|(\\s*\\[[^\\]]+\\])))\\s*))?",
+            "name": "argument"
+        },
+        "type": {
+            "patterns": [
+                {
+                    "include": "#predefined_type"
+                },
+                {
+                    "include": "#bits_type"
+                },
+                {
+                    "include": "#channel_type"
+                },
+                {
+                    "include": "#custom_type"
+                },
+                {
+                    "include": "#custom_generic_type"
+                }
+            ]
+        },
+        "predefined_type": {
+            "match": "\\b[su]\\d+\\b",
+            "name": "keyword"
+        },
+        "bits_type": {
+            "begin": "\\b(bit|sN|uN)\\[",
+            "end": "\\]",
+            "beginCaptures": {
+                "0": {
+                    "name": "punctuation.paren.open"
+                },
+                "1": {
+                    "name": "keyword"
+                }
+            },
+            "endCaptures": {
+                "0": {
+                    "name": "punctuation.paren.close"
+                }
+            },
+            "name": "expression.group",
+            "patterns": [
+                {
+                    "include": "#expression"
+                }
+            ]
+        },
+        "channel_type": {
+            "begin": "\\b(chan)\\s*<",
+            "end": ">\\s+(in|out)",
+            "beginCaptures": {
+                "1": {
+                    "name": "keyword"
+                }
+            },
+            "endCaptures": {
+                "1": {
+                    "name": "keyword"
+                }
+            },
+            "name": "expression.group",
+            "patterns": [
+                {
+                    "include": "#type"
+                }
+            ]
+        },
+        "custom_type": {
+            "match": "\\b\\w+\\b",
+            "name": "type"
+        },
+        "custom_generic_type": {
+            "begin": "\\b(\\w+)<",
+            "end": ">",
+            "beginCaptures": {
+                "1": {
+                    "name": "keyword"
+                }
+            },
+            "endCaptures": {},
+            "name": "expression.group",
+            "patterns": [
+                {
+                    "include": "#type"
+                },
+                {
+                    "include": "#expression"
+                }
+            ]
+        },
+        "paren-expression": {
+            "begin": "\\(",
+            "end": "\\)",
+            "beginCaptures": {
+                "0": {
+                    "name": "punctuation.paren.open"
+                }
+            },
+            "endCaptures": {
+                "0": {
+                    "name": "punctuation.paren.close"
+                }
+            },
+            "name": "expression.group",
+            "patterns": [
+                {
+                    "include": "#expression"
+                }
+            ]
+        }
+    }
+}

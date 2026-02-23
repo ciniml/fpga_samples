@@ -1,0 +1,37 @@
+<?xml version="1" encoding="UTF-8"?>
+<!DOCTYPE gowin-fpga-project>
+<Project>
+    <Template>FPGA</Template>
+    <Version>5</Version>
+    <Device name="GW1N-4B" pn="GW1N-LV4LQ144C6/I5">gw1n4b-011</Device>
+    <FileList>
+        <File path="src/top.sv" type="file.verilog" enable="1"/>
+        <File path="/home/kenta/repos/gowin_runber/external/serv/rtl/ser_add.v" type="file.verilog" enable="1"/>
+        <File path="/home/kenta/repos/gowin_runber/external/serv/rtl/ser_lt.v" type="file.verilog" enable="1"/>
+        <File path="/home/kenta/repos/gowin_runber/external/serv/rtl/ser_shift.v" type="file.verilog" enable="1"/>
+        <File path="/home/kenta/repos/gowin_runber/external/serv/rtl/serv_alu.v" type="file.verilog" enable="1"/>
+        <File path="/home/kenta/repos/gowin_runber/external/serv/rtl/serv_bufreg.v" type="file.verilog" enable="1"/>
+        <File path="/home/kenta/repos/gowin_runber/external/serv/rtl/serv_csr.v" type="file.verilog" enable="1"/>
+        <File path="/home/kenta/repos/gowin_runber/external/serv/rtl/serv_ctrl.v" type="file.verilog" enable="1"/>
+        <File path="/home/kenta/repos/gowin_runber/external/serv/rtl/serv_decode.v" type="file.verilog" enable="1"/>
+        <File path="/home/kenta/repos/gowin_runber/external/serv/rtl/serv_immdec.v" type="file.verilog" enable="0"/>
+        <File path="/home/kenta/repos/gowin_runber/external/serv/rtl/serv_mem_if.v" type="file.verilog" enable="1"/>
+        <File path="/home/kenta/repos/gowin_runber/external/serv/rtl/serv_rf_if.v" type="file.verilog" enable="1"/>
+        <File path="/home/kenta/repos/gowin_runber/external/serv/rtl/serv_rf_ram_if.v" type="file.verilog" enable="1"/>
+        <File path="/home/kenta/repos/gowin_runber/external/serv/rtl/serv_state.v" type="file.verilog" enable="1"/>
+        <File path="/home/kenta/repos/gowin_runber/external/serv/rtl/serv_top.v" type="file.verilog" enable="1"/>
+        <File path="/home/kenta/repos/gowin_runber/external/serv/rtl/shift_reg.v" type="file.verilog" enable="1"/>
+        <File path="/home/kenta/repos/gowin_runber/rtl/segment_led/segment_led.sv" type="file.verilog" enable="1"/>
+        <File path="/home/kenta/repos/gowin_runber/rtl/segment_led/seven_segment_with_dp.sv" type="file.verilog" enable="1"/>
+        <File path="/home/kenta/repos/gowin_runber/rtl/serv_soc/ram32.sv" type="file.verilog" enable="1"/>
+        <File path="/home/kenta/repos/gowin_runber/rtl/serv_soc/ram32_16.sv" type="file.verilog" enable="1"/>
+        <File path="/home/kenta/repos/gowin_runber/rtl/serv_soc/serv_system.sv" type="file.verilog" enable="1"/>
+        <File path="/home/kenta/repos/gowin_runber/rtl/serv_soc/serv_wb_if.sv" type="file.verilog" enable="1"/>
+        <File path="/home/kenta/repos/gowin_runber/rtl/serv_soc/wb_mux.sv" type="file.verilog" enable="1"/>
+        <File path="/home/kenta/repos/gowin_runber/rtl/switch_input/debounce.sv" type="file.verilog" enable="1"/>
+        <File path="/home/kenta/repos/gowin_runber/rtl/util/timer_counter.sv" type="file.verilog" enable="1"/>
+        <File path="src/runber.cst" type="file.cst" enable="1"/>
+        <File path="src/runber.sdc" type="file.sdc" enable="1"/>
+        <File path="src/analyzer.rao" type="file.gao" enable="1"/>
+    </FileList>
+</Project>
