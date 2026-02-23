@@ -1,7 +1,7 @@
-PROJECT_NAME := cpu_stopwatch
+PROJECT_NAME := cpu_matrix_led
 SRCS := src/$(TARGET)/pins.cst $(wildcard src/$(TARGET)/*.sdc) $(wildcard src/$(TARGET)/*.sv) ../../external/picorv32/picorv32.v project.tcl src/sw/bootrom.hex
 PMOD_PORT_OFFSET ?= 0
-PMOD_TARGETS := tangnano9k_pmod tangprimer20k
+PMOD_TARGETS := tangnano9k_pmod tangprimer20k tangnano20k
 
 # Check if the target contains PMOD ports
 ifneq (,$(filter $(TARGET),$(PMOD_TARGETS)))

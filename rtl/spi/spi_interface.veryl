@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2021.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file spi_interface.veryl
+ * @brief SPI interface definition
+ */
+
+pub interface spi_interface {
+    var miso: logic;
+    var mosi: logic;
+    var cs:  '_ reset;
+    var sck: '_ clock;
+
+    modport master {
+        miso: input,
+        mosi: output,
+        cs:   output,
+        sck:  output,
+    }
+
+    modport slave {
+        miso: output,
+        mosi: input,
+        cs:   input,
+        sck:  input,
+    }
+}

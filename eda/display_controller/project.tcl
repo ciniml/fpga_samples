@@ -1,0 +1,72 @@
+set SRC_DIR       [lindex $argv 0]
+set RTL_DIR       [lindex $argv 1]
+set TARGET        [lindex $argv 2]
+set DEVICE_FAMILY [lindex $argv 3]
+set DEVICE_PART   [lindex $argv 4]
+set PROJECT_NAME  [lindex $argv 5]
+
+#create_project -name ${PROJECT_NAME} -pn ${DEVICE_PART} -device_version {C} -force
+
+# Additional args
+set_option -output_base_name ${PROJECT_NAME}
+set_device -name $DEVICE_FAMILY $DEVICE_PART
+
+set_option -verilog_std sysv2017
+set_option -vhdl_std vhd2008
+set_option -print_all_synthesis_warning 1
+set_option -top_module top
+set_option -place_option 1
+set_option -route_option 2
+
+if {${TARGET} == "comprocboard_9k"} {
+    set_option -use_sspi_as_gpio 1
+}
+if {${TARGET} == "tangnano9k"} {
+    set_option -use_sspi_as_gpio 1
+    set_option -top_module display_controller_tangnano9k_top
+    set_option -looplimit 20000
+}
+if {${TARGET} == "tangprimer20k"} {
+    set_option -use_done_as_gpio 1
+    set_option -use_ready_as_gpio 1
+}
+if {${TARGET} == "tangprimer25k"} {
+    set_option -use_cpu_as_gpio 1
+    set_option -place_option 1
+    set_option -route_option 2
+}
+
+add_file -type verilog [file normalize ${RTL_DIR}/dvi_out/dvi_out.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/video/test_pattern_generator.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/top.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/reset_seq.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/dependencies/spi/spi_slave.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/dependencies/sync/synchronizer.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/dependencies/display_controller/video_signal_generator.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/dependencies/display_controller/video_io_if.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/dependencies/display_controller/vram_if.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/dependencies/display_controller/vram_reader.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/dependencies/display_controller/vram_writer.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/dependencies/display_controller/display_controller.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/dependencies/axi4s/axi_stream.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/dependencies/axi4s/axi_stream_demux.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/dependencies/axi4s/axi_stream_mux.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/dependencies/axi4s/axi4s_fifo.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/dependencies/std/lfsr/lfsr_galois.sv]
+
+if {${TARGET} == "tangprimer25k"} {
+    add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_pll_27/gowin_pll_27.v]
+    add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_pll/gowin_pll.v]
+} elseif  {${TARGET} == "kiwinano4k"} {
+    add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_pllvr_dvi/gowin_pllvr_dvi.v]
+    add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_pllvr_ser/gowin_pllvr_ser.v]
+} else {
+    add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_rpll_main/gowin_rpll_main.v]
+    add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_clkdiv_dvi/gowin_clkdiv_dvi.v]
+    add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_rpll_ser/gowin_rpll_ser.v]
+}
+
+add_file -type cst [file normalize ${SRC_DIR}/pins.cst]
+add_file -type sdc [file normalize ${SRC_DIR}/timing.sdc]
+
+run all

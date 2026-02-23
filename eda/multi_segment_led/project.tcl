@@ -16,7 +16,7 @@ set_option -use_done_as_gpio 1
 set_option -use_ready_as_gpio 1
 
 add_file -type verilog [file normalize ${RTL_DIR}/chisel/segment_led/multi_segment_led.v]
-add_file -type verilog [file normalize ${SRC_DIR}/top.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/../top.sv]
 add_file -type cst [file normalize ${SRC_DIR}/pins.cst]
 add_file -type sdc [file normalize ${SRC_DIR}/timing.sdc]
 

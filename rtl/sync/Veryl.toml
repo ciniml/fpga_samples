@@ -1,0 +1,8 @@
+[project]
+name = "sync"
+version = "0.1.0"
+authors = ["Kenta IDA <fuga@fugafuga.org>"]
+license = "BSL-1.0"
+
+[build]
+target = { type = "source" }

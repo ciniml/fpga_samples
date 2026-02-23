@@ -1,0 +1,208 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2024.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file aux_ch_tx.veryl
+ * @brief DisplayPort AUX_CH TX module
+ */
+
+pub module aux_ch_tx #(
+    param CLOCK_HZ: u32 = 32'd100_000_000,  // Clock frequency
+    param PRECHARGE_CYCLES: u32 = 32'd16,   // Number of precharge cycles
+    param DEBUG_OUT: bit = 0,               // Enable debug output messages
+) (
+    clock: input logic,
+    aresetn: input logic,
+
+    // DDS control input
+    saxis_data_tvalid: input logic,
+    saxis_data_tready: output logic,
+    saxis_data_tdata : input logic<8>,
+    saxis_data_tlast : input logic,
+
+
+    // AUX_CH output
+    aux_ch_out:        output logic,
+    aux_ch_out_enable: output logic,
+) {
+    local CLOCK_COUNT_2M: u32 = CLOCK_HZ / 2_000_000;   // Number of cycles for 2MHz
+    type clock_divider_t = logic<$clog2(CLOCK_COUNT_2M)>;
+    var clock_divider: clock_divider_t;
+    var clock_en: logic;
+    var bit_buffer: logic<8>;
+    var is_last: logic;
+
+    enum BitMode: logic {
+        MANCHESTER,
+        RAW,
+    }
+    var bit_mode: BitMode;
+
+    enum State: logic<3> {
+        IDLE,
+        PRECHARGE_1,
+        PRECHARGE_2,
+        SYNC_1,
+        SYNC_2,
+        SYNC_END,
+        TRANSMIT,
+        STOP,
+    }
+
+    var state: State;
+    type bit_counter_t = logic<3>;
+    var bit_counter: bit_counter_t;
+    var phase: logic;
+
+    always_comb {
+        //saxis_data_tready = aresetn && clock_en && phase == 1 && bit_counter == 0 && (state == State::SYNC_END || state == State::TRANSMIT) && !is_last;
+        aux_ch_out_enable = state != State::IDLE;
+        if bit_mode == BitMode::MANCHESTER {
+            aux_ch_out = bit_buffer[msb] ^ phase;    // Mahcnester-II 0: 0->1, 1: 1->0
+        }
+        else {
+            aux_ch_out = bit_buffer[msb];            // Raw. output bit directly for two consecutive cycles.
+        }
+    }
+
+    always_ff (clock, aresetn) {
+        if_reset {
+            clock_divider = 0;
+            clock_en = 0;
+            
+            bit_buffer = 0;
+            is_last = 0;
+            bit_counter = 0;
+            phase = 0;
+            state = State::IDLE;
+            bit_mode = BitMode::MANCHESTER;
+
+            saxis_data_tready = 0;
+        } else {
+            clock_en = 0;
+            if clock_divider == 0 {
+                clock_divider = (CLOCK_COUNT_2M - 1) as clock_divider_t;
+                clock_en = 1;
+            } else {
+                clock_divider = clock_divider - 1;
+            }
+
+            saxis_data_tready = 0;
+
+            if clock_en {
+                phase = !phase;
+                if phase {
+                    bit_buffer = {bit_buffer[msb-1:0], 1'b0};
+                }
+
+                case state {
+                    State::IDLE: {
+                        if saxis_data_tvalid {
+                            bit_buffer = '0;
+                            bit_counter = (8 - 1) as bit_counter_t;
+                            phase = 0;
+                            is_last = 0;
+                            bit_mode = BitMode::MANCHESTER;
+                            state = State::PRECHARGE_1;
+                        }
+                    }
+                    State::PRECHARGE_1: {
+                        if phase == 1 {
+                            if bit_counter == 0 {
+                                bit_counter = (PRECHARGE_CYCLES - 8 - 1) as bit_counter_t;
+                                state = State::PRECHARGE_2;
+                            } else {
+                                bit_counter = bit_counter - 1;
+                            }
+                        }
+                    }
+                    State::PRECHARGE_2: {
+                        if phase == 1 {
+                            if bit_counter == 0 {
+                                bit_counter = (8 - 1) as bit_counter_t;
+                                state = State::SYNC_1;
+                            } else {
+                                bit_counter = bit_counter - 1;
+                            }
+                        }
+                    }
+                    State::SYNC_1: {
+                        if phase == 1 {
+                            if bit_counter == 0 {
+                                bit_counter = (8 - 1) as bit_counter_t;
+                                state = State::SYNC_2;
+                            } else {
+                                bit_counter = bit_counter - 1;
+                            }
+                        }
+                    }
+                    State::SYNC_2: {
+                        if phase == 1 {
+                            if bit_counter == 0 {
+                                bit_counter = (4 - 1) as bit_counter_t;
+                                bit_buffer = 8'b1100_0000; // SYNC end pattern HHLL.
+                                bit_mode = BitMode::RAW;
+                                state = State::SYNC_END;
+                            } else {
+                                bit_counter = bit_counter - 1;
+                            }
+                        }
+                    }
+                    State::SYNC_END: {
+                        if phase == 1 {
+                            if bit_counter == 0 {
+                                if DEBUG_OUT {
+                                    $info("INPUT(1): TVALID=%d, TDATA=%02h, TLAST=%d", saxis_data_tvalid, saxis_data_tdata, saxis_data_tlast);
+                                }
+                                bit_counter = (8 - 1) as bit_counter_t;
+                                bit_buffer = saxis_data_tdata;
+                                is_last = saxis_data_tlast;
+                                bit_mode = BitMode::MANCHESTER;
+                                saxis_data_tready = 1;
+                                state = State::TRANSMIT;
+                            } else {
+                                bit_counter = bit_counter - 1;
+                            }
+                        }
+                    }
+                    State::TRANSMIT: {
+                        if phase == 1 {
+                            if bit_counter == 0 {
+                                if DEBUG_OUT {
+                                    $info("INPUT(2): TVALID=%d, TDATA=%02h, TLAST=%d", saxis_data_tvalid, saxis_data_tdata, saxis_data_tlast);
+                                }
+                                if !saxis_data_tvalid || is_last {  // No data available or last data.
+                                    bit_counter = (4 - 1) as bit_counter_t;
+                                    bit_buffer = 8'b1100_0000; // STOP pattern HHLL.
+                                    bit_mode = BitMode::RAW;
+                                    state = State::STOP;
+                                } else {
+                                    bit_counter = (8 - 1) as bit_counter_t;
+                                    bit_buffer = saxis_data_tdata;
+                                    is_last = saxis_data_tlast;
+                                    saxis_data_tready = 1;
+                                }
+                            } else {
+                                bit_counter = bit_counter - 1;
+                            }
+                        }
+                    }
+                    State::STOP: {
+                        if phase == 1 {
+                            if bit_counter == 0 {
+                                state = State::IDLE;
+                            } else {
+                                bit_counter = bit_counter - 1;
+                            }
+                        }
+                    }
+                    default: {
+                        state = State::IDLE;
+                    }
+                }
+            }
+        }
+    }
+}

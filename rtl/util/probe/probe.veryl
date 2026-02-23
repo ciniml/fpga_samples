@@ -1,0 +1,139 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2024.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file probe.veryl
+ * @brief Simple debug probe.
+ */
+
+pub module embedded_probe #(
+    param BUFFER_DEPTH: u32 = 32'd1024,
+    param TRIGGER_POSITION: u32 = BUFFER_DEPTH/2,
+    param WIDTH: u32 = 32'd8,
+) (
+    r#clock:      input clock,
+    aresetn:  input reset,
+
+    data_in: input logic<WIDTH>,
+    trigger: input logic,
+    triggered: output logic,
+
+    data_out: modport axi4s_if::<8, 1, 0>::master,    
+) {
+    type data_t = logic<WIDTH>;
+    type index_t = logic<$clog2(BUFFER_DEPTH)>;
+    type index_with_phase_t = logic<$clog2(BUFFER_DEPTH) + 1>;
+
+    enum State: logic<3> {
+        RESET,
+        FILL_PRE_TRIGGER,
+        AWAITING_TRIGGER,
+        FILL_POST_TRIGGER,
+        OUTPUT,
+    }
+
+    var state: State;
+    var flush_buffer: logic;
+    assign flush_buffer = state == State::RESET;
+    var buffer: data_t[BUFFER_DEPTH];
+    var buffer_head: index_with_phase_t;
+    var buffer_tail: index_with_phase_t;
+    var buffer_empty: logic;
+    var buffer_full: logic;
+    assign buffer_full = buffer_head[msb-1:0] == buffer_tail[msb-1:0] && buffer_head[msb] != buffer_tail[msb];
+    assign buffer_empty = buffer_head == buffer_tail;
+
+    function buffer_next_index(index: input index_with_phase_t) -> index_with_phase_t {
+        if index[msb-1:0] == (BUFFER_DEPTH-1) as index_t {
+            return {!index[msb], 0 as index_t} as index_with_phase_t;
+        } else {
+            let next_index: index_t = index[msb-1:0] + (1 as index_t);
+            return {index[msb], next_index} as index_with_phase_t;
+        }
+    }
+
+    var trigger_count: index_t;
+    var has_triggered: logic;
+
+    always_ff(r#clock, aresetn) {
+        if_reset {
+            state = State::RESET;
+            buffer_head = 0;
+            buffer_tail = 0;
+            trigger_count = 0;
+            has_triggered = 0;
+            triggered = 0;
+            data_out.tvalid = 0;
+            data_out.tdata = 0;
+            data_out.tlast = 0;
+            
+        } else {
+            if data_out.tvalid && data_out.tready {
+                
+            }
+            case state {
+                State::RESET: {
+                    data_out.tvalid = 0;
+                    data_out.tlast = 0;
+                    trigger_count = 0;
+                    buffer_head = 0;
+                    buffer_tail = 0;
+                    if TRIGGER_POSITION == 0 {
+                        // If no pre-trigger data is required, go straight to AWAITING_TRIGGER.
+                        state = State::AWAITING_TRIGGER;
+                    } else {
+                        // Otherwise, fill the buffer with pre-trigger data.
+                        state = State::FILL_PRE_TRIGGER;
+                    }
+                }
+                State::FILL_PRE_TRIGGER: {
+                    // Fill buffer with pre-trigger data
+                    buffer[buffer_tail[msb-1:0]] = data_in;
+                    buffer_tail = buffer_next_index(buffer_tail);
+                    trigger_count = trigger_count + 1;
+                    if trigger_count == (TRIGGER_POSITION - 1) as index_t {
+                        state = State::AWAITING_TRIGGER;
+                    }
+                }
+                State::AWAITING_TRIGGER: {
+                    buffer[buffer_tail[msb-1:0]] = data_in;
+                    buffer_tail = buffer_next_index(buffer_tail);
+                    if trigger || has_triggered {
+                        triggered = 1;
+                        state = State::FILL_POST_TRIGGER;
+                    } else {
+                        // Discard the oldest data.
+                        buffer_head = buffer_next_index(buffer_head);
+                    }
+                }
+                State::FILL_POST_TRIGGER: {
+                    if buffer_full {
+                        state = State::OUTPUT;
+                    } else {
+                        buffer[buffer_tail[msb-1:0]] = data_in;
+                        buffer_tail = buffer_next_index(buffer_tail);
+                    }
+                }
+                State::OUTPUT: {
+                    // Clear triggered flag
+                    has_triggered = 0;
+                    data_out.tlast = buffer_empty;
+                    if !data_out.tvalid || data_out.tready {
+                        data_out.tvalid = !buffer_empty;
+                        data_out.tdata = buffer[buffer_head[msb-1:0]];
+                        buffer_head = buffer_next_index(buffer_head);
+                    }
+                    if data_out.tvalid && data_out.tready && data_out.tlast {
+                        state = State::RESET;
+                    }
+                }
+                default: {
+                    state = State::RESET;
+                }
+            }
+        }
+    }
+
+}

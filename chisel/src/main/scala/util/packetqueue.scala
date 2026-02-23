@@ -50,3 +50,9 @@ class PacketQueue[T <: Data](gen: Flushable[T], val entries: Int) extends Module
         readCounter := readCounter - 1.U
     }
 }
+
+object PacketQueue {
+    def apply[T <: Data](gen: Flushable[T], entries: Int): PacketQueue[T] = {
+        new PacketQueue(gen, entries)
+    }
+}

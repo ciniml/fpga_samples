@@ -1,2 +1,4 @@
 *.elf
 *.vcd
+dependencies
+Veryl.lock

@@ -42,7 +42,7 @@ class AudioMovingAverageFilter(val width: Int, val entries: Int) extends Module 
     val next = (!dataValid || io.dataOut.ready) && io.dataIn.valid
     val queue = Module(new Queue(UInt((width * 2).W), entries))
     val filled = RegInit(false.B)
-    val lastValue = RegInit(0.U((width * 2).W))
+    val oldestValue = RegInit(0.U((width * 2).W))
     
     when( queue.io.count === (entries - 1).U && next ) {
         filled := true.B
@@ -50,25 +50,25 @@ class AudioMovingAverageFilter(val width: Int, val entries: Int) extends Module 
     
     // The last value queue is must be controlled NOT to be full to enqueue the latest value.
     // So the condition to assert ready signal is the count of the queue is equal to the number of entries - 1 and a new value is available.
-    val updateLastValue = next && (queue.io.count === (entries - 1).U || filled)
+    val updateOldestValue = next && (queue.io.count === (entries - 1).U || filled)
     io.dataIn.ready := !dataValid || io.dataOut.ready
     queue.io.enq.valid := next
     queue.io.enq.bits := io.dataIn.bits
 
-    queue.io.deq.ready := updateLastValue
-    when(updateLastValue) {
-        lastValue := queue.io.deq.bits
+    queue.io.deq.ready := updateOldestValue
+    when(updateOldestValue) {
+        oldestValue := queue.io.deq.bits
     }
     when( next ) {
         for( ch <- 0 to 1 ) {
             val value = io.dataIn.bits(width*(ch + 1) - 1, width*ch).asSInt
-            val lastChannelValue = lastValue(width*(ch + 1) - 1, width*ch).asSInt
-            accumulator(ch) := (accumulator(ch) - lastChannelValue) + value
+            val oldestChannelValue = oldestValue(width*(ch + 1) - 1, width*ch).asSInt
+            accumulator(ch) := (accumulator(ch) - oldestChannelValue) + value
         }
         dataBits := Cat(accumulator(1)(accumulatorBits - 1, accumulatorBits - width), accumulator(0)(accumulatorBits - 1, accumulatorBits - width))
         dataValid := true.B
 
-        val lastChannelValue = (0 to 1).map(ch => lastValue(width*(ch + 1) - 1, width*ch).asSInt)
-        printf(p"[AudioMovingAverageFilter] accumulator(0): ${Hexadecimal(accumulator(0))} accumulator(1): ${Hexadecimal(accumulator(1))} lastChannelValue(0): ${Hexadecimal(lastChannelValue(0))} lastChannelValue(1): ${Hexadecimal(lastChannelValue(1))} dataBits: ${Hexadecimal(dataBits)}\n")
+        val oldestChannelValue = (0 to 1).map(ch => oldestValue(width*(ch + 1) - 1, width*ch).asSInt)
+        printf(p"[AudioMovingAverageFilter] accumulator(0): ${Hexadecimal(accumulator(0))} accumulator(1): ${Hexadecimal(accumulator(1))} oldestChannelValue(0): ${Hexadecimal(oldestChannelValue(0))} lastChannelValue(1): ${Hexadecimal(oldestChannelValue(1))} dataBits: ${Hexadecimal(dataBits)}\n")
     }
 }

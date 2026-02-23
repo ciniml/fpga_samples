@@ -1,0 +1,4 @@
+*.f
+dependencies
+src/*.sv
+Veryl.lock

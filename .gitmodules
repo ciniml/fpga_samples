@@ -7,3 +7,6 @@
 [submodule "external/ebaz4205_ethernet"]
 	path = external/ebaz4205_ethernet
 	url = https://github.com/ciniml/ebaz4205_ethernet
+[submodule "external/learn-fpga"]
+	path = external/learn-fpga
+	url = https://github.com/BrunoLevy/learn-fpga

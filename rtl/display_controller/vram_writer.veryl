@@ -1,0 +1,149 @@
+embed (inline) sv{{{
+`timescale 1ns/1ps
+}}}
+
+package vram_writer_pkg {
+  /**
+   * VRAM writer command structure.
+   */
+  struct vram_writer_cmd_t {
+    x: u16,         // X coordinate of the upper-left pixel of the rectangle area to write
+    y: u16,         // Y coordinate of the upper-left pixel of the rectangle area to write
+    w_minus_1: u16, // Width of the region to write (minus 1) e.g. 0 means 1 pixel wide
+    h_minus_1: u16, // Height of the region to write (minus 1) e.g. 0 means 1 pixel tall
+  }
+}
+
+/**
+ * VRAM writer module, aka video DMA, which writes pixel data to a rectangular area.
+ */
+pub module vram_writer #(
+  param SCREEN_WIDTH: u32 = 320,
+  param SCREEN_HEIGHT: u32 = 240,
+  param PIXEL_BITS: u32 = 8,
+) (
+  r#clock: input clock,
+  r#reset: input reset,
+
+  // Command interface
+  axis_command_in: modport axi4s::axi4s_if::<64, false, 0>::slave,
+  axis_data_in: modport axi4s::axi4s_if::<32, true, 1>::slave,
+
+  // VRAM interface
+  vram_write: modport vram_write_if::master,
+
+  // Complete signal
+  complete: output logic,
+) {
+  // State
+  enum state_t {
+    IDLE,             // IDLE
+    CALCULATE_OFFSET, // prepare offset address
+    TRANSFER,         // transfer pixel data
+  }
+  var state: state_t;
+ 
+  type width_t = logic<$clog2(SCREEN_WIDTH-1)>;
+  type height_t = logic<$clog2(SCREEN_HEIGHT-1)>;
+  type num_pixels_t = logic<$clog2(SCREEN_WIDTH*SCREEN_HEIGHT-1)>;
+  type pixel_t = logic<PIXEL_BITS>;
+
+  var x_count: width_t;   // number of pixels transferred in current line
+  var y_count: height_t;  // number of lines transferred
+  var command: vram_writer_pkg::vram_writer_cmd_t;  // current write command
+
+  var write_address: num_pixels_t; // current write address
+  var write_address_next: num_pixels_t; // next write address
+  var line_address: num_pixels_t;  // current line address, stored for calculating next line address.
+  var write_en: logic;             // VRAM write enable signal
+  var write_data: pixel_t;         // VRAM write data
+
+  always_comb {
+    // Assign interface output signals.
+    vram_write.addr = write_address;
+    vram_write.en = write_en;
+    vram_write.data = write_data;
+
+    case state {
+      state_t::IDLE: {
+        axis_command_in.tready = 1; // Accept incoming commands only when IDLE
+        axis_data_in.tready = 0;    // Don't accept data when IDLE
+      }
+      state_t::CALCULATE_OFFSET: {
+        axis_command_in.tready = 0; // Don't accept commands during processing
+        axis_data_in.tready = 0;    // Don't accept data during address calculation
+      }
+      state_t::TRANSFER: {
+        axis_command_in.tready = 0; // Don't accept commands during transfer
+        axis_data_in.tready = 1;    // Accept pixel data during transfer
+      }
+      default: {
+        axis_command_in.tready = 0;
+        axis_data_in.tready = 0;
+      }
+    }
+  }
+
+  always_ff(r#clock, r#reset) {
+    if_reset {
+      state = state_t::IDLE;
+      x_count = 0;
+      y_count = 0;
+      command = '0;  // Reset command structure
+      write_address_next = 0;
+      line_address = 0;
+
+      write_address = 0;
+      write_en = 0;
+      write_data = 0;
+      complete = 0;
+    } else {
+      write_en = 0;  // By default, the write enable signal is deasserted.
+      complete = 0;  // The complete signal is asserted at most one clock cycle.
+
+      case state {
+        state_t::IDLE: {
+          if axis_command_in.tvalid { // A new command is received
+            let new_command: vram_writer_pkg::vram_writer_cmd_t = axis_command_in.tdata as vram_writer_pkg::vram_writer_cmd_t;
+            write_address_next = (new_command.y * SCREEN_WIDTH) as num_pixels_t;  // calculate the address of the left-most pixel of the line.
+            command = new_command;
+            state = state_t::CALCULATE_OFFSET;
+          }
+        }
+        state_t::CALCULATE_OFFSET: {
+          write_address_next = write_address_next + (command.x as num_pixels_t);  // Add x coordinate to write address to calculate the start address
+          line_address = write_address_next + (command.x as num_pixels_t);   // Store the current line address, used for calculating the next line address
+          x_count = 0;
+          y_count = 0;
+          state = state_t::TRANSFER;
+        }
+        state_t::TRANSFER: {
+          if axis_data_in.tvalid && axis_data_in.tready {  // Input pixel data is available
+            write_en = 1;
+            write_data = axis_data_in.tdata[PIXEL_BITS-1:0] as pixel_t;
+            write_address = write_address_next;
+
+            if x_count == command.w_minus_1 as width_t {  // This is the last pixel of the line.
+              x_count = 0;                                // Reset x_count for the next line.
+              if y_count == command.h_minus_1 as height_t { // This is the last pixel of the last line.
+                state = state_t::IDLE;  // Go back to IDLE state
+                complete = 1; // Assert complete signal to indicate transfer is complete
+              } else {
+                write_address_next = line_address + (SCREEN_WIDTH as num_pixels_t); // Calculate the address of the first pixel of the next line.
+                line_address = line_address + (SCREEN_WIDTH as num_pixels_t);  // Update line_address for the next line.
+                y_count = y_count + 1;
+              }
+            } else {
+              write_address_next = write_address_next + 1;  // Calculate the next address.
+              x_count = x_count + 1;              // Increment X counter.
+            }
+          }
+        }
+        default: {
+          // Handle unexpected states
+          state = state_t::IDLE;
+        }
+      }
+    }
+  }
+}

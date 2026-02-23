@@ -24,7 +24,7 @@ module top(
 logic main_clock;
 logic main_clock_lock;
 
-rpll_main your_instance_name(
+rpll_main rpll_main_inst(
     .clkout(main_clock), //output clkout
     .lock(main_clock_lock), //output lock
     .clkin(clock) //input clkin

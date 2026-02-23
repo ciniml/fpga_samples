@@ -9,7 +9,12 @@ package util
 import chisel3._
 import chisel3.internal.firrtl.Width
 
-class Flushable[T <: Data](gen: T) extends Bundle {
+trait FlushableTrait[T <: Data] {
+    val data: T
+    val last: Bool
+}
+
+class Flushable[T <: Data](gen: T) extends Bundle with FlushableTrait[T] {
     val data = gen.cloneType.asInstanceOf[T]
     val last = Bool()
 }

@@ -10,7 +10,7 @@ IO_PORT "tmds_data_n[2]" PULL_MODE=NONE IO_TYPE=LVCMOS33D DRIVE=8;
 IO_PORT "tmds_data_n[1]" PULL_MODE=NONE IO_TYPE=LVCMOS33D DRIVE=8;
 IO_PORT "tmds_data_n[0]" PULL_MODE=NONE IO_TYPE=LVCMOS33D DRIVE=8;
 IO_PORT "tmds_clk_n" PULL_MODE=NONE IO_TYPE=LVCMOS33D DRIVE=8;
-IO_LOC "tmds_data_p[2]" F5
-IO_LOC "tmds_data_p[1]" G7
-IO_LOC "tmds_data_p[0]" H8
-IO_LOC "tmds_clk_p" H5
+IO_LOC "tmds_data_p[2]" A11
+IO_LOC "tmds_data_p[1]" E11
+IO_LOC "tmds_data_p[0]" K11
+IO_LOC "tmds_clk_p" L5

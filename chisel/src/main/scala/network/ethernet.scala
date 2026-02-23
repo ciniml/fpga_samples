@@ -496,6 +496,9 @@ class EthernetService(config: EthernetServiceConfig = EthernetServiceConfig.defa
     
     val state = RegInit(State.Idle)
 
+    // Pre-calculate part of IPv4 header checksum
+    val sendIpv4HeaderChecksumReg = RegNext(onesComplementAdd(sendIpv4HeaderChecksum, udpSendContext.destinationAddress(31, 16)), 0.U(16.W))
+
     when(outValid && io.out.ready) {
         outValid := false.B
     }
@@ -829,7 +832,7 @@ class EthernetService(config: EthernetServiceConfig = EthernetServiceConfig.defa
             newIpv4Header.length := udpSendContext.dataLength + ipv4HeaderLength.U  // dataLength contains UDP header length.
             newIpv4Header.destination := udpSendContext.destinationAddress
             // Checksum calculation (phase 1) - Add pre-calculated base checksum and destination IP adddress.
-            val headerChecksum = onesComplementAdd(onesComplementAdd(sendIpv4HeaderChecksum, udpSendContext.destinationAddress(31, 16)), udpSendContext.destinationAddress(15, 0))
+            val headerChecksum = onesComplementAdd(sendIpv4HeaderChecksumReg, udpSendContext.destinationAddress(15, 0))
             newIpv4Header.header_checksum := headerChecksum
             
             val newEthernetHeader = Wire(new EthernetHeader)
@@ -878,7 +881,7 @@ class UdpLoopback(config: EthernetServiceConfig = EthernetServiceConfig.default(
     io.port.udpSendContext.valid := udpSendContextValid
     io.port.udpSendContext.bits := udpContext
 
-    val queue = Module(new PacketQueue(Flushable((streamWidth*8).W), 2048))
+    val queue = Module(PacketQueue(Flushable((streamWidth*8).W), 2048))
     queue.io.write.valid <> io.port.udpReceiveData.valid
     queue.io.write.ready <> io.port.udpReceiveData.ready
     queue.io.write.bits.data <> io.port.udpReceiveData.bits.data

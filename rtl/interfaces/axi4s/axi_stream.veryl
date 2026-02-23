@@ -1,0 +1,78 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2025.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file axi_stream.veryl
+ * @brief AXI4 Stream interface
+ */
+
+
+pub proto interface axi4s_proto {
+    const DATA_WIDTH: u32;
+    const HAS_TLAST: bit;
+    const USER_WIDTH: u32;
+
+    var tdata: logic<DATA_WIDTH>;
+    var tvalid: logic;
+    var tready: logic;
+
+    var tlast: logic;
+    var tuser: logic<if USER_WIDTH == 0 ? 1 : USER_WIDTH >;
+
+    function transaction() -> logic;
+    function last() -> logic;
+
+    modport master {
+        tdata:  output,
+        tvalid: output,
+        tready: input,
+        tlast:  output,
+        tuser:  output,
+    }
+
+    modport slave {
+        ..converse(master)
+    }
+
+    modport monitor {
+        ..input
+    }
+}
+
+pub interface axi4s_if::<WIDTH: u32 = 8, LAST: bool = false, USER: u32 = 0> for axi4s_proto {
+    const DATA_WIDTH: u32 = WIDTH;
+    const HAS_TLAST: bit = LAST;
+    const USER_WIDTH: u32 = USER;
+
+    var tdata: logic<DATA_WIDTH>;
+    var tvalid: logic;
+    var tready: logic;
+    
+    var tlast: logic;
+    var tuser: logic<if USER_WIDTH == 0 ? 1 : USER_WIDTH>;
+
+    function transaction() -> logic {
+        return tvalid && tready;
+    }
+    function last() -> logic {
+        return if HAS_TLAST ? tlast : 1'b0;
+    }
+
+    modport master {
+        tdata:  output,
+        tvalid: output,
+        tready: input,
+        tlast:  output,
+        tuser:  output,
+    }
+
+    modport slave {
+        ..converse(master)
+    }
+
+    modport monitor {
+        ..input
+    }
+}

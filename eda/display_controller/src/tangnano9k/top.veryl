@@ -1,0 +1,433 @@
+/**
+ * @file top.sv
+ * @brief Top module for DVI test pattern generator design.
+ */
+// Copyright 2025 Kenta IDA
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          http://www.boost.org/LICENSE_1_0.txt)
+
+embed (inline) sv{{{
+`timescale 1ns/1ps
+}}}
+module top(
+    r#clock: input clock,
+
+    // Input button
+    button_s2: input logic,
+
+    // Tang Nano On Board LEDs
+    led: output logic<6>,
+
+    // DVI
+    tmds_clk_p: output logic,
+    tmds_data_p: output logic<3>,
+
+    // SPI
+    spi_miso: output 'spi_neg logic,
+    spi_mosi: input 'spi_pos logic,
+    spi_sck:  input 'spi_pos clock,
+    spi_cs:   input 'spi_pos reset_async_high,
+
+    // Debug out
+    debug_out: output logic<6>,
+) {
+  var clock_main: logic;
+  var pll_lock_main: logic;
+  var clock_dvi: logic;
+  var clock_dvi_ser: logic;
+  var pll_lock_ser: logic;
+
+  var reset_button: logic<3>;
+
+  function init_reset_signal::<W: u32 = 3>(reset_signal: output logic<W>) {
+    reset_signal = '1;
+  }
+
+  initial {
+    init_reset_signal::<3>(reset_button);
+  }
+  
+  always_ff (r#clock) {
+    reset_button = {!button_s2, reset_button[2:1]};
+  }
+
+  var reset_ext: logic;
+  inst reset_seq_ext: $sv::reset_seq(
+    r#clock: clock_dvi,
+    reset_in: reset_button[0] || !pll_lock_main || !pll_lock_ser,
+    reset_out: reset_ext,
+  );
+
+  inst rpll_main: $sv::gowin_rpll_main(
+    clkout: clock_main,  //output clkout
+    lock: pll_lock_main,  //output lock
+    clkin: r#clock, //input clkin
+  );
+  inst clkdiv_main: $sv::gowin_clkdiv_dvi(
+    clkout: clock_dvi,  //output clkout
+    hclkin: clock_dvi_ser, //input clkin
+    resetn: pll_lock_ser,
+  );
+  inst rpll_dvi_ser: $sv::gowin_rpll_ser (
+    clkout: clock_dvi_ser, //output clkout
+    lock: pll_lock_ser, //output lock
+    clkin: r#clock //input clkin
+  );
+
+  var reset_dvi: logic;
+  inst reset_seq_dvi: $sv::reset_seq #( RESET_DELAY_CYCLES: 4, ) (
+    r#clock: clock_dvi,
+    reset_in: reset_ext,
+    reset_out: reset_dvi
+  );
+
+  assign led = ~{4'b000, pll_lock_main, pll_lock_ser};
+
+  var dvi_clock: logic<10>;
+  var dvi_data0: logic<10>;
+  var dvi_data1: logic<10>;
+  var dvi_data2: logic<10>;
+  var video_de: logic;
+  var video_hsync: logic;
+  var video_vsync: logic;
+  var video_data: logic<24>;
+
+  // inst tpg_inst: $sv::test_pattern_generator #(
+  //   BOUNCE_LOGO: 1,
+  //   LOGO_PATH: "../cq_logo.hex",
+  //   LOGO_WIDTH: 250,
+  //   LOGO_HEIGHT: 50,
+  //   LOGO_COLOR: 24'h000000,
+  // ) (
+  //   r#clock: clock_dvi,
+  //   r#reset: reset_dvi,
+  //   video_de,
+  //   video_hsync,
+  //   video_vsync,
+  //   video_data,
+  // );
+  
+  // cast to clock signals
+  var clock_main_as_clock: '_ clock;
+  var reset_main_as_reset: '_ reset;
+  var clock_dvi_as_clock: '_ clock;
+  var reset_dvi_as_reset: '_ reset;
+  unsafe(cdc) {
+    assign reset_dvi_as_reset = !reset_dvi;
+    assign clock_dvi_as_clock = clock_dvi;
+    assign reset_main_as_reset = pll_lock_main;
+    assign clock_main_as_clock = clock_main;
+  }
+
+  const SCREEN_WIDTH: u32 = 1280/8;
+  const SCREEN_HEIGHT: u32 = 720/8;
+
+  // interfaces
+  inst vram_reader_cmd: axi4s::axi4s_if::<64, false, 0> ();
+  inst axis_data_in: axi4s::axi4s_if::<32, true, 1> ();
+  inst video_out: display_controller::video_io_if #(
+      PIXEL_BITS: 8,
+  ) ();
+  inst vram_read: display_controller::vram_read_if #(
+      SCREEN_WIDTH,
+      SCREEN_HEIGHT,
+  ) ();
+  inst vram_write: display_controller::vram_write_if #(
+      SCREEN_WIDTH,
+      SCREEN_HEIGHT,
+  ) ();
+
+  var vram: logic<8>[SCREEN_WIDTH*SCREEN_HEIGHT];
+  function set_vram_element(value: input u8, value_out: output u8) {
+    value_out = value;
+  }
+  initial {
+    for y: u32 in 0..SCREEN_HEIGHT {
+      for x: u32 in 0..SCREEN_WIDTH {
+        let i: u32 = y * SCREEN_WIDTH + x;
+        let v: u8 = x[7:0] ^ y[7:0];
+        set_vram_element(v, vram[i]);
+      }
+    }
+  }
+
+  var vram_data: logic<8>;
+  always_ff (clock_dvi_as_clock, reset_dvi_as_reset) {
+    if_reset {
+      vram_data = '0;
+    }
+    else {
+      if vram_read.en {
+        vram_data = vram[vram_read.addr];
+      }
+    }
+  }
+  always_ff (clock_main_as_clock, reset_main_as_reset) {
+    if_reset {
+    }
+    else {
+      if vram_write.en {
+        vram[vram_write.addr] = vram_write.data;
+      }
+    }
+  }
+
+  // Display Controller instance.
+  inst axis_command_in: axi4s::axi4s_if::<8, false, 1> ();
+  inst axis_command_out: axi4s::axi4s_if::<8, false, 1> ();
+
+  inst spi_slave_inst: spi::spi_slave::<sync::gen_synchronizer> (
+    r#clock: clock_main_as_clock,
+    r#reset: reset_main_as_reset,
+    axis_receive: axis_command_in,
+    axis_send: axis_command_out,
+
+    spi_mosi,
+    spi_miso,
+    spi_sck,
+    spi_cs,
+  );
+
+  // enum command_state_t {
+  //   IDLE,
+  //   WAIT_VSYNC,
+  //   COMMAND,
+  //   PARAMETER_X_H,
+  //   PARAMETER_X_L,
+  //   PARAMETER_Y_H,
+  //   PARAMETER_Y_L,
+  //   PARAMETER_W_H,
+  //   PARAMETER_W_L,
+  //   PARAMETER_H_H,
+  //   PARAMETER_H_L,
+  //   PARAMETER_FILL_COLOR,
+  // }
+  // var command_state: command_state_t;
+  // var fill_color: logic<8>;
+  // var frame_counter: u32;
+  // always_comb {
+  //   axis_command_out.tready = 1;
+  // }
+  // always_ff(clock_dvi_as_clock, reset_dvi_as_reset) {
+  //   if_reset {
+  //     command_state = command_state_t::IDLE;
+  //     axis_command_in.tvalid = 0;
+  //     axis_command_in.tdata = 0;
+  //     axis_command_in.tlast = 0;
+  //     axis_command_in.tuser[0] = 0;
+  //     frame_counter = 0;
+  //   } else {
+  //     if axis_command_in.tvalid && axis_command_in.tready {
+  //       axis_command_in.tvalid = 0;
+  //     }
+  //     if !axis_command_in.tvalid || axis_command_in.tready {
+  //       axis_command_in.tvalid = outside command_state {command_state_t::IDLE, command_state_t::WAIT_VSYNC};
+  //       axis_command_in.tuser[0] = command_state == command_state_t::COMMAND;
+  //       axis_command_in.tdata = case command_state {
+  //         command_state_t::COMMAND: 8'h20,  // FILL_RECT
+  //         command_state_t::PARAMETER_X_H: 8'h00,
+  //         command_state_t::PARAMETER_X_L: 8'h00,
+  //         command_state_t::PARAMETER_Y_H: 8'h00,
+  //         command_state_t::PARAMETER_Y_L: 8'h00,
+  //         command_state_t::PARAMETER_W_H: ((SCREEN_WIDTH-1) >> 8) as u8,
+  //         command_state_t::PARAMETER_W_L: (SCREEN_WIDTH-1) as u8,
+  //         command_state_t::PARAMETER_H_H: ((SCREEN_HEIGHT-1) >> 8) as u8,
+  //         command_state_t::PARAMETER_H_L: (SCREEN_HEIGHT-1) as u8,
+  //         command_state_t::PARAMETER_FILL_COLOR: fill_color,
+  //         default: 8'h00,
+  //       };
+  //       command_state = case command_state {
+  //         command_state_t::IDLE: if !video_out.vsync ? command_state_t::WAIT_VSYNC : command_state_t::IDLE,
+  //         command_state_t::WAIT_VSYNC: if video_out.vsync ? (if frame_counter == 15-1 ? command_state_t::COMMAND : command_state_t::IDLE) : command_state_t::WAIT_VSYNC,
+  //         command_state_t::COMMAND: command_state_t::PARAMETER_X_H,
+  //         command_state_t::PARAMETER_X_H: command_state_t::PARAMETER_X_L,
+  //         command_state_t::PARAMETER_X_L: command_state_t::PARAMETER_Y_H,
+  //         command_state_t::PARAMETER_Y_H: command_state_t::PARAMETER_Y_L,
+  //         command_state_t::PARAMETER_Y_L: command_state_t::PARAMETER_W_H,
+  //         command_state_t::PARAMETER_W_H: command_state_t::PARAMETER_W_L,
+  //         command_state_t::PARAMETER_W_L: command_state_t::PARAMETER_H_H,
+  //         command_state_t::PARAMETER_H_H: command_state_t::PARAMETER_H_L,
+  //         command_state_t::PARAMETER_H_L: command_state_t::PARAMETER_FILL_COLOR,
+  //         command_state_t::PARAMETER_FILL_COLOR: command_state_t::IDLE,
+  //         default: command_state_t::IDLE,
+  //       };
+  //       if command_state == command_state_t::WAIT_VSYNC && video_out.vsync {
+  //         frame_counter = frame_counter + 1;
+  //         if frame_counter == 15-1 {
+  //           frame_counter = 0;
+  //         }
+  //       }
+  //       if command_state == command_state_t::PARAMETER_FILL_COLOR {
+  //         fill_color = fill_color + 1;
+  //       }
+  //     }
+  //   }
+  // }
+
+  var display_controller_debug_signals: logic<2>;
+  inst display_controller_inst: display_controller::display_controller #(
+      SCREEN_WIDTH,
+      SCREEN_HEIGHT,
+  ) (
+      r#clock: clock_main_as_clock,
+      r#reset: reset_main_as_reset,
+      axis_command_in: axis_command_in,
+      axis_command_out: axis_command_out,
+      vram_write,
+      debug_signals: display_controller_debug_signals,
+  );
+  
+  inst vram_reader_inst: display_controller::vram_reader #(
+      SCREEN_WIDTH,
+      SCREEN_HEIGHT,
+      PIXEL_BITS: 8,
+  ) (
+    r#clock: clock_dvi_as_clock,
+    r#reset: reset_dvi_as_reset,
+    axis_command_in: vram_reader_cmd,
+    axis_data_out: axis_data_in,
+    vram_read: vram_read,
+  );
+
+  always_comb {
+    // Read full screen command.
+    let vram_reader_cmd_read_all: display_controller::vram_reader_pkg::vram_reader_cmd_t = display_controller::vram_reader_pkg::vram_reader_cmd_t'{
+      x: 0,
+      y: 0,
+      w_minus_1: (SCREEN_WIDTH - 1) as u16,
+      h_minus_1: (SCREEN_HEIGHT - 1) as u16,
+    };
+    vram_reader_cmd.tvalid = 1;
+    vram_reader_cmd.tdata = vram_reader_cmd_read_all as u32;
+    vram_reader_cmd.tlast = 0;
+    vram_reader_cmd.tuser = '0;
+
+    vram_read.data = vram_data;
+
+    video_de = video_out.data_enable;
+    video_hsync = video_out.hsync;
+    video_vsync = video_out.vsync;
+    video_data = video_out.pixel_data;
+  }
+
+  inst video_signal_generator_inst: display_controller::video_signal_generator #(
+      SCREEN_WIDTH: 1280,
+      SCREEN_HEIGHT: 720,
+      PIXEL_BITS: 8,
+      BACK_PORCH_H: 220,
+      FRONT_PORCH_H: 110,
+      PULSE_WIDTH_H: 40,
+      BACK_PORCH_V: 20,
+      FRONT_PORCH_V: 5,
+      PULSE_WIDTH_V: 5,
+      MULTIPLIER_H: 8,
+      MULTIPLIER_V: 8
+  ) (
+    r#clock: clock_dvi_as_clock,
+    r#reset: reset_dvi_as_reset,
+    data: axis_data_in,
+    video: video_out,
+    data_in_sync: _,
+  );
+  
+  inst dvi_out_inst: $sv::dvi_out (
+    r#clock: clock_dvi,
+    r#reset: reset_dvi,
+    dvi_clock,
+    dvi_data0,
+    dvi_data1,
+    dvi_data2,
+    video_de,
+    video_hsync,
+    video_vsync,
+    video_data,
+  );
+
+  inst oser_dvi_clock: $sv::OSER10 #(
+    GSREN: "false",
+    LSREN: "true",
+  ) (
+    Q: tmds_clk_p,
+    D0: dvi_clock[0],
+    D1: dvi_clock[1],
+    D2: dvi_clock[2],
+    D3: dvi_clock[3],
+    D4: dvi_clock[4],
+    D5: dvi_clock[5],
+    D6: dvi_clock[6],
+    D7: dvi_clock[7],
+    D8: dvi_clock[8],
+    D9: dvi_clock[9],
+    FCLK: clock_dvi_ser,
+    PCLK: clock_dvi,
+    RESET: reset_dvi,
+  );
+  inst oser_dvi_data0: $sv::OSER10 #(
+    GSREN: "false",
+    LSREN: "true"
+  ) (
+    Q: tmds_data_p[0],
+    D0: dvi_data0[0],
+    D1: dvi_data0[1],
+    D2: dvi_data0[2],
+    D3: dvi_data0[3],
+    D4: dvi_data0[4],
+    D5: dvi_data0[5],
+    D6: dvi_data0[6],
+    D7: dvi_data0[7],
+    D8: dvi_data0[8],
+    D9: dvi_data0[9],
+    FCLK: clock_dvi_ser,
+    PCLK: clock_dvi,
+    RESET: reset_dvi
+  );
+  inst oser_dvi_data1: $sv::OSER10 #(
+    GSREN: "false",
+    LSREN: "true"
+  ) (
+    Q: tmds_data_p[1],
+    D0: dvi_data1[0],
+    D1: dvi_data1[1],
+    D2: dvi_data1[2],
+    D3: dvi_data1[3],
+    D4: dvi_data1[4],
+    D5: dvi_data1[5],
+    D6: dvi_data1[6],
+    D7: dvi_data1[7],
+    D8: dvi_data1[8],
+    D9: dvi_data1[9],
+    FCLK: clock_dvi_ser,
+    PCLK: clock_dvi,
+    RESET: reset_dvi
+  );
+  inst oser_dvi_data2: $sv::OSER10 #(
+    GSREN: "false",
+    LSREN: "true"
+  ) (
+    Q: tmds_data_p[2],
+    D0: dvi_data2[0],
+    D1: dvi_data2[1],
+    D2: dvi_data2[2],
+    D3: dvi_data2[3],
+    D4: dvi_data2[4],
+    D5: dvi_data2[5],
+    D6: dvi_data2[6],
+    D7: dvi_data2[7],
+    D8: dvi_data2[8],
+    D9: dvi_data2[9],
+    FCLK: clock_dvi_ser,
+    PCLK: clock_dvi,
+    RESET: reset_dvi,
+  );
+
+  // Debug out
+  always_comb {
+    debug_out[0] = r#clock;
+    debug_out[1] = axis_command_in.tvalid;
+    debug_out[2] = axis_command_in.tready;
+    debug_out[3] = vram_write.en;
+    debug_out[4] = display_controller_debug_signals[0];
+    debug_out[5] = display_controller_debug_signals[1];
+  }
+}

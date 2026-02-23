@@ -37,7 +37,7 @@ module top(
     output logic out_ws,
     output logic out_pa_en,
 
-    // HUB75
+    // HUB75 (1)
     output logic       hub75io_clk,
     output logic [1:0] hub75io_r,
     output logic [1:0] hub75io_g,
@@ -50,19 +50,31 @@ module top(
     output logic       hub75io_lat,
     output logic       hub75io_oe,
 
+    // HUB75 (2)
+    output logic       hub75io_clk_2,
+    output logic [1:0] hub75io_r_2,
+    output logic [1:0] hub75io_g_2,
+    output logic [1:0] hub75io_b_2,
+    output logic       hub75io_row_a_2,
+    output logic       hub75io_row_b_2,
+    output logic       hub75io_row_c_2,
+    output logic       hub75io_row_d_2,
+    output logic       hub75io_row_e_2,
+    output logic       hub75io_lat_2,
+    output logic       hub75io_oe_2
+
     // Debug
-    output logic out_bclk_dbg,
-    output logic out_data_dbg,
-    output logic out_ws_dbg,
-    output logic dbg_buffering,
-    output logic dbg_probeOut
+    // output logic out_bclk_dbg,
+    // output logic out_data_dbg,
+    // output logic out_ws_dbg,
+    // output logic dbg_buffering,
+    // output logic dbg_probeOut
 );
 
 logic rmii_reset;
 logic main_clock;
 logic main_clock_lock;
 logic main_reset;
-
 
 reset_seq reset_seq_ext(
   .clock(rmii_txclk),
@@ -101,6 +113,44 @@ logic [7:0] gpio_in;
 logic [71:0] gpio_out;
 assign gpio_in = {3'b000, !button_s4, !button_s3, !button_s2, !button_s1, !button_s0};
 assign led = gpio_out[5:0];
+
+logic       hub75io_clk_internal;
+logic [3:0] hub75io_r_internal;
+logic [3:0] hub75io_g_internal;
+logic [3:0] hub75io_b_internal;
+logic       hub75io_row_a_internal;
+logic       hub75io_row_b_internal;
+logic       hub75io_row_c_internal;
+logic       hub75io_row_d_internal;
+logic       hub75io_row_e_internal;
+logic       hub75io_lat_internal;
+logic       hub75io_oe_internal;
+
+always_comb begin
+  hub75io_clk = hub75io_clk_internal;
+  hub75io_r = hub75io_r_internal[1:0];
+  hub75io_g = hub75io_g_internal[1:0];
+  hub75io_b = hub75io_b_internal[1:0];
+  hub75io_row_a = hub75io_row_a_internal;
+  hub75io_row_b = hub75io_row_b_internal;
+  hub75io_row_c = hub75io_row_c_internal;
+  hub75io_row_d = hub75io_row_d_internal;
+  hub75io_row_e = hub75io_row_e_internal;
+  hub75io_lat = hub75io_lat_internal;
+  hub75io_oe = hub75io_oe_internal;
+
+  hub75io_clk_2 = hub75io_clk_internal;
+  hub75io_r_2 = hub75io_r_internal[3:2];
+  hub75io_g_2 = hub75io_g_internal[3:2];
+  hub75io_b_2 = hub75io_b_internal[3:2];
+  hub75io_row_a_2 = hub75io_row_a_internal;
+  hub75io_row_b_2 = hub75io_row_b_internal;
+  hub75io_row_c_2 = hub75io_row_c_internal;
+  hub75io_row_d_2 = hub75io_row_d_internal;
+  hub75io_row_e_2 = hub75io_row_e_internal;
+  hub75io_lat_2 = hub75io_lat_internal;
+  hub75io_oe_2 = hub75io_oe_internal;
+end
 
 rmii_mac rmii_mac_inst (
   .tx_clock(rmii_txclk),
@@ -142,26 +192,26 @@ EthernetVideoSystem ethernet_video_system_inst (
   .out_data(out_data),
   .out_ws(out_ws),
   
-  .hub75io_row_a(hub75io_row_a),
-  .hub75io_row_b(hub75io_row_b),
-  .hub75io_row_c(hub75io_row_c),
-  .hub75io_row_d(hub75io_row_d),
-  .hub75io_row_e(hub75io_row_e),
-  .hub75io_r(hub75io_r),
-  .hub75io_g(hub75io_g),
-  .hub75io_b(hub75io_b),
-  .hub75io_oe(hub75io_oe),
-  .hub75io_lat(hub75io_lat),
-  .hub75io_clk(hub75io_clk),
+  .hub75io_row_a(hub75io_row_a_internal),
+  .hub75io_row_b(hub75io_row_b_internal),
+  .hub75io_row_c(hub75io_row_c_internal),
+  .hub75io_row_d(hub75io_row_d_internal),
+  .hub75io_row_e(hub75io_row_e_internal),
+  .hub75io_r    (hub75io_r_internal    ),
+  .hub75io_g    (hub75io_g_internal    ),
+  .hub75io_b    (hub75io_b_internal    ),
+  .hub75io_oe   (hub75io_oe_internal   ),
+  .hub75io_lat  (hub75io_lat_internal  ),
+  .hub75io_clk  (hub75io_clk_internal  )
   
-  .dbg_buffering(dbg_buffering),
-  .dbg_probeOut(dbg_probeOut)
+  //.dbg_buffering(dbg_buffering),
+  //.dbg_probeOut(dbg_probeOut)
 );
 
 // Connect I2S signals for debugging
-assign out_bclk_dbg = out_bclk;
-assign out_data_dbg = out_data;
-assign out_ws_dbg   = out_ws;
+// assign out_bclk_dbg = out_bclk;
+// assign out_data_dbg = out_data;
+// assign out_ws_dbg   = out_ws;
 
 // Enable phone amplifier
 assign out_pa_en = 1'b1;

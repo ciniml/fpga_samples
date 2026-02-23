@@ -1,0 +1,13 @@
+[project]
+name = "display_controller"
+version = "0.1.0"
+authors = ["Kenta IDA <fuga@fugafuga.org>"]
+license = "BSL-1.0"
+
+[build]
+target = { type = "source" }
+
+[dependencies]
+spi = {path = "../spi"}
+axi4s = {path = "../interfaces/axi4s"}
+sync = {path = "../sync"}

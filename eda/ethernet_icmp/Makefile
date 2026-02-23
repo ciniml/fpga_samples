@@ -31,7 +31,7 @@ include ../build_gowin.mk
 
 ifeq ($(TARGET),tangnano9k_pmod)
 # Add Pmod Ethernet module
-PMOD_MODULES += $(MOD_DIR)/pmod_ethernet/pmod_pins.csv
+PMOD_MODULES += $(MOD_DIR)/pmod_ethernet_w_adapter/pmod_pins.csv
 endif
 PMOD_MODULES += $(MOD_DIR)/pmod_hub75/pmod_pins.csv
 
