@@ -48,6 +48,17 @@ output/
 *.hex
 *.mod
 
+# Chisel generated files
+*.anno.json
+*.fir
+
+# Veryl build directory
+rtl/.build/
+
+# Test binaries
+**/test/testbench
+testbench
+
 # Temporary files
 /src
 node_modules

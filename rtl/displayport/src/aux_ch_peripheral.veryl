@@ -1,0 +1,353 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2024.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file aux_ch_peripheral.veryl
+ * @brief DisplayPort AUX_CH MCU peripheral
+ */
+
+pub module aux_ch_peripheral #(
+    param CLOCK_HZ: u32 = 32'd100_000_000,  // Clock frequency (default = 100MHz)
+    param MANCHESTER_CLOCK_HZ: u32 = 32'd1_000_000,  // Manchester clock frequency (default = 1MHz)
+    param PRECHARGE_CYCLES: u32 = 32'd16,   // Number of precharge cycles
+    param BUFFER_SIZE: u32 = 256,           // Buffer size
+    param DEBUG_OUT: bit = 0,               // Enable debug output messages
+    local REGISTER_COUNT: u32 = 32,          // Number of registers
+) (
+    clock:   input logic,
+    aresetn: input logic,
+
+    // MCU interface
+    mcu_address:    input logic<$clog2(BUFFER_SIZE + REGISTER_COUNT)>,
+    mcu_read_en:    input logic,
+    mcu_read_data:  output logic<8>,
+    mcu_write_en:   input logic,
+    mcu_write_data: input logic<8>,
+    mcu_interrupt:  output logic,
+
+    // AUX_CH input
+    aux_ch_in:        input logic,
+    // AUX_CH output
+    aux_ch_out:        output logic,
+    aux_ch_out_enable: output logic,
+) {
+    local REGISTER_BITS: u32 = $clog2(REGISTER_COUNT);  // Number of bits for register address
+
+    type address_t = logic<$clog2(BUFFER_SIZE + REGISTER_COUNT)>;  // Address type
+    type buffer_index_t = logic<$clog2(BUFFER_SIZE)>;  // Buffer index type
+    type register_type_t = logic<8>;  // Register type
+
+    struct InterruptStatus {
+        reserved: logic<6>,
+        rx_complete: logic,
+        tx_complete: logic,
+    }
+    struct OperationStatus {
+        reserved: logic<6>,
+        rx_running: logic,
+        rx_enable: logic,
+        tx_running: logic,
+        tx_start: logic,
+    }
+
+    enum RegisterAddress : logic<REGISTER_BITS>{
+        OPERATION_STATUS = 0,
+        INTERRUPT_STATUS = 1,
+        RX_COUNT = 2,
+        RX_INDEX = 3,
+        TX_COUNT = 4,
+        TX_INDEX = 5,
+    }
+
+    var interrupt_status: InterruptStatus;
+    var interrupt_clear : InterruptStatus;
+    var operation_status: OperationStatus;
+
+    var buffer: logic<8>[BUFFER_SIZE];  // Buffer for AUX_CH data
+    
+    var rx_index: buffer_index_t;
+    var rx_index_new: buffer_index_t;
+    var rx_index_update: logic;
+    var rx_count: buffer_index_t;
+    var rx_running: logic;
+    var rx_enable: logic;
+    var rx_enable_new: logic;
+    var rx_enable_update: logic;
+    var rx_complete: logic;
+
+    var tx_index: buffer_index_t;
+    var tx_index_new: buffer_index_t;
+    var tx_index_update: logic;
+    var tx_count: buffer_index_t;
+    var tx_count_new: buffer_index_t;
+    var tx_count_update: logic;
+    var tx_running: logic;
+    var tx_start: logic;
+    var tx_complete: logic;
+
+    // Interrupt status
+    always_comb {
+        mcu_interrupt = interrupt_status.rx_complete | interrupt_status.tx_complete;
+    }
+    // Status mapping
+    always_comb {
+        interrupt_status.reserved = 0;
+        interrupt_status.rx_complete = rx_complete;
+        interrupt_status.tx_complete = tx_complete;
+        operation_status.reserved = 0;
+        operation_status.rx_running = rx_running;
+        operation_status.rx_enable = rx_enable;
+        operation_status.tx_running = tx_running;
+        operation_status.tx_start = 0;
+    }
+
+    // MCU access process.
+    always_ff(clock, aresetn) {
+        if_reset {
+            mcu_read_data = 0;
+            interrupt_clear = 0;
+
+            rx_enable_new = 0;
+            rx_enable_update = 0;
+            rx_index_new = 0;
+            rx_index_update = 0;
+            tx_index_new = 0;
+            tx_index_update = 0;
+            tx_count_new = 0;
+            tx_count_update = 0;
+        } else {
+            tx_start = 0;
+            interrupt_clear = 0;
+
+            rx_enable_new = 0;
+            rx_enable_update = 0;
+            rx_index_new = 0;
+            rx_index_update = 0;
+            tx_index_new = 0;
+            tx_index_update = 0;
+            tx_count_new = 0;
+            tx_count_update = 0;
+
+            if (mcu_read_en) {
+                if( mcu_address as address_t <: BUFFER_SIZE as address_t ) {   // Buffer access
+                    mcu_read_data = buffer[mcu_address[$clog2(BUFFER_SIZE)-1:0]];
+                } else {                            // Register access
+                    let register_address: RegisterAddress = mcu_address as RegisterAddress;
+                    case (register_address) {
+                        RegisterAddress::OPERATION_STATUS: mcu_read_data = operation_status as register_type_t;
+                        RegisterAddress::INTERRUPT_STATUS: mcu_read_data = interrupt_status as register_type_t;
+                        RegisterAddress::RX_COUNT: mcu_read_data = rx_count as register_type_t;
+                        RegisterAddress::RX_INDEX: mcu_read_data = rx_index as register_type_t;
+                        RegisterAddress::TX_COUNT: mcu_read_data = tx_count as register_type_t;
+                        RegisterAddress::TX_INDEX: mcu_read_data = tx_index as register_type_t;
+                        default: mcu_read_data = 0;
+                    }
+                }
+            }
+            if (mcu_write_en) {
+                if( mcu_address as address_t <: BUFFER_SIZE as address_t ) {   // Buffer access
+                    buffer[mcu_address[$clog2(BUFFER_SIZE)-1:0]] = mcu_write_data;
+                } else {                            // Register access
+                    let register_address_: RegisterAddress = mcu_address as RegisterAddress;
+                    case (register_address_) {
+                        RegisterAddress::OPERATION_STATUS: {
+                            let operation_status_new: OperationStatus = mcu_write_data as OperationStatus;
+                            rx_enable_new = operation_status_new.rx_enable;
+                            rx_enable_update = 1;
+                            tx_start = operation_status_new.tx_start;
+                        }
+                        RegisterAddress::INTERRUPT_STATUS: {
+                            let interrupt_clear_new: InterruptStatus = mcu_write_data as InterruptStatus;
+                            interrupt_clear = interrupt_clear_new;
+                        }
+                        RegisterAddress::RX_INDEX: {
+                            if !rx_running {
+                                rx_index_new = mcu_write_data as buffer_index_t;
+                                rx_index_update = 1;
+                            }
+                        }
+                        RegisterAddress::TX_COUNT: {
+                            if !tx_running {
+                                tx_count_new = mcu_write_data as buffer_index_t;
+                                tx_count_update = 1;
+                            }
+                        }
+                        RegisterAddress::TX_INDEX: {
+                            if !tx_running {
+                                tx_index_new = mcu_write_data as buffer_index_t;
+                                tx_index_update = 1;
+                            }
+                        }
+                        default: {}
+                    }
+                }
+            }
+        }
+    }
+
+    // AUX_CH TX process
+    var saxis_data_tvalid: logic;
+    var saxis_data_tready: logic;
+    var saxis_data_tdata : logic<8>;
+    var saxis_data_tlast : logic;
+
+    enum TxState: logic<2> {
+        IDLE,
+        RUNNING,
+        WAIT_END,
+    }
+    
+    var tx_state: TxState;
+
+    inst tx_inst: aux_ch_tx #(
+        CLOCK_HZ,
+        PRECHARGE_CYCLES,
+        DEBUG_OUT,
+    ) (
+        clock,
+        aresetn,
+
+        saxis_data_tvalid,
+        saxis_data_tready,
+        saxis_data_tdata,
+        saxis_data_tlast,
+
+        aux_ch_out,
+        aux_ch_out_enable,
+    );
+
+    always_ff(clock, aresetn) {
+        if_reset {
+            saxis_data_tvalid = 0;
+            saxis_data_tlast = 0;
+            saxis_data_tdata = 0;
+            tx_count = 0;
+            tx_index = 0;
+            tx_running = 0;
+            tx_state = TxState::IDLE;
+
+            tx_complete = 0;
+        } else {
+            if tx_index_update {
+                tx_index = tx_index_new;
+            }
+            if tx_count_update {
+                tx_count = tx_count_new;
+            }
+            if interrupt_clear.tx_complete {
+                tx_complete = 0;
+            }
+            if saxis_data_tvalid && saxis_data_tready {
+                saxis_data_tvalid = 0;
+            }
+            case (tx_state) {
+                TxState::IDLE: {
+                    if tx_start {
+                        saxis_data_tlast = 0;
+                        tx_running = 1;
+                        tx_state = TxState::RUNNING;
+                    }
+                }
+                TxState::RUNNING: {
+                    if !saxis_data_tvalid || saxis_data_tready {
+                        if tx_count == 1 {
+                            saxis_data_tlast = 1;
+                            tx_state = TxState::WAIT_END;
+                        }
+                        saxis_data_tvalid = 1;
+                        saxis_data_tdata = buffer[tx_index];
+                        tx_count = tx_count - 1;
+                        tx_index = tx_index + 1;
+                    }
+                }
+                TxState::WAIT_END: {
+                    if !aux_ch_out_enable {
+                        tx_running = 0;
+                        tx_state = TxState::IDLE;
+                        tx_complete = 1;
+                    }
+                }
+                default: {
+                    tx_state = TxState::IDLE;
+                }
+            }
+        }
+    }
+
+
+    // AUX_CH RX process
+    var maxis_data_tvalid: logic;
+    var maxis_data_tready: logic;
+    var maxis_data_tdata : logic<8>;
+    var maxis_data_tlast : logic;
+
+    enum RxState: logic<1> {
+        IDLE,
+        RUNNING,
+    }
+    var rx_state: RxState;
+
+    inst rx_inst: aux_ch_rx #( 
+        CLOCK_HZ,
+        MANCHESTER_CLOCK_HZ,
+        DEBUG_OUT,
+    ) (
+        clock,
+        aresetn,
+        maxis_data_tvalid,
+        maxis_data_tready,
+        maxis_data_tdata,
+        maxis_data_tlast,
+        aux_ch_in,
+    );
+
+    assign maxis_data_tready = aresetn && rx_state == RxState::RUNNING;
+
+    always_ff(clock, aresetn) {
+        if_reset {
+            rx_index = 0;
+            rx_count = 0;
+            rx_running = 0;
+            rx_state = RxState::IDLE;
+
+            rx_enable = 0;
+            rx_complete = 0;
+        } else {
+            if rx_enable_update {
+                rx_enable = rx_enable_new;
+            }
+            if rx_index_update {
+                rx_index = rx_index_new;
+            }
+            if interrupt_clear.rx_complete {
+                rx_complete = 0;
+            }
+            
+            case (rx_state) {
+                RxState::IDLE: {
+                    if rx_enable {
+                        rx_count = 0;
+                        rx_state = RxState::RUNNING;
+                    }
+                }
+                RxState::RUNNING: {
+                    if maxis_data_tvalid {
+                        rx_count = rx_count + 1;
+                        rx_index = rx_index + 1;
+                        buffer[rx_index] = maxis_data_tdata;
+                        if maxis_data_tlast {
+                            rx_complete = 1;
+                            rx_enable = 0;
+                            rx_state = RxState::IDLE;
+                        }
+                    }
+                }
+                default: {
+                    rx_state = RxState::IDLE;
+                }
+            }
+        }
+    }
+}

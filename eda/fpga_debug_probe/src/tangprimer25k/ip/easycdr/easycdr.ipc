@@ -1,0 +1,15 @@
+[General]
+ipc_version=4
+file=easycdr
+module=EasyCDR_Top
+target_device=gw5a25a-000
+type=EasyCDR
+version=1.0
+
+[Config]
+Data_Width=16
+DisableIO=true
+LANG=0
+Rx_Line_Rate=1
+Shared_Logic=Inside
+Synthesis_tool=GowinSynthesis

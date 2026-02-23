@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<wave_config>
+   <wave_state>
+   </wave_state>
+   <db_ref_list>
+      <db_ref path="./test.wdb" id="1">
+         <top_modules>
+            <top_module name="tb" />
+         </top_modules>
+      </db_ref>
+   </db_ref_list>
+   <zoom_setting>
+      <ZoomStartTime time="0fs"></ZoomStartTime>
+      <ZoomEndTime time="809000001fs"></ZoomEndTime>
+      <Cursor1Time time="285000000fs"></Cursor1Time>
+   </zoom_setting>
+   <column_width_setting>
+      <NameColumnWidth column_width="311"></NameColumnWidth>
+      <ValueColumnWidth column_width="156"></ValueColumnWidth>
+   </column_width_setting>
+   <WVObjectSize size="28" />
+   <wvobject type="logic" fp_name="/tb/dut/clock">
+      <obj_property name="ElementShortName">clock</obj_property>
+      <obj_property name="ObjectShortName">clock</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut/aresetn">
+      <obj_property name="ElementShortName">aresetn</obj_property>
+      <obj_property name="ObjectShortName">aresetn</obj_property>
+   </wvobject>
+   <wvobject type="array" fp_name="/tb/dut/saxis_tdata">
+      <obj_property name="ElementShortName">saxis_tdata[63:0]</obj_property>
+      <obj_property name="ObjectShortName">saxis_tdata[63:0]</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut/saxis_tvalid">
+      <obj_property name="ElementShortName">saxis_tvalid</obj_property>
+      <obj_property name="ObjectShortName">saxis_tvalid</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut/saxis_tready">
+      <obj_property name="ElementShortName">saxis_tready</obj_property>
+      <obj_property name="ObjectShortName">saxis_tready</obj_property>
+   </wvobject>
+   <wvobject type="array" fp_name="/tb/dut/saxis_tkeep">
+      <obj_property name="ElementShortName">saxis_tkeep[7:0]</obj_property>
+      <obj_property name="ObjectShortName">saxis_tkeep[7:0]</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut/saxis_tlast">
+      <obj_property name="ElementShortName">saxis_tlast</obj_property>
+      <obj_property name="ObjectShortName">saxis_tlast</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut/saxis_tuser">
+      <obj_property name="ElementShortName">saxis_tuser</obj_property>
+      <obj_property name="ObjectShortName">saxis_tuser</obj_property>
+   </wvobject>
+   <wvobject type="array" fp_name="/tb/dut/maxis_tdata">
+      <obj_property name="ElementShortName">maxis_tdata[63:0]</obj_property>
+      <obj_property name="ObjectShortName">maxis_tdata[63:0]</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut/maxis_tvalid">
+      <obj_property name="ElementShortName">maxis_tvalid</obj_property>
+      <obj_property name="ObjectShortName">maxis_tvalid</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut/maxis_tready">
+      <obj_property name="ElementShortName">maxis_tready</obj_property>
+      <obj_property name="ObjectShortName">maxis_tready</obj_property>
+   </wvobject>
+   <wvobject type="array" fp_name="/tb/dut/maxis_tkeep">
+      <obj_property name="ElementShortName">maxis_tkeep[7:0]</obj_property>
+      <obj_property name="ObjectShortName">maxis_tkeep[7:0]</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut/maxis_tlast">
+      <obj_property name="ElementShortName">maxis_tlast</obj_property>
+      <obj_property name="ObjectShortName">maxis_tlast</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut/maxis_tuser">
+      <obj_property name="ElementShortName">maxis_tuser</obj_property>
+      <obj_property name="ObjectShortName">maxis_tuser</obj_property>
+   </wvobject>
+   <wvobject type="array" fp_name="/tb/dut/previous_tdata">
+      <obj_property name="ElementShortName">previous_tdata[63:0]</obj_property>
+      <obj_property name="ObjectShortName">previous_tdata[63:0]</obj_property>
+   </wvobject>
+   <wvobject type="array" fp_name="/tb/dut/previous_tkeep">
+      <obj_property name="ElementShortName">previous_tkeep[7:0]</obj_property>
+      <obj_property name="ObjectShortName">previous_tkeep[7:0]</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut/previous_tlast">
+      <obj_property name="ElementShortName">previous_tlast</obj_property>
+      <obj_property name="ObjectShortName">previous_tlast</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut/previous_tuser">
+      <obj_property name="ElementShortName">previous_tuser</obj_property>
+      <obj_property name="ObjectShortName">previous_tuser</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut/is_active">
+      <obj_property name="ElementShortName">is_active</obj_property>
+      <obj_property name="ObjectShortName">is_active</obj_property>
+   </wvobject>
+   <wvobject type="array" fp_name="/tb/dut/sfd_pos">
+      <obj_property name="ElementShortName">sfd_pos[7:0]</obj_property>
+      <obj_property name="ObjectShortName">sfd_pos[7:0]</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut/has_sfd">
+      <obj_property name="ElementShortName">has_sfd</obj_property>
+      <obj_property name="ObjectShortName">has_sfd</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut/aligned">
+      <obj_property name="ElementShortName">aligned</obj_property>
+      <obj_property name="ObjectShortName">aligned</obj_property>
+   </wvobject>
+   <wvobject type="array" fp_name="/tb/dut/next_tkeep">
+      <obj_property name="ElementShortName">next_tkeep[15:0]</obj_property>
+      <obj_property name="ObjectShortName">next_tkeep[15:0]</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut/has_next_beat">
+      <obj_property name="ElementShortName">has_next_beat</obj_property>
+      <obj_property name="ObjectShortName">has_next_beat</obj_property>
+   </wvobject>
+   <wvobject type="array" fp_name="/tb/dut/next_tdata">
+      <obj_property name="ElementShortName">next_tdata[127:0]</obj_property>
+      <obj_property name="ObjectShortName">next_tdata[127:0]</obj_property>
+   </wvobject>
+   <wvobject type="logic" fp_name="/tb/dut/flushing">
+      <obj_property name="ElementShortName">flushing</obj_property>
+      <obj_property name="ObjectShortName">flushing</obj_property>
+   </wvobject>
+   <wvobject type="array" fp_name="/tb/dut/SFD">
+      <obj_property name="ElementShortName">SFD[7:0]</obj_property>
+      <obj_property name="ObjectShortName">SFD[7:0]</obj_property>
+   </wvobject>
+   <wvobject type="array" fp_name="/tb/dut/PREAMBLE">
+      <obj_property name="ElementShortName">PREAMBLE[7:0]</obj_property>
+      <obj_property name="ObjectShortName">PREAMBLE[7:0]</obj_property>
+   </wvobject>
+</wave_config>

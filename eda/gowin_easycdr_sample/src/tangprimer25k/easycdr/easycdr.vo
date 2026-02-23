@@ -1,0 +1,4536 @@
+//Copyright (C)2014-2023 Gowin Semiconductor Corporation.
+//All rights reserved.
+//File Title: Post-PnR Simulation Model file
+//GOWIN Version: V1.9.9 Beta-5
+//Created Time: Wed Sep 27 08:50:26 2023
+
+`timescale 100 ps/100 ps
+module EasyCDR_Top(
+	rxp_i,
+	rxn_i,
+	rstn_i,
+	pll_clkin_i,
+	pll_clkout0_i,
+	pll_clkout1_i,
+	pll_clkout2_i,
+	pll_clkout3_i,
+	pll_lock_i,
+	share_clk0_o,
+	share_clk1_o,
+	share_clk2_o,
+	share_clk3_o,
+	share_clk4_o,
+	share_reset_o,
+	dout_o,
+	dout_en_o,
+	error_o
+);
+input rxp_i;
+input rxn_i;
+input rstn_i;
+input pll_clkin_i;
+input pll_clkout0_i;
+input pll_clkout1_i;
+input pll_clkout2_i;
+input pll_clkout3_i;
+input pll_lock_i;
+output share_clk0_o;
+output share_clk1_o;
+output share_clk2_o;
+output share_clk3_o;
+output share_clk4_o;
+output share_reset_o;
+output [15:0] dout_o;
+output dout_en_o;
+output error_o;
+wire GND;
+wire VCC;
+wire dout_en_o;
+wire [15:0] dout_o;
+wire error_o;
+wire pll_clkin_i;
+wire pll_clkout0_i;
+wire pll_clkout1_i;
+wire pll_clkout2_i;
+wire pll_clkout3_i;
+wire pll_lock_i;
+wire rstn_i;
+wire rxn_i;
+wire rxp_i;
+wire share_clk0_o;
+wire share_clk1_o;
+wire share_clk2_o;
+wire share_clk3_o;
+wire share_clk4_o;
+wire share_reset_o;
+wire \u_EasyCDR/rx ;
+wire \u_EasyCDR/pcs_rstn ;
+wire \u_EasyCDR/osides32_inst_32_DF ;
+wire \u_EasyCDR/n54_6 ;
+wire \u_EasyCDR/gearbox_d_vld ;
+wire [31:0] \u_EasyCDR/os_rx_x1_data ;
+wire [31:0] \u_EasyCDR/rx_parallel_data ;
+wire [1:0] \u_EasyCDR/cdr_dout_sel ;
+wire [8:0] \u_EasyCDR/cdr_dout ;
+wire [9:0] \u_EasyCDR/gearbox_d ;
+wire \u_EasyCDR/u_share_logic_mod/n38_5 ;
+wire \u_EasyCDR/u_share_logic_mod/n25_6 ;
+wire \u_EasyCDR/u_share_logic_mod/n24_5 ;
+wire \u_EasyCDR/u_share_logic_mod/n23_5 ;
+wire \u_EasyCDR/u_share_logic_mod/n22_5 ;
+wire \u_EasyCDR/u_share_logic_mod/rst_n ;
+wire \u_EasyCDR/u_share_logic_mod/resetn ;
+wire \u_EasyCDR/u_share_logic_mod/rst_n_d1 ;
+wire \u_EasyCDR/u_share_logic_mod/cen ;
+wire \u_EasyCDR/u_share_logic_mod/n6_6 ;
+wire \u_EasyCDR/u_share_logic_mod/n11_6 ;
+wire [3:0] \u_EasyCDR/u_share_logic_mod/delay_cnt ;
+wire \u_EasyCDR/u_cdr/n218_6 ;
+wire \u_EasyCDR/u_cdr/n218_7 ;
+wire \u_EasyCDR/u_cdr/n219_6 ;
+wire \u_EasyCDR/u_cdr/n219_7 ;
+wire \u_EasyCDR/u_cdr/n220_6 ;
+wire \u_EasyCDR/u_cdr/n220_7 ;
+wire \u_EasyCDR/u_cdr/n221_6 ;
+wire \u_EasyCDR/u_cdr/n221_7 ;
+wire \u_EasyCDR/u_cdr/n222_6 ;
+wire \u_EasyCDR/u_cdr/n222_7 ;
+wire \u_EasyCDR/u_cdr/n223_6 ;
+wire \u_EasyCDR/u_cdr/n223_7 ;
+wire \u_EasyCDR/u_cdr/n224_6 ;
+wire \u_EasyCDR/u_cdr/n224_7 ;
+wire \u_EasyCDR/u_cdr/n225_6 ;
+wire \u_EasyCDR/u_cdr/n225_7 ;
+wire \u_EasyCDR/u_cdr/n169_4 ;
+wire \u_EasyCDR/u_cdr/n175_4 ;
+wire \u_EasyCDR/u_cdr/n213_7 ;
+wire \u_EasyCDR/u_cdr/n214_7 ;
+wire \u_EasyCDR/u_cdr/E4_0_8 ;
+wire \u_EasyCDR/u_cdr/E4_1_8 ;
+wire \u_EasyCDR/u_cdr/E4_2_8 ;
+wire \u_EasyCDR/u_cdr/E4_3_8 ;
+wire \u_EasyCDR/u_cdr/n213_8 ;
+wire \u_EasyCDR/u_cdr/n214_8 ;
+wire \u_EasyCDR/u_cdr/E4_0_9 ;
+wire \u_EasyCDR/u_cdr/E4_0_10 ;
+wire \u_EasyCDR/u_cdr/E4_0_11 ;
+wire \u_EasyCDR/u_cdr/E4_0_12 ;
+wire \u_EasyCDR/u_cdr/E4_1_9 ;
+wire \u_EasyCDR/u_cdr/E4_1_10 ;
+wire \u_EasyCDR/u_cdr/E4_1_11 ;
+wire \u_EasyCDR/u_cdr/E4_1_12 ;
+wire \u_EasyCDR/u_cdr/E4_2_9 ;
+wire \u_EasyCDR/u_cdr/E4_2_10 ;
+wire \u_EasyCDR/u_cdr/E4_2_11 ;
+wire \u_EasyCDR/u_cdr/E4_2_12 ;
+wire \u_EasyCDR/u_cdr/E4_3_9 ;
+wire \u_EasyCDR/u_cdr/E4_3_10 ;
+wire \u_EasyCDR/u_cdr/E4_3_11 ;
+wire \u_EasyCDR/u_cdr/E4_3_12 ;
+wire \u_EasyCDR/u_cdr/n218_9 ;
+wire \u_EasyCDR/u_cdr/n219_9 ;
+wire \u_EasyCDR/u_cdr/n220_9 ;
+wire \u_EasyCDR/u_cdr/n221_9 ;
+wire \u_EasyCDR/u_cdr/n222_9 ;
+wire \u_EasyCDR/u_cdr/n223_9 ;
+wire \u_EasyCDR/u_cdr/n224_9 ;
+wire \u_EasyCDR/u_cdr/n225_9 ;
+wire \u_EasyCDR/u_cdr/cDV_0_6 ;
+wire \u_EasyCDR/u_cdr/DVE_1_9 ;
+wire \u_EasyCDR/u_cdr/DVE_0_9 ;
+wire [31:0] \u_EasyCDR/u_cdr/II ;
+wire [31:0] \u_EasyCDR/u_cdr/ID ;
+wire [31:0] \u_EasyCDR/u_cdr/IDD ;
+wire [1:0] \u_EasyCDR/u_cdr/status ;
+wire [3:0] \u_EasyCDR/u_cdr/E4 ;
+wire [1:0] \u_EasyCDR/u_cdr/DVE ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n153_4 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n174_4 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n175_4 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n188_3 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_3 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n190_3 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_3 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_3 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_3 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_3 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_3 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_3 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_3 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_3 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n199_3 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n202_3 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n203_5 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n154_4 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n153_5 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n174_5 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n174_6 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n174_7 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n175_5 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n188_4 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n188_5 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_4 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_5 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_6 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n190_4 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n190_5 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_4 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_5 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_6 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_4 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_5 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_6 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_7 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_4 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_5 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_6 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_5 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_6 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_7 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_4 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_5 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_6 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_4 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_5 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_6 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_4 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_5 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_6 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_4 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_5 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_6 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n199_4 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt_2_9 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n174_8 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n174_9 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n174_10 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n175_6 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n188_6 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_7 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_8 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_9 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_10 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_11 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_12 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n190_6 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n190_7 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_7 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_8 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_9 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_10 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_11 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_12 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_13 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_8 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_9 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_10 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_7 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_8 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_9 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_10 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_11 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_12 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_13 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_14 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_8 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_9 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_10 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_11 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_12 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_7 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_8 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_9 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_10 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_12 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_13 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_7 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_8 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_9 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_10 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_11 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_12 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_13 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_14 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_7 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_8 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_9 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_10 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_11 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_12 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_7 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_8 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_9 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_10 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_11 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n199_6 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n199_7 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_14 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_15 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_16 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_14 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_15 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_16 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_11 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_12 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_13 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_14 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_15 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_16 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_17 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_18 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_19 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_20 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_21 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_22 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_23 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_13 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_14 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_15 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_16 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_17 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_14 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_15 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_16 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_17 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_18 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_15 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_16 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_17 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_18 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_13 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_14 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_15 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_16 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_17 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_18 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_19 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_12 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_13 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_14 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_15 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_16 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/stor_7_9 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_20 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n199_9 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n154_6 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_19 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt_1_9 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_18 ;
+wire \u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ;
+wire [8:0] \u_EasyCDR/u_gearbox_7_8_9_to_10/stor ;
+wire [3:0] \u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt ;
+wire \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_15_5 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n215_16 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n216_16 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n217_16 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n217_18 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n218_16 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n219_15 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n219_17 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n220_15 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n221_14 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n221_16 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n222_14 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n223_17 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n224_16 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n224_18 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n225_15 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n225_17 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n226_15 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n229_19 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n230_20 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n231_15 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n238_16 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n239_16 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n240_19 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n241_19 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n242_16 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n243_16 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n244_15 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n245_15 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n246_15 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n247_15 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n227_7 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/store_tmp_15_8 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n16_6 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n15_6 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n211_5 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n240_21 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n241_22 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n241_21 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n214_18 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n214_19 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n215_17 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n215_18 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n216_17 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n216_18 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n217_19 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n217_20 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n217_21 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n218_17 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n218_18 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n219_18 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n219_19 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n219_20 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n220_16 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n220_17 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n221_17 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n221_18 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n222_15 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n223_18 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n224_19 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n242_17 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n242_18 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n243_17 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n243_18 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n244_16 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n245_16 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n246_16 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n246_17 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n247_16 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n247_17 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n211_6 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n214_20 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n214_21 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n217_22 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n219_21 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n211_7 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n240_17 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n241_17 ;
+wire \u_EasyCDR/u_gearbox_10_or_16/n17_8 ;
+wire [2:0] \u_EasyCDR/u_gearbox_10_or_16/cnt ;
+wire [15:2] \u_EasyCDR/u_gearbox_10_or_16/store_tmp ;
+wire [2:0] \u_EasyCDR/u_gearbox_10_or_16/st_switch ;
+VCC VCC_cZ (
+  .V(VCC)
+);
+GND GND_cZ (
+  .G(GND)
+);
+GSR GSR (
+	.GSRI(VCC)
+);
+TLVDS_IBUF \u_EasyCDR/u_tlvds_ibuf  (
+	.I(rxp_i),
+	.IB(rxn_i),
+	.O(\u_EasyCDR/rx )
+);
+LUT2 \u_EasyCDR/pcs_rstn_s1  (
+	.I0(share_reset_o),
+	.I1(rstn_i),
+	.F(\u_EasyCDR/pcs_rstn )
+);
+defparam \u_EasyCDR/pcs_rstn_s1 .INIT=4'h4;
+DFFCE \u_EasyCDR/os_rx_x1_data_30_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [1]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [30])
+);
+defparam \u_EasyCDR/os_rx_x1_data_30_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_29_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [2]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [29])
+);
+defparam \u_EasyCDR/os_rx_x1_data_29_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_28_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [3]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [28])
+);
+defparam \u_EasyCDR/os_rx_x1_data_28_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_27_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [4]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [27])
+);
+defparam \u_EasyCDR/os_rx_x1_data_27_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_26_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [5]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [26])
+);
+defparam \u_EasyCDR/os_rx_x1_data_26_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_25_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [6]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [25])
+);
+defparam \u_EasyCDR/os_rx_x1_data_25_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_24_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [7]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [24])
+);
+defparam \u_EasyCDR/os_rx_x1_data_24_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_23_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [8]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [23])
+);
+defparam \u_EasyCDR/os_rx_x1_data_23_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_22_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [9]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [22])
+);
+defparam \u_EasyCDR/os_rx_x1_data_22_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_21_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [10]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [21])
+);
+defparam \u_EasyCDR/os_rx_x1_data_21_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_20_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [11]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [20])
+);
+defparam \u_EasyCDR/os_rx_x1_data_20_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_19_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [12]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [19])
+);
+defparam \u_EasyCDR/os_rx_x1_data_19_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_18_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [13]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [18])
+);
+defparam \u_EasyCDR/os_rx_x1_data_18_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_17_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [14]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [17])
+);
+defparam \u_EasyCDR/os_rx_x1_data_17_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_16_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [15]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [16])
+);
+defparam \u_EasyCDR/os_rx_x1_data_16_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_15_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [16]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [15])
+);
+defparam \u_EasyCDR/os_rx_x1_data_15_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_14_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [17]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [14])
+);
+defparam \u_EasyCDR/os_rx_x1_data_14_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_13_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [18]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [13])
+);
+defparam \u_EasyCDR/os_rx_x1_data_13_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_12_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [19]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [12])
+);
+defparam \u_EasyCDR/os_rx_x1_data_12_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_11_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [20]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [11])
+);
+defparam \u_EasyCDR/os_rx_x1_data_11_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_10_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [21]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [10])
+);
+defparam \u_EasyCDR/os_rx_x1_data_10_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_9_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [22]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [9])
+);
+defparam \u_EasyCDR/os_rx_x1_data_9_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_8_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [23]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [8])
+);
+defparam \u_EasyCDR/os_rx_x1_data_8_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_7_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [24]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [7])
+);
+defparam \u_EasyCDR/os_rx_x1_data_7_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_6_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [25]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [6])
+);
+defparam \u_EasyCDR/os_rx_x1_data_6_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_5_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [26]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [5])
+);
+defparam \u_EasyCDR/os_rx_x1_data_5_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_4_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [27]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [4])
+);
+defparam \u_EasyCDR/os_rx_x1_data_4_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_3_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [28]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [3])
+);
+defparam \u_EasyCDR/os_rx_x1_data_3_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_2_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [29]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [2])
+);
+defparam \u_EasyCDR/os_rx_x1_data_2_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_1_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [30]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [1])
+);
+defparam \u_EasyCDR/os_rx_x1_data_1_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_0_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [31]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [0])
+);
+defparam \u_EasyCDR/os_rx_x1_data_0_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/os_rx_x1_data_31_s0  (
+	.D(\u_EasyCDR/rx_parallel_data [0]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/os_rx_x1_data [31])
+);
+defparam \u_EasyCDR/os_rx_x1_data_31_s0 .INIT=1'b0;
+OSIDES32 \u_EasyCDR/osides32_inst  (
+	.D(\u_EasyCDR/rx ),
+	.PCLK(share_clk4_o),
+	.RESET(share_reset_o),
+	.SDTAP(GND),
+	.VALUE(GND),
+	.FCLKP(share_clk0_o),
+	.FCLKN(share_clk2_o),
+	.FCLKQP(share_clk1_o),
+	.FCLKQN(share_clk3_o),
+	.DLYSTEP({GND, GND, GND, GND, GND, GND, GND, GND}),
+	.DF(\u_EasyCDR/osides32_inst_32_DF ),
+	.Q({\u_EasyCDR/rx_parallel_data [31:0]})
+);
+defparam \u_EasyCDR/osides32_inst .C_STATIC_DLY=16;
+defparam \u_EasyCDR/osides32_inst .DYN_DLY_EN="FALSE";
+defparam \u_EasyCDR/osides32_inst .ADAPT_EN="FALSE";
+INV \u_EasyCDR/n54_s2  (
+	.I(\u_EasyCDR/pcs_rstn ),
+	.O(\u_EasyCDR/n54_6 )
+);
+LUT4 \u_EasyCDR/u_share_logic_mod/n38_s1  (
+	.I0(\u_EasyCDR/u_share_logic_mod/delay_cnt [0]),
+	.I1(\u_EasyCDR/u_share_logic_mod/delay_cnt [1]),
+	.I2(\u_EasyCDR/u_share_logic_mod/delay_cnt [2]),
+	.I3(\u_EasyCDR/u_share_logic_mod/delay_cnt [3]),
+	.F(\u_EasyCDR/u_share_logic_mod/n38_5 )
+);
+defparam \u_EasyCDR/u_share_logic_mod/n38_s1 .INIT=16'h7FFF;
+LUT2 \u_EasyCDR/u_share_logic_mod/n25_s2  (
+	.I0(\u_EasyCDR/u_share_logic_mod/delay_cnt [0]),
+	.I1(\u_EasyCDR/u_share_logic_mod/n38_5 ),
+	.F(\u_EasyCDR/u_share_logic_mod/n25_6 )
+);
+defparam \u_EasyCDR/u_share_logic_mod/n25_s2 .INIT=4'h7;
+LUT3 \u_EasyCDR/u_share_logic_mod/n24_s1  (
+	.I0(\u_EasyCDR/u_share_logic_mod/delay_cnt [0]),
+	.I1(\u_EasyCDR/u_share_logic_mod/delay_cnt [1]),
+	.I2(\u_EasyCDR/u_share_logic_mod/n38_5 ),
+	.F(\u_EasyCDR/u_share_logic_mod/n24_5 )
+);
+defparam \u_EasyCDR/u_share_logic_mod/n24_s1 .INIT=8'h6F;
+LUT4 \u_EasyCDR/u_share_logic_mod/n23_s1  (
+	.I0(\u_EasyCDR/u_share_logic_mod/delay_cnt [3]),
+	.I1(\u_EasyCDR/u_share_logic_mod/delay_cnt [0]),
+	.I2(\u_EasyCDR/u_share_logic_mod/delay_cnt [1]),
+	.I3(\u_EasyCDR/u_share_logic_mod/delay_cnt [2]),
+	.F(\u_EasyCDR/u_share_logic_mod/n23_5 )
+);
+defparam \u_EasyCDR/u_share_logic_mod/n23_s1 .INIT=16'hBFC0;
+LUT4 \u_EasyCDR/u_share_logic_mod/n22_s1  (
+	.I0(\u_EasyCDR/u_share_logic_mod/delay_cnt [1]),
+	.I1(\u_EasyCDR/u_share_logic_mod/delay_cnt [2]),
+	.I2(\u_EasyCDR/u_share_logic_mod/delay_cnt [0]),
+	.I3(\u_EasyCDR/u_share_logic_mod/delay_cnt [3]),
+	.F(\u_EasyCDR/u_share_logic_mod/n22_5 )
+);
+defparam \u_EasyCDR/u_share_logic_mod/n22_s1 .INIT=16'hFF80;
+DFFCE \u_EasyCDR/u_share_logic_mod/rst_n_s0  (
+	.D(\u_EasyCDR/u_share_logic_mod/rst_n_d1 ),
+	.CLK(pll_clkin_i),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/u_share_logic_mod/n6_6 ),
+	.Q(\u_EasyCDR/u_share_logic_mod/rst_n )
+);
+defparam \u_EasyCDR/u_share_logic_mod/rst_n_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_share_logic_mod/delay_cnt_3_s0  (
+	.D(\u_EasyCDR/u_share_logic_mod/n22_5 ),
+	.CLK(pll_clkin_i),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/u_share_logic_mod/n11_6 ),
+	.Q(\u_EasyCDR/u_share_logic_mod/delay_cnt [3])
+);
+defparam \u_EasyCDR/u_share_logic_mod/delay_cnt_3_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_share_logic_mod/delay_cnt_2_s0  (
+	.D(\u_EasyCDR/u_share_logic_mod/n23_5 ),
+	.CLK(pll_clkin_i),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/u_share_logic_mod/n11_6 ),
+	.Q(\u_EasyCDR/u_share_logic_mod/delay_cnt [2])
+);
+defparam \u_EasyCDR/u_share_logic_mod/delay_cnt_2_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_share_logic_mod/delay_cnt_1_s0  (
+	.D(\u_EasyCDR/u_share_logic_mod/n24_5 ),
+	.CLK(pll_clkin_i),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/u_share_logic_mod/n11_6 ),
+	.Q(\u_EasyCDR/u_share_logic_mod/delay_cnt [1])
+);
+defparam \u_EasyCDR/u_share_logic_mod/delay_cnt_1_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_share_logic_mod/delay_cnt_0_s0  (
+	.D(\u_EasyCDR/u_share_logic_mod/n25_6 ),
+	.CLK(pll_clkin_i),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/u_share_logic_mod/n11_6 ),
+	.Q(\u_EasyCDR/u_share_logic_mod/delay_cnt [0])
+);
+defparam \u_EasyCDR/u_share_logic_mod/delay_cnt_0_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_share_logic_mod/resetn_s0  (
+	.D(VCC),
+	.CLK(pll_clkin_i),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/u_share_logic_mod/n11_6 ),
+	.Q(\u_EasyCDR/u_share_logic_mod/resetn )
+);
+defparam \u_EasyCDR/u_share_logic_mod/resetn_s0 .INIT=1'b0;
+DFFPE \u_EasyCDR/u_share_logic_mod/reset_o_s0  (
+	.D(GND),
+	.CLK(pll_clkin_i),
+	.CE(VCC),
+	.PRESET(\u_EasyCDR/u_share_logic_mod/n11_6 ),
+	.Q(share_reset_o)
+);
+defparam \u_EasyCDR/u_share_logic_mod/reset_o_s0 .INIT=1'b1;
+DFFCE \u_EasyCDR/u_share_logic_mod/rst_n_d1_s0  (
+	.D(VCC),
+	.CLK(pll_clkin_i),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/u_share_logic_mod/n6_6 ),
+	.Q(\u_EasyCDR/u_share_logic_mod/rst_n_d1 )
+);
+defparam \u_EasyCDR/u_share_logic_mod/rst_n_d1_s0 .INIT=1'b0;
+DFFPE \u_EasyCDR/u_share_logic_mod/cen_s0  (
+	.D(\u_EasyCDR/u_share_logic_mod/n38_5 ),
+	.CLK(pll_clkin_i),
+	.CE(VCC),
+	.PRESET(\u_EasyCDR/u_share_logic_mod/n11_6 ),
+	.Q(\u_EasyCDR/u_share_logic_mod/cen )
+);
+defparam \u_EasyCDR/u_share_logic_mod/cen_s0 .INIT=1'b1;
+DHCE \u_EasyCDR/u_share_logic_mod/dhcen_625m_0  (
+	.CLKIN(pll_clkout0_i),
+	.CEN(\u_EasyCDR/u_share_logic_mod/cen ),
+	.CLKOUT(share_clk0_o)
+);
+DHCE \u_EasyCDR/u_share_logic_mod/dhcen_625m_90  (
+	.CLKIN(pll_clkout1_i),
+	.CEN(\u_EasyCDR/u_share_logic_mod/cen ),
+	.CLKOUT(share_clk1_o)
+);
+DHCE \u_EasyCDR/u_share_logic_mod/dhcen_625m_180  (
+	.CLKIN(pll_clkout2_i),
+	.CEN(\u_EasyCDR/u_share_logic_mod/cen ),
+	.CLKOUT(share_clk2_o)
+);
+DHCE \u_EasyCDR/u_share_logic_mod/dhcen_625m_270  (
+	.CLKIN(pll_clkout3_i),
+	.CEN(\u_EasyCDR/u_share_logic_mod/cen ),
+	.CLKOUT(share_clk3_o)
+);
+CLKDIV \u_EasyCDR/u_share_logic_mod/clkdiv_inst  (
+	.HCLKIN(share_clk0_o),
+	.RESETN(\u_EasyCDR/u_share_logic_mod/resetn ),
+	.CALIB(GND),
+	.CLKOUT(share_clk4_o)
+);
+defparam \u_EasyCDR/u_share_logic_mod/clkdiv_inst .DIV_MODE="4";
+INV \u_EasyCDR/u_share_logic_mod/n6_s2  (
+	.I(pll_lock_i),
+	.O(\u_EasyCDR/u_share_logic_mod/n6_6 )
+);
+INV \u_EasyCDR/u_share_logic_mod/n11_s2  (
+	.I(\u_EasyCDR/u_share_logic_mod/rst_n ),
+	.O(\u_EasyCDR/u_share_logic_mod/n11_6 )
+);
+LUT3 \u_EasyCDR/u_cdr/n218_s6  (
+	.I0(\u_EasyCDR/u_cdr/IDD [28]),
+	.I1(\u_EasyCDR/u_cdr/IDD [29]),
+	.I2(\u_EasyCDR/u_cdr/status [0]),
+	.F(\u_EasyCDR/u_cdr/n218_6 )
+);
+defparam \u_EasyCDR/u_cdr/n218_s6 .INIT=8'hCA;
+LUT3 \u_EasyCDR/u_cdr/n218_s7  (
+	.I0(\u_EasyCDR/u_cdr/IDD [31]),
+	.I1(\u_EasyCDR/u_cdr/IDD [30]),
+	.I2(\u_EasyCDR/u_cdr/status [0]),
+	.F(\u_EasyCDR/u_cdr/n218_7 )
+);
+defparam \u_EasyCDR/u_cdr/n218_s7 .INIT=8'hCA;
+LUT3 \u_EasyCDR/u_cdr/n219_s6  (
+	.I0(\u_EasyCDR/u_cdr/IDD [24]),
+	.I1(\u_EasyCDR/u_cdr/IDD [25]),
+	.I2(\u_EasyCDR/u_cdr/status [0]),
+	.F(\u_EasyCDR/u_cdr/n219_6 )
+);
+defparam \u_EasyCDR/u_cdr/n219_s6 .INIT=8'hCA;
+LUT3 \u_EasyCDR/u_cdr/n219_s7  (
+	.I0(\u_EasyCDR/u_cdr/IDD [27]),
+	.I1(\u_EasyCDR/u_cdr/IDD [26]),
+	.I2(\u_EasyCDR/u_cdr/status [0]),
+	.F(\u_EasyCDR/u_cdr/n219_7 )
+);
+defparam \u_EasyCDR/u_cdr/n219_s7 .INIT=8'hCA;
+LUT3 \u_EasyCDR/u_cdr/n220_s6  (
+	.I0(\u_EasyCDR/u_cdr/IDD [20]),
+	.I1(\u_EasyCDR/u_cdr/IDD [21]),
+	.I2(\u_EasyCDR/u_cdr/status [0]),
+	.F(\u_EasyCDR/u_cdr/n220_6 )
+);
+defparam \u_EasyCDR/u_cdr/n220_s6 .INIT=8'hCA;
+LUT3 \u_EasyCDR/u_cdr/n220_s7  (
+	.I0(\u_EasyCDR/u_cdr/IDD [23]),
+	.I1(\u_EasyCDR/u_cdr/IDD [22]),
+	.I2(\u_EasyCDR/u_cdr/status [0]),
+	.F(\u_EasyCDR/u_cdr/n220_7 )
+);
+defparam \u_EasyCDR/u_cdr/n220_s7 .INIT=8'hCA;
+LUT3 \u_EasyCDR/u_cdr/n221_s6  (
+	.I0(\u_EasyCDR/u_cdr/IDD [16]),
+	.I1(\u_EasyCDR/u_cdr/IDD [17]),
+	.I2(\u_EasyCDR/u_cdr/status [0]),
+	.F(\u_EasyCDR/u_cdr/n221_6 )
+);
+defparam \u_EasyCDR/u_cdr/n221_s6 .INIT=8'hCA;
+LUT3 \u_EasyCDR/u_cdr/n221_s7  (
+	.I0(\u_EasyCDR/u_cdr/IDD [19]),
+	.I1(\u_EasyCDR/u_cdr/IDD [18]),
+	.I2(\u_EasyCDR/u_cdr/status [0]),
+	.F(\u_EasyCDR/u_cdr/n221_7 )
+);
+defparam \u_EasyCDR/u_cdr/n221_s7 .INIT=8'hCA;
+LUT3 \u_EasyCDR/u_cdr/n222_s6  (
+	.I0(\u_EasyCDR/u_cdr/IDD [12]),
+	.I1(\u_EasyCDR/u_cdr/IDD [13]),
+	.I2(\u_EasyCDR/u_cdr/status [0]),
+	.F(\u_EasyCDR/u_cdr/n222_6 )
+);
+defparam \u_EasyCDR/u_cdr/n222_s6 .INIT=8'hCA;
+LUT3 \u_EasyCDR/u_cdr/n222_s7  (
+	.I0(\u_EasyCDR/u_cdr/IDD [15]),
+	.I1(\u_EasyCDR/u_cdr/IDD [14]),
+	.I2(\u_EasyCDR/u_cdr/status [0]),
+	.F(\u_EasyCDR/u_cdr/n222_7 )
+);
+defparam \u_EasyCDR/u_cdr/n222_s7 .INIT=8'hCA;
+LUT3 \u_EasyCDR/u_cdr/n223_s6  (
+	.I0(\u_EasyCDR/u_cdr/IDD [8]),
+	.I1(\u_EasyCDR/u_cdr/IDD [9]),
+	.I2(\u_EasyCDR/u_cdr/status [0]),
+	.F(\u_EasyCDR/u_cdr/n223_6 )
+);
+defparam \u_EasyCDR/u_cdr/n223_s6 .INIT=8'hCA;
+LUT3 \u_EasyCDR/u_cdr/n223_s7  (
+	.I0(\u_EasyCDR/u_cdr/IDD [11]),
+	.I1(\u_EasyCDR/u_cdr/IDD [10]),
+	.I2(\u_EasyCDR/u_cdr/status [0]),
+	.F(\u_EasyCDR/u_cdr/n223_7 )
+);
+defparam \u_EasyCDR/u_cdr/n223_s7 .INIT=8'hCA;
+LUT3 \u_EasyCDR/u_cdr/n224_s6  (
+	.I0(\u_EasyCDR/u_cdr/IDD [4]),
+	.I1(\u_EasyCDR/u_cdr/IDD [5]),
+	.I2(\u_EasyCDR/u_cdr/status [0]),
+	.F(\u_EasyCDR/u_cdr/n224_6 )
+);
+defparam \u_EasyCDR/u_cdr/n224_s6 .INIT=8'hCA;
+LUT3 \u_EasyCDR/u_cdr/n224_s7  (
+	.I0(\u_EasyCDR/u_cdr/IDD [7]),
+	.I1(\u_EasyCDR/u_cdr/IDD [6]),
+	.I2(\u_EasyCDR/u_cdr/status [0]),
+	.F(\u_EasyCDR/u_cdr/n224_7 )
+);
+defparam \u_EasyCDR/u_cdr/n224_s7 .INIT=8'hCA;
+LUT3 \u_EasyCDR/u_cdr/n225_s6  (
+	.I0(\u_EasyCDR/u_cdr/IDD [0]),
+	.I1(\u_EasyCDR/u_cdr/IDD [1]),
+	.I2(\u_EasyCDR/u_cdr/status [0]),
+	.F(\u_EasyCDR/u_cdr/n225_6 )
+);
+defparam \u_EasyCDR/u_cdr/n225_s6 .INIT=8'hCA;
+LUT3 \u_EasyCDR/u_cdr/n225_s7  (
+	.I0(\u_EasyCDR/u_cdr/IDD [3]),
+	.I1(\u_EasyCDR/u_cdr/IDD [2]),
+	.I2(\u_EasyCDR/u_cdr/status [0]),
+	.F(\u_EasyCDR/u_cdr/n225_7 )
+);
+defparam \u_EasyCDR/u_cdr/n225_s7 .INIT=8'hCA;
+LUT3 \u_EasyCDR/u_cdr/n169_s1  (
+	.I0(\u_EasyCDR/u_cdr/E4 [3]),
+	.I1(\u_EasyCDR/u_cdr/status [0]),
+	.I2(\u_EasyCDR/u_cdr/status [1]),
+	.F(\u_EasyCDR/u_cdr/n169_4 )
+);
+defparam \u_EasyCDR/u_cdr/n169_s1 .INIT=8'h10;
+LUT3 \u_EasyCDR/u_cdr/n175_s1  (
+	.I0(\u_EasyCDR/u_cdr/E4 [3]),
+	.I1(\u_EasyCDR/u_cdr/status [0]),
+	.I2(\u_EasyCDR/u_cdr/status [1]),
+	.F(\u_EasyCDR/u_cdr/n175_4 )
+);
+defparam \u_EasyCDR/u_cdr/n175_s1 .INIT=8'h01;
+LUT4 \u_EasyCDR/u_cdr/n213_s3  (
+	.I0(\u_EasyCDR/u_cdr/E4 [0]),
+	.I1(\u_EasyCDR/u_cdr/E4 [2]),
+	.I2(\u_EasyCDR/u_cdr/n213_8 ),
+	.I3(\u_EasyCDR/u_cdr/status [1]),
+	.F(\u_EasyCDR/u_cdr/n213_7 )
+);
+defparam \u_EasyCDR/u_cdr/n213_s3 .INIT=16'h3FA0;
+LUT4 \u_EasyCDR/u_cdr/n214_s3  (
+	.I0(\u_EasyCDR/u_cdr/E4 [3]),
+	.I1(\u_EasyCDR/u_cdr/E4 [1]),
+	.I2(\u_EasyCDR/u_cdr/n214_8 ),
+	.I3(\u_EasyCDR/u_cdr/status [0]),
+	.F(\u_EasyCDR/u_cdr/n214_7 )
+);
+defparam \u_EasyCDR/u_cdr/n214_s3 .INIT=16'h3FA0;
+LUT4 \u_EasyCDR/u_cdr/E4_0_s3  (
+	.I0(\u_EasyCDR/u_cdr/E4_0_9 ),
+	.I1(\u_EasyCDR/u_cdr/E4_0_10 ),
+	.I2(\u_EasyCDR/u_cdr/E4_0_11 ),
+	.I3(\u_EasyCDR/u_cdr/E4_0_12 ),
+	.F(\u_EasyCDR/u_cdr/E4_0_8 )
+);
+defparam \u_EasyCDR/u_cdr/E4_0_s3 .INIT=16'h7FFF;
+LUT4 \u_EasyCDR/u_cdr/E4_1_s3  (
+	.I0(\u_EasyCDR/u_cdr/E4_1_9 ),
+	.I1(\u_EasyCDR/u_cdr/E4_1_10 ),
+	.I2(\u_EasyCDR/u_cdr/E4_1_11 ),
+	.I3(\u_EasyCDR/u_cdr/E4_1_12 ),
+	.F(\u_EasyCDR/u_cdr/E4_1_8 )
+);
+defparam \u_EasyCDR/u_cdr/E4_1_s3 .INIT=16'h7FFF;
+LUT4 \u_EasyCDR/u_cdr/E4_2_s3  (
+	.I0(\u_EasyCDR/u_cdr/E4_2_9 ),
+	.I1(\u_EasyCDR/u_cdr/E4_2_10 ),
+	.I2(\u_EasyCDR/u_cdr/E4_2_11 ),
+	.I3(\u_EasyCDR/u_cdr/E4_2_12 ),
+	.F(\u_EasyCDR/u_cdr/E4_2_8 )
+);
+defparam \u_EasyCDR/u_cdr/E4_2_s3 .INIT=16'h7FFF;
+LUT4 \u_EasyCDR/u_cdr/E4_3_s3  (
+	.I0(\u_EasyCDR/u_cdr/E4_3_9 ),
+	.I1(\u_EasyCDR/u_cdr/E4_3_10 ),
+	.I2(\u_EasyCDR/u_cdr/E4_3_11 ),
+	.I3(\u_EasyCDR/u_cdr/E4_3_12 ),
+	.F(\u_EasyCDR/u_cdr/E4_3_8 )
+);
+defparam \u_EasyCDR/u_cdr/E4_3_s3 .INIT=16'h7FFF;
+LUT4 \u_EasyCDR/u_cdr/n213_s4  (
+	.I0(\u_EasyCDR/u_cdr/E4 [1]),
+	.I1(\u_EasyCDR/u_cdr/E4 [3]),
+	.I2(\u_EasyCDR/u_cdr/status [1]),
+	.I3(\u_EasyCDR/u_cdr/status [0]),
+	.F(\u_EasyCDR/u_cdr/n213_8 )
+);
+defparam \u_EasyCDR/u_cdr/n213_s4 .INIT=16'hF53F;
+LUT4 \u_EasyCDR/u_cdr/n214_s4  (
+	.I0(\u_EasyCDR/u_cdr/E4 [0]),
+	.I1(\u_EasyCDR/u_cdr/E4 [2]),
+	.I2(\u_EasyCDR/u_cdr/status [0]),
+	.I3(\u_EasyCDR/u_cdr/status [1]),
+	.F(\u_EasyCDR/u_cdr/n214_8 )
+);
+defparam \u_EasyCDR/u_cdr/n214_s4 .INIT=16'h3FF5;
+LUT4 \u_EasyCDR/u_cdr/E4_0_s4  (
+	.I0(\u_EasyCDR/u_cdr/II [4]),
+	.I1(\u_EasyCDR/u_cdr/II [5]),
+	.I2(\u_EasyCDR/u_cdr/II [20]),
+	.I3(\u_EasyCDR/u_cdr/II [21]),
+	.F(\u_EasyCDR/u_cdr/E4_0_9 )
+);
+defparam \u_EasyCDR/u_cdr/E4_0_s4 .INIT=16'h9009;
+LUT4 \u_EasyCDR/u_cdr/E4_0_s5  (
+	.I0(\u_EasyCDR/u_cdr/II [8]),
+	.I1(\u_EasyCDR/u_cdr/II [9]),
+	.I2(\u_EasyCDR/u_cdr/II [16]),
+	.I3(\u_EasyCDR/u_cdr/II [17]),
+	.F(\u_EasyCDR/u_cdr/E4_0_10 )
+);
+defparam \u_EasyCDR/u_cdr/E4_0_s5 .INIT=16'h9009;
+LUT4 \u_EasyCDR/u_cdr/E4_0_s6  (
+	.I0(\u_EasyCDR/u_cdr/II [0]),
+	.I1(\u_EasyCDR/u_cdr/II [1]),
+	.I2(\u_EasyCDR/u_cdr/II [12]),
+	.I3(\u_EasyCDR/u_cdr/II [13]),
+	.F(\u_EasyCDR/u_cdr/E4_0_11 )
+);
+defparam \u_EasyCDR/u_cdr/E4_0_s6 .INIT=16'h9009;
+LUT4 \u_EasyCDR/u_cdr/E4_0_s7  (
+	.I0(\u_EasyCDR/u_cdr/II [24]),
+	.I1(\u_EasyCDR/u_cdr/II [25]),
+	.I2(\u_EasyCDR/u_cdr/II [28]),
+	.I3(\u_EasyCDR/u_cdr/II [29]),
+	.F(\u_EasyCDR/u_cdr/E4_0_12 )
+);
+defparam \u_EasyCDR/u_cdr/E4_0_s7 .INIT=16'h9009;
+LUT4 \u_EasyCDR/u_cdr/E4_1_s4  (
+	.I0(\u_EasyCDR/u_cdr/II [17]),
+	.I1(\u_EasyCDR/u_cdr/II [18]),
+	.I2(\u_EasyCDR/u_cdr/II [21]),
+	.I3(\u_EasyCDR/u_cdr/II [22]),
+	.F(\u_EasyCDR/u_cdr/E4_1_9 )
+);
+defparam \u_EasyCDR/u_cdr/E4_1_s4 .INIT=16'h9009;
+LUT4 \u_EasyCDR/u_cdr/E4_1_s5  (
+	.I0(\u_EasyCDR/u_cdr/II [1]),
+	.I1(\u_EasyCDR/u_cdr/II [2]),
+	.I2(\u_EasyCDR/u_cdr/II [13]),
+	.I3(\u_EasyCDR/u_cdr/II [14]),
+	.F(\u_EasyCDR/u_cdr/E4_1_10 )
+);
+defparam \u_EasyCDR/u_cdr/E4_1_s5 .INIT=16'h9009;
+LUT4 \u_EasyCDR/u_cdr/E4_1_s6  (
+	.I0(\u_EasyCDR/u_cdr/II [9]),
+	.I1(\u_EasyCDR/u_cdr/II [10]),
+	.I2(\u_EasyCDR/u_cdr/II [29]),
+	.I3(\u_EasyCDR/u_cdr/II [30]),
+	.F(\u_EasyCDR/u_cdr/E4_1_11 )
+);
+defparam \u_EasyCDR/u_cdr/E4_1_s6 .INIT=16'h9009;
+LUT4 \u_EasyCDR/u_cdr/E4_1_s7  (
+	.I0(\u_EasyCDR/u_cdr/II [5]),
+	.I1(\u_EasyCDR/u_cdr/II [6]),
+	.I2(\u_EasyCDR/u_cdr/II [25]),
+	.I3(\u_EasyCDR/u_cdr/II [26]),
+	.F(\u_EasyCDR/u_cdr/E4_1_12 )
+);
+defparam \u_EasyCDR/u_cdr/E4_1_s7 .INIT=16'h9009;
+LUT4 \u_EasyCDR/u_cdr/E4_2_s4  (
+	.I0(\u_EasyCDR/u_cdr/II [6]),
+	.I1(\u_EasyCDR/u_cdr/II [7]),
+	.I2(\u_EasyCDR/u_cdr/II [10]),
+	.I3(\u_EasyCDR/u_cdr/II [11]),
+	.F(\u_EasyCDR/u_cdr/E4_2_9 )
+);
+defparam \u_EasyCDR/u_cdr/E4_2_s4 .INIT=16'h9009;
+LUT4 \u_EasyCDR/u_cdr/E4_2_s5  (
+	.I0(\u_EasyCDR/u_cdr/II [18]),
+	.I1(\u_EasyCDR/u_cdr/II [19]),
+	.I2(\u_EasyCDR/u_cdr/II [26]),
+	.I3(\u_EasyCDR/u_cdr/II [27]),
+	.F(\u_EasyCDR/u_cdr/E4_2_10 )
+);
+defparam \u_EasyCDR/u_cdr/E4_2_s5 .INIT=16'h9009;
+LUT4 \u_EasyCDR/u_cdr/E4_2_s6  (
+	.I0(\u_EasyCDR/u_cdr/II [2]),
+	.I1(\u_EasyCDR/u_cdr/II [3]),
+	.I2(\u_EasyCDR/u_cdr/II [14]),
+	.I3(\u_EasyCDR/u_cdr/II [15]),
+	.F(\u_EasyCDR/u_cdr/E4_2_11 )
+);
+defparam \u_EasyCDR/u_cdr/E4_2_s6 .INIT=16'h9009;
+LUT4 \u_EasyCDR/u_cdr/E4_2_s7  (
+	.I0(\u_EasyCDR/u_cdr/II [22]),
+	.I1(\u_EasyCDR/u_cdr/II [23]),
+	.I2(\u_EasyCDR/u_cdr/II [30]),
+	.I3(\u_EasyCDR/u_cdr/II [31]),
+	.F(\u_EasyCDR/u_cdr/E4_2_12 )
+);
+defparam \u_EasyCDR/u_cdr/E4_2_s7 .INIT=16'h9009;
+LUT4 \u_EasyCDR/u_cdr/E4_3_s4  (
+	.I0(\u_EasyCDR/u_cdr/II [4]),
+	.I1(\u_EasyCDR/u_cdr/II [3]),
+	.I2(\u_EasyCDR/u_cdr/II [8]),
+	.I3(\u_EasyCDR/u_cdr/II [7]),
+	.F(\u_EasyCDR/u_cdr/E4_3_9 )
+);
+defparam \u_EasyCDR/u_cdr/E4_3_s4 .INIT=16'h9009;
+LUT4 \u_EasyCDR/u_cdr/E4_3_s5  (
+	.I0(\u_EasyCDR/u_cdr/II [28]),
+	.I1(\u_EasyCDR/u_cdr/II [27]),
+	.I2(\u_EasyCDR/u_cdr/II [31]),
+	.I3(\u_EasyCDR/u_cdr/ID [0]),
+	.F(\u_EasyCDR/u_cdr/E4_3_10 )
+);
+defparam \u_EasyCDR/u_cdr/E4_3_s5 .INIT=16'h9009;
+LUT4 \u_EasyCDR/u_cdr/E4_3_s6  (
+	.I0(\u_EasyCDR/u_cdr/II [20]),
+	.I1(\u_EasyCDR/u_cdr/II [19]),
+	.I2(\u_EasyCDR/u_cdr/II [24]),
+	.I3(\u_EasyCDR/u_cdr/II [23]),
+	.F(\u_EasyCDR/u_cdr/E4_3_11 )
+);
+defparam \u_EasyCDR/u_cdr/E4_3_s6 .INIT=16'h9009;
+LUT4 \u_EasyCDR/u_cdr/E4_3_s7  (
+	.I0(\u_EasyCDR/u_cdr/II [12]),
+	.I1(\u_EasyCDR/u_cdr/II [11]),
+	.I2(\u_EasyCDR/u_cdr/II [16]),
+	.I3(\u_EasyCDR/u_cdr/II [15]),
+	.F(\u_EasyCDR/u_cdr/E4_3_12 )
+);
+defparam \u_EasyCDR/u_cdr/E4_3_s7 .INIT=16'h9009;
+DFFRE \u_EasyCDR/u_cdr/II_30_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [30]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [30])
+);
+defparam \u_EasyCDR/u_cdr/II_30_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_29_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [29]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [29])
+);
+defparam \u_EasyCDR/u_cdr/II_29_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_28_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [28]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [28])
+);
+defparam \u_EasyCDR/u_cdr/II_28_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_27_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [27]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [27])
+);
+defparam \u_EasyCDR/u_cdr/II_27_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_26_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [26]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [26])
+);
+defparam \u_EasyCDR/u_cdr/II_26_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_25_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [25]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [25])
+);
+defparam \u_EasyCDR/u_cdr/II_25_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_24_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [24]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [24])
+);
+defparam \u_EasyCDR/u_cdr/II_24_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_23_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [23]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [23])
+);
+defparam \u_EasyCDR/u_cdr/II_23_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_22_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [22]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [22])
+);
+defparam \u_EasyCDR/u_cdr/II_22_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_21_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [21]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [21])
+);
+defparam \u_EasyCDR/u_cdr/II_21_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_20_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [20]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [20])
+);
+defparam \u_EasyCDR/u_cdr/II_20_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_19_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [19]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [19])
+);
+defparam \u_EasyCDR/u_cdr/II_19_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_18_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [18]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [18])
+);
+defparam \u_EasyCDR/u_cdr/II_18_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_17_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [17]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [17])
+);
+defparam \u_EasyCDR/u_cdr/II_17_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_16_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [16]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [16])
+);
+defparam \u_EasyCDR/u_cdr/II_16_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_15_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [15]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [15])
+);
+defparam \u_EasyCDR/u_cdr/II_15_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_14_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [14]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [14])
+);
+defparam \u_EasyCDR/u_cdr/II_14_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_13_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [13]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [13])
+);
+defparam \u_EasyCDR/u_cdr/II_13_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_12_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [12]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [12])
+);
+defparam \u_EasyCDR/u_cdr/II_12_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_11_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [11]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [11])
+);
+defparam \u_EasyCDR/u_cdr/II_11_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_10_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [10]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [10])
+);
+defparam \u_EasyCDR/u_cdr/II_10_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_9_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [9]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [9])
+);
+defparam \u_EasyCDR/u_cdr/II_9_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_8_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [8]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [8])
+);
+defparam \u_EasyCDR/u_cdr/II_8_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_7_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [7]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [7])
+);
+defparam \u_EasyCDR/u_cdr/II_7_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_6_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [6]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [6])
+);
+defparam \u_EasyCDR/u_cdr/II_6_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_5_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [5]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [5])
+);
+defparam \u_EasyCDR/u_cdr/II_5_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_4_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [4]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [4])
+);
+defparam \u_EasyCDR/u_cdr/II_4_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_3_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [3]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [3])
+);
+defparam \u_EasyCDR/u_cdr/II_3_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_2_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [2]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [2])
+);
+defparam \u_EasyCDR/u_cdr/II_2_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_1_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [1]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [1])
+);
+defparam \u_EasyCDR/u_cdr/II_1_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_0_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [0]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [0])
+);
+defparam \u_EasyCDR/u_cdr/II_0_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_31_s0  (
+	.D(\u_EasyCDR/u_cdr/II [31]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [31])
+);
+defparam \u_EasyCDR/u_cdr/ID_31_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_30_s0  (
+	.D(\u_EasyCDR/u_cdr/II [30]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [30])
+);
+defparam \u_EasyCDR/u_cdr/ID_30_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_29_s0  (
+	.D(\u_EasyCDR/u_cdr/II [29]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [29])
+);
+defparam \u_EasyCDR/u_cdr/ID_29_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_28_s0  (
+	.D(\u_EasyCDR/u_cdr/II [28]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [28])
+);
+defparam \u_EasyCDR/u_cdr/ID_28_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_27_s0  (
+	.D(\u_EasyCDR/u_cdr/II [27]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [27])
+);
+defparam \u_EasyCDR/u_cdr/ID_27_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_26_s0  (
+	.D(\u_EasyCDR/u_cdr/II [26]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [26])
+);
+defparam \u_EasyCDR/u_cdr/ID_26_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_25_s0  (
+	.D(\u_EasyCDR/u_cdr/II [25]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [25])
+);
+defparam \u_EasyCDR/u_cdr/ID_25_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_24_s0  (
+	.D(\u_EasyCDR/u_cdr/II [24]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [24])
+);
+defparam \u_EasyCDR/u_cdr/ID_24_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_23_s0  (
+	.D(\u_EasyCDR/u_cdr/II [23]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [23])
+);
+defparam \u_EasyCDR/u_cdr/ID_23_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_22_s0  (
+	.D(\u_EasyCDR/u_cdr/II [22]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [22])
+);
+defparam \u_EasyCDR/u_cdr/ID_22_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_21_s0  (
+	.D(\u_EasyCDR/u_cdr/II [21]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [21])
+);
+defparam \u_EasyCDR/u_cdr/ID_21_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_20_s0  (
+	.D(\u_EasyCDR/u_cdr/II [20]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [20])
+);
+defparam \u_EasyCDR/u_cdr/ID_20_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_19_s0  (
+	.D(\u_EasyCDR/u_cdr/II [19]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [19])
+);
+defparam \u_EasyCDR/u_cdr/ID_19_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_18_s0  (
+	.D(\u_EasyCDR/u_cdr/II [18]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [18])
+);
+defparam \u_EasyCDR/u_cdr/ID_18_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_17_s0  (
+	.D(\u_EasyCDR/u_cdr/II [17]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [17])
+);
+defparam \u_EasyCDR/u_cdr/ID_17_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_16_s0  (
+	.D(\u_EasyCDR/u_cdr/II [16]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [16])
+);
+defparam \u_EasyCDR/u_cdr/ID_16_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_15_s0  (
+	.D(\u_EasyCDR/u_cdr/II [15]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [15])
+);
+defparam \u_EasyCDR/u_cdr/ID_15_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_14_s0  (
+	.D(\u_EasyCDR/u_cdr/II [14]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [14])
+);
+defparam \u_EasyCDR/u_cdr/ID_14_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_13_s0  (
+	.D(\u_EasyCDR/u_cdr/II [13]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [13])
+);
+defparam \u_EasyCDR/u_cdr/ID_13_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_12_s0  (
+	.D(\u_EasyCDR/u_cdr/II [12]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [12])
+);
+defparam \u_EasyCDR/u_cdr/ID_12_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_11_s0  (
+	.D(\u_EasyCDR/u_cdr/II [11]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [11])
+);
+defparam \u_EasyCDR/u_cdr/ID_11_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_10_s0  (
+	.D(\u_EasyCDR/u_cdr/II [10]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [10])
+);
+defparam \u_EasyCDR/u_cdr/ID_10_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_9_s0  (
+	.D(\u_EasyCDR/u_cdr/II [9]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [9])
+);
+defparam \u_EasyCDR/u_cdr/ID_9_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_8_s0  (
+	.D(\u_EasyCDR/u_cdr/II [8]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [8])
+);
+defparam \u_EasyCDR/u_cdr/ID_8_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_7_s0  (
+	.D(\u_EasyCDR/u_cdr/II [7]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [7])
+);
+defparam \u_EasyCDR/u_cdr/ID_7_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_6_s0  (
+	.D(\u_EasyCDR/u_cdr/II [6]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [6])
+);
+defparam \u_EasyCDR/u_cdr/ID_6_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_5_s0  (
+	.D(\u_EasyCDR/u_cdr/II [5]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [5])
+);
+defparam \u_EasyCDR/u_cdr/ID_5_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_4_s0  (
+	.D(\u_EasyCDR/u_cdr/II [4]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [4])
+);
+defparam \u_EasyCDR/u_cdr/ID_4_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_3_s0  (
+	.D(\u_EasyCDR/u_cdr/II [3]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [3])
+);
+defparam \u_EasyCDR/u_cdr/ID_3_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_2_s0  (
+	.D(\u_EasyCDR/u_cdr/II [2]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [2])
+);
+defparam \u_EasyCDR/u_cdr/ID_2_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_1_s0  (
+	.D(\u_EasyCDR/u_cdr/II [1]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [1])
+);
+defparam \u_EasyCDR/u_cdr/ID_1_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/ID_0_s0  (
+	.D(\u_EasyCDR/u_cdr/II [0]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/ID [0])
+);
+defparam \u_EasyCDR/u_cdr/ID_0_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_31_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [31]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [31])
+);
+defparam \u_EasyCDR/u_cdr/IDD_31_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_30_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [30]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [30])
+);
+defparam \u_EasyCDR/u_cdr/IDD_30_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_29_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [29]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [29])
+);
+defparam \u_EasyCDR/u_cdr/IDD_29_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_28_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [28]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [28])
+);
+defparam \u_EasyCDR/u_cdr/IDD_28_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_27_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [27]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [27])
+);
+defparam \u_EasyCDR/u_cdr/IDD_27_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_26_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [26]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [26])
+);
+defparam \u_EasyCDR/u_cdr/IDD_26_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_25_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [25]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [25])
+);
+defparam \u_EasyCDR/u_cdr/IDD_25_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_24_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [24]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [24])
+);
+defparam \u_EasyCDR/u_cdr/IDD_24_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_23_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [23]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [23])
+);
+defparam \u_EasyCDR/u_cdr/IDD_23_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_22_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [22]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [22])
+);
+defparam \u_EasyCDR/u_cdr/IDD_22_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_21_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [21]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [21])
+);
+defparam \u_EasyCDR/u_cdr/IDD_21_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_20_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [20]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [20])
+);
+defparam \u_EasyCDR/u_cdr/IDD_20_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_19_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [19]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [19])
+);
+defparam \u_EasyCDR/u_cdr/IDD_19_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_18_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [18]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [18])
+);
+defparam \u_EasyCDR/u_cdr/IDD_18_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_17_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [17]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [17])
+);
+defparam \u_EasyCDR/u_cdr/IDD_17_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_16_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [16]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [16])
+);
+defparam \u_EasyCDR/u_cdr/IDD_16_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_15_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [15]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [15])
+);
+defparam \u_EasyCDR/u_cdr/IDD_15_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_14_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [14]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [14])
+);
+defparam \u_EasyCDR/u_cdr/IDD_14_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_13_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [13]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [13])
+);
+defparam \u_EasyCDR/u_cdr/IDD_13_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_12_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [12]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [12])
+);
+defparam \u_EasyCDR/u_cdr/IDD_12_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_11_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [11]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [11])
+);
+defparam \u_EasyCDR/u_cdr/IDD_11_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_10_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [10]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [10])
+);
+defparam \u_EasyCDR/u_cdr/IDD_10_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_9_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [9]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [9])
+);
+defparam \u_EasyCDR/u_cdr/IDD_9_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_8_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [8]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [8])
+);
+defparam \u_EasyCDR/u_cdr/IDD_8_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_7_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [7]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [7])
+);
+defparam \u_EasyCDR/u_cdr/IDD_7_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_6_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [6]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [6])
+);
+defparam \u_EasyCDR/u_cdr/IDD_6_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_5_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [5]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [5])
+);
+defparam \u_EasyCDR/u_cdr/IDD_5_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_4_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [4]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [4])
+);
+defparam \u_EasyCDR/u_cdr/IDD_4_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_3_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [3]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [3])
+);
+defparam \u_EasyCDR/u_cdr/IDD_3_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_2_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [2]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [2])
+);
+defparam \u_EasyCDR/u_cdr/IDD_2_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_1_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [1]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [1])
+);
+defparam \u_EasyCDR/u_cdr/IDD_1_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/IDD_0_s0  (
+	.D(\u_EasyCDR/u_cdr/ID [0]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/IDD [0])
+);
+defparam \u_EasyCDR/u_cdr/IDD_0_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/DV_1_s0  (
+	.D(\u_EasyCDR/u_cdr/DVE [0]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/cdr_dout_sel [1])
+);
+defparam \u_EasyCDR/u_cdr/DV_1_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/DV_0_s0  (
+	.D(\u_EasyCDR/u_cdr/cDV_0_6 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/cdr_dout_sel [0])
+);
+defparam \u_EasyCDR/u_cdr/DV_0_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/status_1_s0  (
+	.D(\u_EasyCDR/u_cdr/n213_7 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/status [1])
+);
+defparam \u_EasyCDR/u_cdr/status_1_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/status_0_s0  (
+	.D(\u_EasyCDR/u_cdr/n214_7 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/status [0])
+);
+defparam \u_EasyCDR/u_cdr/status_0_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/o_dout_8_s1  (
+	.D(\u_EasyCDR/u_cdr/IDD [31]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/cdr_dout [8])
+);
+defparam \u_EasyCDR/u_cdr/o_dout_8_s1 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/o_dout_7_s1  (
+	.D(\u_EasyCDR/u_cdr/n218_9 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/cdr_dout [7])
+);
+defparam \u_EasyCDR/u_cdr/o_dout_7_s1 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/o_dout_6_s1  (
+	.D(\u_EasyCDR/u_cdr/n219_9 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/cdr_dout [6])
+);
+defparam \u_EasyCDR/u_cdr/o_dout_6_s1 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/o_dout_5_s1  (
+	.D(\u_EasyCDR/u_cdr/n220_9 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/cdr_dout [5])
+);
+defparam \u_EasyCDR/u_cdr/o_dout_5_s1 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/o_dout_4_s1  (
+	.D(\u_EasyCDR/u_cdr/n221_9 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/cdr_dout [4])
+);
+defparam \u_EasyCDR/u_cdr/o_dout_4_s1 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/o_dout_3_s1  (
+	.D(\u_EasyCDR/u_cdr/n222_9 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/cdr_dout [3])
+);
+defparam \u_EasyCDR/u_cdr/o_dout_3_s1 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/o_dout_2_s1  (
+	.D(\u_EasyCDR/u_cdr/n223_9 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/cdr_dout [2])
+);
+defparam \u_EasyCDR/u_cdr/o_dout_2_s1 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/o_dout_1_s1  (
+	.D(\u_EasyCDR/u_cdr/n224_9 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/cdr_dout [1])
+);
+defparam \u_EasyCDR/u_cdr/o_dout_1_s1 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/o_dout_0_s1  (
+	.D(\u_EasyCDR/u_cdr/n225_9 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/cdr_dout [0])
+);
+defparam \u_EasyCDR/u_cdr/o_dout_0_s1 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/II_31_s0  (
+	.D(\u_EasyCDR/os_rx_x1_data [31]),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/II [31])
+);
+defparam \u_EasyCDR/u_cdr/II_31_s0 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/E4_0_s1  (
+	.D(\u_EasyCDR/u_cdr/E4_0_8 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/E4 [0])
+);
+defparam \u_EasyCDR/u_cdr/E4_0_s1 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/E4_1_s1  (
+	.D(\u_EasyCDR/u_cdr/E4_1_8 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/E4 [1])
+);
+defparam \u_EasyCDR/u_cdr/E4_1_s1 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/E4_2_s1  (
+	.D(\u_EasyCDR/u_cdr/E4_2_8 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/E4 [2])
+);
+defparam \u_EasyCDR/u_cdr/E4_2_s1 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/E4_3_s1  (
+	.D(\u_EasyCDR/u_cdr/E4_3_8 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(GND),
+	.Q(\u_EasyCDR/u_cdr/E4 [3])
+);
+defparam \u_EasyCDR/u_cdr/E4_3_s1 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/DVE_1_s1  (
+	.D(\u_EasyCDR/u_cdr/n175_4 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(\u_EasyCDR/u_cdr/DVE_1_9 ),
+	.Q(\u_EasyCDR/u_cdr/DVE [1])
+);
+defparam \u_EasyCDR/u_cdr/DVE_1_s1 .INIT=1'b0;
+DFFRE \u_EasyCDR/u_cdr/DVE_0_s1  (
+	.D(\u_EasyCDR/u_cdr/n169_4 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.RESET(\u_EasyCDR/u_cdr/DVE_0_9 ),
+	.Q(\u_EasyCDR/u_cdr/DVE [0])
+);
+defparam \u_EasyCDR/u_cdr/DVE_0_s1 .INIT=1'b0;
+MUX2_LUT5 \u_EasyCDR/u_cdr/n218_s5  (
+	.I0(\u_EasyCDR/u_cdr/n218_6 ),
+	.I1(\u_EasyCDR/u_cdr/n218_7 ),
+	.S0(\u_EasyCDR/u_cdr/status [1]),
+	.O(\u_EasyCDR/u_cdr/n218_9 )
+);
+MUX2_LUT5 \u_EasyCDR/u_cdr/n219_s5  (
+	.I0(\u_EasyCDR/u_cdr/n219_6 ),
+	.I1(\u_EasyCDR/u_cdr/n219_7 ),
+	.S0(\u_EasyCDR/u_cdr/status [1]),
+	.O(\u_EasyCDR/u_cdr/n219_9 )
+);
+MUX2_LUT5 \u_EasyCDR/u_cdr/n220_s5  (
+	.I0(\u_EasyCDR/u_cdr/n220_6 ),
+	.I1(\u_EasyCDR/u_cdr/n220_7 ),
+	.S0(\u_EasyCDR/u_cdr/status [1]),
+	.O(\u_EasyCDR/u_cdr/n220_9 )
+);
+MUX2_LUT5 \u_EasyCDR/u_cdr/n221_s5  (
+	.I0(\u_EasyCDR/u_cdr/n221_6 ),
+	.I1(\u_EasyCDR/u_cdr/n221_7 ),
+	.S0(\u_EasyCDR/u_cdr/status [1]),
+	.O(\u_EasyCDR/u_cdr/n221_9 )
+);
+MUX2_LUT5 \u_EasyCDR/u_cdr/n222_s5  (
+	.I0(\u_EasyCDR/u_cdr/n222_6 ),
+	.I1(\u_EasyCDR/u_cdr/n222_7 ),
+	.S0(\u_EasyCDR/u_cdr/status [1]),
+	.O(\u_EasyCDR/u_cdr/n222_9 )
+);
+MUX2_LUT5 \u_EasyCDR/u_cdr/n223_s5  (
+	.I0(\u_EasyCDR/u_cdr/n223_6 ),
+	.I1(\u_EasyCDR/u_cdr/n223_7 ),
+	.S0(\u_EasyCDR/u_cdr/status [1]),
+	.O(\u_EasyCDR/u_cdr/n223_9 )
+);
+MUX2_LUT5 \u_EasyCDR/u_cdr/n224_s5  (
+	.I0(\u_EasyCDR/u_cdr/n224_6 ),
+	.I1(\u_EasyCDR/u_cdr/n224_7 ),
+	.S0(\u_EasyCDR/u_cdr/status [1]),
+	.O(\u_EasyCDR/u_cdr/n224_9 )
+);
+MUX2_LUT5 \u_EasyCDR/u_cdr/n225_s5  (
+	.I0(\u_EasyCDR/u_cdr/n225_6 ),
+	.I1(\u_EasyCDR/u_cdr/n225_7 ),
+	.S0(\u_EasyCDR/u_cdr/status [1]),
+	.O(\u_EasyCDR/u_cdr/n225_9 )
+);
+LUT1 \u_EasyCDR/u_cdr/cDV_0_s2  (
+	.I0(\u_EasyCDR/u_cdr/DVE [1]),
+	.F(\u_EasyCDR/u_cdr/cDV_0_6 )
+);
+defparam \u_EasyCDR/u_cdr/cDV_0_s2 .INIT=2'h1;
+INV \u_EasyCDR/u_cdr/DVE_1_s4  (
+	.I(\u_EasyCDR/u_cdr/E4 [0]),
+	.O(\u_EasyCDR/u_cdr/DVE_1_9 )
+);
+INV \u_EasyCDR/u_cdr/DVE_0_s4  (
+	.I(\u_EasyCDR/u_cdr/E4 [2]),
+	.O(\u_EasyCDR/u_cdr/DVE_0_9 )
+);
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n153_s1  (
+	.I0(\u_EasyCDR/cdr_dout [8]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n153_5 ),
+	.I2(\u_EasyCDR/cdr_dout_sel [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n153_4 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n153_s1 .INIT=8'hAC;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n174_s1  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n174_5 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n174_6 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n174_7 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n174_4 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n174_s1 .INIT=16'h0F73;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n175_s1  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n174_5 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n175_5 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n175_4 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n175_s1 .INIT=8'h35;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n188_s0  (
+	.I0(\u_EasyCDR/cdr_dout_sel [1]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n188_4 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n188_5 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n188_3 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n188_s0 .INIT=16'hE300;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s0  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_4 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_5 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_6 ),
+	.I3(\u_EasyCDR/cdr_dout_sel [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_3 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s0 .INIT=16'h440F;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n190_s0  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n190_4 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n190_5 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n188_3 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n190_3 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n190_s0 .INIT=16'hCA00;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s0  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_4 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_5 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_6 ),
+	.I3(\u_EasyCDR/cdr_dout_sel [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_3 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s0 .INIT=16'hCFFD;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_s0  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_4 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_5 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_6 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_7 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_3 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_s0 .INIT=16'hFF70;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s0  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_4 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_5 ),
+	.I2(\u_EasyCDR/cdr_dout_sel [1]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_6 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_3 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s0 .INIT=16'hFF0B;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s0  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_19 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_5 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_6 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_7 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_3 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s0 .INIT=16'hFFF8;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s0  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_4 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_5 ),
+	.I2(\u_EasyCDR/cdr_dout_sel [1]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_6 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_3 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s0 .INIT=16'hFF0B;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s0  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n154_4 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_4 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_5 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_6 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_3 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s0 .INIT=16'hFFF2;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s0  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n154_4 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_4 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_5 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_6 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_3 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s0 .INIT=16'hFFF2;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s0  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_4 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_19 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_5 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_6 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_3 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s0 .INIT=16'hFFF8;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n199_s0  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n199_4 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n199_9 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n199_3 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n199_s0 .INIT=8'hC5;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n202_s0  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I1(\u_EasyCDR/cdr_dout_sel [1]),
+	.I2(\u_EasyCDR/cdr_dout_sel [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n202_3 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n202_s0 .INIT=8'h61;
+LUT2 \u_EasyCDR/u_gearbox_7_8_9_to_10/n203_s1  (
+	.I0(\u_EasyCDR/cdr_dout_sel [0]),
+	.I1(\u_EasyCDR/cdr_dout_sel [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n203_5 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n203_s1 .INIT=4'h4;
+LUT2 \u_EasyCDR/u_gearbox_7_8_9_to_10/n154_s1  (
+	.I0(\u_EasyCDR/cdr_dout_sel [0]),
+	.I1(\u_EasyCDR/cdr_dout_sel [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n154_4 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n154_s1 .INIT=4'h1;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n153_s2  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [1]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [0]),
+	.I2(\u_EasyCDR/cdr_dout_sel [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n153_5 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n153_s2 .INIT=8'hCA;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n174_s2  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I1(\u_EasyCDR/cdr_dout_sel [1]),
+	.I2(\u_EasyCDR/cdr_dout_sel [0]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n174_8 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n174_5 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n174_s2 .INIT=16'hDC2F;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n174_s3  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I2(\u_EasyCDR/cdr_dout_sel [0]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n174_9 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n174_6 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n174_s3 .INIT=16'h3FD4;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n174_s4  (
+	.I0(\u_EasyCDR/cdr_dout_sel [1]),
+	.I1(\u_EasyCDR/cdr_dout_sel [0]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n174_10 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n174_7 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n174_s4 .INIT=16'hE73D;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n175_s2  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n175_6 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I3(\u_EasyCDR/cdr_dout_sel [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n175_5 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n175_s2 .INIT=16'h3CC7;
+LUT2 \u_EasyCDR/u_gearbox_7_8_9_to_10/n188_s1  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n188_4 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n188_s1 .INIT=4'h1;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n188_s2  (
+	.I0(\u_EasyCDR/cdr_dout_sel [1]),
+	.I1(\u_EasyCDR/cdr_dout_sel [0]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n188_6 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n188_5 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n188_s2 .INIT=16'hCDD0;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s1  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_7 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_8 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_4 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s1 .INIT=8'h0E;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s2  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_9 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_10 ),
+	.I3(\u_EasyCDR/cdr_dout_sel [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_5 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s2 .INIT=16'hBF00;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s3  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_11 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_8 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_12 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_18 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_6 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s3 .INIT=16'h00F1;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n190_s1  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n190_6 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_4 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n190_7 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n190_4 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n190_s1 .INIT=16'h5F30;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n190_s2  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [6]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [7]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n190_5 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n190_s2 .INIT=8'hCA;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s1  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_7 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_8 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_9 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_4 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s1 .INIT=16'h00BF;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s2  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_9 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_10 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_11 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_5 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s2 .INIT=16'h0E00;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s3  (
+	.I0(\u_EasyCDR/cdr_dout_sel [0]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_12 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_13 ),
+	.I3(\u_EasyCDR/cdr_dout_sel [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_6 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s3 .INIT=16'hF70C;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_s1  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [2]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [3]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_4 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_s1 .INIT=8'h35;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_s2  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_5 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_s2 .INIT=8'h40;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_s3  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_8 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n190_6 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_19 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_6 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_s3 .INIT=16'h3A00;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_s4  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_9 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_10 ),
+	.I2(\u_EasyCDR/cdr_dout_sel [1]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_7 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_s4 .INIT=16'h0C05;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s1  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_7 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_8 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I3(\u_EasyCDR/cdr_dout_sel [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_4 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s1 .INIT=16'h0305;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s2  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_9 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_5 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_10 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_11 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_5 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s2 .INIT=16'h000B;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s3  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_12 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_13 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_14 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_19 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_6 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s3 .INIT=16'hFE00;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s2  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_4 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_8 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_9 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_5 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s2 .INIT=16'h0007;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s3  (
+	.I0(\u_EasyCDR/cdr_dout_sel [0]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_10 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_11 ),
+	.I3(\u_EasyCDR/cdr_dout_sel [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_6 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s3 .INIT=16'h004F;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s4  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_12 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_7 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt_2_9 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_7 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s4 .INIT=16'h0B00;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s1  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_10 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_7 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_8 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_9 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_4 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s1 .INIT=16'hB0BB;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s2  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_10 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_5 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_12 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_9 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_5 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s2 .INIT=16'h7707;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s3  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_20 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_12 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_13 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_19 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_6 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s3 .INIT=16'hFE00;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s1  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_7 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_12 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_8 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_9 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_4 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s1 .INIT=16'h000B;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s2  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_8 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_10 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_11 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt_2_9 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_5 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s2 .INIT=16'hEF00;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s3  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_12 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_8 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_13 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_14 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_6 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s3 .INIT=16'h0700;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s1  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_10 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_12 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_7 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_8 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_4 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s1 .INIT=16'h0700;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s2  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_8 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_9 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_9 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt_2_9 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_5 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s2 .INIT=16'hEF00;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s3  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_10 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_11 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_12 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_6 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s3 .INIT=16'h0700;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s1  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_7 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_11 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_8 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_9 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_4 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s1 .INIT=16'h000B;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s2  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_12 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_11 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_10 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n154_4 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_5 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s2 .INIT=16'h4F00;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s3  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_7 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_11 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_8 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt_2_9 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_6 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s3 .INIT=16'hBF00;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n199_s1  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I1(\u_EasyCDR/cdr_dout_sel [0]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n199_6 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n199_4 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n199_s1 .INIT=16'hE3FD;
+LUT2 \u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt_2_s4  (
+	.I0(\u_EasyCDR/cdr_dout_sel [1]),
+	.I1(\u_EasyCDR/cdr_dout_sel [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt_2_9 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt_2_s4 .INIT=4'h4;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n174_s5  (
+	.I0(\u_EasyCDR/cdr_dout_sel [1]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n174_8 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n174_s5 .INIT=16'h3EC3;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n174_s6  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I2(\u_EasyCDR/cdr_dout_sel [0]),
+	.I3(\u_EasyCDR/cdr_dout_sel [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n174_9 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n174_s6 .INIT=16'h8F54;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n174_s7  (
+	.I0(\u_EasyCDR/cdr_dout_sel [0]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I3(\u_EasyCDR/cdr_dout_sel [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n174_10 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n174_s7 .INIT=16'hD5DC;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n175_s3  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I2(\u_EasyCDR/cdr_dout_sel [1]),
+	.I3(\u_EasyCDR/cdr_dout_sel [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n175_6 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n175_s3 .INIT=16'h3A53;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n188_s3  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n188_6 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n188_s3 .INIT=16'h03FE;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s4  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [0]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_14 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_7 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s4 .INIT=16'h00F1;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s5  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [7]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [8]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_12 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_8 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s5 .INIT=16'hCA00;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s6  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [5]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_9 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s6 .INIT=8'h40;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s7  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [6]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_15 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_10 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s7 .INIT=8'h7C;
+LUT2 \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s8  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_11 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s8 .INIT=4'h4;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s9  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_13 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_15 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_11 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_12 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s9 .INIT=16'hAFC0;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n190_s3  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [4]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [5]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n190_6 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n190_s3 .INIT=8'h35;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n190_s4  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_7 ),
+	.I1(\u_EasyCDR/cdr_dout [8]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n190_7 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n190_s4 .INIT=16'hF50C;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s4  (
+	.I0(\u_EasyCDR/cdr_dout [7]),
+	.I1(\u_EasyCDR/cdr_dout_sel [0]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [0]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_7 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s4 .INIT=16'h0F77;
+LUT2 \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s5  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_8 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s5 .INIT=4'h1;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s6  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_14 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_15 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_11 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_9 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s6 .INIT=16'hC500;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s7  (
+	.I0(\u_EasyCDR/cdr_dout [8]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_16 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_10 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s7 .INIT=16'h000E;
+LUT2 \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s8  (
+	.I0(\u_EasyCDR/cdr_dout_sel [0]),
+	.I1(\u_EasyCDR/cdr_dout_sel [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_11 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s8 .INIT=4'h8;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s9  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_12 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s9 .INIT=8'h10;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s10  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [5]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [6]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_13 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s10 .INIT=8'h35;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_s5  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_11 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_7 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_12 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_8 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_s5 .INIT=16'h3F05;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_s6  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n190_6 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_13 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_9 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_s6 .INIT=16'hFACF;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_s7  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_14 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_14 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_10 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_s7 .INIT=16'h0503;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s4  (
+	.I0(\u_EasyCDR/cdr_dout [6]),
+	.I1(\u_EasyCDR/cdr_dout [5]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_15 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_7 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s4 .INIT=16'h5FF3;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s5  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_16 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_17 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_8 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s5 .INIT=16'hFA3F;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s6  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [1]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [2]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_9 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s6 .INIT=8'h35;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s7  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [3]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_12 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_10 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s7 .INIT=8'h40;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s8  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_18 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_11 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s8 .INIT=8'h10;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s9  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_19 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_20 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_8 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_12 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s9 .INIT=16'hF400;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s10  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_21 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_22 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_23 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_11 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_13 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s10 .INIT=16'h0E00;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s11  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [3]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [4]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_14 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s11 .INIT=16'hCA00;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s5  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_7 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_13 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_8 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s5 .INIT=16'hA300;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s6  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_16 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_14 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_8 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_9 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s6 .INIT=16'hA300;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s7  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_15 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_16 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_10 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s7 .INIT=16'h00F4;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s8  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_5 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_7 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_12 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_4 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_11 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s8 .INIT=16'hDD0D;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s9  (
+	.I0(\u_EasyCDR/cdr_dout [4]),
+	.I1(\u_EasyCDR/cdr_dout [7]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_17 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_12 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s9 .INIT=16'h0C0A;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s4  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_14 ),
+	.I3(\u_EasyCDR/cdr_dout_sel [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_7 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s4 .INIT=16'hBF00;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s5  (
+	.I0(\u_EasyCDR/cdr_dout [4]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_15 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_8 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s5 .INIT=16'h000E;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s6  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_16 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I3(\u_EasyCDR/cdr_dout_sel [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_9 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s6 .INIT=16'h00EF;
+LUT2 \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s7  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_10 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s7 .INIT=4'h8;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s9  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n199_7 ),
+	.I1(\u_EasyCDR/cdr_dout [5]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_17 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_8 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_12 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s9 .INIT=16'h8F00;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s10  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_18 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_16 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_11 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_13 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s10 .INIT=16'h3500;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s4  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [0]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [1]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_7 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s4 .INIT=8'h35;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s5  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_15 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_8 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s5 .INIT=8'h10;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s6  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_16 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_16 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_11 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_9 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s6 .INIT=16'h5C00;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s7  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n199_7 ),
+	.I1(\u_EasyCDR/cdr_dout [7]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_16 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_11 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_10 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s7 .INIT=16'h8F00;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s8  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_7 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_12 ),
+	.I2(\u_EasyCDR/cdr_dout [2]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_17 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_11 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s8 .INIT=16'h0BBB;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s9  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I1(\u_EasyCDR/cdr_dout [2]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_18 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_12 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s9 .INIT=16'h0F77;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s10  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_19 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_18 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_11 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_13 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s10 .INIT=16'hCA00;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s11  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n188_4 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_7 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_11 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_14 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s11 .INIT=16'h2F00;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s4  (
+	.I0(\u_EasyCDR/cdr_dout [6]),
+	.I1(\u_EasyCDR/cdr_dout [5]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_13 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_7 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s4 .INIT=16'h0C0A;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s5  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_17 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_11 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_14 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_15 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_8 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s5 .INIT=16'hB0BB;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s6  (
+	.I0(\u_EasyCDR/cdr_dout [1]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_17 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_16 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_12 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_9 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s6 .INIT=16'h0777;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s7  (
+	.I0(\u_EasyCDR/cdr_dout [7]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_17 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_20 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_10 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s7 .INIT=16'h00F4;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s8  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I1(\u_EasyCDR/cdr_dout [1]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_18 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_8 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_11 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s8 .INIT=16'h1F00;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s9  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_19 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n188_4 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_11 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_12 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s9 .INIT=16'h8F00;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s4  (
+	.I0(\u_EasyCDR/cdr_dout [4]),
+	.I1(\u_EasyCDR/cdr_dout [6]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_12 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_7 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s4 .INIT=16'hC0AF;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s5  (
+	.I0(\u_EasyCDR/cdr_dout [7]),
+	.I1(\u_EasyCDR/cdr_dout [8]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_8 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s5 .INIT=16'h3500;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s6  (
+	.I0(\u_EasyCDR/cdr_dout [0]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_13 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_8 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_9 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s6 .INIT=16'h3D00;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s7  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_16 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_12 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_14 ),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_15 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_10 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s7 .INIT=16'hB0BB;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s8  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_12 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_16 ),
+	.I2(\u_EasyCDR/cdr_dout [0]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_17 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_11 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s8 .INIT=16'h0777;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n199_s3  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I1(\u_EasyCDR/cdr_dout_sel [1]),
+	.I2(\u_EasyCDR/cdr_dout_sel [0]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n199_6 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n199_s3 .INIT=16'h9E51;
+LUT2 \u_EasyCDR/u_gearbox_7_8_9_to_10/n199_s4  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n199_7 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n199_s4 .INIT=4'h8;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s11  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [1]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [2]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_14 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s11 .INIT=16'h305F;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s12  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [4]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [3]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_15 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s12 .INIT=16'hF503;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s13  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [1]),
+	.I1(\u_EasyCDR/cdr_dout_sel [0]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [2]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_16 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s13 .INIT=16'h0F77;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s11  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [1]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [3]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_14 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s11 .INIT=8'h35;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s12  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [2]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [4]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_15 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s12 .INIT=8'hCA;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s13  (
+	.I0(\u_EasyCDR/cdr_dout [7]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [0]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_16 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n191_s13 .INIT=16'h305F;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_s8  (
+	.I0(\u_EasyCDR/cdr_dout [7]),
+	.I1(\u_EasyCDR/cdr_dout [8]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_11 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_s8 .INIT=16'h3500;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_s9  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I2(\u_EasyCDR/cdr_dout [6]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_12 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_s9 .INIT=16'h00BF;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_s10  (
+	.I0(\u_EasyCDR/cdr_dout [7]),
+	.I1(\u_EasyCDR/cdr_dout [6]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I3(\u_EasyCDR/cdr_dout_sel [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_13 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_s10 .INIT=16'h533F;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_s11  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [0]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [2]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_14 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n192_s11 .INIT=8'h35;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s12  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_15 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s12 .INIT=8'h17;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s13  (
+	.I0(\u_EasyCDR/cdr_dout [5]),
+	.I1(\u_EasyCDR/cdr_dout [6]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_16 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s13 .INIT=8'h35;
+LUT2 \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s14  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I1(\u_EasyCDR/cdr_dout [7]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_17 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s14 .INIT=4'h4;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s15  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [4]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [0]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_18 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s15 .INIT=16'hF53F;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s16  (
+	.I0(\u_EasyCDR/cdr_dout [5]),
+	.I1(\u_EasyCDR/cdr_dout [7]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_19 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s16 .INIT=8'h35;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s17  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I2(\u_EasyCDR/cdr_dout [6]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_20 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s17 .INIT=8'h40;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s18  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [0]),
+	.I1(\u_EasyCDR/cdr_dout [8]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_21 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s18 .INIT=16'hFA0C;
+LUT2 \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s19  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_22 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s19 .INIT=4'h8;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s20  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [2]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_23 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n193_s20 .INIT=8'h40;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s10  (
+	.I0(\u_EasyCDR/cdr_dout [7]),
+	.I1(\u_EasyCDR/cdr_dout [8]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_13 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s10 .INIT=8'hCA;
+LUT2 \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s11  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I1(\u_EasyCDR/cdr_dout [4]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_14 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s11 .INIT=4'h8;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s12  (
+	.I0(\u_EasyCDR/cdr_dout [5]),
+	.I1(\u_EasyCDR/cdr_dout [6]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_15 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s12 .INIT=16'hCA00;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s13  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I3(\u_EasyCDR/cdr_dout [4]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_16 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s13 .INIT=16'h4000;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s14  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_17 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s14 .INIT=8'hE7;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s11  (
+	.I0(\u_EasyCDR/cdr_dout [3]),
+	.I1(\u_EasyCDR/cdr_dout [7]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_14 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s11 .INIT=16'h0C0A;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s12  (
+	.I0(\u_EasyCDR/cdr_dout [3]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_15 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s12 .INIT=16'hDFF3;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s13  (
+	.I0(\u_EasyCDR/cdr_dout [6]),
+	.I1(\u_EasyCDR/cdr_dout [5]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_16 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s13 .INIT=16'hF53F;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s14  (
+	.I0(\u_EasyCDR/cdr_dout [4]),
+	.I1(\u_EasyCDR/cdr_dout [3]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_17 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s14 .INIT=16'hF53F;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s15  (
+	.I0(\u_EasyCDR/cdr_dout [6]),
+	.I1(\u_EasyCDR/cdr_dout [8]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_18 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s15 .INIT=8'h35;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s12  (
+	.I0(\u_EasyCDR/cdr_dout [4]),
+	.I1(\u_EasyCDR/cdr_dout [2]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_15 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s12 .INIT=16'hF53F;
+LUT2 \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s13  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I1(\u_EasyCDR/cdr_dout [3]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_16 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s13 .INIT=4'h4;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s14  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_17 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s14 .INIT=16'h0100;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s15  (
+	.I0(\u_EasyCDR/cdr_dout [3]),
+	.I1(\u_EasyCDR/cdr_dout [4]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_18 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n196_s15 .INIT=8'hCA;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s10  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_13 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s10 .INIT=16'hFE7F;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s11  (
+	.I0(\u_EasyCDR/cdr_dout [1]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_14 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s11 .INIT=16'hDFF3;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s12  (
+	.I0(\u_EasyCDR/cdr_dout [2]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_15 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s12 .INIT=8'h0E;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s13  (
+	.I0(\u_EasyCDR/cdr_dout [7]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [0]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_16 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s13 .INIT=8'hCA;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s14  (
+	.I0(\u_EasyCDR/cdr_dout [4]),
+	.I1(\u_EasyCDR/cdr_dout [5]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_17 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s14 .INIT=16'h03F5;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s15  (
+	.I0(\u_EasyCDR/cdr_dout [3]),
+	.I1(\u_EasyCDR/cdr_dout [2]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_18 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s15 .INIT=16'hAFC0;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s16  (
+	.I0(\u_EasyCDR/cdr_dout [8]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [0]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_19 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n197_s16 .INIT=8'hCA;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s9  (
+	.I0(\u_EasyCDR/cdr_dout [5]),
+	.I1(\u_EasyCDR/cdr_dout [3]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_12 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s9 .INIT=16'hF503;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s10  (
+	.I0(\u_EasyCDR/cdr_dout [1]),
+	.I1(\u_EasyCDR/cdr_dout [2]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_13 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s10 .INIT=16'hC0AF;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s11  (
+	.I0(\u_EasyCDR/cdr_dout [0]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_14 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s11 .INIT=16'hDFF3;
+LUT3 \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s12  (
+	.I0(\u_EasyCDR/cdr_dout [1]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_15 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s12 .INIT=8'h0E;
+LUT2 \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s13  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I1(\u_EasyCDR/cdr_dout [7]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_16 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n198_s13 .INIT=4'h8;
+LUT2 \u_EasyCDR/u_gearbox_7_8_9_to_10/stor_7_s3  (
+	.I0(\u_EasyCDR/cdr_dout_sel [0]),
+	.I1(\u_EasyCDR/cdr_dout_sel [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor_7_9 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/stor_7_s3 .INIT=4'hB;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s16  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [1]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [2]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_20 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n195_s16 .INIT=16'hA088;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n199_s5  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_11 ),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n199_9 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n199_s5 .INIT=16'h8000;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n154_s2  (
+	.I0(\u_EasyCDR/cdr_dout [7]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [0]),
+	.I2(\u_EasyCDR/cdr_dout_sel [0]),
+	.I3(\u_EasyCDR/cdr_dout_sel [1]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n154_6 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n154_s2 .INIT=16'hAAAC;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s15  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_11 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_19 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n194_s15 .INIT=16'h1F00;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt_1_s3  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt_2_9 ),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt_1_9 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt_1_s3 .INIT=16'h56FF;
+LUT4 \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s14  (
+	.I0(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_16 ),
+	.I1(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1]),
+	.I2(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2]),
+	.I3(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3]),
+	.F(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_18 )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/n189_s14 .INIT=16'h0004;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/stor_6_s0  (
+	.D(\u_EasyCDR/cdr_dout [6]),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor_7_9 ),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [6])
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/stor_6_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/stor_5_s0  (
+	.D(\u_EasyCDR/cdr_dout [5]),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor_7_9 ),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [5])
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/stor_5_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/stor_4_s0  (
+	.D(\u_EasyCDR/cdr_dout [4]),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor_7_9 ),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [4])
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/stor_4_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/stor_3_s0  (
+	.D(\u_EasyCDR/cdr_dout [3]),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor_7_9 ),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [3])
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/stor_3_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/stor_2_s0  (
+	.D(\u_EasyCDR/cdr_dout [2]),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor_7_9 ),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [2])
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/stor_2_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/stor_1_s0  (
+	.D(\u_EasyCDR/cdr_dout [1]),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor_7_9 ),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [1])
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/stor_1_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/stor_0_s0  (
+	.D(\u_EasyCDR/cdr_dout [0]),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor_7_9 ),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [0])
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/stor_0_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/o_dout_vld_s0  (
+	.D(\u_EasyCDR/u_gearbox_7_8_9_to_10/n188_3 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(\u_EasyCDR/gearbox_d_vld )
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/o_dout_vld_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/o_dout_9_s0  (
+	.D(\u_EasyCDR/u_gearbox_7_8_9_to_10/n189_3 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(\u_EasyCDR/gearbox_d [9])
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/o_dout_9_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/o_dout_8_s0  (
+	.D(\u_EasyCDR/u_gearbox_7_8_9_to_10/n190_3 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(\u_EasyCDR/gearbox_d [8])
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/o_dout_8_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/o_dout_7_s0  (
+	.D(\u_EasyCDR/u_gearbox_7_8_9_to_10/n191_3 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(\u_EasyCDR/gearbox_d [7])
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/o_dout_7_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/o_dout_6_s0  (
+	.D(\u_EasyCDR/u_gearbox_7_8_9_to_10/n192_3 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(\u_EasyCDR/gearbox_d [6])
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/o_dout_6_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/o_dout_5_s0  (
+	.D(\u_EasyCDR/u_gearbox_7_8_9_to_10/n193_3 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(\u_EasyCDR/gearbox_d [5])
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/o_dout_5_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/o_dout_4_s0  (
+	.D(\u_EasyCDR/u_gearbox_7_8_9_to_10/n194_3 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(\u_EasyCDR/gearbox_d [4])
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/o_dout_4_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/o_dout_3_s0  (
+	.D(\u_EasyCDR/u_gearbox_7_8_9_to_10/n195_3 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(\u_EasyCDR/gearbox_d [3])
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/o_dout_3_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/o_dout_2_s0  (
+	.D(\u_EasyCDR/u_gearbox_7_8_9_to_10/n196_3 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(\u_EasyCDR/gearbox_d [2])
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/o_dout_2_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/o_dout_1_s0  (
+	.D(\u_EasyCDR/u_gearbox_7_8_9_to_10/n197_3 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(\u_EasyCDR/gearbox_d [1])
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/o_dout_1_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/o_dout_0_s0  (
+	.D(\u_EasyCDR/u_gearbox_7_8_9_to_10/n198_3 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(\u_EasyCDR/gearbox_d [0])
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/o_dout_0_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt_3_s0  (
+	.D(\u_EasyCDR/u_gearbox_7_8_9_to_10/n199_3 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [3])
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt_3_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt_0_s0  (
+	.D(\u_EasyCDR/u_gearbox_7_8_9_to_10/n202_3 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [0])
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt_0_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/o_din_sel_error_s0  (
+	.D(\u_EasyCDR/u_gearbox_7_8_9_to_10/n203_5 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(error_o)
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/o_din_sel_error_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/stor_8_s1  (
+	.D(\u_EasyCDR/u_gearbox_7_8_9_to_10/n153_4 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor_7_9 ),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [8])
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/stor_8_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/stor_7_s1  (
+	.D(\u_EasyCDR/u_gearbox_7_8_9_to_10/n154_6 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor_7_9 ),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(\u_EasyCDR/u_gearbox_7_8_9_to_10/stor [7])
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/stor_7_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt_2_s1  (
+	.D(\u_EasyCDR/u_gearbox_7_8_9_to_10/n174_4 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt_1_9 ),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [2])
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt_2_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt_1_s1  (
+	.D(\u_EasyCDR/u_gearbox_7_8_9_to_10/n175_4 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt_1_9 ),
+	.CLEAR(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 ),
+	.Q(\u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt [1])
+);
+defparam \u_EasyCDR/u_gearbox_7_8_9_to_10/remained_cnt_1_s1 .INIT=1'b0;
+INV \u_EasyCDR/u_gearbox_7_8_9_to_10/n6_s2  (
+	.I(\u_EasyCDR/pcs_rstn ),
+	.O(\u_EasyCDR/u_gearbox_7_8_9_to_10/n6_6 )
+);
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n214_s11  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/n214_18 ),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/cnt [0]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/n214_19 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_15_5 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n214_s11 .INIT=8'hF8;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n215_s12  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/n215_17 ),
+	.I1(\u_EasyCDR/gearbox_d [5]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/n215_18 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n215_16 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n215_s12 .INIT=16'hFC05;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n216_s12  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/n216_17 ),
+	.I1(\u_EasyCDR/gearbox_d [4]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/n216_18 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n216_16 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n216_s12 .INIT=16'hFC05;
+LUT2 \u_EasyCDR/u_gearbox_10_or_16/n217_s12  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/n214_18 ),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/n217_19 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n217_16 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n217_s12 .INIT=4'hE;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n217_s13  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/n217_20 ),
+	.I1(\u_EasyCDR/gearbox_d [5]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/n217_21 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n217_18 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n217_s13 .INIT=16'hFC05;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n218_s12  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/n218_17 ),
+	.I1(\u_EasyCDR/gearbox_d [4]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/n218_18 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n218_16 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n218_s12 .INIT=16'hFC05;
+LUT2 \u_EasyCDR/u_gearbox_10_or_16/n219_s11  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/n217_19 ),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/n219_18 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n219_15 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n219_s11 .INIT=4'hE;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n219_s12  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/n219_19 ),
+	.I1(\u_EasyCDR/gearbox_d [7]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/n219_20 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n219_17 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n219_s12 .INIT=16'h50CF;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n220_s11  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/n220_16 ),
+	.I1(\u_EasyCDR/gearbox_d [6]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/n220_17 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n220_15 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n220_s11 .INIT=16'h50CF;
+LUT2 \u_EasyCDR/u_gearbox_10_or_16/n221_s10  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/n219_18 ),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/n221_17 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n221_14 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n221_s10 .INIT=4'hE;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n221_s11  (
+	.I0(\u_EasyCDR/gearbox_d [5]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/n221_18 ),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n221_16 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n221_s11 .INIT=8'hAC;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n222_s10  (
+	.I0(\u_EasyCDR/gearbox_d [4]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/n222_15 ),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n222_14 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n222_s10 .INIT=8'hAC;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n223_s13  (
+	.I0(\u_EasyCDR/gearbox_d [3]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/n223_18 ),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n223_17 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n223_s13 .INIT=8'hAC;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n224_s12  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/cnt [0]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/n214_18 ),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/n225_15 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n224_16 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n224_s12 .INIT=8'hF4;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n224_s13  (
+	.I0(\u_EasyCDR/gearbox_d [2]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/n224_19 ),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n224_18 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n224_s13 .INIT=8'hAC;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n225_s11  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/cnt [0]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/n219_18 ),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/cnt [1]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/n221_17 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n225_15 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n225_s11 .INIT=16'hFF40;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n225_s12  (
+	.I0(\u_EasyCDR/gearbox_d [3]),
+	.I1(\u_EasyCDR/gearbox_d [1]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n225_17 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n225_s12 .INIT=8'hCA;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n226_s11  (
+	.I0(\u_EasyCDR/gearbox_d [2]),
+	.I1(\u_EasyCDR/gearbox_d [0]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n226_15 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n226_s11 .INIT=8'hCA;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n229_s11  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [0]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n229_19 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n229_s11 .INIT=8'hCA;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n230_s12  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [0]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n230_20 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n230_s12 .INIT=8'h3A;
+LUT2 \u_EasyCDR/u_gearbox_10_or_16/n231_s9  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n231_15 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n231_s9 .INIT=4'h9;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n238_s12  (
+	.I0(\u_EasyCDR/gearbox_d [9]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [9]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [0]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/n241_22 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n238_16 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n238_s12 .INIT=16'hCACC;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n239_s12  (
+	.I0(\u_EasyCDR/gearbox_d [8]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [8]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [0]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/n241_22 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n239_16 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n239_s12 .INIT=16'hCACC;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n240_s19  (
+	.I0(\u_EasyCDR/gearbox_d [7]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [7]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [0]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n240_19 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n240_s19 .INIT=8'hCA;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n241_s18  (
+	.I0(\u_EasyCDR/gearbox_d [6]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [6]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [0]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n241_19 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n241_s18 .INIT=8'hCA;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n242_s12  (
+	.I0(\u_EasyCDR/gearbox_d [7]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/n242_17 ),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/n242_18 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n242_16 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n242_s12 .INIT=16'hA03F;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n243_s12  (
+	.I0(\u_EasyCDR/gearbox_d [6]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/n243_17 ),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/n243_18 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n243_16 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n243_s12 .INIT=16'hA03F;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n244_s11  (
+	.I0(\u_EasyCDR/gearbox_d [5]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/n219_19 ),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/n244_16 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n244_15 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n244_s11 .INIT=16'hA03F;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n245_s11  (
+	.I0(\u_EasyCDR/gearbox_d [4]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/n220_16 ),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/n245_16 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n245_15 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n245_s11 .INIT=16'hA03F;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n246_s11  (
+	.I0(\u_EasyCDR/gearbox_d [3]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/n246_16 ),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/n246_17 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n246_15 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n246_s11 .INIT=16'hA03F;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n247_s11  (
+	.I0(\u_EasyCDR/gearbox_d [2]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/n247_16 ),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/n247_17 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n247_15 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n247_s11 .INIT=16'hA03F;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n227_s3  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/cnt [0]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/cnt [1]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/n219_18 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n227_7 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n227_s3 .INIT=8'h40;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/store_tmp_15_s3  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/cnt [0]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/n214_19 ),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/n214_18 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/store_tmp_15_8 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/store_tmp_15_s3 .INIT=8'hF4;
+LUT2 \u_EasyCDR/u_gearbox_10_or_16/n16_s2  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/cnt [0]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/cnt [1]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n16_6 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n16_s2 .INIT=4'h6;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n15_s2  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/cnt [0]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/cnt [1]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/cnt [2]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n15_6 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n15_s2 .INIT=8'h78;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n211_s0  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/n214_19 ),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/n221_17 ),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/n211_6 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n211_5 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n211_s0 .INIT=8'hFE;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n240_s18  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [7]),
+	.I1(\u_EasyCDR/gearbox_d [9]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n240_21 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n240_s18 .INIT=8'hCA;
+LUT2 \u_EasyCDR/u_gearbox_10_or_16/n240_s17  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n241_22 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n240_s17 .INIT=4'h4;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n241_s17  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [6]),
+	.I1(\u_EasyCDR/gearbox_d [8]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n241_21 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n241_s17 .INIT=8'hCA;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n214_s12  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/n214_20 ),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/cnt [2]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.I3(\u_EasyCDR/gearbox_d_vld ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n214_18 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n214_s12 .INIT=16'h0100;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n214_s13  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/n214_21 ),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/cnt [2]),
+	.I2(\u_EasyCDR/gearbox_d_vld ),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n214_19 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n214_s13 .INIT=16'h4000;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n215_s13  (
+	.I0(\u_EasyCDR/gearbox_d [9]),
+	.I1(\u_EasyCDR/gearbox_d [3]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [0]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n215_17 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n215_s13 .INIT=8'h35;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n215_s14  (
+	.I0(\u_EasyCDR/gearbox_d [1]),
+	.I1(\u_EasyCDR/gearbox_d [7]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n215_18 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n215_s14 .INIT=16'hAFC0;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n216_s13  (
+	.I0(\u_EasyCDR/gearbox_d [8]),
+	.I1(\u_EasyCDR/gearbox_d [2]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [0]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n216_17 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n216_s13 .INIT=8'h35;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n216_s14  (
+	.I0(\u_EasyCDR/gearbox_d [0]),
+	.I1(\u_EasyCDR/gearbox_d [6]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n216_18 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n216_s14 .INIT=16'hAFC0;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n217_s14  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/cnt [0]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/cnt [1]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/n217_22 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n217_19 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n217_s14 .INIT=16'h1800;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n217_s15  (
+	.I0(\u_EasyCDR/gearbox_d [7]),
+	.I1(\u_EasyCDR/gearbox_d [1]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [0]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n217_20 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n217_s15 .INIT=8'h35;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n217_s16  (
+	.I0(\u_EasyCDR/gearbox_d [9]),
+	.I1(\u_EasyCDR/gearbox_d [3]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n217_21 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n217_s16 .INIT=16'hAFC0;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n218_s13  (
+	.I0(\u_EasyCDR/gearbox_d [6]),
+	.I1(\u_EasyCDR/gearbox_d [0]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [0]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n218_17 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n218_s13 .INIT=8'h35;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n218_s14  (
+	.I0(\u_EasyCDR/gearbox_d [8]),
+	.I1(\u_EasyCDR/gearbox_d [2]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n218_18 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n218_s14 .INIT=16'hAFC0;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n219_s13  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/n219_21 ),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/cnt [2]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.I3(\u_EasyCDR/gearbox_d_vld ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n219_18 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n219_s13 .INIT=16'h0100;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n219_s14  (
+	.I0(\u_EasyCDR/gearbox_d [3]),
+	.I1(\u_EasyCDR/gearbox_d [9]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [0]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n219_19 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n219_s14 .INIT=8'h35;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n219_s15  (
+	.I0(\u_EasyCDR/gearbox_d [5]),
+	.I1(\u_EasyCDR/gearbox_d [1]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n219_20 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n219_s15 .INIT=16'h03F5;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n220_s12  (
+	.I0(\u_EasyCDR/gearbox_d [2]),
+	.I1(\u_EasyCDR/gearbox_d [8]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [0]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n220_16 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n220_s12 .INIT=8'h35;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n220_s13  (
+	.I0(\u_EasyCDR/gearbox_d [4]),
+	.I1(\u_EasyCDR/gearbox_d [0]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n220_17 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n220_s13 .INIT=16'h03F5;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n221_s12  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/cnt [1]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/cnt [0]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/n217_22 ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n221_17 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n221_s12 .INIT=16'h4000;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n221_s13  (
+	.I0(\u_EasyCDR/gearbox_d [3]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/n246_16 ),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n221_18 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n221_s13 .INIT=8'h3A;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n222_s11  (
+	.I0(\u_EasyCDR/gearbox_d [2]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/n247_16 ),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n222_15 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n222_s11 .INIT=8'h3A;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n223_s14  (
+	.I0(\u_EasyCDR/gearbox_d [1]),
+	.I1(\u_EasyCDR/gearbox_d [5]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n223_18 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n223_s14 .INIT=8'hCA;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n224_s14  (
+	.I0(\u_EasyCDR/gearbox_d [0]),
+	.I1(\u_EasyCDR/gearbox_d [4]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n224_19 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n224_s14 .INIT=8'hCA;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n242_s13  (
+	.I0(\u_EasyCDR/gearbox_d [5]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [5]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [0]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n242_17 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n242_s13 .INIT=8'h35;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n242_s14  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [5]),
+	.I1(\u_EasyCDR/gearbox_d [9]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n242_18 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n242_s14 .INIT=16'hF503;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n243_s13  (
+	.I0(\u_EasyCDR/gearbox_d [4]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [4]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [0]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n243_17 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n243_s13 .INIT=8'h35;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n243_s14  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [4]),
+	.I1(\u_EasyCDR/gearbox_d [8]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n243_18 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n243_s14 .INIT=16'hF503;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n244_s12  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [3]),
+	.I1(\u_EasyCDR/gearbox_d [7]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n244_16 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n244_s12 .INIT=16'hF503;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n245_s12  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [2]),
+	.I1(\u_EasyCDR/gearbox_d [6]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n245_16 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n245_s12 .INIT=16'hF503;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n246_s12  (
+	.I0(\u_EasyCDR/gearbox_d [1]),
+	.I1(\u_EasyCDR/gearbox_d [7]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [0]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n246_16 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n246_s12 .INIT=8'h35;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n246_s13  (
+	.I0(\u_EasyCDR/gearbox_d [9]),
+	.I1(\u_EasyCDR/gearbox_d [5]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n246_17 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n246_s13 .INIT=16'hF503;
+LUT3 \u_EasyCDR/u_gearbox_10_or_16/n247_s12  (
+	.I0(\u_EasyCDR/gearbox_d [0]),
+	.I1(\u_EasyCDR/gearbox_d [6]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [0]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n247_16 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n247_s12 .INIT=8'h35;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n247_s13  (
+	.I0(\u_EasyCDR/gearbox_d [8]),
+	.I1(\u_EasyCDR/gearbox_d [4]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n247_17 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n247_s13 .INIT=16'hF503;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n211_s1  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/n211_7 ),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/cnt [2]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.I3(\u_EasyCDR/gearbox_d_vld ),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n211_6 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n211_s1 .INIT=16'h0100;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n214_s14  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/cnt [1]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [0]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n214_20 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n214_s14 .INIT=16'hE7FE;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n214_s15  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/cnt [0]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/st_switch [0]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/cnt [1]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n214_21 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n214_s15 .INIT=16'hFE9F;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n217_s17  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/cnt [2]),
+	.I1(\u_EasyCDR/gearbox_d_vld ),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [0]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n217_22 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n217_s17 .INIT=16'h8000;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n219_s16  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/cnt [0]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/st_switch [0]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/cnt [1]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n219_21 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n219_s16 .INIT=16'h9FFE;
+LUT4 \u_EasyCDR/u_gearbox_10_or_16/n211_s2  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/cnt [0]),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/cnt [1]),
+	.I2(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1]),
+	.I3(\u_EasyCDR/u_gearbox_10_or_16/st_switch [0]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n211_7 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n211_s2 .INIT=16'hBD7E;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/cnt_1_s0  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n16_6 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/gearbox_d_vld ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/u_gearbox_10_or_16/cnt [1])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/cnt_1_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/cnt_0_s0  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n17_8 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/gearbox_d_vld ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/u_gearbox_10_or_16/cnt [0])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/cnt_0_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/o_dout_vld_tmp_s0  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_15_5 ),
+	.CLK(share_clk4_o),
+	.CE(VCC),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(dout_en_o)
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/o_dout_vld_tmp_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/store_tmp_3_s0  (
+	.D(\u_EasyCDR/gearbox_d [1]),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/n227_7 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [3])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/store_tmp_3_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/store_tmp_2_s0  (
+	.D(\u_EasyCDR/gearbox_d [0]),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/n227_7 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [2])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/store_tmp_2_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/cnt_2_s0  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n15_6 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/gearbox_d_vld ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/u_gearbox_10_or_16/cnt [2])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/cnt_2_s0 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/st_switch_2_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n229_19 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/n211_5 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/u_gearbox_10_or_16/st_switch [2])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/st_switch_2_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/st_switch_1_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n230_20 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/n211_5 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/u_gearbox_10_or_16/st_switch [1])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/st_switch_1_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/st_switch_0_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n231_15 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/n211_5 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/u_gearbox_10_or_16/st_switch [0])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/st_switch_0_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_15_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [15]),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_15_5 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(dout_o[15])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_15_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_14_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [14]),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_15_5 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(dout_o[14])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_14_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_13_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [13]),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_15_5 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(dout_o[13])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_13_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_12_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [12]),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_15_5 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(dout_o[12])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_12_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_11_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [11]),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_15_5 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(dout_o[11])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_11_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_10_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [10]),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_15_5 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(dout_o[10])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_10_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_9_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n238_16 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_15_5 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(dout_o[9])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_9_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_8_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n239_16 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_15_5 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(dout_o[8])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_8_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_7_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n240_17 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_15_5 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(dout_o[7])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_7_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_6_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n241_17 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_15_5 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(dout_o[6])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_6_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_5_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n242_16 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_15_5 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(dout_o[5])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_5_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_4_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n243_16 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_15_5 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(dout_o[4])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_4_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_3_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n244_15 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_15_5 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(dout_o[3])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_3_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_2_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n245_15 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_15_5 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(dout_o[2])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_2_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_1_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n246_15 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_15_5 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(dout_o[1])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_1_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_0_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n247_15 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_15_5 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(dout_o[0])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/o_dout_tmp_0_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/store_tmp_15_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n215_16 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/store_tmp_15_8 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [15])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/store_tmp_15_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/store_tmp_14_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n216_16 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/store_tmp_15_8 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [14])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/store_tmp_14_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/store_tmp_13_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n217_18 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/n217_16 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [13])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/store_tmp_13_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/store_tmp_12_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n218_16 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/n217_16 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [12])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/store_tmp_12_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/store_tmp_11_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n219_17 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/n219_15 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [11])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/store_tmp_11_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/store_tmp_10_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n220_15 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/n219_15 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [10])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/store_tmp_10_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/store_tmp_9_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n221_16 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/n221_14 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [9])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/store_tmp_9_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/store_tmp_8_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n222_14 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/n221_14 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [8])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/store_tmp_8_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/store_tmp_7_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n223_17 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/n224_16 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [7])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/store_tmp_7_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/store_tmp_6_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n224_18 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/n224_16 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [6])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/store_tmp_6_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/store_tmp_5_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n225_17 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/n225_15 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [5])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/store_tmp_5_s1 .INIT=1'b0;
+DFFCE \u_EasyCDR/u_gearbox_10_or_16/store_tmp_4_s1  (
+	.D(\u_EasyCDR/u_gearbox_10_or_16/n226_15 ),
+	.CLK(share_clk4_o),
+	.CE(\u_EasyCDR/u_gearbox_10_or_16/n225_15 ),
+	.CLEAR(\u_EasyCDR/n54_6 ),
+	.Q(\u_EasyCDR/u_gearbox_10_or_16/store_tmp [4])
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/store_tmp_4_s1 .INIT=1'b0;
+MUX2_LUT5 \u_EasyCDR/u_gearbox_10_or_16/n240_s14  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/n240_21 ),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/n240_19 ),
+	.S0(\u_EasyCDR/u_gearbox_10_or_16/n241_22 ),
+	.O(\u_EasyCDR/u_gearbox_10_or_16/n240_17 )
+);
+MUX2_LUT5 \u_EasyCDR/u_gearbox_10_or_16/n241_s14  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/n241_21 ),
+	.I1(\u_EasyCDR/u_gearbox_10_or_16/n241_19 ),
+	.S0(\u_EasyCDR/u_gearbox_10_or_16/n241_22 ),
+	.O(\u_EasyCDR/u_gearbox_10_or_16/n241_17 )
+);
+LUT1 \u_EasyCDR/u_gearbox_10_or_16/n17_s4  (
+	.I0(\u_EasyCDR/u_gearbox_10_or_16/cnt [0]),
+	.F(\u_EasyCDR/u_gearbox_10_or_16/n17_8 )
+);
+defparam \u_EasyCDR/u_gearbox_10_or_16/n17_s4 .INIT=2'h1;
+endmodule

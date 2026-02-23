@@ -1,0 +1,44 @@
+
+bootrom.elf:     file format elf32-littleriscv
+
+
+Disassembly of section .isr_vector:
+
+00000000 <isr_vector>:
+   0:	00c0006f          	j	c <start>
+   4:	0080006f          	j	c <start>
+   8:	00000013          	nop
+
+Disassembly of section .text:
+
+0000000c <start>:
+   c:	20000117          	auipc	sp,0x20000
+  10:	03410113          	addi	sp,sp,52 # 20000040 <ramend>
+  14:	004000ef          	jal	ra,18 <main>
+
+00000018 <main>:
+  18:	fe010113          	addi	sp,sp,-32
+  1c:	00812e23          	sw	s0,28(sp)
+  20:	02010413          	addi	s0,sp,32
+  24:	00100793          	li	a5,1
+  28:	fef42623          	sw	a5,-20(s0)
+  2c:	300007b7          	lui	a5,0x30000
+  30:	fec42703          	lw	a4,-20(s0)
+  34:	00e7a023          	sw	a4,0(a5) # 30000000 <ramend+0xfffffc0>
+  38:	fec42783          	lw	a5,-20(s0)
+  3c:	00179713          	slli	a4,a5,0x1
+  40:	fec42783          	lw	a5,-20(s0)
+  44:	0077d793          	srli	a5,a5,0x7
+  48:	0017f793          	andi	a5,a5,1
+  4c:	00f767b3          	or	a5,a4,a5
+  50:	fef42623          	sw	a5,-20(s0)
+  54:	fe042423          	sw	zero,-24(s0)
+  58:	0100006f          	j	68 <main+0x50>
+  5c:	fe842783          	lw	a5,-24(s0)
+  60:	00178793          	addi	a5,a5,1
+  64:	fef42423          	sw	a5,-24(s0)
+  68:	fe842703          	lw	a4,-24(s0)
+  6c:	000f47b7          	lui	a5,0xf4
+  70:	23f78793          	addi	a5,a5,575 # f423f <GPIO_OUT+0xf41c3>
+  74:	fee7d4e3          	bge	a5,a4,5c <main+0x44>
+  78:	fb5ff06f          	j	2c <main+0x14>

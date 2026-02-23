@@ -1,0 +1,7 @@
+signal_name,pmod_pin
+ml_lane_0_p,pmod0_1
+ml_lane_1_p,pmod0_2
+ml_lane_2_p,pmod0_3
+ml_lane_3_p,pmod0_4
+aux_ch_p,pmod1_1
+hotplug,pmod1_2
