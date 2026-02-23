@@ -1,19 +1,56 @@
+# IDE and build tools
 .bloop
 .idea
 .metals
 target
 project
 test_run_dir
-
 .Xil
 .bsp
 .jvmopts
 .vscode
+.devcontainer
+.vscode-ctags
 
+# Tool logs and traces
 *.log
 *.jou
 *.bin
 *.scala_
+*.str
+*.rpt
+vivado_pid*
+hs_err_pid*
+upgrade_project_migration_report.*
 
+# Archive files
+*.tar.gz
+*.zip
+*.tar
+*.gz
+
+# EDA generated files
+**/*.cst
+**/*.gen.svh
+**/ip/*/*.v
+**/ip/*/*.mod
+**/ip/*/*.vo
+**/impl/
+**/project/
+
+# Analyzer files
+*.analyzer_prj
+*.xml
+
+# Build outputs
+build/
+output/
+*.hex
+*.mod
+
+# Temporary files
 /src
 node_modules
+*.tmp
+*.temp
+*~
