@@ -411,5 +411,93 @@
                 </register>
             </registers>
         </peripheral>
+        <peripheral>
+            <name>VIDEO</name>
+            <description>DisplayPort video pipeline (Phase D). Sync clock mode.</description>
+            <baseAddress>0x40030000</baseAddress>
+            <registers>
+                <register>
+                    <name>CTRL</name>
+                    <description>Video control. ENABLE=1 starts framing video using the configured MSA fields.</description>
+                    <addressOffset>0x00</addressOffset>
+                    <fields>
+                        <field><name>ENABLE</name><bitOffset>0</bitOffset><bitWidth>1</bitWidth><access>read-write</access></field>
+                    </fields>
+                </register>
+                <register>
+                    <name>HTOTAL</name>
+                    <addressOffset>0x04</addressOffset>
+                    <fields><field><name>VALUE</name><bitOffset>0</bitOffset><bitWidth>16</bitWidth><access>read-write</access></field></fields>
+                </register>
+                <register>
+                    <name>VTOTAL</name>
+                    <addressOffset>0x08</addressOffset>
+                    <fields><field><name>VALUE</name><bitOffset>0</bitOffset><bitWidth>16</bitWidth><access>read-write</access></field></fields>
+                </register>
+                <register>
+                    <name>HSTART</name>
+                    <addressOffset>0x0C</addressOffset>
+                    <fields><field><name>VALUE</name><bitOffset>0</bitOffset><bitWidth>16</bitWidth><access>read-write</access></field></fields>
+                </register>
+                <register>
+                    <name>VSTART</name>
+                    <addressOffset>0x10</addressOffset>
+                    <fields><field><name>VALUE</name><bitOffset>0</bitOffset><bitWidth>16</bitWidth><access>read-write</access></field></fields>
+                </register>
+                <register>
+                    <name>HWIDTH</name>
+                    <addressOffset>0x14</addressOffset>
+                    <fields><field><name>VALUE</name><bitOffset>0</bitOffset><bitWidth>16</bitWidth><access>read-write</access></field></fields>
+                </register>
+                <register>
+                    <name>VHEIGHT</name>
+                    <addressOffset>0x18</addressOffset>
+                    <fields><field><name>VALUE</name><bitOffset>0</bitOffset><bitWidth>16</bitWidth><access>read-write</access></field></fields>
+                </register>
+                <register>
+                    <name>HSW_HSP</name>
+                    <description>Horizontal sync. [14:0]=HSW, [15]=HSP polarity.</description>
+                    <addressOffset>0x1C</addressOffset>
+                    <fields>
+                        <field><name>HSW</name><bitOffset>0</bitOffset><bitWidth>15</bitWidth><access>read-write</access></field>
+                        <field><name>HSP</name><bitOffset>15</bitOffset><bitWidth>1</bitWidth><access>read-write</access></field>
+                    </fields>
+                </register>
+                <register>
+                    <name>VSW_VSP</name>
+                    <description>Vertical sync. [14:0]=VSW, [15]=VSP polarity.</description>
+                    <addressOffset>0x20</addressOffset>
+                    <fields>
+                        <field><name>VSW</name><bitOffset>0</bitOffset><bitWidth>15</bitWidth><access>read-write</access></field>
+                        <field><name>VSP</name><bitOffset>15</bitOffset><bitWidth>1</bitWidth><access>read-write</access></field>
+                    </fields>
+                </register>
+                <register>
+                    <name>MVID</name>
+                    <addressOffset>0x24</addressOffset>
+                    <fields><field><name>VALUE</name><bitOffset>0</bitOffset><bitWidth>24</bitWidth><access>read-write</access></field></fields>
+                </register>
+                <register>
+                    <name>NVID</name>
+                    <addressOffset>0x28</addressOffset>
+                    <fields><field><name>VALUE</name><bitOffset>0</bitOffset><bitWidth>24</bitWidth><access>read-write</access></field></fields>
+                </register>
+                <register>
+                    <name>MISC</name>
+                    <description>[7:0]=MISC0, [15:8]=MISC1.</description>
+                    <addressOffset>0x2C</addressOffset>
+                    <fields>
+                        <field><name>MISC0</name><bitOffset>0</bitOffset><bitWidth>8</bitWidth><access>read-write</access></field>
+                        <field><name>MISC1</name><bitOffset>8</bitOffset><bitWidth>8</bitWidth><access>read-write</access></field>
+                    </fields>
+                </register>
+                <register>
+                    <name>TU_ACTIVE</name>
+                    <description>Number of active (valid pixel) bytes per 64-symbol TU. CPU computes from Mvid/Nvid.</description>
+                    <addressOffset>0x30</addressOffset>
+                    <fields><field><name>VALUE</name><bitOffset>0</bitOffset><bitWidth>7</bitWidth><access>read-write</access></field></fields>
+                </register>
+            </registers>
+        </peripheral>
     </peripherals>
 </device>

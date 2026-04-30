@@ -1,0 +1,132 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file msa_generator.veryl
+ * @brief Generates the 33-byte Main Stream Attribute (MSA) sequence for a
+ *        1-lane DP main link. DP 1.2 Fig 2-18 (1-lane column).
+ *
+ * Byte sequence (per i_byte_tick):
+ *   00, 01: SS, SS                 (K28.2 = 0x5C)
+ *   02..04: Mvid23:16, Mvid15:8, Mvid7:0
+ *   05, 06: Htotal15:8, Htotal7:0
+ *   07, 08: Vtotal15:8, Vtotal7:0
+ *   09, 10: HSP|HSW14:8, HSW7:0
+ *   11, 12: VSP|VSW14:8, VSW7:0
+ *   13, 14: Hstart15:8, Hstart7:0
+ *   15, 16: Vstart15:8, Vstart7:0
+ *   17, 18: Hwidth15:8, Hwidth7:0
+ *   19, 20: Vheight15:8, Vheight7:0
+ *   21, 22: 0x00, 0x00 (lane padding for 1-lane case)
+ *   23..25: Mvid23:16, Mvid15:8, Mvid7:0   (redundancy)
+ *   26..28: Nvid23:16, Nvid15:8, Nvid7:0
+ *   29, 30: MISC0_7:0, MISC1_7:0
+ *   31    : 0x00 (lane padding)
+ *   32    : SE                      (K28.3 = 0x7C)
+ */
+
+pub module msa_generator (
+    i_clk:  input clock_posedge,
+    i_rstn: input reset_sync_low,
+
+    // Pacing pulse from the upstream byte clock domain (= 1 byte / pulse).
+    i_byte_tick: input logic,
+    // Single-cycle trigger to start a new 33-byte MSA emission.
+    i_trigger: input logic,
+
+    // MSA fields. All driven from CPU-set VIDEO registers.
+    i_htotal:  input logic<16>,
+    i_vtotal:  input logic<16>,
+    i_hstart:  input logic<16>,
+    i_vstart:  input logic<16>,
+    i_hwidth:  input logic<16>,
+    i_vheight: input logic<16>,
+    i_hsw_hsp: input logic<16>, // [14:0]=HSW, [15]=HSP
+    i_vsw_vsp: input logic<16>, // [14:0]=VSW, [15]=VSP
+    i_mvid:    input logic<24>,
+    i_nvid:    input logic<24>,
+    i_misc:    input logic<16>, // [7:0]=MISC0, [15:8]=MISC1
+
+    // 1 while emission is in progress (or scheduled). Upstream may use it
+    // to gate other byte sources.
+    o_busy:  output logic,
+    // Single-cycle pulse with each emitted byte.
+    o_valid: output logic,
+    o_byte:  output logic<8>,
+    o_is_k:  output logic,
+) {
+    var counter: logic<6>; // 0..32
+    var active:  logic;
+
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            counter = 0;
+            active  = 0;
+            o_valid = 0;
+            o_byte  = 0;
+            o_is_k  = 0;
+        } else {
+            // Sticky outputs: only the emit branch updates o_byte/o_is_k.
+            // Mux upstream samples them on the NEXT byte_tick, so the
+            // registered value must persist between ticks.
+            if !active && i_trigger {
+                active  = 1;
+                counter = 0;
+            } else if active && i_byte_tick {
+                o_valid = 1;
+                o_is_k  = 0;
+                case counter {
+                    6'd0,
+                    6'd1:  {
+                        o_byte = 8'h5C; // SS (K28.2)
+                        o_is_k = 1;
+                    }
+                    6'd2:  o_byte = i_mvid[23:16];
+                    6'd3:  o_byte = i_mvid[15:8];
+                    6'd4:  o_byte = i_mvid[7:0];
+                    6'd5:  o_byte = i_htotal[15:8];
+                    6'd6:  o_byte = i_htotal[7:0];
+                    6'd7:  o_byte = i_vtotal[15:8];
+                    6'd8:  o_byte = i_vtotal[7:0];
+                    6'd9:  o_byte = {i_hsw_hsp[15], i_hsw_hsp[14:8]};
+                    6'd10: o_byte = i_hsw_hsp[7:0];
+                    6'd11: o_byte = {i_vsw_vsp[15], i_vsw_vsp[14:8]};
+                    6'd12: o_byte = i_vsw_vsp[7:0];
+                    6'd13: o_byte = i_hstart[15:8];
+                    6'd14: o_byte = i_hstart[7:0];
+                    6'd15: o_byte = i_vstart[15:8];
+                    6'd16: o_byte = i_vstart[7:0];
+                    6'd17: o_byte = i_hwidth[15:8];
+                    6'd18: o_byte = i_hwidth[7:0];
+                    6'd19: o_byte = i_vheight[15:8];
+                    6'd20: o_byte = i_vheight[7:0];
+                    6'd21,
+                    6'd22: o_byte = 8'h00;
+                    6'd23: o_byte = i_mvid[23:16];
+                    6'd24: o_byte = i_mvid[15:8];
+                    6'd25: o_byte = i_mvid[7:0];
+                    6'd26: o_byte = i_nvid[23:16];
+                    6'd27: o_byte = i_nvid[15:8];
+                    6'd28: o_byte = i_nvid[7:0];
+                    6'd29: o_byte = i_misc[7:0];
+                    6'd30: o_byte = i_misc[15:8];
+                    6'd31: o_byte = 8'h00;
+                    6'd32: {
+                        o_byte = 8'h7C; // SE (K28.3)
+                        o_is_k = 1;
+                    }
+                    default: o_byte = 8'h00;
+                }
+                if counter == 6'd32 {
+                    active = 0;
+                } else {
+                    counter = counter + 1;
+                }
+            }
+        }
+    }
+
+    assign o_busy = active || i_trigger;
+}

@@ -45,6 +45,11 @@ pub module dp_source_top #(
     // Main-link lane 0 serial output (Phase C: 1 lane only)
     o_lane0_bit:       output logic,
     o_lane0_bit_valid: output logic,
+
+    // AXI-Stream pixel input (Phase D, 24bpp RGB)
+    s_axis_video_tvalid: input  logic,
+    s_axis_video_tready: output logic,
+    s_axis_video_tdata:  input  logic<24>,
 ) {
     // Wires from aux_ch_subsystem to main_link_tx
     var ml_pattern_select: logic<2>;
@@ -53,6 +58,20 @@ pub module dp_source_top #(
     var ml_lane_count:     logic<3>;
     var ml_lane0_drive:    logic<8>;
     let _unused_lane0_drive: logic<8> = ml_lane0_drive; // informational only
+
+    var v_enable:    logic;
+    var v_htotal:    logic<16>;
+    var v_vtotal:    logic<16>;
+    var v_hstart:    logic<16>;
+    var v_vstart:    logic<16>;
+    var v_hwidth:    logic<16>;
+    var v_vheight:   logic<16>;
+    var v_hsw_hsp:   logic<16>;
+    var v_vsw_vsp:   logic<16>;
+    var v_mvid:      logic<24>;
+    var v_nvid:      logic<24>;
+    var v_misc:      logic<16>;
+    var v_tu_active: logic<7>;
 
     inst aux_subsystem: aux_ch_subsystem #(
         CLOCK_HZ,
@@ -88,6 +107,20 @@ pub module dp_source_top #(
         main_link_rd_reset      : ml_rd_reset,
         main_link_lane_count    : ml_lane_count,
         main_link_lane0_drive   : ml_lane0_drive,
+
+        video_enable            : v_enable,
+        video_htotal            : v_htotal,
+        video_vtotal            : v_vtotal,
+        video_hstart            : v_hstart,
+        video_vstart            : v_vstart,
+        video_hwidth            : v_hwidth,
+        video_vheight           : v_vheight,
+        video_hsw_hsp           : v_hsw_hsp,
+        video_vsw_vsp           : v_vsw_vsp,
+        video_mvid              : v_mvid,
+        video_nvid              : v_nvid,
+        video_misc              : v_misc,
+        video_tu_active         : v_tu_active,
     );
 
     inst main_link: main_link_tx (
@@ -97,6 +130,22 @@ pub module dp_source_top #(
         i_enable         : ml_enable,
         i_rd_reset       : ml_rd_reset,
         i_lane_count     : ml_lane_count,
+        i_video_enable   : v_enable,
+        i_htotal         : v_htotal,
+        i_vtotal         : v_vtotal,
+        i_hstart         : v_hstart,
+        i_vstart         : v_vstart,
+        i_hwidth         : v_hwidth,
+        i_vheight        : v_vheight,
+        i_hsw_hsp        : v_hsw_hsp,
+        i_vsw_vsp        : v_vsw_vsp,
+        i_mvid           : v_mvid,
+        i_nvid           : v_nvid,
+        i_misc           : v_misc,
+        i_tu_active      : v_tu_active,
+        s_axis_tvalid    : s_axis_video_tvalid,
+        s_axis_tready    : s_axis_video_tready,
+        s_axis_tdata     : s_axis_video_tdata,
         o_lane0_bit      : o_lane0_bit,
         o_lane0_bit_valid: o_lane0_bit_valid,
     );

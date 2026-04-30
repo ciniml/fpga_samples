@@ -7,7 +7,9 @@
  * @file main_link_tx_lane.veryl
  * @brief Single-lane DisplayPort main-link TX chain.
  *
- *   training_pattern_gen → scrambler → encoder_8b10b → serializer_10to1
+ *   training_pattern_gen ─┐
+ *                         ├→ data_mux → scrambler → encoder_8b10b → serializer_10to1
+ *   video_framer (+TU/MSA)┘
  *
  * The serializer's o_ready is fed back as the byte_tick that paces the
  * upstream chain (one byte every ten system-clock cycles, matching one
@@ -15,8 +17,6 @@
  *
  * `i_rd_reset` is a CPU-issued single-cycle pulse that requests the next
  * 8B/10B encoder input to start at RD = - (DP 1.2 §3.5.1.2 requirement).
- * The pulse is held in `rd_reset_pending` until the next valid byte
- * actually reaches the encoder, at which point it is consumed.
  */
 
 pub module main_link_tx_lane (
@@ -27,12 +27,32 @@ pub module main_link_tx_lane (
     i_enable:         input logic,
     i_rd_reset:       input logic,
 
+    // Video pipeline inputs (forwarded to video_framer)
+    i_video_enable: input logic,
+    i_htotal:       input logic<16>,
+    i_vtotal:       input logic<16>,
+    i_hstart:       input logic<16>,
+    i_vstart:       input logic<16>,
+    i_hwidth:       input logic<16>,
+    i_vheight:      input logic<16>,
+    i_hsw_hsp:      input logic<16>,
+    i_vsw_vsp:      input logic<16>,
+    i_mvid:         input logic<24>,
+    i_nvid:         input logic<24>,
+    i_misc:         input logic<16>,
+    i_tu_active:    input logic<7>,
+
+    // AXI-Stream pixel input (24bpp RGB)
+    s_axis_tvalid: input  logic,
+    s_axis_tready: output logic,
+    s_axis_tdata:  input  logic<24>,
+
     o_bit:       output logic,
     o_bit_valid: output logic,
 ) {
     // serializer ready → byte tick (gated by enable so the chain is silent
     // when the main link is disabled, and rate-limited so only one byte
-    // is in flight through tpg → scrambler → encoder at a time).
+    // is in flight through the source path → scrambler → encoder).
     var ser_ready: logic;
     var pipe_busy: logic<3>; // shifts byte_tick down the pipeline
     let pipe_idle: logic = pipe_busy == 3'b000;
@@ -46,7 +66,7 @@ pub module main_link_tx_lane (
         }
     }
 
-    // Training pattern generator
+    // ----- Training pattern path -----
     var tpg_valid:            logic;
     var tpg_data:             logic<8>;
     var tpg_is_k:             logic;
@@ -63,7 +83,77 @@ pub module main_link_tx_lane (
         o_scramble_disable: tpg_scramble_disable,
     );
 
-    // Scrambler. Phase C does not inject SR symbols yet; tie i_seed_reset = 0.
+    // ----- Pixel FIFO -----
+    var fifo_byte:  logic<8>;
+    var fifo_empty: logic;
+    var fifo_pop:   logic;
+
+    inst u_pixel: pixel_fifo (
+        i_clk        : i_clk,
+        i_rstn       : i_rstn,
+        s_axis_tvalid: s_axis_tvalid,
+        s_axis_tready: s_axis_tready,
+        s_axis_tdata : s_axis_tdata,
+        o_pop_byte   : fifo_byte,
+        o_pop_empty  : fifo_empty,
+        i_pop        : fifo_pop,
+    );
+
+    // ----- Video framer (with embedded MSA + TU) -----
+    var vid_valid:            logic;
+    var vid_byte:             logic<8>;
+    var vid_is_k:             logic;
+    var vid_scramble_disable: logic;
+
+    inst u_vf: video_framer (
+        i_clk             : i_clk,
+        i_rstn            : i_rstn,
+        i_byte_tick       : byte_tick,
+        i_video_enable    : i_video_enable,
+        i_htotal          : i_htotal,
+        i_vtotal          : i_vtotal,
+        i_hstart          : i_hstart,
+        i_vstart          : i_vstart,
+        i_hwidth          : i_hwidth,
+        i_vheight         : i_vheight,
+        i_hsw_hsp         : i_hsw_hsp,
+        i_vsw_vsp         : i_vsw_vsp,
+        i_mvid            : i_mvid,
+        i_nvid            : i_nvid,
+        i_misc            : i_misc,
+        i_tu_active       : i_tu_active,
+        i_pixel_byte      : fifo_byte,
+        i_pixel_empty     : fifo_empty,
+        o_pixel_pop       : fifo_pop,
+        o_valid           : vid_valid,
+        o_byte            : vid_byte,
+        o_is_k            : vid_is_k,
+        o_scramble_disable: vid_scramble_disable,
+    );
+
+    // ----- Source mux (training vs video) -----
+    var mux_valid:            logic;
+    var mux_byte:             logic<8>;
+    var mux_is_k:             logic;
+    var mux_scramble_disable: logic;
+
+    inst u_mux: main_link_data_mux (
+        i_pattern_select        : i_pattern_select,
+        i_train_valid           : tpg_valid,
+        i_train_byte            : tpg_data,
+        i_train_is_k            : tpg_is_k,
+        i_train_scramble_disable: tpg_scramble_disable,
+        i_video_valid           : vid_valid,
+        i_video_byte            : vid_byte,
+        i_video_is_k            : vid_is_k,
+        i_video_scramble_disable: vid_scramble_disable,
+        o_valid                 : mux_valid,
+        o_byte                  : mux_byte,
+        o_is_k                  : mux_is_k,
+        o_scramble_disable      : mux_scramble_disable,
+    );
+
+    // ----- Scrambler -----
     var sc_valid: logic;
     var sc_data:  logic<8>;
     var sc_is_k:  logic;
@@ -72,17 +162,16 @@ pub module main_link_tx_lane (
         i_clk             : i_clk,
         i_rstn            : i_rstn,
         i_seed_reset      : 1'b0,
-        i_scramble_disable: tpg_scramble_disable,
-        i_valid           : tpg_valid,
-        i_data            : tpg_data,
-        i_is_k            : tpg_is_k,
+        i_scramble_disable: mux_scramble_disable,
+        i_valid           : mux_valid,
+        i_data            : mux_byte,
+        i_is_k            : mux_is_k,
         o_valid           : sc_valid,
         o_data            : sc_data,
         o_is_k            : sc_is_k,
     );
 
-    // RD-reset request: latch CPU pulse until consumed by the encoder on
-    // the first valid byte that reaches it.
+    // RD-reset latching (Phase C semantics).
     var rd_reset_pending: logic;
     always_ff (i_clk, i_rstn) {
         if_reset {
@@ -98,7 +187,7 @@ pub module main_link_tx_lane (
     }
     let enc_rd_reset: logic = rd_reset_pending && sc_valid;
 
-    // 8B/10B encoder
+    // ----- 8B/10B encoder -----
     var enc_valid:  logic;
     var enc_symbol: logic<10>;
 
@@ -113,7 +202,7 @@ pub module main_link_tx_lane (
         o_symbol  : enc_symbol,
     );
 
-    // 10:1 serializer (sim-only; FPGA build replaces with vendor primitive).
+    // ----- 10:1 serializer -----
     inst u_ser: serializer_10to1 (
         i_clk      : i_clk,
         i_rstn     : i_rstn,

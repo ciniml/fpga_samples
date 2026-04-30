@@ -5,9 +5,8 @@
 //          https://www.boost.org/LICENSE_1_0.txt)
 /**
  * @file main_link_tx.veryl
- * @brief DisplayPort main-link TX wrapper. Phase C only instantiates a
- *        single lane; later phases extend this with per-lane skew and
- *        2/4-lane support.
+ * @brief DisplayPort main-link TX wrapper. Phase D forwards video pipeline
+ *        ports through to a single lane instance.
  */
 
 pub module main_link_tx (
@@ -17,8 +16,27 @@ pub module main_link_tx (
     i_pattern_select: input logic<2>,
     i_enable:         input logic,
     i_rd_reset:       input logic,
-    // Lane count is plumbed through but only lane 0 is wired in Phase C.
     i_lane_count:     input logic<3>,
+
+    // Video pipeline inputs (forwarded to lane 0 in Phase D).
+    i_video_enable: input logic,
+    i_htotal:       input logic<16>,
+    i_vtotal:       input logic<16>,
+    i_hstart:       input logic<16>,
+    i_vstart:       input logic<16>,
+    i_hwidth:       input logic<16>,
+    i_vheight:      input logic<16>,
+    i_hsw_hsp:      input logic<16>,
+    i_vsw_vsp:      input logic<16>,
+    i_mvid:         input logic<24>,
+    i_nvid:         input logic<24>,
+    i_misc:         input logic<16>,
+    i_tu_active:    input logic<7>,
+
+    // AXI-Stream pixel input (24bpp RGB)
+    s_axis_tvalid: input  logic,
+    s_axis_tready: output logic,
+    s_axis_tdata:  input  logic<24>,
 
     o_lane0_bit:       output logic,
     o_lane0_bit_valid: output logic,
@@ -31,6 +49,22 @@ pub module main_link_tx (
         i_pattern_select: i_pattern_select,
         i_enable        : i_enable,
         i_rd_reset      : i_rd_reset,
+        i_video_enable  : i_video_enable,
+        i_htotal        : i_htotal,
+        i_vtotal        : i_vtotal,
+        i_hstart        : i_hstart,
+        i_vstart        : i_vstart,
+        i_hwidth        : i_hwidth,
+        i_vheight       : i_vheight,
+        i_hsw_hsp       : i_hsw_hsp,
+        i_vsw_vsp       : i_vsw_vsp,
+        i_mvid          : i_mvid,
+        i_nvid          : i_nvid,
+        i_misc          : i_misc,
+        i_tu_active     : i_tu_active,
+        s_axis_tvalid   : s_axis_tvalid,
+        s_axis_tready   : s_axis_tready,
+        s_axis_tdata    : s_axis_tdata,
         o_bit           : o_lane0_bit,
         o_bit_valid     : o_lane0_bit_valid,
     );

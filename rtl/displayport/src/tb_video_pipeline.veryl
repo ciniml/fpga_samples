@@ -1,0 +1,294 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_video_pipeline.veryl
+ * @brief Phase D integration TB. Drives a 64x16 24bpp RGB frame through
+ *        the source's AXI-Stream pixel input after link training, and
+ *        recovers the pixel stream from the source's main-link byte
+ *        output (tapped pre-scrambler) to verify a full pixel round-trip.
+ */
+
+module TbVideoPipeline {}
+
+#[test(video_pipeline_full)]
+embed (inline) sv{{{
+module video_pipeline_full;
+    parameter int unsigned CLOCK_HZ            = 32'd100_000_000;
+    parameter int unsigned MANCHESTER_CLOCK_HZ = 32'd1_000_000;
+    parameter int unsigned PROCESSOR_ROM_SIZE  = 32'd16384;
+    parameter int unsigned PROCESSOR_RAM_SIZE  = 32'd8192;
+
+    localparam int unsigned FRAME_W = 64;
+    localparam int unsigned FRAME_H = 16;
+
+    logic clk;
+    logic rstn;
+    initial clk = 1'b0;
+    always #5 clk = ~clk;
+
+    logic [1:0]  aux_out;
+    logic [1:0]  aux_oen;
+    logic [1:0]  aux_in;
+    logic [1:0]  hpd;
+    logic [31:0] cpu_out [0:1];
+
+    logic [1:0]  lane0_bit;
+    logic [1:0]  lane0_bit_valid;
+
+    assign aux_in[0] = aux_oen[1] ? aux_out[1] : 1'b0;
+    assign aux_in[1] = aux_oen[0] ? aux_out[0] : 1'b0;
+
+    // CPU0's pixel input (driven by TB).
+    logic        pix_tvalid;
+    logic        pix_tready;
+    logic [23:0] pix_tdata;
+
+    genvar i;
+    generate
+        for (i = 0; i < 2; i++) begin: g
+            logic       ser_valid;
+            logic [7:0] ser_data;
+
+            // Only CPU0 (i==0) gets the TB-driven pixel stream. CPU1's pixel
+            // input is tied off.
+            logic        local_pix_tvalid;
+            logic        local_pix_tready;
+            logic [23:0] local_pix_tdata;
+            assign local_pix_tvalid = (i == 0) ? pix_tvalid : 1'b0;
+            assign local_pix_tdata  = (i == 0) ? pix_tdata  : 24'h000000;
+
+            displayport_dp_source_top #(
+                .CLOCK_HZ(CLOCK_HZ),
+                .MANCHESTER_CLOCK_HZ(MANCHESTER_CLOCK_HZ),
+                .PROCESSOR_ID(32'(i)),
+                .PROCESSOR_ROM_SIZE(PROCESSOR_ROM_SIZE),
+                .PROCESSOR_RAM_SIZE(PROCESSOR_RAM_SIZE)
+            ) dut (
+                .i_clk                  (clk),
+                .i_rstn                 (rstn),
+                .aux_ch_in              (aux_in[i]),
+                .aux_ch_out              (aux_out[i]),
+                .aux_ch_out_enable      (aux_oen[i]),
+                .hpd_in                 (hpd[i]),
+                .cpu_io_out             (cpu_out[i]),
+                .saxis_serial_in_tvalid (1'b0),
+                .saxis_serial_in_tready (),
+                .saxis_serial_in_tdata  (8'h00),
+                .maxis_serial_out_tvalid(ser_valid),
+                .maxis_serial_out_tready(1'b1),
+                .maxis_serial_out_tdata (ser_data),
+                .o_lane0_bit            (lane0_bit[i]),
+                .o_lane0_bit_valid      (lane0_bit_valid[i]),
+                .s_axis_video_tvalid    (local_pix_tvalid),
+                .s_axis_video_tready    (local_pix_tready),
+                .s_axis_video_tdata     (local_pix_tdata)
+            );
+
+            string line_buf;
+            always_ff @(posedge clk) begin
+                if (!rstn) begin
+                    line_buf = "";
+                end else if (ser_valid) begin
+                    if (ser_data == 8'h0a) begin
+                        $display("[%0d] %s", i, line_buf);
+                        $fflush(1);
+                        line_buf = "";
+                    end else begin
+                        line_buf = {line_buf, ser_data};
+                    end
+                end
+            end
+        end
+    endgenerate
+
+    assign pix_tready = g[0].local_pix_tready;
+
+    // ----- TB-side frame parser: taps the pre-scrambler byte stream from
+    //       CPU0's main_link mux. Verifies BS / VBID / pixel layout.
+    wire        tx_valid = g[0].dut.main_link.u_lane0.u_mux.o_valid;
+    wire [7:0]  tx_byte  = g[0].dut.main_link.u_lane0.u_mux.o_byte;
+    wire        tx_is_k  = g[0].dut.main_link.u_lane0.u_mux.o_is_k;
+
+    typedef enum logic [2:0] {
+        PS_WAIT_BS    = 3'd0,
+        PS_GOT_BS     = 3'd1, // next byte: VBID
+        PS_GOT_VBID   = 3'd2, // next byte: Mvid (skip)
+        PS_GOT_MVID   = 3'd3, // next byte: Maud (skip)
+        PS_VBLANK     = 3'd4, // skip until next BS
+        PS_WAIT_BE    = 3'd5, // active line: skip until BE
+        PS_ACTIVE     = 3'd6  // active line: collect data bytes
+    } parse_state_t;
+
+    parse_state_t pstate;
+    logic         line_is_vblank;
+    logic         in_stuffing;
+    integer       active_line_count;
+    integer       pixels_collected_this_line;
+    logic [7:0]   recovered_bytes [0:FRAME_W * FRAME_H * 3 - 1];
+    integer       recovered_index;
+    integer       parse_errors;
+
+
+    always_ff @(posedge clk) begin
+        if (!rstn) begin
+            pstate                     <= PS_WAIT_BS;
+            line_is_vblank             <= 1'b0;
+            in_stuffing                <= 1'b0;
+            active_line_count          <= 0;
+            pixels_collected_this_line <= 0;
+            recovered_index            <= 0;
+            parse_errors               <= 0;
+        end else if (tx_valid) begin
+            case (pstate)
+                PS_WAIT_BS: begin
+                    if (tx_is_k && tx_byte == 8'hBC) begin
+                        pstate <= PS_GOT_BS;
+                    end
+                end
+                PS_GOT_BS: begin
+                    line_is_vblank <= tx_byte[0];
+                    pstate         <= PS_GOT_VBID;
+                end
+                PS_GOT_VBID: pstate <= PS_GOT_MVID; // Mvid byte, ignore
+                PS_GOT_MVID: begin
+                    // Maud byte, ignore. Next state depends on line type.
+                    if (line_is_vblank) pstate <= PS_VBLANK;
+                    else                 pstate <= PS_WAIT_BE;
+                end
+                PS_VBLANK: begin
+                    if (tx_is_k && tx_byte == 8'hBC) begin
+                        pstate <= PS_GOT_BS;
+                    end
+                end
+                PS_WAIT_BE: begin
+                    if (tx_is_k && tx_byte == 8'hFB) begin
+                        pstate                     <= PS_ACTIVE;
+                        in_stuffing                <= 1'b0;
+                        pixels_collected_this_line <= 0;
+                    end else if (tx_is_k && tx_byte == 8'hBC) begin
+                        // Unexpected BS without BE — skip line.
+                        pstate <= PS_GOT_BS;
+                    end
+                end
+                PS_ACTIVE: begin
+                    if (tx_is_k && tx_byte == 8'hBC) begin
+                        // Line ended.
+                        if (pixels_collected_this_line != FRAME_W * 3) begin
+                            $display("[tb_video] line %0d: collected %0d bytes (expected %0d)",
+                                     active_line_count, pixels_collected_this_line, FRAME_W * 3);
+                            parse_errors <= parse_errors + 1;
+                        end
+                        active_line_count <= active_line_count + 1;
+                        pstate            <= PS_GOT_BS;
+                    end else if (tx_is_k && tx_byte == 8'h9C) begin
+                        // FS — start of stuffing.
+                        in_stuffing <= 1'b1;
+                    end else if (tx_is_k && tx_byte == 8'hFC) begin
+                        // FE — end of stuffing.
+                        in_stuffing <= 1'b0;
+                    end else if (!tx_is_k && !in_stuffing) begin
+                        if (recovered_index < FRAME_W * FRAME_H * 3) begin
+                            recovered_bytes[recovered_index] <= tx_byte;
+                            recovered_index                  <= recovered_index + 1;
+                            pixels_collected_this_line       <= pixels_collected_this_line + 1;
+                        end
+                    end
+                end
+                default: pstate <= PS_WAIT_BS;
+            endcase
+        end
+    end
+
+    // ----- TB stimulus: pixel pattern generator + control flow -----
+    initial begin
+        $readmemh("bootrom-rs.hex", g[0].dut.aux_subsystem.processor_rom);
+        $readmemh("bootrom-rs.hex", g[1].dut.aux_subsystem.processor_rom);
+
+        rstn       = 1'b0;
+        hpd[0]     = 1'b0;
+        hpd[1]     = 1'b0;
+        pix_tvalid = 1'b0;
+        pix_tdata  = 24'h000000;
+        repeat (16) @(posedge clk);
+        rstn = 1'b1;
+
+        repeat (2000) @(posedge clk);
+        $display("[TB] asserting HPD on CPU0");
+        hpd[0] = 1'b1;
+
+        $display("[TB] all %0d pixels streamed; waiting for frame parser to finish.",
+                 FRAME_W * FRAME_H);
+
+        // Wait for parser to collect a full frame (or timeout).
+        for (int t = 0; t < 50_000_000; t++) begin
+            @(posedge clk);
+            if (recovered_index >= FRAME_W * FRAME_H * 3) break;
+        end
+
+        if (recovered_index < FRAME_W * FRAME_H * 3) begin
+            $fatal(1, "[TB] parser collected only %0d / %0d bytes",
+                   recovered_index, FRAME_W * FRAME_H * 3);
+        end
+
+        // Compare against expected.
+        for (int y = 0; y < FRAME_H; y++) begin
+            for (int x = 0; x < FRAME_W; x++) begin
+                int idx;
+                logic [7:0] er, eg, eb;
+                idx = (y * FRAME_W + x) * 3;
+                er  = x[7:0];
+                eg  = y[7:0];
+                eb  = (x + y) & 8'hFF;
+                if (recovered_bytes[idx]   !== er ||
+                    recovered_bytes[idx+1] !== eg ||
+                    recovered_bytes[idx+2] !== eb) begin
+                    $display("[TB] pixel (%0d,%0d) mismatch: expected (%02h,%02h,%02h) got (%02h,%02h,%02h)",
+                             x, y, er, eg, eb,
+                             recovered_bytes[idx], recovered_bytes[idx+1], recovered_bytes[idx+2]);
+                    parse_errors = parse_errors + 1;
+                end
+            end
+        end
+
+        if (parse_errors != 0) begin
+            $fatal(1, "[TB] %0d pixel mismatches", parse_errors);
+        end
+
+        $display("[TB] PASS: %0d pixels reconstructed cleanly.",
+                 FRAME_W * FRAME_H);
+        $finish;
+    end
+
+    initial begin
+        #200_000_000;
+        $fatal(1, "[TB] timeout");
+    end
+
+    // ----- Pixel pump: starts feeding the FIFO as soon as HPD is asserted,
+    //       so the FIFO is primed before firmware enables the video pipeline.
+    //       The FIFO backpressures via tready, so the loop self-paces.
+    initial begin
+        @(posedge rstn);
+        wait (hpd[0] == 1'b1);
+        // NOTE: assigning x[7:0] / y[7:0] directly inside the concatenation
+        // expression yields 0 under Verilator (int slicing quirk). Stage them
+        // through 8-bit logic locals first.
+        for (int y = 0; y < FRAME_H; y++) begin
+            for (int x = 0; x < FRAME_W; x++) begin
+                logic [7:0] xb, yb, bb;
+                xb = x[7:0];
+                yb = y[7:0];
+                bb = (x + y) & 32'hFF;
+                pix_tdata  = {xb, yb, bb};
+                pix_tvalid = 1'b1;
+                @(posedge clk);
+                while (!pix_tready) @(posedge clk);
+            end
+        end
+        pix_tvalid = 1'b0;
+    end
+endmodule
+}}}

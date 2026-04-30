@@ -2560,6 +2560,1215 @@ pub mod main_link {
         }
     }
 }
+#[doc = "DisplayPort video pipeline (Phase D). Sync clock mode."]
+pub struct VIDEO {
+    _marker: PhantomData<*const ()>,
+}
+unsafe impl Send for VIDEO {}
+impl VIDEO {
+    #[doc = r"Pointer to the register block"]
+    pub const PTR: *const video::RegisterBlock = 0x4003_0000 as *const _;
+    #[doc = r"Return the pointer to the register block"]
+    #[inline(always)]
+    pub const fn ptr() -> *const video::RegisterBlock {
+        Self::PTR
+    }
+}
+impl Deref for VIDEO {
+    type Target = video::RegisterBlock;
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*Self::PTR }
+    }
+}
+impl core::fmt::Debug for VIDEO {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        f.debug_struct("VIDEO").finish()
+    }
+}
+#[doc = "DisplayPort video pipeline (Phase D). Sync clock mode."]
+pub mod video {
+    #[doc = r"Register block"]
+    #[repr(C)]
+    pub struct RegisterBlock {
+        #[doc = "0x00 - Video control. ENABLE=1 starts framing video using the configured MSA fields."]
+        pub ctrl: CTRL,
+        #[doc = "0x04 - "]
+        pub htotal: HTOTAL,
+        #[doc = "0x08 - "]
+        pub vtotal: VTOTAL,
+        #[doc = "0x0c - "]
+        pub hstart: HSTART,
+        #[doc = "0x10 - "]
+        pub vstart: VSTART,
+        #[doc = "0x14 - "]
+        pub hwidth: HWIDTH,
+        #[doc = "0x18 - "]
+        pub vheight: VHEIGHT,
+        #[doc = "0x1c - Horizontal sync. \\[14:0\\]=HSW, \\[15\\]=HSP polarity."]
+        pub hsw_hsp: HSW_HSP,
+        #[doc = "0x20 - Vertical sync. \\[14:0\\]=VSW, \\[15\\]=VSP polarity."]
+        pub vsw_vsp: VSW_VSP,
+        #[doc = "0x24 - "]
+        pub mvid: MVID,
+        #[doc = "0x28 - "]
+        pub nvid: NVID,
+        #[doc = "0x2c - 7:0\\]=MISC0, \\[15:8\\]=MISC1."]
+        pub misc: MISC,
+        #[doc = "0x30 - Number of active (valid pixel) bytes per 64-symbol TU. CPU computes from Mvid/Nvid."]
+        pub tu_active: TU_ACTIVE,
+    }
+    #[doc = "CTRL (rw) register accessor: an alias for `Reg<CTRL_SPEC>`"]
+    pub type CTRL = crate::Reg<ctrl::CTRL_SPEC>;
+    #[doc = "Video control. ENABLE=1 starts framing video using the configured MSA fields."]
+    pub mod ctrl {
+        #[doc = "Register `CTRL` reader"]
+        pub struct R(crate::R<CTRL_SPEC>);
+        impl core::ops::Deref for R {
+            type Target = crate::R<CTRL_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl From<crate::R<CTRL_SPEC>> for R {
+            #[inline(always)]
+            fn from(reader: crate::R<CTRL_SPEC>) -> Self {
+                R(reader)
+            }
+        }
+        #[doc = "Register `CTRL` writer"]
+        pub struct W(crate::W<CTRL_SPEC>);
+        impl core::ops::Deref for W {
+            type Target = crate::W<CTRL_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl core::ops::DerefMut for W {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+        impl From<crate::W<CTRL_SPEC>> for W {
+            #[inline(always)]
+            fn from(writer: crate::W<CTRL_SPEC>) -> Self {
+                W(writer)
+            }
+        }
+        #[doc = "Field `ENABLE` reader - "]
+        pub type ENABLE_R = crate::BitReader;
+        #[doc = "Field `ENABLE` writer - "]
+        pub type ENABLE_W<'a, const O: u8> = crate::BitWriter<'a, CTRL_SPEC, O>;
+        impl R {
+            #[doc = "Bit 0"]
+            #[inline(always)]
+            pub fn enable(&self) -> ENABLE_R {
+                ENABLE_R::new((self.bits & 1) != 0)
+            }
+        }
+        impl W {
+            #[doc = "Bit 0"]
+            #[inline(always)]
+            #[must_use]
+            pub fn enable(&mut self) -> ENABLE_W<0> {
+                ENABLE_W::new(self)
+            }
+            #[doc = "Writes raw bits to the register."]
+            #[inline(always)]
+            pub unsafe fn bits(&mut self, bits: u32) -> &mut Self {
+                self.0.bits(bits);
+                self
+            }
+        }
+        #[doc = "Video control. ENABLE=1 starts framing video using the configured MSA fields.\n\nThis register you can [`read`](crate::generic::Reg::read), [`write_with_zero`](crate::generic::Reg::write_with_zero), [`reset`](crate::generic::Reg::reset), [`write`](crate::generic::Reg::write), [`modify`](crate::generic::Reg::modify). See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [ctrl](index.html) module"]
+        pub struct CTRL_SPEC;
+        impl crate::RegisterSpec for CTRL_SPEC {
+            type Ux = u32;
+        }
+        #[doc = "`read()` method returns [ctrl::R](R) reader structure"]
+        impl crate::Readable for CTRL_SPEC {
+            type Reader = R;
+        }
+        #[doc = "`write(|w| ..)` method takes [ctrl::W](W) writer structure"]
+        impl crate::Writable for CTRL_SPEC {
+            type Writer = W;
+            const ZERO_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+            const ONE_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+        }
+        #[doc = "`reset()` method sets CTRL to value 0"]
+        impl crate::Resettable for CTRL_SPEC {
+            const RESET_VALUE: Self::Ux = 0;
+        }
+    }
+    #[doc = "HTOTAL (rw) register accessor: an alias for `Reg<HTOTAL_SPEC>`"]
+    pub type HTOTAL = crate::Reg<htotal::HTOTAL_SPEC>;
+    #[doc = ""]
+    pub mod htotal {
+        #[doc = "Register `HTOTAL` reader"]
+        pub struct R(crate::R<HTOTAL_SPEC>);
+        impl core::ops::Deref for R {
+            type Target = crate::R<HTOTAL_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl From<crate::R<HTOTAL_SPEC>> for R {
+            #[inline(always)]
+            fn from(reader: crate::R<HTOTAL_SPEC>) -> Self {
+                R(reader)
+            }
+        }
+        #[doc = "Register `HTOTAL` writer"]
+        pub struct W(crate::W<HTOTAL_SPEC>);
+        impl core::ops::Deref for W {
+            type Target = crate::W<HTOTAL_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl core::ops::DerefMut for W {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+        impl From<crate::W<HTOTAL_SPEC>> for W {
+            #[inline(always)]
+            fn from(writer: crate::W<HTOTAL_SPEC>) -> Self {
+                W(writer)
+            }
+        }
+        #[doc = "Field `VALUE` reader - "]
+        pub type VALUE_R = crate::FieldReader<u16>;
+        #[doc = "Field `VALUE` writer - "]
+        pub type VALUE_W<'a, const O: u8> = crate::FieldWriter<'a, HTOTAL_SPEC, 16, O, u16>;
+        impl R {
+            #[doc = "Bits 0:15"]
+            #[inline(always)]
+            pub fn value(&self) -> VALUE_R {
+                VALUE_R::new((self.bits & 0xffff) as u16)
+            }
+        }
+        impl W {
+            #[doc = "Bits 0:15"]
+            #[inline(always)]
+            #[must_use]
+            pub fn value(&mut self) -> VALUE_W<0> {
+                VALUE_W::new(self)
+            }
+            #[doc = "Writes raw bits to the register."]
+            #[inline(always)]
+            pub unsafe fn bits(&mut self, bits: u32) -> &mut Self {
+                self.0.bits(bits);
+                self
+            }
+        }
+        #[doc = "\n\nThis register you can [`read`](crate::generic::Reg::read), [`write_with_zero`](crate::generic::Reg::write_with_zero), [`reset`](crate::generic::Reg::reset), [`write`](crate::generic::Reg::write), [`modify`](crate::generic::Reg::modify). See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [htotal](index.html) module"]
+        pub struct HTOTAL_SPEC;
+        impl crate::RegisterSpec for HTOTAL_SPEC {
+            type Ux = u32;
+        }
+        #[doc = "`read()` method returns [htotal::R](R) reader structure"]
+        impl crate::Readable for HTOTAL_SPEC {
+            type Reader = R;
+        }
+        #[doc = "`write(|w| ..)` method takes [htotal::W](W) writer structure"]
+        impl crate::Writable for HTOTAL_SPEC {
+            type Writer = W;
+            const ZERO_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+            const ONE_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+        }
+        #[doc = "`reset()` method sets HTOTAL to value 0"]
+        impl crate::Resettable for HTOTAL_SPEC {
+            const RESET_VALUE: Self::Ux = 0;
+        }
+    }
+    #[doc = "VTOTAL (rw) register accessor: an alias for `Reg<VTOTAL_SPEC>`"]
+    pub type VTOTAL = crate::Reg<vtotal::VTOTAL_SPEC>;
+    #[doc = ""]
+    pub mod vtotal {
+        #[doc = "Register `VTOTAL` reader"]
+        pub struct R(crate::R<VTOTAL_SPEC>);
+        impl core::ops::Deref for R {
+            type Target = crate::R<VTOTAL_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl From<crate::R<VTOTAL_SPEC>> for R {
+            #[inline(always)]
+            fn from(reader: crate::R<VTOTAL_SPEC>) -> Self {
+                R(reader)
+            }
+        }
+        #[doc = "Register `VTOTAL` writer"]
+        pub struct W(crate::W<VTOTAL_SPEC>);
+        impl core::ops::Deref for W {
+            type Target = crate::W<VTOTAL_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl core::ops::DerefMut for W {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+        impl From<crate::W<VTOTAL_SPEC>> for W {
+            #[inline(always)]
+            fn from(writer: crate::W<VTOTAL_SPEC>) -> Self {
+                W(writer)
+            }
+        }
+        #[doc = "Field `VALUE` reader - "]
+        pub type VALUE_R = crate::FieldReader<u16>;
+        #[doc = "Field `VALUE` writer - "]
+        pub type VALUE_W<'a, const O: u8> = crate::FieldWriter<'a, VTOTAL_SPEC, 16, O, u16>;
+        impl R {
+            #[doc = "Bits 0:15"]
+            #[inline(always)]
+            pub fn value(&self) -> VALUE_R {
+                VALUE_R::new((self.bits & 0xffff) as u16)
+            }
+        }
+        impl W {
+            #[doc = "Bits 0:15"]
+            #[inline(always)]
+            #[must_use]
+            pub fn value(&mut self) -> VALUE_W<0> {
+                VALUE_W::new(self)
+            }
+            #[doc = "Writes raw bits to the register."]
+            #[inline(always)]
+            pub unsafe fn bits(&mut self, bits: u32) -> &mut Self {
+                self.0.bits(bits);
+                self
+            }
+        }
+        #[doc = "\n\nThis register you can [`read`](crate::generic::Reg::read), [`write_with_zero`](crate::generic::Reg::write_with_zero), [`reset`](crate::generic::Reg::reset), [`write`](crate::generic::Reg::write), [`modify`](crate::generic::Reg::modify). See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [vtotal](index.html) module"]
+        pub struct VTOTAL_SPEC;
+        impl crate::RegisterSpec for VTOTAL_SPEC {
+            type Ux = u32;
+        }
+        #[doc = "`read()` method returns [vtotal::R](R) reader structure"]
+        impl crate::Readable for VTOTAL_SPEC {
+            type Reader = R;
+        }
+        #[doc = "`write(|w| ..)` method takes [vtotal::W](W) writer structure"]
+        impl crate::Writable for VTOTAL_SPEC {
+            type Writer = W;
+            const ZERO_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+            const ONE_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+        }
+        #[doc = "`reset()` method sets VTOTAL to value 0"]
+        impl crate::Resettable for VTOTAL_SPEC {
+            const RESET_VALUE: Self::Ux = 0;
+        }
+    }
+    #[doc = "HSTART (rw) register accessor: an alias for `Reg<HSTART_SPEC>`"]
+    pub type HSTART = crate::Reg<hstart::HSTART_SPEC>;
+    #[doc = ""]
+    pub mod hstart {
+        #[doc = "Register `HSTART` reader"]
+        pub struct R(crate::R<HSTART_SPEC>);
+        impl core::ops::Deref for R {
+            type Target = crate::R<HSTART_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl From<crate::R<HSTART_SPEC>> for R {
+            #[inline(always)]
+            fn from(reader: crate::R<HSTART_SPEC>) -> Self {
+                R(reader)
+            }
+        }
+        #[doc = "Register `HSTART` writer"]
+        pub struct W(crate::W<HSTART_SPEC>);
+        impl core::ops::Deref for W {
+            type Target = crate::W<HSTART_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl core::ops::DerefMut for W {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+        impl From<crate::W<HSTART_SPEC>> for W {
+            #[inline(always)]
+            fn from(writer: crate::W<HSTART_SPEC>) -> Self {
+                W(writer)
+            }
+        }
+        #[doc = "Field `VALUE` reader - "]
+        pub type VALUE_R = crate::FieldReader<u16>;
+        #[doc = "Field `VALUE` writer - "]
+        pub type VALUE_W<'a, const O: u8> = crate::FieldWriter<'a, HSTART_SPEC, 16, O, u16>;
+        impl R {
+            #[doc = "Bits 0:15"]
+            #[inline(always)]
+            pub fn value(&self) -> VALUE_R {
+                VALUE_R::new((self.bits & 0xffff) as u16)
+            }
+        }
+        impl W {
+            #[doc = "Bits 0:15"]
+            #[inline(always)]
+            #[must_use]
+            pub fn value(&mut self) -> VALUE_W<0> {
+                VALUE_W::new(self)
+            }
+            #[doc = "Writes raw bits to the register."]
+            #[inline(always)]
+            pub unsafe fn bits(&mut self, bits: u32) -> &mut Self {
+                self.0.bits(bits);
+                self
+            }
+        }
+        #[doc = "\n\nThis register you can [`read`](crate::generic::Reg::read), [`write_with_zero`](crate::generic::Reg::write_with_zero), [`reset`](crate::generic::Reg::reset), [`write`](crate::generic::Reg::write), [`modify`](crate::generic::Reg::modify). See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [hstart](index.html) module"]
+        pub struct HSTART_SPEC;
+        impl crate::RegisterSpec for HSTART_SPEC {
+            type Ux = u32;
+        }
+        #[doc = "`read()` method returns [hstart::R](R) reader structure"]
+        impl crate::Readable for HSTART_SPEC {
+            type Reader = R;
+        }
+        #[doc = "`write(|w| ..)` method takes [hstart::W](W) writer structure"]
+        impl crate::Writable for HSTART_SPEC {
+            type Writer = W;
+            const ZERO_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+            const ONE_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+        }
+        #[doc = "`reset()` method sets HSTART to value 0"]
+        impl crate::Resettable for HSTART_SPEC {
+            const RESET_VALUE: Self::Ux = 0;
+        }
+    }
+    #[doc = "VSTART (rw) register accessor: an alias for `Reg<VSTART_SPEC>`"]
+    pub type VSTART = crate::Reg<vstart::VSTART_SPEC>;
+    #[doc = ""]
+    pub mod vstart {
+        #[doc = "Register `VSTART` reader"]
+        pub struct R(crate::R<VSTART_SPEC>);
+        impl core::ops::Deref for R {
+            type Target = crate::R<VSTART_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl From<crate::R<VSTART_SPEC>> for R {
+            #[inline(always)]
+            fn from(reader: crate::R<VSTART_SPEC>) -> Self {
+                R(reader)
+            }
+        }
+        #[doc = "Register `VSTART` writer"]
+        pub struct W(crate::W<VSTART_SPEC>);
+        impl core::ops::Deref for W {
+            type Target = crate::W<VSTART_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl core::ops::DerefMut for W {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+        impl From<crate::W<VSTART_SPEC>> for W {
+            #[inline(always)]
+            fn from(writer: crate::W<VSTART_SPEC>) -> Self {
+                W(writer)
+            }
+        }
+        #[doc = "Field `VALUE` reader - "]
+        pub type VALUE_R = crate::FieldReader<u16>;
+        #[doc = "Field `VALUE` writer - "]
+        pub type VALUE_W<'a, const O: u8> = crate::FieldWriter<'a, VSTART_SPEC, 16, O, u16>;
+        impl R {
+            #[doc = "Bits 0:15"]
+            #[inline(always)]
+            pub fn value(&self) -> VALUE_R {
+                VALUE_R::new((self.bits & 0xffff) as u16)
+            }
+        }
+        impl W {
+            #[doc = "Bits 0:15"]
+            #[inline(always)]
+            #[must_use]
+            pub fn value(&mut self) -> VALUE_W<0> {
+                VALUE_W::new(self)
+            }
+            #[doc = "Writes raw bits to the register."]
+            #[inline(always)]
+            pub unsafe fn bits(&mut self, bits: u32) -> &mut Self {
+                self.0.bits(bits);
+                self
+            }
+        }
+        #[doc = "\n\nThis register you can [`read`](crate::generic::Reg::read), [`write_with_zero`](crate::generic::Reg::write_with_zero), [`reset`](crate::generic::Reg::reset), [`write`](crate::generic::Reg::write), [`modify`](crate::generic::Reg::modify). See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [vstart](index.html) module"]
+        pub struct VSTART_SPEC;
+        impl crate::RegisterSpec for VSTART_SPEC {
+            type Ux = u32;
+        }
+        #[doc = "`read()` method returns [vstart::R](R) reader structure"]
+        impl crate::Readable for VSTART_SPEC {
+            type Reader = R;
+        }
+        #[doc = "`write(|w| ..)` method takes [vstart::W](W) writer structure"]
+        impl crate::Writable for VSTART_SPEC {
+            type Writer = W;
+            const ZERO_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+            const ONE_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+        }
+        #[doc = "`reset()` method sets VSTART to value 0"]
+        impl crate::Resettable for VSTART_SPEC {
+            const RESET_VALUE: Self::Ux = 0;
+        }
+    }
+    #[doc = "HWIDTH (rw) register accessor: an alias for `Reg<HWIDTH_SPEC>`"]
+    pub type HWIDTH = crate::Reg<hwidth::HWIDTH_SPEC>;
+    #[doc = ""]
+    pub mod hwidth {
+        #[doc = "Register `HWIDTH` reader"]
+        pub struct R(crate::R<HWIDTH_SPEC>);
+        impl core::ops::Deref for R {
+            type Target = crate::R<HWIDTH_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl From<crate::R<HWIDTH_SPEC>> for R {
+            #[inline(always)]
+            fn from(reader: crate::R<HWIDTH_SPEC>) -> Self {
+                R(reader)
+            }
+        }
+        #[doc = "Register `HWIDTH` writer"]
+        pub struct W(crate::W<HWIDTH_SPEC>);
+        impl core::ops::Deref for W {
+            type Target = crate::W<HWIDTH_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl core::ops::DerefMut for W {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+        impl From<crate::W<HWIDTH_SPEC>> for W {
+            #[inline(always)]
+            fn from(writer: crate::W<HWIDTH_SPEC>) -> Self {
+                W(writer)
+            }
+        }
+        #[doc = "Field `VALUE` reader - "]
+        pub type VALUE_R = crate::FieldReader<u16>;
+        #[doc = "Field `VALUE` writer - "]
+        pub type VALUE_W<'a, const O: u8> = crate::FieldWriter<'a, HWIDTH_SPEC, 16, O, u16>;
+        impl R {
+            #[doc = "Bits 0:15"]
+            #[inline(always)]
+            pub fn value(&self) -> VALUE_R {
+                VALUE_R::new((self.bits & 0xffff) as u16)
+            }
+        }
+        impl W {
+            #[doc = "Bits 0:15"]
+            #[inline(always)]
+            #[must_use]
+            pub fn value(&mut self) -> VALUE_W<0> {
+                VALUE_W::new(self)
+            }
+            #[doc = "Writes raw bits to the register."]
+            #[inline(always)]
+            pub unsafe fn bits(&mut self, bits: u32) -> &mut Self {
+                self.0.bits(bits);
+                self
+            }
+        }
+        #[doc = "\n\nThis register you can [`read`](crate::generic::Reg::read), [`write_with_zero`](crate::generic::Reg::write_with_zero), [`reset`](crate::generic::Reg::reset), [`write`](crate::generic::Reg::write), [`modify`](crate::generic::Reg::modify). See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [hwidth](index.html) module"]
+        pub struct HWIDTH_SPEC;
+        impl crate::RegisterSpec for HWIDTH_SPEC {
+            type Ux = u32;
+        }
+        #[doc = "`read()` method returns [hwidth::R](R) reader structure"]
+        impl crate::Readable for HWIDTH_SPEC {
+            type Reader = R;
+        }
+        #[doc = "`write(|w| ..)` method takes [hwidth::W](W) writer structure"]
+        impl crate::Writable for HWIDTH_SPEC {
+            type Writer = W;
+            const ZERO_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+            const ONE_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+        }
+        #[doc = "`reset()` method sets HWIDTH to value 0"]
+        impl crate::Resettable for HWIDTH_SPEC {
+            const RESET_VALUE: Self::Ux = 0;
+        }
+    }
+    #[doc = "VHEIGHT (rw) register accessor: an alias for `Reg<VHEIGHT_SPEC>`"]
+    pub type VHEIGHT = crate::Reg<vheight::VHEIGHT_SPEC>;
+    #[doc = ""]
+    pub mod vheight {
+        #[doc = "Register `VHEIGHT` reader"]
+        pub struct R(crate::R<VHEIGHT_SPEC>);
+        impl core::ops::Deref for R {
+            type Target = crate::R<VHEIGHT_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl From<crate::R<VHEIGHT_SPEC>> for R {
+            #[inline(always)]
+            fn from(reader: crate::R<VHEIGHT_SPEC>) -> Self {
+                R(reader)
+            }
+        }
+        #[doc = "Register `VHEIGHT` writer"]
+        pub struct W(crate::W<VHEIGHT_SPEC>);
+        impl core::ops::Deref for W {
+            type Target = crate::W<VHEIGHT_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl core::ops::DerefMut for W {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+        impl From<crate::W<VHEIGHT_SPEC>> for W {
+            #[inline(always)]
+            fn from(writer: crate::W<VHEIGHT_SPEC>) -> Self {
+                W(writer)
+            }
+        }
+        #[doc = "Field `VALUE` reader - "]
+        pub type VALUE_R = crate::FieldReader<u16>;
+        #[doc = "Field `VALUE` writer - "]
+        pub type VALUE_W<'a, const O: u8> = crate::FieldWriter<'a, VHEIGHT_SPEC, 16, O, u16>;
+        impl R {
+            #[doc = "Bits 0:15"]
+            #[inline(always)]
+            pub fn value(&self) -> VALUE_R {
+                VALUE_R::new((self.bits & 0xffff) as u16)
+            }
+        }
+        impl W {
+            #[doc = "Bits 0:15"]
+            #[inline(always)]
+            #[must_use]
+            pub fn value(&mut self) -> VALUE_W<0> {
+                VALUE_W::new(self)
+            }
+            #[doc = "Writes raw bits to the register."]
+            #[inline(always)]
+            pub unsafe fn bits(&mut self, bits: u32) -> &mut Self {
+                self.0.bits(bits);
+                self
+            }
+        }
+        #[doc = "\n\nThis register you can [`read`](crate::generic::Reg::read), [`write_with_zero`](crate::generic::Reg::write_with_zero), [`reset`](crate::generic::Reg::reset), [`write`](crate::generic::Reg::write), [`modify`](crate::generic::Reg::modify). See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [vheight](index.html) module"]
+        pub struct VHEIGHT_SPEC;
+        impl crate::RegisterSpec for VHEIGHT_SPEC {
+            type Ux = u32;
+        }
+        #[doc = "`read()` method returns [vheight::R](R) reader structure"]
+        impl crate::Readable for VHEIGHT_SPEC {
+            type Reader = R;
+        }
+        #[doc = "`write(|w| ..)` method takes [vheight::W](W) writer structure"]
+        impl crate::Writable for VHEIGHT_SPEC {
+            type Writer = W;
+            const ZERO_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+            const ONE_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+        }
+        #[doc = "`reset()` method sets VHEIGHT to value 0"]
+        impl crate::Resettable for VHEIGHT_SPEC {
+            const RESET_VALUE: Self::Ux = 0;
+        }
+    }
+    #[doc = "HSW_HSP (rw) register accessor: an alias for `Reg<HSW_HSP_SPEC>`"]
+    pub type HSW_HSP = crate::Reg<hsw_hsp::HSW_HSP_SPEC>;
+    #[doc = "Horizontal sync. \\[14:0\\]=HSW, \\[15\\]=HSP polarity."]
+    pub mod hsw_hsp {
+        #[doc = "Register `HSW_HSP` reader"]
+        pub struct R(crate::R<HSW_HSP_SPEC>);
+        impl core::ops::Deref for R {
+            type Target = crate::R<HSW_HSP_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl From<crate::R<HSW_HSP_SPEC>> for R {
+            #[inline(always)]
+            fn from(reader: crate::R<HSW_HSP_SPEC>) -> Self {
+                R(reader)
+            }
+        }
+        #[doc = "Register `HSW_HSP` writer"]
+        pub struct W(crate::W<HSW_HSP_SPEC>);
+        impl core::ops::Deref for W {
+            type Target = crate::W<HSW_HSP_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl core::ops::DerefMut for W {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+        impl From<crate::W<HSW_HSP_SPEC>> for W {
+            #[inline(always)]
+            fn from(writer: crate::W<HSW_HSP_SPEC>) -> Self {
+                W(writer)
+            }
+        }
+        #[doc = "Field `HSW` reader - "]
+        pub type HSW_R = crate::FieldReader<u16>;
+        #[doc = "Field `HSW` writer - "]
+        pub type HSW_W<'a, const O: u8> = crate::FieldWriter<'a, HSW_HSP_SPEC, 15, O, u16>;
+        #[doc = "Field `HSP` reader - "]
+        pub type HSP_R = crate::BitReader;
+        #[doc = "Field `HSP` writer - "]
+        pub type HSP_W<'a, const O: u8> = crate::BitWriter<'a, HSW_HSP_SPEC, O>;
+        impl R {
+            #[doc = "Bits 0:14"]
+            #[inline(always)]
+            pub fn hsw(&self) -> HSW_R {
+                HSW_R::new((self.bits & 0x7fff) as u16)
+            }
+            #[doc = "Bit 15"]
+            #[inline(always)]
+            pub fn hsp(&self) -> HSP_R {
+                HSP_R::new(((self.bits >> 15) & 1) != 0)
+            }
+        }
+        impl W {
+            #[doc = "Bits 0:14"]
+            #[inline(always)]
+            #[must_use]
+            pub fn hsw(&mut self) -> HSW_W<0> {
+                HSW_W::new(self)
+            }
+            #[doc = "Bit 15"]
+            #[inline(always)]
+            #[must_use]
+            pub fn hsp(&mut self) -> HSP_W<15> {
+                HSP_W::new(self)
+            }
+            #[doc = "Writes raw bits to the register."]
+            #[inline(always)]
+            pub unsafe fn bits(&mut self, bits: u32) -> &mut Self {
+                self.0.bits(bits);
+                self
+            }
+        }
+        #[doc = "Horizontal sync. \\[14:0\\]=HSW, \\[15\\]=HSP polarity.\n\nThis register you can [`read`](crate::generic::Reg::read), [`write_with_zero`](crate::generic::Reg::write_with_zero), [`reset`](crate::generic::Reg::reset), [`write`](crate::generic::Reg::write), [`modify`](crate::generic::Reg::modify). See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [hsw_hsp](index.html) module"]
+        pub struct HSW_HSP_SPEC;
+        impl crate::RegisterSpec for HSW_HSP_SPEC {
+            type Ux = u32;
+        }
+        #[doc = "`read()` method returns [hsw_hsp::R](R) reader structure"]
+        impl crate::Readable for HSW_HSP_SPEC {
+            type Reader = R;
+        }
+        #[doc = "`write(|w| ..)` method takes [hsw_hsp::W](W) writer structure"]
+        impl crate::Writable for HSW_HSP_SPEC {
+            type Writer = W;
+            const ZERO_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+            const ONE_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+        }
+        #[doc = "`reset()` method sets HSW_HSP to value 0"]
+        impl crate::Resettable for HSW_HSP_SPEC {
+            const RESET_VALUE: Self::Ux = 0;
+        }
+    }
+    #[doc = "VSW_VSP (rw) register accessor: an alias for `Reg<VSW_VSP_SPEC>`"]
+    pub type VSW_VSP = crate::Reg<vsw_vsp::VSW_VSP_SPEC>;
+    #[doc = "Vertical sync. \\[14:0\\]=VSW, \\[15\\]=VSP polarity."]
+    pub mod vsw_vsp {
+        #[doc = "Register `VSW_VSP` reader"]
+        pub struct R(crate::R<VSW_VSP_SPEC>);
+        impl core::ops::Deref for R {
+            type Target = crate::R<VSW_VSP_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl From<crate::R<VSW_VSP_SPEC>> for R {
+            #[inline(always)]
+            fn from(reader: crate::R<VSW_VSP_SPEC>) -> Self {
+                R(reader)
+            }
+        }
+        #[doc = "Register `VSW_VSP` writer"]
+        pub struct W(crate::W<VSW_VSP_SPEC>);
+        impl core::ops::Deref for W {
+            type Target = crate::W<VSW_VSP_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl core::ops::DerefMut for W {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+        impl From<crate::W<VSW_VSP_SPEC>> for W {
+            #[inline(always)]
+            fn from(writer: crate::W<VSW_VSP_SPEC>) -> Self {
+                W(writer)
+            }
+        }
+        #[doc = "Field `VSW` reader - "]
+        pub type VSW_R = crate::FieldReader<u16>;
+        #[doc = "Field `VSW` writer - "]
+        pub type VSW_W<'a, const O: u8> = crate::FieldWriter<'a, VSW_VSP_SPEC, 15, O, u16>;
+        #[doc = "Field `VSP` reader - "]
+        pub type VSP_R = crate::BitReader;
+        #[doc = "Field `VSP` writer - "]
+        pub type VSP_W<'a, const O: u8> = crate::BitWriter<'a, VSW_VSP_SPEC, O>;
+        impl R {
+            #[doc = "Bits 0:14"]
+            #[inline(always)]
+            pub fn vsw(&self) -> VSW_R {
+                VSW_R::new((self.bits & 0x7fff) as u16)
+            }
+            #[doc = "Bit 15"]
+            #[inline(always)]
+            pub fn vsp(&self) -> VSP_R {
+                VSP_R::new(((self.bits >> 15) & 1) != 0)
+            }
+        }
+        impl W {
+            #[doc = "Bits 0:14"]
+            #[inline(always)]
+            #[must_use]
+            pub fn vsw(&mut self) -> VSW_W<0> {
+                VSW_W::new(self)
+            }
+            #[doc = "Bit 15"]
+            #[inline(always)]
+            #[must_use]
+            pub fn vsp(&mut self) -> VSP_W<15> {
+                VSP_W::new(self)
+            }
+            #[doc = "Writes raw bits to the register."]
+            #[inline(always)]
+            pub unsafe fn bits(&mut self, bits: u32) -> &mut Self {
+                self.0.bits(bits);
+                self
+            }
+        }
+        #[doc = "Vertical sync. \\[14:0\\]=VSW, \\[15\\]=VSP polarity.\n\nThis register you can [`read`](crate::generic::Reg::read), [`write_with_zero`](crate::generic::Reg::write_with_zero), [`reset`](crate::generic::Reg::reset), [`write`](crate::generic::Reg::write), [`modify`](crate::generic::Reg::modify). See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [vsw_vsp](index.html) module"]
+        pub struct VSW_VSP_SPEC;
+        impl crate::RegisterSpec for VSW_VSP_SPEC {
+            type Ux = u32;
+        }
+        #[doc = "`read()` method returns [vsw_vsp::R](R) reader structure"]
+        impl crate::Readable for VSW_VSP_SPEC {
+            type Reader = R;
+        }
+        #[doc = "`write(|w| ..)` method takes [vsw_vsp::W](W) writer structure"]
+        impl crate::Writable for VSW_VSP_SPEC {
+            type Writer = W;
+            const ZERO_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+            const ONE_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+        }
+        #[doc = "`reset()` method sets VSW_VSP to value 0"]
+        impl crate::Resettable for VSW_VSP_SPEC {
+            const RESET_VALUE: Self::Ux = 0;
+        }
+    }
+    #[doc = "MVID (rw) register accessor: an alias for `Reg<MVID_SPEC>`"]
+    pub type MVID = crate::Reg<mvid::MVID_SPEC>;
+    #[doc = ""]
+    pub mod mvid {
+        #[doc = "Register `MVID` reader"]
+        pub struct R(crate::R<MVID_SPEC>);
+        impl core::ops::Deref for R {
+            type Target = crate::R<MVID_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl From<crate::R<MVID_SPEC>> for R {
+            #[inline(always)]
+            fn from(reader: crate::R<MVID_SPEC>) -> Self {
+                R(reader)
+            }
+        }
+        #[doc = "Register `MVID` writer"]
+        pub struct W(crate::W<MVID_SPEC>);
+        impl core::ops::Deref for W {
+            type Target = crate::W<MVID_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl core::ops::DerefMut for W {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+        impl From<crate::W<MVID_SPEC>> for W {
+            #[inline(always)]
+            fn from(writer: crate::W<MVID_SPEC>) -> Self {
+                W(writer)
+            }
+        }
+        #[doc = "Field `VALUE` reader - "]
+        pub type VALUE_R = crate::FieldReader<u32>;
+        #[doc = "Field `VALUE` writer - "]
+        pub type VALUE_W<'a, const O: u8> = crate::FieldWriter<'a, MVID_SPEC, 24, O, u32>;
+        impl R {
+            #[doc = "Bits 0:23"]
+            #[inline(always)]
+            pub fn value(&self) -> VALUE_R {
+                VALUE_R::new(self.bits & 0x00ff_ffff)
+            }
+        }
+        impl W {
+            #[doc = "Bits 0:23"]
+            #[inline(always)]
+            #[must_use]
+            pub fn value(&mut self) -> VALUE_W<0> {
+                VALUE_W::new(self)
+            }
+            #[doc = "Writes raw bits to the register."]
+            #[inline(always)]
+            pub unsafe fn bits(&mut self, bits: u32) -> &mut Self {
+                self.0.bits(bits);
+                self
+            }
+        }
+        #[doc = "\n\nThis register you can [`read`](crate::generic::Reg::read), [`write_with_zero`](crate::generic::Reg::write_with_zero), [`reset`](crate::generic::Reg::reset), [`write`](crate::generic::Reg::write), [`modify`](crate::generic::Reg::modify). See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [mvid](index.html) module"]
+        pub struct MVID_SPEC;
+        impl crate::RegisterSpec for MVID_SPEC {
+            type Ux = u32;
+        }
+        #[doc = "`read()` method returns [mvid::R](R) reader structure"]
+        impl crate::Readable for MVID_SPEC {
+            type Reader = R;
+        }
+        #[doc = "`write(|w| ..)` method takes [mvid::W](W) writer structure"]
+        impl crate::Writable for MVID_SPEC {
+            type Writer = W;
+            const ZERO_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+            const ONE_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+        }
+        #[doc = "`reset()` method sets MVID to value 0"]
+        impl crate::Resettable for MVID_SPEC {
+            const RESET_VALUE: Self::Ux = 0;
+        }
+    }
+    #[doc = "NVID (rw) register accessor: an alias for `Reg<NVID_SPEC>`"]
+    pub type NVID = crate::Reg<nvid::NVID_SPEC>;
+    #[doc = ""]
+    pub mod nvid {
+        #[doc = "Register `NVID` reader"]
+        pub struct R(crate::R<NVID_SPEC>);
+        impl core::ops::Deref for R {
+            type Target = crate::R<NVID_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl From<crate::R<NVID_SPEC>> for R {
+            #[inline(always)]
+            fn from(reader: crate::R<NVID_SPEC>) -> Self {
+                R(reader)
+            }
+        }
+        #[doc = "Register `NVID` writer"]
+        pub struct W(crate::W<NVID_SPEC>);
+        impl core::ops::Deref for W {
+            type Target = crate::W<NVID_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl core::ops::DerefMut for W {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+        impl From<crate::W<NVID_SPEC>> for W {
+            #[inline(always)]
+            fn from(writer: crate::W<NVID_SPEC>) -> Self {
+                W(writer)
+            }
+        }
+        #[doc = "Field `VALUE` reader - "]
+        pub type VALUE_R = crate::FieldReader<u32>;
+        #[doc = "Field `VALUE` writer - "]
+        pub type VALUE_W<'a, const O: u8> = crate::FieldWriter<'a, NVID_SPEC, 24, O, u32>;
+        impl R {
+            #[doc = "Bits 0:23"]
+            #[inline(always)]
+            pub fn value(&self) -> VALUE_R {
+                VALUE_R::new(self.bits & 0x00ff_ffff)
+            }
+        }
+        impl W {
+            #[doc = "Bits 0:23"]
+            #[inline(always)]
+            #[must_use]
+            pub fn value(&mut self) -> VALUE_W<0> {
+                VALUE_W::new(self)
+            }
+            #[doc = "Writes raw bits to the register."]
+            #[inline(always)]
+            pub unsafe fn bits(&mut self, bits: u32) -> &mut Self {
+                self.0.bits(bits);
+                self
+            }
+        }
+        #[doc = "\n\nThis register you can [`read`](crate::generic::Reg::read), [`write_with_zero`](crate::generic::Reg::write_with_zero), [`reset`](crate::generic::Reg::reset), [`write`](crate::generic::Reg::write), [`modify`](crate::generic::Reg::modify). See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [nvid](index.html) module"]
+        pub struct NVID_SPEC;
+        impl crate::RegisterSpec for NVID_SPEC {
+            type Ux = u32;
+        }
+        #[doc = "`read()` method returns [nvid::R](R) reader structure"]
+        impl crate::Readable for NVID_SPEC {
+            type Reader = R;
+        }
+        #[doc = "`write(|w| ..)` method takes [nvid::W](W) writer structure"]
+        impl crate::Writable for NVID_SPEC {
+            type Writer = W;
+            const ZERO_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+            const ONE_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+        }
+        #[doc = "`reset()` method sets NVID to value 0"]
+        impl crate::Resettable for NVID_SPEC {
+            const RESET_VALUE: Self::Ux = 0;
+        }
+    }
+    #[doc = "MISC (rw) register accessor: an alias for `Reg<MISC_SPEC>`"]
+    pub type MISC = crate::Reg<misc::MISC_SPEC>;
+    #[doc = "7:0\\]=MISC0, \\[15:8\\]=MISC1."]
+    pub mod misc {
+        #[doc = "Register `MISC` reader"]
+        pub struct R(crate::R<MISC_SPEC>);
+        impl core::ops::Deref for R {
+            type Target = crate::R<MISC_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl From<crate::R<MISC_SPEC>> for R {
+            #[inline(always)]
+            fn from(reader: crate::R<MISC_SPEC>) -> Self {
+                R(reader)
+            }
+        }
+        #[doc = "Register `MISC` writer"]
+        pub struct W(crate::W<MISC_SPEC>);
+        impl core::ops::Deref for W {
+            type Target = crate::W<MISC_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl core::ops::DerefMut for W {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+        impl From<crate::W<MISC_SPEC>> for W {
+            #[inline(always)]
+            fn from(writer: crate::W<MISC_SPEC>) -> Self {
+                W(writer)
+            }
+        }
+        #[doc = "Field `MISC0` reader - "]
+        pub type MISC0_R = crate::FieldReader;
+        #[doc = "Field `MISC0` writer - "]
+        pub type MISC0_W<'a, const O: u8> = crate::FieldWriter<'a, MISC_SPEC, 8, O>;
+        #[doc = "Field `MISC1` reader - "]
+        pub type MISC1_R = crate::FieldReader;
+        #[doc = "Field `MISC1` writer - "]
+        pub type MISC1_W<'a, const O: u8> = crate::FieldWriter<'a, MISC_SPEC, 8, O>;
+        impl R {
+            #[doc = "Bits 0:7"]
+            #[inline(always)]
+            pub fn misc0(&self) -> MISC0_R {
+                MISC0_R::new((self.bits & 0xff) as u8)
+            }
+            #[doc = "Bits 8:15"]
+            #[inline(always)]
+            pub fn misc1(&self) -> MISC1_R {
+                MISC1_R::new(((self.bits >> 8) & 0xff) as u8)
+            }
+        }
+        impl W {
+            #[doc = "Bits 0:7"]
+            #[inline(always)]
+            #[must_use]
+            pub fn misc0(&mut self) -> MISC0_W<0> {
+                MISC0_W::new(self)
+            }
+            #[doc = "Bits 8:15"]
+            #[inline(always)]
+            #[must_use]
+            pub fn misc1(&mut self) -> MISC1_W<8> {
+                MISC1_W::new(self)
+            }
+            #[doc = "Writes raw bits to the register."]
+            #[inline(always)]
+            pub unsafe fn bits(&mut self, bits: u32) -> &mut Self {
+                self.0.bits(bits);
+                self
+            }
+        }
+        #[doc = "7:0\\]=MISC0, \\[15:8\\]=MISC1.\n\nThis register you can [`read`](crate::generic::Reg::read), [`write_with_zero`](crate::generic::Reg::write_with_zero), [`reset`](crate::generic::Reg::reset), [`write`](crate::generic::Reg::write), [`modify`](crate::generic::Reg::modify). See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [misc](index.html) module"]
+        pub struct MISC_SPEC;
+        impl crate::RegisterSpec for MISC_SPEC {
+            type Ux = u32;
+        }
+        #[doc = "`read()` method returns [misc::R](R) reader structure"]
+        impl crate::Readable for MISC_SPEC {
+            type Reader = R;
+        }
+        #[doc = "`write(|w| ..)` method takes [misc::W](W) writer structure"]
+        impl crate::Writable for MISC_SPEC {
+            type Writer = W;
+            const ZERO_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+            const ONE_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+        }
+        #[doc = "`reset()` method sets MISC to value 0"]
+        impl crate::Resettable for MISC_SPEC {
+            const RESET_VALUE: Self::Ux = 0;
+        }
+    }
+    #[doc = "TU_ACTIVE (rw) register accessor: an alias for `Reg<TU_ACTIVE_SPEC>`"]
+    pub type TU_ACTIVE = crate::Reg<tu_active::TU_ACTIVE_SPEC>;
+    #[doc = "Number of active (valid pixel) bytes per 64-symbol TU. CPU computes from Mvid/Nvid."]
+    pub mod tu_active {
+        #[doc = "Register `TU_ACTIVE` reader"]
+        pub struct R(crate::R<TU_ACTIVE_SPEC>);
+        impl core::ops::Deref for R {
+            type Target = crate::R<TU_ACTIVE_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl From<crate::R<TU_ACTIVE_SPEC>> for R {
+            #[inline(always)]
+            fn from(reader: crate::R<TU_ACTIVE_SPEC>) -> Self {
+                R(reader)
+            }
+        }
+        #[doc = "Register `TU_ACTIVE` writer"]
+        pub struct W(crate::W<TU_ACTIVE_SPEC>);
+        impl core::ops::Deref for W {
+            type Target = crate::W<TU_ACTIVE_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl core::ops::DerefMut for W {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+        impl From<crate::W<TU_ACTIVE_SPEC>> for W {
+            #[inline(always)]
+            fn from(writer: crate::W<TU_ACTIVE_SPEC>) -> Self {
+                W(writer)
+            }
+        }
+        #[doc = "Field `VALUE` reader - "]
+        pub type VALUE_R = crate::FieldReader;
+        #[doc = "Field `VALUE` writer - "]
+        pub type VALUE_W<'a, const O: u8> = crate::FieldWriter<'a, TU_ACTIVE_SPEC, 7, O>;
+        impl R {
+            #[doc = "Bits 0:6"]
+            #[inline(always)]
+            pub fn value(&self) -> VALUE_R {
+                VALUE_R::new((self.bits & 0x7f) as u8)
+            }
+        }
+        impl W {
+            #[doc = "Bits 0:6"]
+            #[inline(always)]
+            #[must_use]
+            pub fn value(&mut self) -> VALUE_W<0> {
+                VALUE_W::new(self)
+            }
+            #[doc = "Writes raw bits to the register."]
+            #[inline(always)]
+            pub unsafe fn bits(&mut self, bits: u32) -> &mut Self {
+                self.0.bits(bits);
+                self
+            }
+        }
+        #[doc = "Number of active (valid pixel) bytes per 64-symbol TU. CPU computes from Mvid/Nvid.\n\nThis register you can [`read`](crate::generic::Reg::read), [`write_with_zero`](crate::generic::Reg::write_with_zero), [`reset`](crate::generic::Reg::reset), [`write`](crate::generic::Reg::write), [`modify`](crate::generic::Reg::modify). See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [tu_active](index.html) module"]
+        pub struct TU_ACTIVE_SPEC;
+        impl crate::RegisterSpec for TU_ACTIVE_SPEC {
+            type Ux = u32;
+        }
+        #[doc = "`read()` method returns [tu_active::R](R) reader structure"]
+        impl crate::Readable for TU_ACTIVE_SPEC {
+            type Reader = R;
+        }
+        #[doc = "`write(|w| ..)` method takes [tu_active::W](W) writer structure"]
+        impl crate::Writable for TU_ACTIVE_SPEC {
+            type Writer = W;
+            const ZERO_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+            const ONE_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+        }
+        #[doc = "`reset()` method sets TU_ACTIVE to value 0"]
+        impl crate::Resettable for TU_ACTIVE_SPEC {
+            const RESET_VALUE: Self::Ux = 0;
+        }
+    }
+}
 #[no_mangle]
 static mut DEVICE_PERIPHERALS: bool = false;
 #[doc = r" All the peripherals."]
@@ -2573,6 +3782,8 @@ pub struct Peripherals {
     pub AUX_CH: AUX_CH,
     #[doc = "MAIN_LINK"]
     pub MAIN_LINK: MAIN_LINK,
+    #[doc = "VIDEO"]
+    pub VIDEO: VIDEO,
 }
 impl Peripherals {
     #[doc = r" Returns all the peripherals *once*."]
@@ -2605,6 +3816,9 @@ impl Peripherals {
                 _marker: PhantomData,
             },
             MAIN_LINK: MAIN_LINK {
+                _marker: PhantomData,
+            },
+            VIDEO: VIDEO {
                 _marker: PhantomData,
             },
         }

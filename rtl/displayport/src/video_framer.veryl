@@ -1,0 +1,237 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file video_framer.veryl
+ * @brief Top-level DP main-link video framer for a 1-lane / 24bpp / sync
+ *        video pipeline (DP 1.2 §2.2). Wraps msa_generator and tu_packer
+ *        and emits the proper byte sequence per line:
+ *
+ *          byte 0                : BS (K28.5)
+ *          byte 1                : VB-ID
+ *          byte 2                : Mvid7:0
+ *          byte 3                : Maud (= 0)
+ *          bytes 4..36 (vblank)  : MSA (33 bytes from msa_generator)
+ *          byte hblank_bytes-1   : BE (K27.7)        -- active lines only
+ *          bytes hblank_bytes..  : TU pixel bytes    -- active lines only
+ *          all other bytes       : 0x00 stuffing
+ *
+ *        When i_video_enable = 0 the framer emits the Idle Pattern: a
+ *        BS / VB-ID(NoVideo) / Mvid(0) / Maud(0) burst once every 8192
+ *        link symbols, with the rest as 0x00 (scrambled).
+ */
+
+pub module video_framer (
+    i_clk:  input clock_posedge,
+    i_rstn: input reset_sync_low,
+
+    i_byte_tick: input logic,
+
+    i_video_enable: input logic,
+
+    // MSA fields from CPU registers
+    i_htotal:    input logic<16>,
+    i_vtotal:    input logic<16>,
+    i_hstart:    input logic<16>, // unused for now
+    i_vstart:    input logic<16>,
+    i_hwidth:    input logic<16>,
+    i_vheight:   input logic<16>,
+    i_hsw_hsp:   input logic<16>,
+    i_vsw_vsp:   input logic<16>,
+    i_mvid:      input logic<24>,
+    i_nvid:      input logic<24>,
+    i_misc:      input logic<16>,
+    i_tu_active: input logic<7>,
+
+    // Pixel input from pixel_fifo
+    i_pixel_byte:  input  logic<8>,
+    i_pixel_empty: input  logic,
+    o_pixel_pop:   output logic,
+
+    // Downstream byte interface (to scrambler)
+    o_valid:            output logic,
+    o_byte:             output logic<8>,
+    o_is_k:             output logic,
+    o_scramble_disable: output logic,
+) {
+    let _unused_hstart: logic<16> = i_hstart; // forwarded to msa_generator only
+
+    // Timing in BYTES per line / frame.
+    let bytes_per_line: logic<18> = ({2'b0, i_htotal} * 18'd3);
+    let hblank_bytes:   logic<18> = (({2'b0, i_htotal} - {2'b0, i_hwidth}) * 18'd3);
+
+    var byte_in_line: logic<18>; // 0..bytes_per_line-1
+    var line:         logic<16>; // 0..vtotal-1
+    var idle_counter: logic<13>; // 0..8191 for IDLE pattern
+
+    let line_is_active: logic =
+        (line >= i_vstart) && (line <: i_vstart + i_vheight);
+    let line_is_vblank: logic = !line_is_active;
+
+    // Window predicates (bytes inside the line).
+    let in_msa_window: logic =
+        line_is_vblank && (byte_in_line >= 18'd4) && (byte_in_line <: 18'd37);
+    let in_tu_window: logic =
+        line_is_active && (byte_in_line >= hblank_bytes);
+    let at_be: logic =
+        line_is_active && (byte_in_line == hblank_bytes - 18'd1);
+
+    // Trigger / start pulses for submodules. Submodule outputs are
+    // registered (1-cycle delay), so we drive their byte_ticks one byte
+    // EARLIER than the slot the mux reads them at.
+    //
+    // MSA mux range is byte_in_line [4..36]. Pre-emit at byte_in_line
+    // [3..35]; trigger at byte_in_line == 2 so the first byte is ready
+    // by byte_in_line == 4.
+    let msa_trigger: logic =
+        i_byte_tick && line_is_vblank && (byte_in_line == 18'd2);
+    let msa_pre_window: logic =
+        line_is_vblank && (byte_in_line >= 18'd3) && (byte_in_line <: 18'd36);
+    let msa_byte_tick: logic = i_byte_tick && msa_pre_window;
+
+    // TU mux range is byte_in_line [hblank..bytes_per_line-1]. Pre-emit at
+    // byte_in_line [hblank-1..bytes_per_line-1]; reset phase at hblank-2.
+    // The hblank-1 emit is masked at the mux because at_be takes priority.
+    let tu_pre_window: logic =
+        line_is_active && (byte_in_line + 18'd1 >= hblank_bytes) &&
+        (byte_in_line + 18'd1 <: bytes_per_line);
+    let tu_start_pulse: logic =
+        i_byte_tick && line_is_active && (byte_in_line + 18'd2 == hblank_bytes);
+    let tu_byte_tick:  logic = i_byte_tick && tu_pre_window;
+
+    // ------ MSA generator ------
+    var msa_byte:  logic<8>;
+    var msa_is_k:  logic;
+    var msa_valid: logic;
+    var msa_busy:  logic;
+
+    inst u_msa: msa_generator (
+        i_clk      : i_clk,
+        i_rstn     : i_rstn,
+        i_byte_tick: msa_byte_tick,
+        i_trigger  : msa_trigger,
+        i_htotal   : i_htotal,
+        i_vtotal   : i_vtotal,
+        i_hstart   : i_hstart,
+        i_vstart   : i_vstart,
+        i_hwidth   : i_hwidth,
+        i_vheight  : i_vheight,
+        i_hsw_hsp  : i_hsw_hsp,
+        i_vsw_vsp  : i_vsw_vsp,
+        i_mvid     : i_mvid,
+        i_nvid     : i_nvid,
+        i_misc     : i_misc,
+        o_busy     : msa_busy,
+        o_valid    : msa_valid,
+        o_byte     : msa_byte,
+        o_is_k     : msa_is_k,
+    );
+
+    // ------ TU packer ------
+    var tu_byte:  logic<8>;
+    var tu_is_k:  logic;
+    var tu_valid: logic;
+    var tu_pop:   logic;
+    assign o_pixel_pop = tu_pop;
+
+    inst u_tu: tu_packer (
+        i_clk         : i_clk,
+        i_rstn        : i_rstn,
+        i_byte_tick   : tu_byte_tick,
+        i_emit_enable : tu_pre_window,
+        i_tu_start    : tu_start_pulse,
+        i_active_count: i_tu_active,
+        i_pixel_byte  : i_pixel_byte,
+        i_pixel_empty : i_pixel_empty,
+        o_pixel_pop   : tu_pop,
+        o_valid       : tu_valid,
+        o_byte        : tu_byte,
+        o_is_k        : tu_is_k,
+    );
+
+    // ------ Output mux ------
+    always_comb {
+        o_scramble_disable = 0;
+        o_valid            = i_byte_tick;
+        o_byte             = 8'h00;
+        o_is_k             = 0;
+
+        if i_video_enable {
+            if byte_in_line == 18'd0 {
+                o_byte = 8'hBC; // BS = K28.5
+                o_is_k = 1;
+            } else if byte_in_line == 18'd1 {
+                // VB-ID: bit0 = VBlank flag (rest 0 in our minimal scope)
+                o_byte = {7'h00, line_is_vblank};
+            } else if byte_in_line == 18'd2 {
+                o_byte = i_mvid[7:0];
+            } else if byte_in_line == 18'd3 {
+                o_byte = 8'h00; // Maud
+            } else if at_be {
+                o_byte = 8'hFB; // BE = K27.7
+                o_is_k = 1;
+            } else if in_msa_window {
+                if msa_valid {
+                    o_byte = msa_byte;
+                    o_is_k = msa_is_k;
+                }
+            } else if in_tu_window {
+                if tu_valid {
+                    o_byte = tu_byte;
+                    o_is_k = tu_is_k;
+                }
+            }
+        } else {
+            // Idle Pattern: BS, VBID(NoVideoStream=1), Mvid=0, Maud=0,
+            // then 0x00 stuffing for the remainder of the 8192-symbol
+            // window.
+            if idle_counter == 13'd0 {
+                o_byte = 8'hBC;
+                o_is_k = 1;
+            } else if idle_counter == 13'd1 {
+                o_byte = 8'h08; // NoVideoStream_Flag (bit 3)
+            } else if idle_counter == 13'd2 {
+                o_byte = 8'h00; // Mvid7:0
+            } else if idle_counter == 13'd3 {
+                o_byte = 8'h00; // Maud
+            }
+        }
+    }
+
+    // ------ Frame counters ------
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            byte_in_line = 0;
+            line         = 0;
+            idle_counter = 0;
+        } else {
+            if !i_video_enable {
+                if i_byte_tick {
+                    if idle_counter == 13'd8191 {
+                        idle_counter = 0;
+                    } else {
+                        idle_counter = idle_counter + 13'd1;
+                    }
+                }
+                byte_in_line = 0;
+                line         = 0;
+            } else {
+                idle_counter = 0;
+                if i_byte_tick {
+                    if byte_in_line + 18'd1 >= bytes_per_line {
+                        byte_in_line = 0;
+                        if line + 16'd1 >= i_vtotal {
+                            line = 0;
+                        } else {
+                            line = line + 16'd1;
+                        }
+                    } else {
+                        byte_in_line = byte_in_line + 18'd1;
+                    }
+                }
+            }
+        }
+    }
+}

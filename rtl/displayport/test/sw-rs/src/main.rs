@@ -16,11 +16,13 @@ mod link_training;
 mod main_link;
 mod mock_sink;
 mod serialout;
+mod video;
 
 use aux::AuxCh;
 use main_link::MainLink;
 use mock_sink::MockSink;
 use serialout::SerialOut;
+use video::{Video, VideoConfig};
 
 #[allow(unused_imports)]
 use riscv::asm;
@@ -158,7 +160,7 @@ fn panic(info: &PanicInfo) -> ! {
 // Source-side scenario.
 // ---------------------------------------------------------------------------
 
-fn source_process(aux: &AuxCh, ml: &MainLink) {
+fn source_process(aux: &AuxCh, ml: &MainLink, vid: &Video) {
     println!("[SRC] waiting for HPD");
     while !read_hpd_level() {}
     if read_hpd_event_plug() {
@@ -173,24 +175,47 @@ fn source_process(aux: &AuxCh, ml: &MainLink) {
     }
 
     // Phase C link training.
-    match link_training::run(aux, ml) {
+    let stats = match link_training::run(aux, ml) {
         Ok(stats) => {
             println!(
                 "[SRC] link training done (cr_iters={}, eq_iters={})",
                 stats.cr_iters, stats.eq_iters
             );
-            // Encode iteration counts in upper bits of cpu_io_out for the TB
-            // to verify the ADJUST_REQUEST loop ran exactly twice per phase.
-            let v = 0x0000_0001
-                | ((stats.cr_iters & 0xFF) << 8)
-                | ((stats.eq_iters & 0xFF) << 16);
-            write_system_out(v);
+            stats
         }
         Err(e) => {
             println!("[SRC] link training failed: {:?}", e);
             write_system_out(0x0000_0003);
+            return;
         }
-    }
+    };
+
+    // Phase D: configure MSA and enable the video pipeline.
+    let cfg = VideoConfig {
+        htotal:    80,
+        vtotal:    24,
+        hstart:    16,
+        vstart:    8,
+        hwidth:    64,
+        vheight:   16,
+        hsw:       4,
+        hsp:       false,
+        vsw:       2,
+        vsp:       false,
+        mvid:      64,
+        nvid:      64,
+        misc0:     0x01, // sync clock
+        misc1:     0x00,
+        tu_active: 64, // 100% packed for the contrived 64x16 test (no FS/FE)
+    };
+    vid.setup_and_enable(&cfg);
+    println!("[SRC] video pipeline enabled");
+
+    // Encode iteration counts in upper bits of cpu_io_out and signal done.
+    let v = 0x0000_0001
+        | ((stats.cr_iters & 0xFF) << 8)
+        | ((stats.eq_iters & 0xFF) << 16);
+    write_system_out(v);
 }
 
 fn sink_process(aux: &AuxCh) {
@@ -215,10 +240,11 @@ pub extern "C" fn main() -> ! {
     let cpu_id = get_cpu_id();
     let aux = AuxCh::new(peripherals.AUX_CH);
     let ml = MainLink::new(peripherals.MAIN_LINK);
-    println!("[CPU{}] phase C boot", cpu_id);
+    let vid = Video::new(peripherals.VIDEO);
+    println!("[CPU{}] phase D boot", cpu_id);
 
     match cpu_id {
-        0 => source_process(&aux, &ml),
+        0 => source_process(&aux, &ml, &vid),
         1 => sink_process(&aux),
         other => {
             println!("[CPU?] unknown id {:08X}", other);

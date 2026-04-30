@@ -1,0 +1,99 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tu_packer.veryl
+ * @brief Packs pixel bytes into 64-symbol Transfer Units (DP 1.2 §2.2.1.4,
+ *        Fig 2-13) for a single lane. Phase D fixes TU = 64 link symbols.
+ *
+ * Layout per TU (active_count = N):
+ *   N == 64 : 64 valid pixel bytes (no FS / no FE)
+ *   N == 63 : 63 valid + FE                (no FS — only one stuffing symbol)
+ *   N == 62 : 62 valid + FS + FE           (FS and FE adjacent)
+ *   N <= 61 : N valid + FS + dummy(0x00) × (62 - N) + FE
+ *
+ * FS = K28.4 = 0x9C
+ * FE = K28.7 = 0xFC
+ *
+ * `i_tu_start` resets the per-TU phase counter (used by video_framer at
+ * the start of each active line). Otherwise the phase wraps 0..63.
+ */
+
+pub module tu_packer (
+    i_clk:  input clock_posedge,
+    i_rstn: input reset_sync_low,
+
+    // Pacing pulse (= 1 byte / pulse from upstream byte clock).
+    i_byte_tick:    input logic,
+    // 1 = drive output, 0 = freeze (no o_valid, no FIFO pop).
+    i_emit_enable:  input logic,
+    // Pulse to reset the TU phase counter.
+    i_tu_start:     input logic,
+    // 1..64 valid bytes per TU (CPU-set).
+    i_active_count: input logic<7>,
+
+    // Pixel byte input (from pixel_fifo).
+    i_pixel_byte:  input  logic<8>,
+    i_pixel_empty: input  logic,
+    o_pixel_pop:   output logic,
+
+    o_valid: output logic,
+    o_byte:  output logic<8>,
+    o_is_k:  output logic,
+) {
+    var phase: logic<6>; // 0..63
+
+    // o_pixel_pop is combinational so the upstream FIFO advances within the
+    // same cycle the byte is consumed. This avoids a 2-stage NBA delay.
+    let in_active_region: logic =
+        i_emit_enable && i_byte_tick && !i_tu_start &&
+        {1'b0, phase} <: i_active_count;
+    assign o_pixel_pop = in_active_region && !i_pixel_empty;
+
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            phase   = 0;
+            o_valid = 0;
+            o_byte  = 0;
+            o_is_k  = 0;
+        } else {
+            // Sticky outputs: only the emit branch updates o_byte/o_is_k.
+            // The upstream mux reads these registers on the NEXT byte_tick,
+            // so they must persist between ticks rather than being cleared.
+            if i_tu_start {
+                phase = 0;
+            } else if i_emit_enable && i_byte_tick {
+                o_valid = 1;
+                o_is_k  = 0;
+
+                if {1'b0, phase} <: i_active_count {
+                    // Active region — pull from pixel FIFO when available.
+                    if i_pixel_empty {
+                        o_byte = 8'h00;
+                    } else {
+                        o_byte = i_pixel_byte;
+                    }
+                } else if {1'b0, phase} == i_active_count && i_active_count <: 7'd63 {
+                    // FS (only when stuffing >= 2 symbols).
+                    o_byte = 8'h9C;
+                    o_is_k = 1;
+                } else if phase == 6'd63 && i_active_count <: 7'd64 {
+                    // FE (every TU with at least one stuffing symbol).
+                    o_byte = 8'hFC;
+                    o_is_k = 1;
+                } else {
+                    // Dummy stuffing.
+                    o_byte = 8'h00;
+                }
+
+                if phase == 6'd63 {
+                    phase = 0;
+                } else {
+                    phase = phase + 6'd1;
+                }
+            }
+        }
+    }
+}

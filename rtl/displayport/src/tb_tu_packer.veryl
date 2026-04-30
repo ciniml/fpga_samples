@@ -1,0 +1,183 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_tu_packer.veryl
+ * @brief Phase D unit test for tu_packer. Drives a known pixel stream and
+ *        checks the TU layout: N valid + FS + dummy + FE for active_count
+ *        configurations 16, 32, 62, 63 and 64.
+ */
+
+module TbTuPacker {}
+
+#[test(tu_packer_layout)]
+embed (inline) sv{{{
+module tu_packer_layout;
+    logic clk;
+    logic rstn;
+    initial clk = 0;
+    always #5 clk = ~clk;
+
+    logic        byte_tick;
+    logic        emit_enable;
+    logic        tu_start;
+    logic [6:0]  active_count;
+
+    logic [7:0]  pixel_byte;
+    logic        pixel_empty;
+    logic        pixel_pop;
+
+    logic        valid;
+    logic [7:0]  out_byte;
+    logic        out_is_k;
+
+    // Simple pixel source modelled as a combinational FIFO: data = mem[rd_ptr],
+    // rd_ptr advances on pop. Mem is filled with i in mem[i] for pixel id traceability.
+    logic [11:0] rd_ptr;
+    assign pixel_byte  = rd_ptr[7:0]; // pixels mem[i] = i (mod 256)
+    assign pixel_empty = 1'b0;
+
+    always_ff @(posedge clk) begin
+        if (!rstn)             rd_ptr <= 12'h000;
+        else if (pixel_pop)    rd_ptr <= rd_ptr + 12'h001;
+    end
+
+    displayport_tu_packer u_tu (
+        .i_clk          (clk),
+        .i_rstn         (rstn),
+        .i_byte_tick    (byte_tick),
+        .i_emit_enable  (emit_enable),
+        .i_tu_start     (tu_start),
+        .i_active_count (active_count),
+        .i_pixel_byte   (pixel_byte),
+        .i_pixel_empty  (pixel_empty),
+        .o_pixel_pop    (pixel_pop),
+        .o_valid        (valid),
+        .o_byte         (out_byte),
+        .o_is_k         (out_is_k)
+    );
+
+    integer mismatches;
+
+    // Verify a single 64-symbol TU starting from the next byte_tick after
+    // tu_start (already pulsed by caller). Pixel bytes are expected to be
+    // a contiguous range starting from `start_pixel`.
+    task automatic verify_tu(input integer ac, input logic [7:0] start_pixel);
+        logic [7:0] expected;
+        logic       expected_is_k;
+        for (int p = 0; p < 64; p++) begin
+            // Wait for a valid sample.
+            do begin
+                @(posedge clk);
+                #1;
+            end while (!valid);
+
+            expected_is_k = 1'b0;
+            if (p < ac) begin
+                expected     = start_pixel + p[7:0];
+            end else if (p == ac && ac < 63) begin
+                expected     = 8'h9C; // FS
+                expected_is_k = 1'b1;
+            end else if (p == 63 && ac < 64) begin
+                expected     = 8'hFC; // FE
+                expected_is_k = 1'b1;
+            end else begin
+                expected     = 8'h00; // dummy
+            end
+
+            if (out_byte !== expected || out_is_k !== expected_is_k) begin
+                mismatches = mismatches + 1;
+                $display("[tb_tu_packer] ac=%0d phase=%0d: expected (%02h, k=%b) got (%02h, k=%b)",
+                         ac, p, expected, expected_is_k, out_byte, out_is_k);
+            end
+        end
+    endtask
+
+    initial begin
+        rstn         = 1'b0;
+        byte_tick    = 1'b0;
+        emit_enable  = 1'b0;
+        tu_start     = 1'b0;
+        active_count = 7'd16;
+        mismatches   = 0;
+        repeat (4) @(posedge clk);
+        rstn = 1'b1;
+        @(posedge clk);
+
+        // Pulse tu_start once with byte_tick low to reset phase.
+        active_count = 7'd16;
+        tu_start     = 1'b1;
+        @(posedge clk);
+        #1;
+        tu_start = 1'b0;
+        emit_enable = 1'b1;
+        byte_tick   = 1'b1;
+        verify_tu(16, 8'h00);
+
+        // Test active_count = 32. tu_start to reset phase.
+        emit_enable = 1'b0;
+        byte_tick   = 1'b0;
+        active_count = 7'd32;
+        tu_start    = 1'b1;
+        @(posedge clk);
+        #1;
+        tu_start = 1'b0;
+        emit_enable = 1'b1;
+        byte_tick   = 1'b1;
+        verify_tu(32, rd_ptr[7:0]);
+
+        // active_count = 62 (FS + FE adjacent).
+        emit_enable = 1'b0;
+        byte_tick   = 1'b0;
+        active_count = 7'd62;
+        tu_start    = 1'b1;
+        @(posedge clk);
+        #1;
+        tu_start = 1'b0;
+        emit_enable = 1'b1;
+        byte_tick   = 1'b1;
+        verify_tu(62, rd_ptr[7:0]);
+
+        // active_count = 63 (FE only, no FS).
+        emit_enable = 1'b0;
+        byte_tick   = 1'b0;
+        active_count = 7'd63;
+        tu_start    = 1'b1;
+        @(posedge clk);
+        #1;
+        tu_start = 1'b0;
+        emit_enable = 1'b1;
+        byte_tick   = 1'b1;
+        verify_tu(63, rd_ptr[7:0]);
+
+        // active_count = 64 (no FS no FE; all valid).
+        emit_enable = 1'b0;
+        byte_tick   = 1'b0;
+        active_count = 7'd64;
+        tu_start    = 1'b1;
+        @(posedge clk);
+        #1;
+        tu_start = 1'b0;
+        emit_enable = 1'b1;
+        byte_tick   = 1'b1;
+        verify_tu(64, rd_ptr[7:0]);
+
+        emit_enable = 1'b0;
+        byte_tick   = 1'b0;
+        repeat (4) @(posedge clk);
+
+        if (mismatches != 0) begin
+            $fatal(1, "[tb_tu_packer] %0d mismatches", mismatches);
+        end
+        $display("[tb_tu_packer] PASS");
+        $finish;
+    end
+
+    initial begin
+        #5_000_000;
+        $fatal(1, "[tb_tu_packer] timeout");
+    end
+endmodule
+}}}

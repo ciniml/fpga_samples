@@ -1,0 +1,82 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file pixel_fifo.veryl
+ * @brief AXI-Stream 24bpp pixel input → byte-stream FIFO. Each accepted
+ *        AXI beat loads three bytes (R, G, B) into the FIFO, popped one
+ *        byte per pop pulse.
+ *
+ * Phase D scope: 1-lane / 24bpp / depth = 256 bytes (~85 pixels). Depth
+ * is sized for the small-frame test; raise via parameter if needed.
+ *
+ * Pixel-byte ordering matches DP 1.2 Tab 2-7 (24bpp RGB on 1 lane): the
+ * three bytes per pixel are emitted in the order R, G, B.
+ */
+
+pub module pixel_fifo #(
+    param DEPTH: u32 = 256,
+) (
+    i_clk:  input clock_posedge,
+    i_rstn: input reset_sync_low,
+
+    // AXI-Stream input. tdata[7:0]=B, tdata[15:8]=G, tdata[23:16]=R
+    s_axis_tvalid: input  logic,
+    s_axis_tready: output logic,
+    s_axis_tdata:  input  logic<24>,
+
+    // Pop interface (combinational head; pop pulse advances at next edge).
+    o_pop_byte:  output logic<8>,
+    o_pop_empty: output logic,
+    i_pop:       input  logic,
+) {
+    const PTR_BITS:   u32 = $clog2(DEPTH);
+    const COUNT_BITS: u32 = $clog2(DEPTH + 1);
+    type ptr_t   = logic<PTR_BITS>;
+    type count_t = logic<COUNT_BITS>;
+
+    var mem:    logic<8>[DEPTH];
+    var wr_ptr: ptr_t;
+    var rd_ptr: ptr_t;
+    var count:  count_t;
+
+    // Push acceptance: need at least 3 free entries.
+    let push_accept: logic = s_axis_tvalid && (count <: (DEPTH - 2) as count_t);
+    assign s_axis_tready = (count <: (DEPTH - 2) as count_t);
+
+    assign o_pop_byte  = mem[rd_ptr];
+    assign o_pop_empty = (count == 0);
+
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            wr_ptr = 0;
+            rd_ptr = 0;
+            count  = 0;
+        } else {
+            let pop_now: logic = i_pop && (count != 0);
+
+            // Push: 3 bytes per accepted beat (R, G, B).
+            if push_accept {
+                mem[wr_ptr]                  = s_axis_tdata[23:16]; // R
+                mem[(wr_ptr + 1) as ptr_t]   = s_axis_tdata[15:8];  // G
+                mem[(wr_ptr + 2) as ptr_t]   = s_axis_tdata[7:0];   // B
+                wr_ptr                       = (wr_ptr + 3) as ptr_t;
+            }
+
+            if pop_now {
+                rd_ptr = (rd_ptr + 1) as ptr_t;
+            }
+
+            // Update count.
+            if push_accept && pop_now {
+                count = count + 2 as count_t; // +3 -1
+            } else if push_accept {
+                count = count + 3 as count_t;
+            } else if pop_now {
+                count = count - 1 as count_t;
+            }
+        }
+    }
+}

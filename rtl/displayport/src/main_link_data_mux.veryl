@@ -1,0 +1,54 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file main_link_data_mux.veryl
+ * @brief Selects the byte source feeding the scrambler:
+ *        - Training in progress (pattern_select == TPS1 / TPS2): use the
+ *          training_pattern_gen output.
+ *        - Otherwise (pattern_select == 00 = IDLE): use video_framer
+ *          output (Idle Pattern when video disabled, framed video stream
+ *          when enabled).
+ *
+ * Combinational mux. No state.
+ */
+
+pub module main_link_data_mux (
+    i_pattern_select: input logic<2>,
+
+    // Training pattern path
+    i_train_valid:            input logic,
+    i_train_byte:             input logic<8>,
+    i_train_is_k:             input logic,
+    i_train_scramble_disable: input logic,
+
+    // Video framer path
+    i_video_valid:            input logic,
+    i_video_byte:             input logic<8>,
+    i_video_is_k:             input logic,
+    i_video_scramble_disable: input logic,
+
+    o_valid:            output logic,
+    o_byte:             output logic<8>,
+    o_is_k:             output logic,
+    o_scramble_disable: output logic,
+) {
+    // Training takes priority when pattern_select != 0 (TPS1 or TPS2).
+    let use_video: logic = (i_pattern_select == 2'b00);
+
+    always_comb {
+        if use_video {
+            o_valid            = i_video_valid;
+            o_byte             = i_video_byte;
+            o_is_k             = i_video_is_k;
+            o_scramble_disable = i_video_scramble_disable;
+        } else {
+            o_valid            = i_train_valid;
+            o_byte             = i_train_byte;
+            o_is_k             = i_train_is_k;
+            o_scramble_disable = i_train_scramble_disable;
+        }
+    }
+}
