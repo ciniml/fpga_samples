@@ -1,0 +1,67 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file deserializer_1to10.veryl
+ * @brief Simulation-only 1:10 deserializer.
+ *
+ * Counterpart to `serializer_10to1`. Captures one bit per clock and
+ * emits a 10-bit word every 10 cycles. Bit 0 (= "a") is the first bit
+ * received; bit 9 (= "j") the last.
+ *
+ * Phase B does not implement comma-based bit-alignment. The TB drives
+ * `i_align` high for one cycle to mark "this incoming bit is bit 0".
+ * Phase E will replace this with a real K28.5 comma-detection block.
+ */
+
+pub module deserializer_1to10 (
+    i_clk:  input clock_posedge,
+    i_rstn: input reset_sync_low,
+
+    i_bit:       input logic,
+    i_bit_valid: input logic,
+
+    // Single-cycle pulse that resets the bit phase: the bit on i_bit at
+    // this cycle is treated as bit 0 of a fresh symbol.
+    i_align: input logic,
+
+    o_valid: output logic,
+    o_data:  output logic<10>,
+) {
+    var counter: logic<4>;
+    var buffer:  logic<10>;
+    var aligned: logic;
+
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            counter = 0;
+            buffer  = 0;
+            aligned = 0;
+            o_valid = 0;
+            o_data  = 0;
+        } else {
+            o_valid = 0;
+            if i_align {
+                if i_bit_valid {
+                    buffer  = {9'b0, i_bit};
+                    counter = 1;
+                    aligned = 1;
+                } else {
+                    counter = 0;
+                    aligned = 0;
+                }
+            } else if aligned && i_bit_valid {
+                buffer[counter] = i_bit;
+                if counter == 9 {
+                    o_valid = 1;
+                    o_data  = {i_bit, buffer[8:0]};
+                    counter = 0;
+                } else {
+                    counter = counter + 1;
+                }
+            }
+        }
+    }
+}

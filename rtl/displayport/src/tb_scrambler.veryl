@@ -1,0 +1,164 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_scrambler.veryl
+ * @brief Phase B unit test for the scrambler. Verifies:
+ *        - K-coded bytes pass through unchanged
+ *        - Scrambling followed by descrambling (same module) recovers
+ *          the original byte stream
+ *        - Re-seeding via i_seed_reset does not break the round-trip
+ */
+
+module TbScrambler {}
+
+#[test(scrambler_loopback)]
+embed (inline) sv{{{
+module scrambler_loopback;
+    logic clk;
+    logic rstn;
+    initial clk = 0;
+    always #5 clk = ~clk;
+
+    logic       a_seed_reset;
+    logic       a_valid;
+    logic [7:0] a_data;
+    logic       a_is_k;
+
+    logic       b_seed_reset;
+    logic       b_valid;
+    logic [7:0] b_data;
+    logic       b_is_k;
+
+    logic       c_valid;
+    logic [7:0] c_data;
+    logic       c_is_k;
+
+    // Forward (TX) scrambler
+    displayport_scrambler tx_scram (
+        .i_clk        (clk),
+        .i_rstn       (rstn),
+        .i_seed_reset (a_seed_reset),
+        .i_valid      (a_valid),
+        .i_data       (a_data),
+        .i_is_k       (a_is_k),
+        .o_valid      (b_valid),
+        .o_data       (b_data),
+        .o_is_k       (b_is_k)
+    );
+
+    // Reverse (RX) descrambler — same module, same INIT seed.
+    // SR detection on RX: assert seed_reset whenever the K-code 0x1C
+    // (scrambler reset symbol) flows through.
+    wire   rx_seed_reset = b_valid && b_is_k && (b_data == 8'h1C);
+    displayport_scrambler rx_descram (
+        .i_clk        (clk),
+        .i_rstn       (rstn),
+        .i_seed_reset (rx_seed_reset),
+        .i_valid      (b_valid),
+        .i_data       (b_data),
+        .i_is_k       (b_is_k),
+        .o_valid      (c_valid),
+        .o_data       (c_data),
+        .o_is_k       (c_is_k)
+    );
+
+    // Capture the input stream into a queue so we can compare against
+    // the descrambled output. Two cycles of pipeline = two-deep delay.
+    typedef struct packed {
+        logic [7:0] data;
+        logic       is_k;
+    } sample_t;
+    sample_t tx_pipe [0:1];
+
+    integer mismatches;
+    integer checked;
+
+    initial begin
+        rstn         = 1'b0;
+        a_seed_reset = 1'b0;
+        a_valid      = 1'b0;
+        a_data       = 8'h00;
+        a_is_k       = 1'b0;
+        mismatches   = 0;
+        checked      = 0;
+        tx_pipe[0]   = '0;
+        tx_pipe[1]   = '0;
+        repeat (4) @(posedge clk);
+        rstn = 1'b1;
+        @(posedge clk);
+
+        // Force matching seeds on both sides (reset symbol).
+        a_valid      = 1'b1;
+        a_is_k       = 1'b1;
+        a_data       = 8'h1C; // SR
+        a_seed_reset = 1'b1;
+        @(posedge clk);
+        a_seed_reset = 1'b0;
+        a_is_k       = 1'b0;
+
+        // Stream a deterministic pattern (256 D-bytes + 4 K-bytes interleaved).
+        for (int i = 0; i < 320; i++) begin
+            a_valid = 1'b1;
+            if (i % 64 == 63) begin
+                // Slip in a K-code; should bypass the scrambler.
+                a_is_k = 1'b1;
+                a_data = 8'hBC; // BS
+            end else begin
+                a_is_k = 1'b0;
+                a_data = 8'(i & 8'hff);
+            end
+            @(posedge clk);
+        end
+        a_valid = 1'b0;
+
+        // Drain the pipeline.
+        repeat (8) @(posedge clk);
+
+        if (mismatches != 0) begin
+            $fatal(1, "[tb_scrambler] %0d mismatches across %0d samples", mismatches, checked);
+        end
+        if (checked < 200) begin
+            $fatal(1, "[tb_scrambler] only checked %0d samples", checked);
+        end
+        $display("[tb_scrambler] PASS (%0d samples checked)", checked);
+        $finish;
+    end
+
+    // Reference pipeline: capture (a_valid, a_data, a_is_k) two cycles
+    // earlier and compare against the (c_valid, c_data, c_is_k) output.
+    always_ff @(posedge clk) begin
+        if (!rstn) begin
+            tx_pipe[0] <= '0;
+            tx_pipe[1] <= '0;
+        end else begin
+            tx_pipe[1] <= tx_pipe[0];
+            if (a_valid) begin
+                tx_pipe[0].data <= a_data;
+                tx_pipe[0].is_k <= a_is_k;
+            end else begin
+                tx_pipe[0] <= '0;
+            end
+        end
+    end
+
+    always_ff @(posedge clk) begin
+        if (rstn && c_valid) begin
+            checked <= checked + 1;
+            if (c_data !== tx_pipe[1].data || c_is_k !== tx_pipe[1].is_k) begin
+                mismatches <= mismatches + 1;
+                $display("[tb_scrambler] MISMATCH @%0t: expected data=%02h k=%b got data=%02h k=%b",
+                         $time, tx_pipe[1].data, tx_pipe[1].is_k, c_data, c_is_k);
+            end
+        end
+    end
+
+    // Hard timeout
+    initial begin
+        #1_000_000;
+        $fatal(1, "[tb_scrambler] timeout");
+    end
+endmodule
+}}}

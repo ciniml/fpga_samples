@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file link_symbol_demux.veryl
+ * @brief Inverse of link_symbol_mux: classifies a (byte, is_k) sample
+ *        coming back from the descrambler into a (kind, data) pair, plus
+ *        the SR-detected pulse used to reset the descrambler LFSR.
+ */
+
+import link_pkg::*;
+
+pub module link_symbol_demux (
+    i_valid: input logic,
+    i_data:  input logic<8>,
+    i_is_k:  input logic,
+
+    o_valid:      output logic,
+    o_kind:       output SymbolKind,
+    o_data:       output logic<8>,
+    o_seed_reset: output logic, // 1 when an SR symbol is detected
+) {
+    always_comb {
+        o_valid      = i_valid;
+        o_seed_reset = 0;
+        o_data       = i_data;
+        if i_is_k {
+            case i_data {
+                K_BS:    o_kind = SymbolKind::BS;
+                K_BE:    o_kind = SymbolKind::BE;
+                K_SR:    {
+                    o_kind       = SymbolKind::SR;
+                    o_seed_reset = i_valid;
+                }
+                K_FS:    o_kind = SymbolKind::FS;
+                K_FE:    o_kind = SymbolKind::FE;
+                K_SS:    o_kind = SymbolKind::SS;
+                K_SE:    o_kind = SymbolKind::SE;
+                default: o_kind = SymbolKind::DATA; // unknown K — best effort
+            }
+        } else {
+            o_kind = SymbolKind::DATA;
+        }
+    }
+}

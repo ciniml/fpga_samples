@@ -1,0 +1,88 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file scrambler.veryl
+ * @brief DisplayPort 1.2 main-link scrambler / descrambler.
+ *
+ * Polynomial: x^16 + x^5 + x^4 + x^3 + 1 (DP 1.2 §3.1.6, App E).
+ * State is reloaded with INIT (default 0xFFFF) when i_seed_reset is high
+ * during a valid cycle (typically the cycle that transmits / receives an
+ * SR symbol, K28.0). K-coded bytes (i_is_k = 1) bypass the LFSR per spec.
+ *
+ * The scrambler is its own inverse (bitwise XOR is symmetric), so this
+ * module is used unchanged on both the TX (scramble) and RX (descramble)
+ * sides of the link.
+ *
+ * Each cycle advances the LFSR by 8 steps. With INIT = 0xFFFF the first
+ * 8 LFSR output bits XORed onto a data byte are 0xFF, 0xFE, ... — the
+ * sequence used by the spec reference.
+ */
+
+pub module scrambler #(
+    param INIT: logic<16> = 16'hFFFF,
+) (
+    i_clk:        input clock_posedge,
+    i_rstn:       input reset_sync_low,
+
+    // Active-high pulse: reload LFSR to INIT on this cycle. The byte present
+    // on i_data passes through unchanged (BS/SR control symbols are not
+    // scrambled themselves).
+    i_seed_reset: input logic,
+
+    // Upstream sample (one byte per accepted cycle).
+    i_valid: input logic,
+    i_data:  input logic<8>,
+    i_is_k:  input logic,
+
+    // Downstream sample (one cycle latency).
+    o_valid: output logic,
+    o_data:  output logic<8>,
+    o_is_k:  output logic,
+) {
+    var lfsr: logic<16>;
+
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            lfsr    = INIT;
+            o_valid = 0;
+            o_data  = 0;
+            o_is_k  = 0;
+        } else {
+            o_valid = i_valid;
+            o_is_k  = i_is_k;
+            if i_valid && i_seed_reset {
+                // Seed reload: pass current byte through unchanged.
+                lfsr   = INIT;
+                o_data = i_data;
+            } else if i_valid && i_is_k {
+                // Control symbols are not scrambled.
+                o_data = i_data;
+            } else if i_valid {
+                // Advance LFSR 8 steps, XOR LSB-first with each input bit.
+                let s0: logic<16> = lfsr;
+                let b0: logic     = i_data[0] ^ s0[15];
+                let s1: logic<16> = {s0[14:0], s0[15] ^ s0[4] ^ s0[3] ^ s0[2]};
+                let b1: logic     = i_data[1] ^ s1[15];
+                let s2: logic<16> = {s1[14:0], s1[15] ^ s1[4] ^ s1[3] ^ s1[2]};
+                let b2: logic     = i_data[2] ^ s2[15];
+                let s3: logic<16> = {s2[14:0], s2[15] ^ s2[4] ^ s2[3] ^ s2[2]};
+                let b3: logic     = i_data[3] ^ s3[15];
+                let s4: logic<16> = {s3[14:0], s3[15] ^ s3[4] ^ s3[3] ^ s3[2]};
+                let b4: logic     = i_data[4] ^ s4[15];
+                let s5: logic<16> = {s4[14:0], s4[15] ^ s4[4] ^ s4[3] ^ s4[2]};
+                let b5: logic     = i_data[5] ^ s5[15];
+                let s6: logic<16> = {s5[14:0], s5[15] ^ s5[4] ^ s5[3] ^ s5[2]};
+                let b6: logic     = i_data[6] ^ s6[15];
+                let s7: logic<16> = {s6[14:0], s6[15] ^ s6[4] ^ s6[3] ^ s6[2]};
+                let b7: logic     = i_data[7] ^ s7[15];
+                let s8: logic<16> = {s7[14:0], s7[15] ^ s7[4] ^ s7[3] ^ s7[2]};
+
+                o_data = {b7, b6, b5, b4, b3, b2, b1, b0};
+                lfsr   = s8;
+            }
+        }
+    }
+}

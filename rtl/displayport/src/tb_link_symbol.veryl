@@ -1,0 +1,275 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_link_symbol.veryl
+ * @brief Phase B end-to-end loopback test for the parallel main-link
+ *        forward (mux -> scrambler -> encoder) and reverse (decoder ->
+ *        descrambler -> demux) chains.
+ *
+ * Pipeline depth (TX in -> RX out): 4 cycles.
+ *   mux        : 0 cycles (combinational)
+ *   scrambler  : 1 cycle
+ *   encoder    : 1 cycle
+ *   decoder    : 1 cycle
+ *   descrambler: 1 cycle
+ *   demux      : 0 cycles
+ *
+ * The test interleaves data bytes with control symbols (BS, BE, SR, FS,
+ * FE, SS, SE) and verifies that the (kind, data) pair recovered at the
+ * RX end matches the TX side, including correct scrambler-reset
+ * handling around SR.
+ */
+
+module TbLinkSymbol {}
+
+#[test(link_symbol_round_trip)]
+embed (inline) sv{{{
+module link_symbol_round_trip;
+    // SymbolKind enum encoding (matches displayport_link_pkg::SymbolKind).
+    // Using a plain 3-bit signal here avoids cross-file package import
+    // ordering issues when Verilator parses the filelist.
+    localparam logic [2:0] K_DATA = 3'd0;
+    localparam logic [2:0] K_BS   = 3'd1;
+    localparam logic [2:0] K_BE   = 3'd2;
+    localparam logic [2:0] K_SR   = 3'd3;
+    localparam logic [2:0] K_FS   = 3'd4;
+    localparam logic [2:0] K_FE   = 3'd5;
+    localparam logic [2:0] K_SS   = 3'd6;
+    localparam logic [2:0] K_SE   = 3'd7;
+
+    logic clk;
+    logic rstn;
+    initial clk = 0;
+    always #5 clk = ~clk;
+
+    // TX-side stimulus
+    logic        tx_valid;
+    logic [2:0]  tx_kind;
+    logic [7:0]  tx_data;
+
+    // mux outputs
+    logic       mux_valid;
+    logic [7:0] mux_data;
+    logic       mux_is_k;
+    logic       mux_seed_reset;
+
+    // scrambler outputs (1 cycle)
+    logic       sc_valid;
+    logic [7:0] sc_data;
+    logic       sc_is_k;
+
+    // encoder outputs (1 cycle)
+    logic       enc_valid;
+    logic [9:0] enc_symbol;
+
+    // decoder outputs (1 cycle, parallel loopback)
+    logic       dec_valid;
+    logic [7:0] dec_data;
+    logic       dec_is_k;
+    logic       dec_err;
+
+    // descrambler outputs (1 cycle)
+    logic       ds_valid;
+    logic [7:0] ds_data;
+    logic       ds_is_k;
+
+    // demux outputs (combinational)
+    logic        rx_valid;
+    logic [2:0]  rx_kind;
+    logic [7:0]  rx_data;
+    logic        rx_seed_reset;
+
+    // ---- TX chain ----
+    displayport_link_symbol_mux u_mux (
+        .i_valid       (tx_valid),
+        .i_kind        (tx_kind),
+        .i_data        (tx_data),
+        .o_valid       (mux_valid),
+        .o_data        (mux_data),
+        .o_is_k        (mux_is_k),
+        .o_seed_reset  (mux_seed_reset)
+    );
+
+    displayport_scrambler u_tx_scram (
+        .i_clk        (clk),
+        .i_rstn       (rstn),
+        .i_seed_reset (mux_seed_reset),
+        .i_valid      (mux_valid),
+        .i_data       (mux_data),
+        .i_is_k       (mux_is_k),
+        .o_valid      (sc_valid),
+        .o_data       (sc_data),
+        .o_is_k       (sc_is_k)
+    );
+
+    displayport_encoder_8b10b u_enc (
+        .i_clk    (clk),
+        .i_rstn   (rstn),
+        .i_valid  (sc_valid),
+        .i_data   (sc_data),
+        .i_is_k   (sc_is_k),
+        .o_valid  (enc_valid),
+        .o_symbol (enc_symbol)
+    );
+
+    // ---- Parallel loopback (no serdes here) ----
+
+    // ---- RX chain ----
+    displayport_decoder_8b10b u_dec (
+        .i_clk      (clk),
+        .i_rstn     (rstn),
+        .i_valid    (enc_valid),
+        .i_symbol   (enc_symbol),
+        .o_valid    (dec_valid),
+        .o_data     (dec_data),
+        .o_is_k     (dec_is_k),
+        .o_code_err (dec_err)
+    );
+
+    // RX-side scrambler reset is detected from the SR symbol *before*
+    // descrambling (since SR is a K-code and bypasses the scrambler).
+    wire rx_sr_pulse = dec_valid && dec_is_k && (dec_data == 8'h1C);
+
+    displayport_scrambler u_rx_descram (
+        .i_clk        (clk),
+        .i_rstn       (rstn),
+        .i_seed_reset (rx_sr_pulse),
+        .i_valid      (dec_valid),
+        .i_data       (dec_data),
+        .i_is_k       (dec_is_k),
+        .o_valid      (ds_valid),
+        .o_data       (ds_data),
+        .o_is_k       (ds_is_k)
+    );
+
+    displayport_link_symbol_demux u_demux (
+        .i_valid      (ds_valid),
+        .i_data       (ds_data),
+        .i_is_k       (ds_is_k),
+        .o_valid      (rx_valid),
+        .o_kind       (rx_kind),
+        .o_data       (rx_data),
+        .o_seed_reset (rx_seed_reset)
+    );
+
+    // ---- Reference pipeline (4 cycles) ----
+    typedef struct packed {
+        logic [2:0] kind;
+        logic [7:0] data;
+        logic       valid;
+    } sample_t;
+    sample_t pipe [0:3];
+
+    integer mismatches;
+    integer checked;
+    integer dec_errs;
+
+    task automatic send(input logic [2:0] kind, input logic [7:0] d);
+        tx_valid = 1'b1;
+        tx_kind  = kind;
+        tx_data  = d;
+        @(posedge clk);
+    endtask
+
+    initial begin
+        rstn       = 1'b0;
+        tx_valid   = 1'b0;
+        tx_kind    = K_DATA;
+        tx_data    = 8'h00;
+        mismatches = 0;
+        checked    = 0;
+        dec_errs   = 0;
+        for (int i = 0; i < 4; i++) pipe[i] = '0;
+        repeat (4) @(posedge clk);
+        rstn = 1'b1;
+        @(posedge clk);
+
+        // Send SR first to align scramblers on both sides.
+        send(K_SR, 8'h00);
+
+        // Burst of pseudo-random data bytes.
+        for (int i = 0; i < 64; i++) begin
+            send(K_DATA, 8'(i ^ 8'hA5));
+        end
+
+        // Insert each control symbol once interleaved with data.
+        send(K_BS, 8'h00);
+        send(K_DATA, 8'h11);
+        send(K_DATA, 8'h22);
+        send(K_BE, 8'h00);
+        send(K_DATA, 8'h33);
+        send(K_FS, 8'h00);
+        send(K_DATA, 8'h44);
+        send(K_FE, 8'h00);
+        send(K_SS, 8'h00);
+        send(K_DATA, 8'h55);
+        send(K_DATA, 8'h66);
+        send(K_SE, 8'h00);
+
+        // Re-seed mid-stream.
+        send(K_SR, 8'h00);
+        for (int i = 0; i < 32; i++) begin
+            send(K_DATA, 8'(i + 8'h10));
+        end
+
+        tx_valid = 1'b0;
+        repeat (10) @(posedge clk);
+
+        if (mismatches != 0) begin
+            $fatal(1, "[tb_link_symbol] %0d mismatches across %0d samples", mismatches, checked);
+        end
+        if (dec_errs != 0) begin
+            $fatal(1, "[tb_link_symbol] %0d decoder code errors", dec_errs);
+        end
+        if (checked < 100) begin
+            $fatal(1, "[tb_link_symbol] only checked %0d samples", checked);
+        end
+        $display("[tb_link_symbol] PASS (%0d samples checked)", checked);
+        $finish;
+    end
+
+    always_ff @(posedge clk) begin
+        if (!rstn) begin
+            for (int i = 0; i < 4; i++) pipe[i] <= '0;
+        end else begin
+            pipe[3] <= pipe[2];
+            pipe[2] <= pipe[1];
+            pipe[1] <= pipe[0];
+            if (tx_valid) begin
+                pipe[0].kind  <= tx_kind;
+                pipe[0].data  <= tx_data;
+                pipe[0].valid <= 1'b1;
+            end else begin
+                pipe[0] <= '0;
+            end
+        end
+    end
+
+    always_ff @(posedge clk) begin
+        if (rstn && dec_err) dec_errs <= dec_errs + 1;
+        if (rstn && rx_valid) begin
+            checked <= checked + 1;
+            // Compare against pipe[3] (4 cycles of pipeline delay).
+            // For control symbols only the kind matters; the data field is the
+            // K-code byte itself, which is fine — we just don't compare it.
+            if (rx_kind !== pipe[3].kind || pipe[3].valid !== 1'b1) begin
+                mismatches <= mismatches + 1;
+                $display("[tb_link_symbol] MISMATCH (kind) @%0t: expected (kind=%0d) got (kind=%0d, data=%02h)",
+                         $time, pipe[3].kind, rx_kind, rx_data);
+            end else if (pipe[3].kind == K_DATA && rx_data !== pipe[3].data) begin
+                mismatches <= mismatches + 1;
+                $display("[tb_link_symbol] MISMATCH (data) @%0t: expected data=%02h got data=%02h",
+                         $time, pipe[3].data, rx_data);
+            end
+        end
+    end
+
+    initial begin
+        #2_000_000;
+        $fatal(1, "[tb_link_symbol] timeout");
+    end
+endmodule
+}}}

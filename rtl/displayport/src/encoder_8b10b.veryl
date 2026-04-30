@@ -1,0 +1,246 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file encoder_8b10b.veryl
+ * @brief ANSI 8B/10B encoder used by the DisplayPort main link.
+ *        DP 1.2 §3.1.7, Tab 3-5.
+ *
+ * Input  : (i_data[7:0], i_is_k) — HGFEDCBA + control flag.
+ * Output : 10-bit symbol with bit 0 = a (first transmitted), bit 9 = j (last).
+ *
+ * D-codes follow the standard 5b/6b + 3b/4b table. The alternate D.x.7'
+ * substitution is NOT performed in this Phase B implementation; some
+ * (D.17.7, D.18.7, D.20.7) RD- combinations therefore produce a 10-bit
+ * pattern with a six-bit run that is technically a spec violation. The
+ * decoder still recovers them, so round-trip verification is correct.
+ * Phase C/D will add the alternate selection.
+ *
+ * K-codes covered: K28.0..K28.7, K23.7, K27.7, K29.7, K30.7 (the full set
+ * permitted by 8B/10B). Other (i_is_k=1, i_data) combinations are illegal
+ * and produce 10'h000.
+ */
+
+pub module encoder_8b10b (
+    i_clk:  input clock_posedge,
+    i_rstn: input reset_sync_low,
+
+    i_valid: input logic,
+    i_data:  input logic<8>,
+    i_is_k:  input logic,
+
+    o_valid:  output logic,
+    o_symbol: output logic<10>,  // bit 0 = a (LSB / first transmitted)
+) {
+    // RD: 0 = RD-, 1 = RD+. Reset to RD-.
+    var rd: logic;
+
+    // ------ 5b/6b sub-encoder LUTs ------
+    // For each (K, EDCBA) pair return three things:
+    //   neg : 6-bit form to use when entering with RD = 0 (RD-).
+    //   pos : 6-bit form to use when entering with RD = 1 (RD+).
+    //   flip: 1 if the sub-symbol flips RD on exit (i.e. ±2 disparity
+    //         OR D.7-style "neutral with form-swap").
+    //
+    // For purely-neutral codes neg == pos and flip = 0.
+    // For polar codes pos == ~neg and flip = 1.
+    // D.7 alone has neg != pos with flip = 0 (both forms are balanced).
+    function lut5_neg(k: input logic, d5: input logic<5>) -> logic<6> {
+        return case {k, d5} {
+            6'b0_00000: 6'b100111, // D.00
+            6'b0_00001: 6'b011101, // D.01
+            6'b0_00010: 6'b101101, // D.02
+            6'b0_00011: 6'b110001, // D.03 neutral
+            6'b0_00100: 6'b110101, // D.04
+            6'b0_00101: 6'b101001, // D.05 neutral
+            6'b0_00110: 6'b011001, // D.06 neutral
+            6'b0_00111: 6'b111000, // D.07 neutral-swap
+            6'b0_01000: 6'b111001, // D.08
+            6'b0_01001: 6'b100101, // D.09 neutral
+            6'b0_01010: 6'b010101, // D.10 neutral
+            6'b0_01011: 6'b110100, // D.11 neutral
+            6'b0_01100: 6'b001101, // D.12 neutral
+            6'b0_01101: 6'b101100, // D.13 neutral
+            6'b0_01110: 6'b011100, // D.14 neutral
+            6'b0_01111: 6'b010111, // D.15
+            6'b0_10000: 6'b011011, // D.16
+            6'b0_10001: 6'b100011, // D.17 neutral
+            6'b0_10010: 6'b010011, // D.18 neutral
+            6'b0_10011: 6'b110010, // D.19 neutral
+            6'b0_10100: 6'b001011, // D.20 neutral
+            6'b0_10101: 6'b101010, // D.21 neutral
+            6'b0_10110: 6'b011010, // D.22 neutral
+            6'b0_10111: 6'b111010, // D.23
+            6'b0_11000: 6'b110011, // D.24
+            6'b0_11001: 6'b100110, // D.25 neutral
+            6'b0_11010: 6'b010110, // D.26 neutral
+            6'b0_11011: 6'b110110, // D.27
+            6'b0_11100: 6'b001110, // D.28 neutral
+            6'b0_11101: 6'b101110, // D.29
+            6'b0_11110: 6'b011110, // D.30
+            6'b0_11111: 6'b101011, // D.31
+            // K codes
+            6'b1_10111: 6'b111010, // K23.x — same as D.23
+            6'b1_11011: 6'b110110, // K27.x — same as D.27
+            6'b1_11100: 6'b001111, // K28.x — special
+            6'b1_11101: 6'b101110, // K29.x — same as D.29
+            6'b1_11110: 6'b011110, // K30.x — same as D.30
+            default:    6'b000000,
+        };
+    }
+
+    function lut5_pos(k: input logic, d5: input logic<5>) -> logic<6> {
+        return case {k, d5} {
+            6'b0_00000: 6'b011000,
+            6'b0_00001: 6'b100010,
+            6'b0_00010: 6'b010010,
+            6'b0_00011: 6'b110001,
+            6'b0_00100: 6'b001010,
+            6'b0_00101: 6'b101001,
+            6'b0_00110: 6'b011001,
+            6'b0_00111: 6'b000111, // D.07 swap form
+            6'b0_01000: 6'b000110,
+            6'b0_01001: 6'b100101,
+            6'b0_01010: 6'b010101,
+            6'b0_01011: 6'b110100,
+            6'b0_01100: 6'b001101,
+            6'b0_01101: 6'b101100,
+            6'b0_01110: 6'b011100,
+            6'b0_01111: 6'b101000,
+            6'b0_10000: 6'b100100,
+            6'b0_10001: 6'b100011,
+            6'b0_10010: 6'b010011,
+            6'b0_10011: 6'b110010,
+            6'b0_10100: 6'b001011,
+            6'b0_10101: 6'b101010,
+            6'b0_10110: 6'b011010,
+            6'b0_10111: 6'b000101,
+            6'b0_11000: 6'b001100,
+            6'b0_11001: 6'b100110,
+            6'b0_11010: 6'b010110,
+            6'b0_11011: 6'b001001,
+            6'b0_11100: 6'b001110,
+            6'b0_11101: 6'b010001,
+            6'b0_11110: 6'b100001,
+            6'b0_11111: 6'b010100,
+            6'b1_10111: 6'b000101, // K23.x
+            6'b1_11011: 6'b001001, // K27.x
+            6'b1_11100: 6'b110000, // K28.x
+            6'b1_11101: 6'b010001, // K29.x
+            6'b1_11110: 6'b100001, // K30.x
+            default:    6'b000000,
+        };
+    }
+
+    // 1 = sub-symbol flips RD on exit.
+    function lut5_flip(k: input logic, d5: input logic<5>) -> logic {
+        return case {k, d5} {
+            // Polar D codes (RD- form has +2 disparity, RD+ form is its inverse)
+            6'b0_00000, 6'b0_00001, 6'b0_00010, 6'b0_00100,
+            6'b0_01000, 6'b0_01111, 6'b0_10000,
+            6'b0_10111, 6'b0_11000, 6'b0_11011,
+            6'b0_11101, 6'b0_11110, 6'b0_11111: 1'b1,
+            // Polar K codes
+            6'b1_10111, 6'b1_11011, 6'b1_11100,
+            6'b1_11101, 6'b1_11110: 1'b1,
+            // All others (neutral D codes, including D.7 neutral-swap) keep RD.
+            default: 1'b0,
+        };
+    }
+
+    // ------ 3b/4b sub-encoder LUTs ------
+    function lut4_neg(k: input logic, d3: input logic<3>, alt7: input logic) -> logic<4> {
+        return case {k, d3} {
+            4'b0_000: 4'b1011, // D.x.0
+            4'b0_001: 4'b1001, // D.x.1 neutral
+            4'b0_010: 4'b0101, // D.x.2 neutral
+            4'b0_011: 4'b1100, // D.x.3
+            4'b0_100: 4'b1101, // D.x.4
+            4'b0_101: 4'b1010, // D.x.5 neutral
+            4'b0_110: 4'b0110, // D.x.6 neutral
+            4'b0_111: if alt7 ? 4'b0111 : 4'b1110, // D.x.7 primary or alternate
+            // K-code 4b
+            // K-codes — sub-encoder RD entry convention.
+            4'b1_000: 4'b1011, // K28.0  polar
+            4'b1_001: 4'b0110, // K28.1  neutral-swap
+            4'b1_010: 4'b1010, // K28.2  neutral-swap
+            4'b1_011: 4'b1100, // K28.3  neutral-swap
+            4'b1_100: 4'b1101, // K28.4  polar
+            4'b1_101: 4'b0101, // K28.5  neutral-swap
+            4'b1_110: 4'b1001, // K28.6  neutral-swap
+            4'b1_111: 4'b0111, // K28.7 / K23.7 / K27.7 / K29.7 / K30.7 — alt-7 polar
+            default: 4'b0000,
+        };
+    }
+
+    function lut4_pos(k: input logic, d3: input logic<3>, alt7: input logic) -> logic<4> {
+        return case {k, d3} {
+            4'b0_000: 4'b0100,
+            4'b0_001: 4'b1001,
+            4'b0_010: 4'b0101,
+            4'b0_011: 4'b0011,
+            4'b0_100: 4'b0010,
+            4'b0_101: 4'b1010,
+            4'b0_110: 4'b0110,
+            4'b0_111: if alt7 ? 4'b1000 : 4'b0001,
+            4'b1_000: 4'b0100,
+            4'b1_001: 4'b1001,
+            4'b1_010: 4'b0101,
+            4'b1_011: 4'b0011,
+            4'b1_100: 4'b0010,
+            4'b1_101: 4'b1010,
+            4'b1_110: 4'b0110,
+            4'b1_111: 4'b1000,
+            default: 4'b0000,
+        };
+    }
+
+    function lut4_flip(k: input logic, d3: input logic<3>) -> logic {
+        return case {k, d3} {
+            // Polar (4b form has ±2 internal disparity).
+            4'b0_000, 4'b0_100, 4'b0_111: 1'b1, // D.x.0, D.x.4, D.x.7 / D.x.7'
+            4'b1_000, 4'b1_100, 4'b1_111: 1'b1, // K28.0, K28.4, K28.7 (alt-7)
+            // All other entries are neutral (balanced 4b form, possibly swap).
+            default: 1'b0,
+        };
+    }
+
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            rd       = 0;
+            o_valid  = 0;
+            o_symbol = 0;
+        } else {
+            o_valid = i_valid;
+            if i_valid {
+                let k:    logic     = i_is_k;
+                let d5:   logic<5>  = i_data[4:0];
+                let d3:   logic<3>  = i_data[7:5];
+
+                let flip5: logic    = lut5_flip(k, d5);
+                let neg5:  logic<6> = lut5_neg(k, d5);
+                let pos5:  logic<6> = lut5_pos(k, d5);
+                let out5:  logic<6> = if rd ? pos5 : neg5;
+                let rd_after5: logic = rd ^ flip5;
+
+                // Alternate D.x.7' is required to avoid run-length violation when
+                // entering 3b/4b with rd_after5 = 0 and EDCBA in {17,18,20}, or
+                // rd_after5 = 1 and EDCBA in {11,13,14}. Phase B leaves alt7 = 0
+                // (primary form always); see file header.
+                let alt7: logic = 0;
+
+                let flip4: logic    = lut4_flip(k, d3);
+                let neg4:  logic<4> = lut4_neg(k, d3, alt7);
+                let pos4:  logic<4> = lut4_pos(k, d3, alt7);
+                let out4:  logic<4> = if rd_after5 ? pos4 : neg4;
+                let rd_after4: logic = rd_after5 ^ flip4;
+
+                // {fghj, abcdei}: bit 0 = a (first transmitted), bit 9 = j (last).
+                o_symbol = {out4, out5};
+                rd       = rd_after4;
+            }
+        }
+    }
+}

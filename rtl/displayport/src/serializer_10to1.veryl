@@ -1,0 +1,76 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file serializer_10to1.veryl
+ * @brief Simulation-only 10:1 serializer.
+ *
+ * Each clock cycle emits one bit. The next 10-bit symbol is latched when
+ * `o_ready` is asserted. On FPGA this is replaced with vendor primitives
+ * (Gowin OSER10 / Xilinx OSERDESE2) and the surrounding clocking, so this
+ * module is intended only for unit-test loopback in `veryl test`.
+ *
+ * Bit ordering: i_data[0] (= "a") is transmitted first, i_data[9] (= "j")
+ * last, matching the encoder output convention.
+ */
+
+pub module serializer_10to1 (
+    i_clk:  input clock_posedge,
+    i_rstn: input reset_sync_low,
+
+    i_valid: input  logic,
+    i_data:  input  logic<10>,
+    o_ready: output logic,
+
+    o_bit:       output logic,
+    o_bit_valid: output logic,
+) {
+    var shreg:  logic<10>;
+    var counter: logic<4>; // 0..9 while active
+    var active: logic;
+
+    always_comb {
+        o_ready = !active || counter == 9;
+    }
+
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            shreg       = 0;
+            counter     = 0;
+            active      = 0;
+            o_bit       = 0;
+            o_bit_valid = 0;
+        } else {
+            if !active {
+                if i_valid {
+                    shreg       = i_data;
+                    counter     = 0;
+                    active      = 1;
+                    o_bit       = i_data[0];
+                    o_bit_valid = 1;
+                } else {
+                    o_bit       = 0;
+                    o_bit_valid = 0;
+                }
+            } else if counter == 9 {
+                // End of current symbol; accept next or go idle.
+                if i_valid {
+                    shreg       = i_data;
+                    counter     = 0;
+                    o_bit       = i_data[0];
+                    o_bit_valid = 1;
+                } else {
+                    active      = 0;
+                    o_bit       = 0;
+                    o_bit_valid = 0;
+                }
+            } else {
+                counter     = counter + 1;
+                o_bit       = shreg[counter + 1];
+                o_bit_valid = 1;
+            }
+        }
+    }
+}

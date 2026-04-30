@@ -1,0 +1,46 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file link_pkg.veryl
+ * @brief Shared types and K-code constants for the DP main link layer.
+ *
+ * The DP 1.2 control symbols of interest for Phase B (per Tab 2-1):
+ *   BS  Blanking Start         K28.5 (0xBC)
+ *   BE  Blanking End           K27.7 (0xFB)
+ *   SR  Scrambler Reset        K28.0 (0x1C)
+ *   FS  Fill Start             K28.4 (0x9C)
+ *   FE  Fill End               K28.7 (0xFC)
+ *   SS  Secondary-data Start   K28.2 (0x5C)
+ *   SE  Secondary-data End     K28.3 (0x7C)
+ *
+ * The exact K-code assignments above match DP 1.2 §2.2 Tab 2-1 with the
+ * single exception of SE: the spec uses K28.2 for SS and lets SE share
+ * a code; for Phase B we chose K28.3 to keep the enum 1-to-1 with the
+ * K-code value, which makes mux/demux round-tripping unambiguous. The
+ * later phases that integrate against a real sink will revise this if
+ * needed.
+ */
+
+pub package link_pkg {
+    enum SymbolKind: logic<3> {
+        DATA = 0,
+        BS   = 1,
+        BE   = 2,
+        SR   = 3,
+        FS   = 4,
+        FE   = 5,
+        SS   = 6,
+        SE   = 7,
+    }
+
+    const K_BS: logic<8> = 8'hBC; // K28.5
+    const K_BE: logic<8> = 8'hFB; // K27.7
+    const K_SR: logic<8> = 8'h1C; // K28.0
+    const K_FS: logic<8> = 8'h9C; // K28.4
+    const K_FE: logic<8> = 8'hFC; // K28.7
+    const K_SS: logic<8> = 8'h5C; // K28.2
+    const K_SE: logic<8> = 8'h7C; // K28.3
+}

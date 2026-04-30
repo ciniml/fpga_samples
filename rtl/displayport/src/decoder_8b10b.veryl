@@ -1,0 +1,164 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file decoder_8b10b.veryl
+ * @brief ANSI 8B/10B decoder. Inverse of `encoder_8b10b`.
+ *
+ * Input  : 10-bit symbol with bit 0 = a (first received), bit 9 = j (last).
+ * Output : (data[7:0], is_k, code_err) one cycle later.
+ *
+ * The decoder does not need an explicit running-disparity input: every
+ * 6b/5b code is reachable from at most two 6-bit forms, and both forms
+ * map to the same 5b value. K28 is identified by the 6b form (001111 or
+ * 110000), and the four "K23.7 / K27.7 / K29.7 / K30.7" K-codes are
+ * identified by the 4b alt-7 form (0111 / 1000) sitting in front of one
+ * of the four matching 5b values.
+ *
+ * This complement to `encoder_8b10b` ignores the alternate D.x.7'
+ * substitution (the encoder does not generate it). A real-link decoder
+ * Phase C/D will add D.x.7' acceptance and a code-violation flag.
+ */
+
+pub module decoder_8b10b (
+    i_clk:  input clock_posedge,
+    i_rstn: input reset_sync_low,
+
+    i_valid:  input logic,
+    i_symbol: input logic<10>,  // bit 0 = a, bit 9 = j
+
+    o_valid:    output logic,
+    o_data:     output logic<8>,
+    o_is_k:     output logic,
+    o_code_err: output logic,
+) {
+    // 6b → {err, 5b[4:0]}.  err = 1 marks an invalid (un-encoded) 6-bit value.
+    function decode_6b(c6: input logic<6>) -> logic<6> {
+        return case c6 {
+            6'b100111, 6'b011000: 6'b0_00000, // D.0
+            6'b011101, 6'b100010: 6'b0_00001, // D.1
+            6'b101101, 6'b010010: 6'b0_00010, // D.2
+            6'b110001            : 6'b0_00011, // D.3
+            6'b110101, 6'b001010: 6'b0_00100, // D.4
+            6'b101001            : 6'b0_00101, // D.5
+            6'b011001            : 6'b0_00110, // D.6
+            6'b111000, 6'b000111: 6'b0_00111, // D.7
+            6'b111001, 6'b000110: 6'b0_01000, // D.8
+            6'b100101            : 6'b0_01001, // D.9
+            6'b010101            : 6'b0_01010, // D.10
+            6'b110100            : 6'b0_01011, // D.11
+            6'b001101            : 6'b0_01100, // D.12
+            6'b101100            : 6'b0_01101, // D.13
+            6'b011100            : 6'b0_01110, // D.14
+            6'b010111, 6'b101000: 6'b0_01111, // D.15
+            6'b011011, 6'b100100: 6'b0_10000, // D.16
+            6'b100011            : 6'b0_10001, // D.17
+            6'b010011            : 6'b0_10010, // D.18
+            6'b110010            : 6'b0_10011, // D.19
+            6'b001011            : 6'b0_10100, // D.20
+            6'b101010            : 6'b0_10101, // D.21
+            6'b011010            : 6'b0_10110, // D.22
+            6'b111010, 6'b000101: 6'b0_10111, // D.23 / K23.7 (5b portion)
+            6'b110011, 6'b001100: 6'b0_11000, // D.24
+            6'b100110            : 6'b0_11001, // D.25
+            6'b010110            : 6'b0_11010, // D.26
+            6'b110110, 6'b001001: 6'b0_11011, // D.27 / K27.7
+            6'b001110            : 6'b0_11100, // D.28
+            6'b001111, 6'b110000: 6'b0_11100, // K28 (5b same as D.28, distinguished by 6b form)
+            6'b101110, 6'b010001: 6'b0_11101, // D.29 / K29.7
+            6'b011110, 6'b100001: 6'b0_11110, // D.30 / K30.7
+            6'b101011, 6'b010100: 6'b0_11111, // D.31
+            default                : 6'b1_00000,
+        };
+    }
+
+    // D-context 4b → {err, HGF[2:0]}.  Both RD- and RD+ forms decode to the
+    // same HGF in D-context.
+    function decode_4b_d(c4: input logic<4>) -> logic<4> {
+        return case c4 {
+            4'b1011, 4'b0100: 4'b0_000, // D.x.0
+            4'b1001            : 4'b0_001, // D.x.1
+            4'b0101            : 4'b0_010, // D.x.2
+            4'b1100, 4'b0011: 4'b0_011, // D.x.3
+            4'b1101, 4'b0010: 4'b0_100, // D.x.4
+            4'b1010            : 4'b0_101, // D.x.5
+            4'b0110            : 4'b0_110, // D.x.6
+            4'b1110, 4'b0001: 4'b0_111, // D.x.7 primary
+            default            : 4'b1_000,
+        };
+    }
+
+    // K28-context 4b → HGF, when the 4b sub-encoder entered at sub-RD-.
+    // (i.e. when the 6b portion is 110000, which is the K28 RD+ entry form.)
+    function decode_4b_k28_neg(c4: input logic<4>) -> logic<4> {
+        return case c4 {
+            4'b1011: 4'b0_000, // K28.0
+            4'b0110: 4'b0_001, // K28.1
+            4'b1010: 4'b0_010, // K28.2
+            4'b1100: 4'b0_011, // K28.3
+            4'b1101: 4'b0_100, // K28.4
+            4'b0101: 4'b0_101, // K28.5
+            4'b1001: 4'b0_110, // K28.6
+            4'b0111: 4'b0_111, // K28.7
+            default: 4'b1_000,
+        };
+    }
+
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            o_valid    = 0;
+            o_data     = 0;
+            o_is_k     = 0;
+            o_code_err = 0;
+        } else {
+            o_valid = i_valid;
+            if i_valid {
+                let c6: logic<6> = i_symbol[5:0];
+                let c4: logic<4> = i_symbol[9:6];
+
+                let dec5: logic<6> = decode_6b(c6);
+                let err5: logic    = dec5[5];
+                let val5: logic<5> = dec5[4:0];
+
+                let is_k28_form: logic = (c6 == 6'b001111) || (c6 == 6'b110000);
+                // For K28, the 6b form determines whether the 4b sub-encoder
+                // entered at sub-RD- (c6 = 110000) or sub-RD+ (c6 = 001111).
+                // The two K28 4b tables are bit-inverses, so we normalise to
+                // sub-RD- by inverting 4b when c6 = 001111.
+                let c4_norm: logic<4> = if (c6 == 6'b001111) ? ~c4 : c4;
+                let dec_k28: logic<4> = decode_4b_k28_neg(c4_norm);
+                let err_k28: logic    = dec_k28[3];
+                let hgf_k28: logic<3> = dec_k28[2:0];
+
+                let dec_d: logic<4> = decode_4b_d(c4);
+                let err_d: logic    = dec_d[3];
+                let hgf_d: logic<3> = dec_d[2:0];
+
+                // K23.7 / K27.7 / K29.7 / K30.7 detection: 4b alt-7 form sits
+                // in front of D.23 / D.27 / D.29 / D.30 5b form, AND it's not
+                // already covered by the K28 case.
+                let is_alt7_4b: logic = (c4 == 4'b0111) || (c4 == 4'b1000);
+                let is_v7: logic =
+                    (val5 == 5'd23) || (val5 == 5'd27) ||
+                    (val5 == 5'd29) || (val5 == 5'd30);
+                let is_kx7: logic = is_alt7_4b && is_v7 && !is_k28_form;
+
+                if is_k28_form {
+                    o_is_k     = 1;
+                    o_data     = {hgf_k28, val5};
+                    o_code_err = err5 || err_k28;
+                } else if is_kx7 {
+                    o_is_k     = 1;
+                    o_data     = {3'b111, val5};
+                    o_code_err = err5;
+                } else {
+                    o_is_k     = 0;
+                    o_data     = {hgf_d, val5};
+                    o_code_err = err5 || err_d;
+                }
+            }
+        }
+    }
+}

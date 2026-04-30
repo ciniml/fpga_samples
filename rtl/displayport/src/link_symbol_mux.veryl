@@ -1,0 +1,74 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file link_symbol_mux.veryl
+ * @brief Selects between user data byte and a DP control K-code.
+ *
+ * Combinational. Sits between the link-layer producer and the scrambler.
+ * The scrambler is to be wired so that `o_seed_reset` is high in the same
+ * cycle the SR symbol is emitted (DP 1.2 §3.1.6).
+ */
+
+import link_pkg::*;
+
+pub module link_symbol_mux (
+    i_valid:   input logic,
+    // Selector. SymbolKind::DATA passes i_data through; otherwise the
+    // appropriate K-code byte is emitted instead.
+    i_kind:    input SymbolKind,
+    i_data:    input logic<8>,
+
+    o_valid:        output logic,
+    o_data:         output logic<8>,
+    o_is_k:         output logic,
+    o_seed_reset:   output logic, // 1 in the cycle SR is emitted
+) {
+    always_comb {
+        o_valid = i_valid;
+        o_seed_reset = 0;
+        o_is_k = 0;
+        o_data = 0;
+        case i_kind {
+            SymbolKind::DATA: {
+                o_data = i_data;
+                o_is_k = 0;
+            }
+            SymbolKind::BS: {
+                o_data = K_BS;
+                o_is_k = 1;
+            }
+            SymbolKind::BE: {
+                o_data = K_BE;
+                o_is_k = 1;
+            }
+            SymbolKind::SR: {
+                o_data = K_SR;
+                o_is_k = 1;
+                o_seed_reset = i_valid;
+            }
+            SymbolKind::FS: {
+                o_data = K_FS;
+                o_is_k = 1;
+            }
+            SymbolKind::FE: {
+                o_data = K_FE;
+                o_is_k = 1;
+            }
+            SymbolKind::SS: {
+                o_data = K_SS;
+                o_is_k = 1;
+            }
+            SymbolKind::SE: {
+                o_data = K_SE;
+                o_is_k = 1;
+            }
+            default: {
+                o_data = 0;
+                o_is_k = 0;
+            }
+        }
+    }
+}
