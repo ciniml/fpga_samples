@@ -1,0 +1,96 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file training_pattern_gen.veryl
+ * @brief Per-lane DisplayPort link-training pattern generator (DP 1.2 §3.5,
+ *        Tab 3-16). Produces TPS1, TPS2 or an IDLE byte stream depending on
+ *        i_pattern_select. Phase C does not implement TPS3 (HBR2-only).
+ *
+ * Pacing: a new byte is emitted on each cycle that i_byte_tick is high.
+ * In the main_link_tx_lane integration this is driven by the serializer's
+ * o_ready (one byte every 10 system-clock cycles, i.e. one symbol period).
+ *
+ * Output formats per i_pattern_select (matches DPCD TRAINING_PATTERN_SELECT
+ * encoding bit[1:0]):
+ *   2'b00 (IDLE) — byte = 0x00, is_k = 0, scramble_disable = 0
+ *   2'b01 (TPS1) — byte = 0x4A (D10.2), is_k = 0, scramble_disable = 1
+ *   2'b10 (TPS2) — 10-symbol cycle:
+ *       phase 0: K28.5 (0xBC, K)
+ *       phase 1: D11.6 (0xCB)
+ *       phase 2: K28.5 (0xBC, K)
+ *       phase 3: D11.6 (0xCB)
+ *       phase 4..9: D10.2 (0x4A)
+ *     scramble_disable = 1 throughout.
+ *   2'b11 — reserved for TPS3, treated as IDLE for Phase C.
+ */
+
+pub module training_pattern_gen (
+    i_clk:  input clock_posedge,
+    i_rstn: input reset_sync_low,
+
+    i_pattern_select: input logic<2>,
+    i_byte_tick:      input logic,
+
+    o_valid:            output logic,
+    o_data:             output logic<8>,
+    o_is_k:             output logic,
+    o_scramble_disable: output logic,
+) {
+    var phase: logic<4>; // 0..9 for TPS2, otherwise idle at 0
+
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            phase              = 0;
+            o_valid            = 0;
+            o_data             = 0;
+            o_is_k             = 0;
+            o_scramble_disable = 0;
+        } else {
+            o_valid = i_byte_tick;
+            if i_byte_tick {
+                case i_pattern_select {
+                    2'b01: {
+                        // TPS1
+                        o_data             = 8'h4A;
+                        o_is_k             = 0;
+                        o_scramble_disable = 1;
+                        phase              = 0;
+                    }
+                    2'b10: {
+                        // TPS2
+                        o_scramble_disable = 1;
+                        case phase {
+                            4'd0, 4'd2: {
+                                o_data = 8'hBC; // K28.5
+                                o_is_k = 1;
+                            }
+                            4'd1, 4'd3: {
+                                o_data = 8'hCB; // D11.6
+                                o_is_k = 0;
+                            }
+                            default: {
+                                o_data = 8'h4A; // D10.2 (phase 4..9)
+                                o_is_k = 0;
+                            }
+                        }
+                        if phase == 4'd9 {
+                            phase = 0;
+                        } else {
+                            phase = phase + 1;
+                        }
+                    }
+                    default: {
+                        // IDLE / reserved
+                        o_data             = 8'h00;
+                        o_is_k             = 0;
+                        o_scramble_disable = 0;
+                        phase              = 0;
+                    }
+                }
+            }
+        }
+    }
+}

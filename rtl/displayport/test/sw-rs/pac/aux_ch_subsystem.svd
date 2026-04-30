@@ -332,5 +332,84 @@
                 </register>
             </registers>
         </peripheral>
+        <peripheral>
+            <name>MAIN_LINK</name>
+            <description>DisplayPort main-link control (Phase C)</description>
+            <baseAddress>0x40020000</baseAddress>
+            <registers>
+                <register>
+                    <name>CTRL</name>
+                    <description>Main-link control. Pattern select / enable / RD reset pulse.</description>
+                    <addressOffset>0x00</addressOffset>
+                    <fields>
+                        <field>
+                            <name>PATTERN_SELECT</name>
+                            <description>00=IDLE, 01=TPS1, 10=TPS2 (DP 1.2 Tab 3-16)</description>
+                            <bitOffset>0</bitOffset>
+                            <bitWidth>2</bitWidth>
+                            <access>read-write</access>
+                        </field>
+                        <field>
+                            <name>ENABLE</name>
+                            <description>1 = main link transmitter enabled</description>
+                            <bitOffset>4</bitOffset>
+                            <bitWidth>1</bitWidth>
+                            <access>read-write</access>
+                        </field>
+                        <field>
+                            <name>RD_RESET</name>
+                            <description>Write 1 to force the next encoder input to start at RD=- (DP 1.2 §3.5.1.2). Self-clearing.</description>
+                            <bitOffset>5</bitOffset>
+                            <bitWidth>1</bitWidth>
+                            <access>read-write</access>
+                        </field>
+                    </fields>
+                </register>
+                <register>
+                    <name>LANE_COUNT</name>
+                    <description>Active lane count (1, 2, or 4). Phase C uses 1 only.</description>
+                    <addressOffset>0x04</addressOffset>
+                    <fields>
+                        <field>
+                            <name>VALUE</name>
+                            <bitOffset>0</bitOffset>
+                            <bitWidth>3</bitWidth>
+                            <access>read-write</access>
+                        </field>
+                    </fields>
+                </register>
+                <register>
+                    <name>LANE0_DRIVE</name>
+                    <description>Drive setting for lane 0 (informational in sim).</description>
+                    <addressOffset>0x08</addressOffset>
+                    <fields>
+                        <field>
+                            <name>VOLTAGE_SWING</name>
+                            <bitOffset>0</bitOffset>
+                            <bitWidth>2</bitWidth>
+                            <access>read-write</access>
+                        </field>
+                        <field>
+                            <name>MAX_SWING</name>
+                            <bitOffset>2</bitOffset>
+                            <bitWidth>1</bitWidth>
+                            <access>read-write</access>
+                        </field>
+                        <field>
+                            <name>PRE_EMPHASIS</name>
+                            <bitOffset>3</bitOffset>
+                            <bitWidth>2</bitWidth>
+                            <access>read-write</access>
+                        </field>
+                        <field>
+                            <name>MAX_PRE_EMPHASIS</name>
+                            <bitOffset>5</bitOffset>
+                            <bitWidth>1</bitWidth>
+                            <access>read-write</access>
+                        </field>
+                    </fields>
+                </register>
+            </registers>
+        </peripheral>
     </peripherals>
 </device>

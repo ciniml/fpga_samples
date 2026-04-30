@@ -94,25 +94,27 @@ module link_symbol_round_trip;
     );
 
     displayport_scrambler u_tx_scram (
-        .i_clk        (clk),
-        .i_rstn       (rstn),
-        .i_seed_reset (mux_seed_reset),
-        .i_valid      (mux_valid),
-        .i_data       (mux_data),
-        .i_is_k       (mux_is_k),
+        .i_clk              (clk),
+        .i_rstn             (rstn),
+        .i_seed_reset       (mux_seed_reset),
+        .i_scramble_disable (1'b0),
+        .i_valid            (mux_valid),
+        .i_data             (mux_data),
+        .i_is_k             (mux_is_k),
         .o_valid      (sc_valid),
         .o_data       (sc_data),
         .o_is_k       (sc_is_k)
     );
 
     displayport_encoder_8b10b u_enc (
-        .i_clk    (clk),
-        .i_rstn   (rstn),
-        .i_valid  (sc_valid),
-        .i_data   (sc_data),
-        .i_is_k   (sc_is_k),
-        .o_valid  (enc_valid),
-        .o_symbol (enc_symbol)
+        .i_clk      (clk),
+        .i_rstn     (rstn),
+        .i_valid    (sc_valid),
+        .i_data     (sc_data),
+        .i_is_k     (sc_is_k),
+        .i_rd_reset (1'b0),
+        .o_valid    (enc_valid),
+        .o_symbol   (enc_symbol)
     );
 
     // ---- Parallel loopback (no serdes here) ----
@@ -134,12 +136,13 @@ module link_symbol_round_trip;
     wire rx_sr_pulse = dec_valid && dec_is_k && (dec_data == 8'h1C);
 
     displayport_scrambler u_rx_descram (
-        .i_clk        (clk),
-        .i_rstn       (rstn),
-        .i_seed_reset (rx_sr_pulse),
-        .i_valid      (dec_valid),
-        .i_data       (dec_data),
-        .i_is_k       (dec_is_k),
+        .i_clk              (clk),
+        .i_rstn             (rstn),
+        .i_seed_reset       (rx_sr_pulse),
+        .i_scramble_disable (1'b0),
+        .i_valid            (dec_valid),
+        .i_data             (dec_data),
+        .i_is_k             (dec_is_k),
         .o_valid      (ds_valid),
         .o_data       (ds_data),
         .o_is_k       (ds_is_k)

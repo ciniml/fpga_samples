@@ -1,0 +1,149 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_training_pattern.veryl
+ * @brief Phase C unit test for `training_pattern_gen`. Verifies the byte
+ *        sequence emitted for TPS1 / TPS2 / IDLE matches DP 1.2 Tab 3-16.
+ */
+
+module TbTrainingPattern {}
+
+#[test(training_pattern_gen_golden)]
+embed (inline) sv{{{
+module training_pattern_gen_golden;
+    logic clk;
+    logic rstn;
+    initial clk = 0;
+    always #5 clk = ~clk;
+
+    logic [1:0] pattern_select;
+    logic       byte_tick;
+
+    logic       o_valid;
+    logic [7:0] o_data;
+    logic       o_is_k;
+    logic       o_scramble_disable;
+
+    displayport_training_pattern_gen u_gen (
+        .i_clk              (clk),
+        .i_rstn             (rstn),
+        .i_pattern_select   (pattern_select),
+        .i_byte_tick        (byte_tick),
+        .o_valid            (o_valid),
+        .o_data             (o_data),
+        .o_is_k             (o_is_k),
+        .o_scramble_disable (o_scramble_disable)
+    );
+
+    integer mismatches;
+    integer checked;
+
+    // TPS2 expected sequence (10 symbols / cycle).
+    // {data[7:0], is_k}
+    typedef struct packed {
+        logic [7:0] data;
+        logic       is_k;
+    } sample_t;
+    sample_t tps2_seq [0:9];
+    initial begin
+        tps2_seq[0] = '{data: 8'hBC, is_k: 1'b1};
+        tps2_seq[1] = '{data: 8'hCB, is_k: 1'b0};
+        tps2_seq[2] = '{data: 8'hBC, is_k: 1'b1};
+        tps2_seq[3] = '{data: 8'hCB, is_k: 1'b0};
+        tps2_seq[4] = '{data: 8'h4A, is_k: 1'b0};
+        tps2_seq[5] = '{data: 8'h4A, is_k: 1'b0};
+        tps2_seq[6] = '{data: 8'h4A, is_k: 1'b0};
+        tps2_seq[7] = '{data: 8'h4A, is_k: 1'b0};
+        tps2_seq[8] = '{data: 8'h4A, is_k: 1'b0};
+        tps2_seq[9] = '{data: 8'h4A, is_k: 1'b0};
+    end
+
+    task automatic check_sample(input logic [7:0] expected_data,
+                                input logic       expected_is_k,
+                                input logic       expected_scramble_disable,
+                                input string      label);
+        if (o_valid) begin
+            checked = checked + 1;
+            if (o_data !== expected_data || o_is_k !== expected_is_k ||
+                o_scramble_disable !== expected_scramble_disable) begin
+                mismatches = mismatches + 1;
+                $display("[tb_training_pattern] %s mismatch: expected (%02h, k=%b, sd=%b) got (%02h, k=%b, sd=%b)",
+                         label, expected_data, expected_is_k, expected_scramble_disable,
+                         o_data, o_is_k, o_scramble_disable);
+            end
+        end else begin
+            mismatches = mismatches + 1;
+            $display("[tb_training_pattern] %s: o_valid not asserted", label);
+        end
+    endtask
+
+    initial begin
+        rstn           = 1'b0;
+        pattern_select = 2'b00;
+        byte_tick      = 1'b0;
+        mismatches     = 0;
+        checked        = 0;
+        repeat (4) @(posedge clk);
+        rstn = 1'b1;
+        @(posedge clk);
+
+        // ----- IDLE -----
+        pattern_select = 2'b00;
+        byte_tick      = 1'b1;
+        for (int i = 0; i < 8; i++) begin
+            @(posedge clk);
+            #1;
+            check_sample(8'h00, 1'b0, 1'b0, "IDLE");
+        end
+
+        // ----- TPS1 -----
+        pattern_select = 2'b01;
+        for (int i = 0; i < 64; i++) begin
+            @(posedge clk);
+            #1;
+            check_sample(8'h4A, 1'b0, 1'b1, "TPS1");
+        end
+
+        // ----- TPS2 (12 cycles of the 10-symbol sequence) -----
+        // The cycle pattern_select changes is also the first cycle the
+        // FSM samples it (output reflects phase=0 on that edge).
+        pattern_select = 2'b10;
+        for (int rep = 0; rep < 12; rep++) begin
+            for (int p = 0; p < 10; p++) begin
+                @(posedge clk);
+                #1;
+                check_sample(tps2_seq[p].data, tps2_seq[p].is_k, 1'b1,
+                             $sformatf("TPS2 rep=%0d phase=%0d", rep, p));
+            end
+        end
+
+        // ----- back to IDLE -----
+        pattern_select = 2'b00;
+        for (int i = 0; i < 8; i++) begin
+            @(posedge clk);
+            #1;
+            check_sample(8'h00, 1'b0, 1'b0, "post-TPS2 IDLE");
+        end
+
+        byte_tick = 1'b0;
+        repeat (4) @(posedge clk);
+
+        if (mismatches != 0) begin
+            $fatal(1, "[tb_training_pattern] %0d mismatches across %0d samples", mismatches, checked);
+        end
+        if (checked < 200) begin
+            $fatal(1, "[tb_training_pattern] only checked %0d samples", checked);
+        end
+        $display("[tb_training_pattern] PASS (%0d samples checked)", checked);
+        $finish;
+    end
+
+    initial begin
+        #2_000_000;
+        $fatal(1, "[tb_training_pattern] timeout");
+    end
+endmodule
+}}}

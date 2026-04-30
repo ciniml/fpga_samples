@@ -42,13 +42,14 @@ module eight_b_ten_b_round_trip;
     logic        dec_err;
 
     displayport_encoder_8b10b u_enc (
-        .i_clk    (clk),
-        .i_rstn   (rstn),
-        .i_valid  (enc_valid),
-        .i_data   (enc_data),
-        .i_is_k   (enc_is_k),
-        .o_valid  (sym_valid),
-        .o_symbol (sym_data)
+        .i_clk      (clk),
+        .i_rstn     (rstn),
+        .i_valid    (enc_valid),
+        .i_data     (enc_data),
+        .i_is_k     (enc_is_k),
+        .i_rd_reset (1'b0),
+        .o_valid    (sym_valid),
+        .o_symbol   (sym_data)
     );
 
     displayport_decoder_8b10b u_dec (

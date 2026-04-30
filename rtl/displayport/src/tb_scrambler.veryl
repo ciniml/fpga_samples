@@ -38,12 +38,13 @@ module scrambler_loopback;
 
     // Forward (TX) scrambler
     displayport_scrambler tx_scram (
-        .i_clk        (clk),
-        .i_rstn       (rstn),
-        .i_seed_reset (a_seed_reset),
-        .i_valid      (a_valid),
-        .i_data       (a_data),
-        .i_is_k       (a_is_k),
+        .i_clk              (clk),
+        .i_rstn             (rstn),
+        .i_seed_reset       (a_seed_reset),
+        .i_scramble_disable (1'b0),
+        .i_valid            (a_valid),
+        .i_data             (a_data),
+        .i_is_k             (a_is_k),
         .o_valid      (b_valid),
         .o_data       (b_data),
         .o_is_k       (b_is_k)
@@ -54,12 +55,13 @@ module scrambler_loopback;
     // (scrambler reset symbol) flows through.
     wire   rx_seed_reset = b_valid && b_is_k && (b_data == 8'h1C);
     displayport_scrambler rx_descram (
-        .i_clk        (clk),
-        .i_rstn       (rstn),
-        .i_seed_reset (rx_seed_reset),
-        .i_valid      (b_valid),
-        .i_data       (b_data),
-        .i_is_k       (b_is_k),
+        .i_clk              (clk),
+        .i_rstn             (rstn),
+        .i_seed_reset       (rx_seed_reset),
+        .i_scramble_disable (1'b0),
+        .i_valid            (b_valid),
+        .i_data             (b_data),
+        .i_is_k             (b_is_k),
         .o_valid      (c_valid),
         .o_data       (c_data),
         .o_is_k       (c_is_k)

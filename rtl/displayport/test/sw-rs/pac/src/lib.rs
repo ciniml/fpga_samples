@@ -2191,6 +2191,375 @@ pub mod aux_ch {
         }
     }
 }
+#[doc = "DisplayPort main-link control (Phase C)"]
+pub struct MAIN_LINK {
+    _marker: PhantomData<*const ()>,
+}
+unsafe impl Send for MAIN_LINK {}
+impl MAIN_LINK {
+    #[doc = r"Pointer to the register block"]
+    pub const PTR: *const main_link::RegisterBlock = 0x4002_0000 as *const _;
+    #[doc = r"Return the pointer to the register block"]
+    #[inline(always)]
+    pub const fn ptr() -> *const main_link::RegisterBlock {
+        Self::PTR
+    }
+}
+impl Deref for MAIN_LINK {
+    type Target = main_link::RegisterBlock;
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*Self::PTR }
+    }
+}
+impl core::fmt::Debug for MAIN_LINK {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        f.debug_struct("MAIN_LINK").finish()
+    }
+}
+#[doc = "DisplayPort main-link control (Phase C)"]
+pub mod main_link {
+    #[doc = r"Register block"]
+    #[repr(C)]
+    pub struct RegisterBlock {
+        #[doc = "0x00 - Main-link control. Pattern select / enable / RD reset pulse."]
+        pub ctrl: CTRL,
+        #[doc = "0x04 - Active lane count (1, 2, or 4). Phase C uses 1 only."]
+        pub lane_count: LANE_COUNT,
+        #[doc = "0x08 - Drive setting for lane 0 (informational in sim)."]
+        pub lane0_drive: LANE0_DRIVE,
+    }
+    #[doc = "CTRL (rw) register accessor: an alias for `Reg<CTRL_SPEC>`"]
+    pub type CTRL = crate::Reg<ctrl::CTRL_SPEC>;
+    #[doc = "Main-link control. Pattern select / enable / RD reset pulse."]
+    pub mod ctrl {
+        #[doc = "Register `CTRL` reader"]
+        pub struct R(crate::R<CTRL_SPEC>);
+        impl core::ops::Deref for R {
+            type Target = crate::R<CTRL_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl From<crate::R<CTRL_SPEC>> for R {
+            #[inline(always)]
+            fn from(reader: crate::R<CTRL_SPEC>) -> Self {
+                R(reader)
+            }
+        }
+        #[doc = "Register `CTRL` writer"]
+        pub struct W(crate::W<CTRL_SPEC>);
+        impl core::ops::Deref for W {
+            type Target = crate::W<CTRL_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl core::ops::DerefMut for W {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+        impl From<crate::W<CTRL_SPEC>> for W {
+            #[inline(always)]
+            fn from(writer: crate::W<CTRL_SPEC>) -> Self {
+                W(writer)
+            }
+        }
+        #[doc = "Field `PATTERN_SELECT` reader - 00=IDLE, 01=TPS1, 10=TPS2 (DP 1.2 Tab 3-16)"]
+        pub type PATTERN_SELECT_R = crate::FieldReader;
+        #[doc = "Field `PATTERN_SELECT` writer - 00=IDLE, 01=TPS1, 10=TPS2 (DP 1.2 Tab 3-16)"]
+        pub type PATTERN_SELECT_W<'a, const O: u8> = crate::FieldWriter<'a, CTRL_SPEC, 2, O>;
+        #[doc = "Field `ENABLE` reader - 1 = main link transmitter enabled"]
+        pub type ENABLE_R = crate::BitReader;
+        #[doc = "Field `ENABLE` writer - 1 = main link transmitter enabled"]
+        pub type ENABLE_W<'a, const O: u8> = crate::BitWriter<'a, CTRL_SPEC, O>;
+        #[doc = "Field `RD_RESET` reader - Write 1 to force the next encoder input to start at RD=- (DP 1.2 §3.5.1.2). Self-clearing."]
+        pub type RD_RESET_R = crate::BitReader;
+        #[doc = "Field `RD_RESET` writer - Write 1 to force the next encoder input to start at RD=- (DP 1.2 §3.5.1.2). Self-clearing."]
+        pub type RD_RESET_W<'a, const O: u8> = crate::BitWriter<'a, CTRL_SPEC, O>;
+        impl R {
+            #[doc = "Bits 0:1 - 00=IDLE, 01=TPS1, 10=TPS2 (DP 1.2 Tab 3-16)"]
+            #[inline(always)]
+            pub fn pattern_select(&self) -> PATTERN_SELECT_R {
+                PATTERN_SELECT_R::new((self.bits & 3) as u8)
+            }
+            #[doc = "Bit 4 - 1 = main link transmitter enabled"]
+            #[inline(always)]
+            pub fn enable(&self) -> ENABLE_R {
+                ENABLE_R::new(((self.bits >> 4) & 1) != 0)
+            }
+            #[doc = "Bit 5 - Write 1 to force the next encoder input to start at RD=- (DP 1.2 §3.5.1.2). Self-clearing."]
+            #[inline(always)]
+            pub fn rd_reset(&self) -> RD_RESET_R {
+                RD_RESET_R::new(((self.bits >> 5) & 1) != 0)
+            }
+        }
+        impl W {
+            #[doc = "Bits 0:1 - 00=IDLE, 01=TPS1, 10=TPS2 (DP 1.2 Tab 3-16)"]
+            #[inline(always)]
+            #[must_use]
+            pub fn pattern_select(&mut self) -> PATTERN_SELECT_W<0> {
+                PATTERN_SELECT_W::new(self)
+            }
+            #[doc = "Bit 4 - 1 = main link transmitter enabled"]
+            #[inline(always)]
+            #[must_use]
+            pub fn enable(&mut self) -> ENABLE_W<4> {
+                ENABLE_W::new(self)
+            }
+            #[doc = "Bit 5 - Write 1 to force the next encoder input to start at RD=- (DP 1.2 §3.5.1.2). Self-clearing."]
+            #[inline(always)]
+            #[must_use]
+            pub fn rd_reset(&mut self) -> RD_RESET_W<5> {
+                RD_RESET_W::new(self)
+            }
+            #[doc = "Writes raw bits to the register."]
+            #[inline(always)]
+            pub unsafe fn bits(&mut self, bits: u32) -> &mut Self {
+                self.0.bits(bits);
+                self
+            }
+        }
+        #[doc = "Main-link control. Pattern select / enable / RD reset pulse.\n\nThis register you can [`read`](crate::generic::Reg::read), [`write_with_zero`](crate::generic::Reg::write_with_zero), [`reset`](crate::generic::Reg::reset), [`write`](crate::generic::Reg::write), [`modify`](crate::generic::Reg::modify). See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [ctrl](index.html) module"]
+        pub struct CTRL_SPEC;
+        impl crate::RegisterSpec for CTRL_SPEC {
+            type Ux = u32;
+        }
+        #[doc = "`read()` method returns [ctrl::R](R) reader structure"]
+        impl crate::Readable for CTRL_SPEC {
+            type Reader = R;
+        }
+        #[doc = "`write(|w| ..)` method takes [ctrl::W](W) writer structure"]
+        impl crate::Writable for CTRL_SPEC {
+            type Writer = W;
+            const ZERO_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+            const ONE_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+        }
+        #[doc = "`reset()` method sets CTRL to value 0"]
+        impl crate::Resettable for CTRL_SPEC {
+            const RESET_VALUE: Self::Ux = 0;
+        }
+    }
+    #[doc = "LANE_COUNT (rw) register accessor: an alias for `Reg<LANE_COUNT_SPEC>`"]
+    pub type LANE_COUNT = crate::Reg<lane_count::LANE_COUNT_SPEC>;
+    #[doc = "Active lane count (1, 2, or 4). Phase C uses 1 only."]
+    pub mod lane_count {
+        #[doc = "Register `LANE_COUNT` reader"]
+        pub struct R(crate::R<LANE_COUNT_SPEC>);
+        impl core::ops::Deref for R {
+            type Target = crate::R<LANE_COUNT_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl From<crate::R<LANE_COUNT_SPEC>> for R {
+            #[inline(always)]
+            fn from(reader: crate::R<LANE_COUNT_SPEC>) -> Self {
+                R(reader)
+            }
+        }
+        #[doc = "Register `LANE_COUNT` writer"]
+        pub struct W(crate::W<LANE_COUNT_SPEC>);
+        impl core::ops::Deref for W {
+            type Target = crate::W<LANE_COUNT_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl core::ops::DerefMut for W {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+        impl From<crate::W<LANE_COUNT_SPEC>> for W {
+            #[inline(always)]
+            fn from(writer: crate::W<LANE_COUNT_SPEC>) -> Self {
+                W(writer)
+            }
+        }
+        #[doc = "Field `VALUE` reader - "]
+        pub type VALUE_R = crate::FieldReader;
+        #[doc = "Field `VALUE` writer - "]
+        pub type VALUE_W<'a, const O: u8> = crate::FieldWriter<'a, LANE_COUNT_SPEC, 3, O>;
+        impl R {
+            #[doc = "Bits 0:2"]
+            #[inline(always)]
+            pub fn value(&self) -> VALUE_R {
+                VALUE_R::new((self.bits & 7) as u8)
+            }
+        }
+        impl W {
+            #[doc = "Bits 0:2"]
+            #[inline(always)]
+            #[must_use]
+            pub fn value(&mut self) -> VALUE_W<0> {
+                VALUE_W::new(self)
+            }
+            #[doc = "Writes raw bits to the register."]
+            #[inline(always)]
+            pub unsafe fn bits(&mut self, bits: u32) -> &mut Self {
+                self.0.bits(bits);
+                self
+            }
+        }
+        #[doc = "Active lane count (1, 2, or 4). Phase C uses 1 only.\n\nThis register you can [`read`](crate::generic::Reg::read), [`write_with_zero`](crate::generic::Reg::write_with_zero), [`reset`](crate::generic::Reg::reset), [`write`](crate::generic::Reg::write), [`modify`](crate::generic::Reg::modify). See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [lane_count](index.html) module"]
+        pub struct LANE_COUNT_SPEC;
+        impl crate::RegisterSpec for LANE_COUNT_SPEC {
+            type Ux = u32;
+        }
+        #[doc = "`read()` method returns [lane_count::R](R) reader structure"]
+        impl crate::Readable for LANE_COUNT_SPEC {
+            type Reader = R;
+        }
+        #[doc = "`write(|w| ..)` method takes [lane_count::W](W) writer structure"]
+        impl crate::Writable for LANE_COUNT_SPEC {
+            type Writer = W;
+            const ZERO_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+            const ONE_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+        }
+        #[doc = "`reset()` method sets LANE_COUNT to value 0"]
+        impl crate::Resettable for LANE_COUNT_SPEC {
+            const RESET_VALUE: Self::Ux = 0;
+        }
+    }
+    #[doc = "LANE0_DRIVE (rw) register accessor: an alias for `Reg<LANE0_DRIVE_SPEC>`"]
+    pub type LANE0_DRIVE = crate::Reg<lane0_drive::LANE0_DRIVE_SPEC>;
+    #[doc = "Drive setting for lane 0 (informational in sim)."]
+    pub mod lane0_drive {
+        #[doc = "Register `LANE0_DRIVE` reader"]
+        pub struct R(crate::R<LANE0_DRIVE_SPEC>);
+        impl core::ops::Deref for R {
+            type Target = crate::R<LANE0_DRIVE_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl From<crate::R<LANE0_DRIVE_SPEC>> for R {
+            #[inline(always)]
+            fn from(reader: crate::R<LANE0_DRIVE_SPEC>) -> Self {
+                R(reader)
+            }
+        }
+        #[doc = "Register `LANE0_DRIVE` writer"]
+        pub struct W(crate::W<LANE0_DRIVE_SPEC>);
+        impl core::ops::Deref for W {
+            type Target = crate::W<LANE0_DRIVE_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl core::ops::DerefMut for W {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+        impl From<crate::W<LANE0_DRIVE_SPEC>> for W {
+            #[inline(always)]
+            fn from(writer: crate::W<LANE0_DRIVE_SPEC>) -> Self {
+                W(writer)
+            }
+        }
+        #[doc = "Field `VOLTAGE_SWING` reader - "]
+        pub type VOLTAGE_SWING_R = crate::FieldReader;
+        #[doc = "Field `VOLTAGE_SWING` writer - "]
+        pub type VOLTAGE_SWING_W<'a, const O: u8> = crate::FieldWriter<'a, LANE0_DRIVE_SPEC, 2, O>;
+        #[doc = "Field `MAX_SWING` reader - "]
+        pub type MAX_SWING_R = crate::BitReader;
+        #[doc = "Field `MAX_SWING` writer - "]
+        pub type MAX_SWING_W<'a, const O: u8> = crate::BitWriter<'a, LANE0_DRIVE_SPEC, O>;
+        #[doc = "Field `PRE_EMPHASIS` reader - "]
+        pub type PRE_EMPHASIS_R = crate::FieldReader;
+        #[doc = "Field `PRE_EMPHASIS` writer - "]
+        pub type PRE_EMPHASIS_W<'a, const O: u8> = crate::FieldWriter<'a, LANE0_DRIVE_SPEC, 2, O>;
+        #[doc = "Field `MAX_PRE_EMPHASIS` reader - "]
+        pub type MAX_PRE_EMPHASIS_R = crate::BitReader;
+        #[doc = "Field `MAX_PRE_EMPHASIS` writer - "]
+        pub type MAX_PRE_EMPHASIS_W<'a, const O: u8> = crate::BitWriter<'a, LANE0_DRIVE_SPEC, O>;
+        impl R {
+            #[doc = "Bits 0:1"]
+            #[inline(always)]
+            pub fn voltage_swing(&self) -> VOLTAGE_SWING_R {
+                VOLTAGE_SWING_R::new((self.bits & 3) as u8)
+            }
+            #[doc = "Bit 2"]
+            #[inline(always)]
+            pub fn max_swing(&self) -> MAX_SWING_R {
+                MAX_SWING_R::new(((self.bits >> 2) & 1) != 0)
+            }
+            #[doc = "Bits 3:4"]
+            #[inline(always)]
+            pub fn pre_emphasis(&self) -> PRE_EMPHASIS_R {
+                PRE_EMPHASIS_R::new(((self.bits >> 3) & 3) as u8)
+            }
+            #[doc = "Bit 5"]
+            #[inline(always)]
+            pub fn max_pre_emphasis(&self) -> MAX_PRE_EMPHASIS_R {
+                MAX_PRE_EMPHASIS_R::new(((self.bits >> 5) & 1) != 0)
+            }
+        }
+        impl W {
+            #[doc = "Bits 0:1"]
+            #[inline(always)]
+            #[must_use]
+            pub fn voltage_swing(&mut self) -> VOLTAGE_SWING_W<0> {
+                VOLTAGE_SWING_W::new(self)
+            }
+            #[doc = "Bit 2"]
+            #[inline(always)]
+            #[must_use]
+            pub fn max_swing(&mut self) -> MAX_SWING_W<2> {
+                MAX_SWING_W::new(self)
+            }
+            #[doc = "Bits 3:4"]
+            #[inline(always)]
+            #[must_use]
+            pub fn pre_emphasis(&mut self) -> PRE_EMPHASIS_W<3> {
+                PRE_EMPHASIS_W::new(self)
+            }
+            #[doc = "Bit 5"]
+            #[inline(always)]
+            #[must_use]
+            pub fn max_pre_emphasis(&mut self) -> MAX_PRE_EMPHASIS_W<5> {
+                MAX_PRE_EMPHASIS_W::new(self)
+            }
+            #[doc = "Writes raw bits to the register."]
+            #[inline(always)]
+            pub unsafe fn bits(&mut self, bits: u32) -> &mut Self {
+                self.0.bits(bits);
+                self
+            }
+        }
+        #[doc = "Drive setting for lane 0 (informational in sim).\n\nThis register you can [`read`](crate::generic::Reg::read), [`write_with_zero`](crate::generic::Reg::write_with_zero), [`reset`](crate::generic::Reg::reset), [`write`](crate::generic::Reg::write), [`modify`](crate::generic::Reg::modify). See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [lane0_drive](index.html) module"]
+        pub struct LANE0_DRIVE_SPEC;
+        impl crate::RegisterSpec for LANE0_DRIVE_SPEC {
+            type Ux = u32;
+        }
+        #[doc = "`read()` method returns [lane0_drive::R](R) reader structure"]
+        impl crate::Readable for LANE0_DRIVE_SPEC {
+            type Reader = R;
+        }
+        #[doc = "`write(|w| ..)` method takes [lane0_drive::W](W) writer structure"]
+        impl crate::Writable for LANE0_DRIVE_SPEC {
+            type Writer = W;
+            const ZERO_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+            const ONE_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+        }
+        #[doc = "`reset()` method sets LANE0_DRIVE to value 0"]
+        impl crate::Resettable for LANE0_DRIVE_SPEC {
+            const RESET_VALUE: Self::Ux = 0;
+        }
+    }
+}
 #[no_mangle]
 static mut DEVICE_PERIPHERALS: bool = false;
 #[doc = r" All the peripherals."]
@@ -2202,6 +2571,8 @@ pub struct Peripherals {
     pub SYSTEM_SERIALOUT: SYSTEM_SERIALOUT,
     #[doc = "AUX_CH"]
     pub AUX_CH: AUX_CH,
+    #[doc = "MAIN_LINK"]
+    pub MAIN_LINK: MAIN_LINK,
 }
 impl Peripherals {
     #[doc = r" Returns all the peripherals *once*."]
@@ -2231,6 +2602,9 @@ impl Peripherals {
                 _marker: PhantomData,
             },
             AUX_CH: AUX_CH {
+                _marker: PhantomData,
+            },
+            MAIN_LINK: MAIN_LINK {
                 _marker: PhantomData,
             },
         }

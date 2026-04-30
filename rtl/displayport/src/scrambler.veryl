@@ -32,6 +32,11 @@ pub module scrambler #(
     // scrambled themselves).
     i_seed_reset: input logic,
 
+    // When high during a valid cycle, the LFSR is not advanced and i_data
+    // passes through unchanged. Used during link training (DP 1.2 §3.5.1.2)
+    // where TPS1/TPS2/TPS3 must be transmitted without scrambling.
+    i_scramble_disable: input logic,
+
     // Upstream sample (one byte per accepted cycle).
     i_valid: input logic,
     i_data:  input logic<8>,
@@ -56,6 +61,9 @@ pub module scrambler #(
             if i_valid && i_seed_reset {
                 // Seed reload: pass current byte through unchanged.
                 lfsr   = INIT;
+                o_data = i_data;
+            } else if i_valid && i_scramble_disable {
+                // Bypass: link-training pattern is sent un-scrambled.
                 o_data = i_data;
             } else if i_valid && i_is_k {
                 // Control symbols are not scrambled.

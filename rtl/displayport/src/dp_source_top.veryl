@@ -41,7 +41,19 @@ pub module dp_source_top #(
     maxis_serial_out_tvalid: output logic,
     maxis_serial_out_tready: input  logic,
     maxis_serial_out_tdata:  output logic<8>,
+
+    // Main-link lane 0 serial output (Phase C: 1 lane only)
+    o_lane0_bit:       output logic,
+    o_lane0_bit_valid: output logic,
 ) {
+    // Wires from aux_ch_subsystem to main_link_tx
+    var ml_pattern_select: logic<2>;
+    var ml_enable:         logic;
+    var ml_rd_reset:       logic;
+    var ml_lane_count:     logic<3>;
+    var ml_lane0_drive:    logic<8>;
+    let _unused_lane0_drive: logic<8> = ml_lane0_drive; // informational only
+
     inst aux_subsystem: aux_ch_subsystem #(
         CLOCK_HZ,
         MANCHESTER_CLOCK_HZ,
@@ -52,23 +64,40 @@ pub module dp_source_top #(
         PROCESSOR_ROM_SIZE,
         PROCESSOR_RAM_SIZE,
     ) (
-        i_clk,
-        i_rstn,
+        i_clk                   : i_clk,
+        i_rstn                  : i_rstn,
 
-        aux_ch_in,
-        aux_ch_out,
-        aux_ch_out_enable,
+        aux_ch_in               : aux_ch_in,
+        aux_ch_out              : aux_ch_out,
+        aux_ch_out_enable       : aux_ch_out_enable,
 
-        hpd_in,
+        hpd_in                  : hpd_in,
 
-        cpu_io_out,
+        cpu_io_out              : cpu_io_out,
 
-        saxis_serial_in_tvalid,
-        saxis_serial_in_tready,
-        saxis_serial_in_tdata,
+        saxis_serial_in_tvalid  : saxis_serial_in_tvalid,
+        saxis_serial_in_tready  : saxis_serial_in_tready,
+        saxis_serial_in_tdata   : saxis_serial_in_tdata,
 
-        maxis_serial_out_tvalid,
-        maxis_serial_out_tready,
-        maxis_serial_out_tdata,
+        maxis_serial_out_tvalid : maxis_serial_out_tvalid,
+        maxis_serial_out_tready : maxis_serial_out_tready,
+        maxis_serial_out_tdata  : maxis_serial_out_tdata,
+
+        main_link_pattern_select: ml_pattern_select,
+        main_link_enable        : ml_enable,
+        main_link_rd_reset      : ml_rd_reset,
+        main_link_lane_count    : ml_lane_count,
+        main_link_lane0_drive   : ml_lane0_drive,
+    );
+
+    inst main_link: main_link_tx (
+        i_clk            : i_clk,
+        i_rstn           : i_rstn,
+        i_pattern_select : ml_pattern_select,
+        i_enable         : ml_enable,
+        i_rd_reset       : ml_rd_reset,
+        i_lane_count     : ml_lane_count,
+        o_lane0_bit      : o_lane0_bit,
+        o_lane0_bit_valid: o_lane0_bit_valid,
     );
 }

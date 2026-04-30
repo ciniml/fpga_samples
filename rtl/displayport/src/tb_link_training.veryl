@@ -1,0 +1,287 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_link_training.veryl
+ * @brief Phase C integration TB. CPU0 (source) runs the link-training SM
+ *        from Fig 3-32 + Fig 3-33 against CPU1 (mock sink) which uses an
+ *        ADJUST_REQUEST policy that succeeds on the second iteration in
+ *        each phase. A passive bit-level monitor on lane 0 of CPU0
+ *        deserializes + decodes the symbol stream and verifies that TPS1
+ *        and TPS2 byte sequences match Tab 3-16.
+ */
+
+module TbLinkTraining {}
+
+#[test(link_training_full)]
+embed (inline) sv{{{
+module link_training_full;
+    parameter int unsigned CLOCK_HZ            = 32'd100_000_000;
+    parameter int unsigned MANCHESTER_CLOCK_HZ = 32'd1_000_000;
+    parameter int unsigned PROCESSOR_ROM_SIZE  = 32'd16384;
+    parameter int unsigned PROCESSOR_RAM_SIZE  = 32'd8192;
+
+    logic clk;
+    logic rstn;
+    initial clk = 1'b0;
+    always #5 clk = ~clk;  // 100 MHz
+
+    // 2 DP source instances connected via AUX loopback.
+    logic [1:0]  aux_out;
+    logic [1:0]  aux_oen;
+    logic [1:0]  aux_in;
+    logic [1:0]  hpd;
+    logic [31:0] cpu_out [0:1];
+
+    logic [1:0]  lane0_bit;
+    logic [1:0]  lane0_bit_valid;
+
+    assign aux_in[0] = aux_oen[1] ? aux_out[1] : 1'b0;
+    assign aux_in[1] = aux_oen[0] ? aux_out[0] : 1'b0;
+
+    genvar i;
+    generate
+        for (i = 0; i < 2; i++) begin: g
+            logic       ser_valid;
+            logic [7:0] ser_data;
+            displayport_dp_source_top #(
+                .CLOCK_HZ(CLOCK_HZ),
+                .MANCHESTER_CLOCK_HZ(MANCHESTER_CLOCK_HZ),
+                .PROCESSOR_ID(32'(i)),
+                .PROCESSOR_ROM_SIZE(PROCESSOR_ROM_SIZE),
+                .PROCESSOR_RAM_SIZE(PROCESSOR_RAM_SIZE)
+            ) dut (
+                .i_clk                  (clk),
+                .i_rstn                 (rstn),
+                .aux_ch_in              (aux_in[i]),
+                .aux_ch_out             (aux_out[i]),
+                .aux_ch_out_enable      (aux_oen[i]),
+                .hpd_in                 (hpd[i]),
+                .cpu_io_out             (cpu_out[i]),
+                .saxis_serial_in_tvalid (1'b0),
+                .saxis_serial_in_tready (),
+                .saxis_serial_in_tdata  (8'h00),
+                .maxis_serial_out_tvalid(ser_valid),
+                .maxis_serial_out_tready(1'b1),
+                .maxis_serial_out_tdata (ser_data),
+                .o_lane0_bit            (lane0_bit[i]),
+                .o_lane0_bit_valid      (lane0_bit_valid[i])
+            );
+
+            string line_buf;
+            always_ff @(posedge clk) begin
+                if (!rstn) begin
+                    line_buf = "";
+                end else if (ser_valid) begin
+                    if (ser_data == 8'h0a) begin
+                        $display("[%0d] %s", i, line_buf);
+                        $fflush(1);
+                        line_buf = "";
+                    end else begin
+                        line_buf = {line_buf, ser_data};
+                    end
+                end
+            end
+        end
+    endgenerate
+
+    // ----- Bit-level monitor on CPU0's lane 0 -----
+    logic       align_pulse;
+    logic       monitor_align_done;
+    logic       sym_valid;
+    logic [9:0] sym_data;
+    logic       dec_valid;
+    logic [7:0] dec_data;
+    logic       dec_is_k;
+    logic       dec_err;
+
+    // Capture first valid bit as bit-0 of a symbol.
+    assign align_pulse = lane0_bit_valid[0] && !monitor_align_done;
+    always_ff @(posedge clk) begin
+        if (!rstn) begin
+            monitor_align_done <= 1'b0;
+        end else if (align_pulse) begin
+            monitor_align_done <= 1'b1;
+        end
+    end
+
+    displayport_deserializer_1to10 u_des (
+        .i_clk      (clk),
+        .i_rstn     (rstn),
+        .i_bit      (lane0_bit[0]),
+        .i_bit_valid(lane0_bit_valid[0]),
+        .i_align    (align_pulse),
+        .o_valid    (sym_valid),
+        .o_data     (sym_data)
+    );
+
+    displayport_decoder_8b10b u_dec (
+        .i_clk      (clk),
+        .i_rstn     (rstn),
+        .i_valid    (sym_valid),
+        .i_symbol   (sym_data),
+        .o_valid    (dec_valid),
+        .o_data     (dec_data),
+        .o_is_k     (dec_is_k),
+        .o_code_err (dec_err)
+    );
+
+    // FIFO-style byte capture for the FW's TPS1 / TPS2 windows. We just
+    // count how many bytes of each kind we've seen and verify a few
+    // properties: TPS1 bytes are all 0x4A, and TPS2 bytes follow the
+    // 10-symbol cycle. We track the TPS2 phase by aligning on the first
+    // K28.5 (BC, K) we observe inside the TPS2 window.
+    typedef enum logic [1:0] {
+        MS_INIT = 2'd0,
+        MS_TPS1 = 2'd1,
+        MS_TPS2 = 2'd2,
+        MS_DONE = 2'd3
+    } mon_state_t;
+    mon_state_t mon_state;
+    integer     tps1_bytes;
+    integer     tps2_bytes;
+    integer     tps1_bad;
+    integer     tps2_bad;
+    integer     tps2_miss;
+    integer     tps2_phase;
+    logic       tps2_synced;
+
+    // Expected TPS2 bytes / K-flags by phase (matches training_pattern_gen).
+    function automatic logic [8:0] tps2_expected(input integer p);
+        case (p)
+            0:  tps2_expected = {1'b1, 8'hBC};
+            1:  tps2_expected = {1'b0, 8'hCB};
+            2:  tps2_expected = {1'b1, 8'hBC};
+            3:  tps2_expected = {1'b0, 8'hCB};
+            default: tps2_expected = {1'b0, 8'h4A};
+        endcase
+    endfunction
+
+    // Drive monitor state machine purely from observed symbols. Switch
+    // from INIT → TPS1 once we see 16 consecutive 0x4A bytes; switch to
+    // TPS2 once we see a K-coded 0xBC; finish when we see scrambled
+    // (i.e. neither pattern) again, well after both phases.
+    integer tps1_streak;
+    always_ff @(posedge clk) begin
+        if (!rstn) begin
+            mon_state   <= MS_INIT;
+            tps1_bytes  <= 0;
+            tps2_bytes  <= 0;
+            tps1_bad    <= 0;
+            tps2_bad    <= 0;
+            tps2_miss   <= 0;
+            tps2_phase  <= 0;
+            tps2_synced <= 1'b0;
+            tps1_streak <= 0;
+        end else if (dec_valid) begin
+            case (mon_state)
+                MS_INIT: begin
+                    if (dec_data == 8'h4A && !dec_is_k) begin
+                        tps1_streak <= tps1_streak + 1;
+                        if (tps1_streak >= 4) mon_state <= MS_TPS1;
+                    end else begin
+                        tps1_streak <= 0;
+                    end
+                end
+                MS_TPS1: begin
+                    if (dec_is_k && dec_data == 8'hBC) begin
+                        // Transition to TPS2.
+                        mon_state   <= MS_TPS2;
+                        tps2_synced <= 1'b1;
+                        tps2_phase  <= 1; // we just consumed phase 0
+                        tps2_bytes  <= tps2_bytes + 1;
+                    end else if (dec_data == 8'h4A && !dec_is_k) begin
+                        tps1_bytes <= tps1_bytes + 1;
+                    end else begin
+                        tps1_bad <= tps1_bad + 1;
+                    end
+                end
+                MS_TPS2: begin
+                    // Validate against the expected phase. Once we see 4
+                    // consecutive non-matching bytes we treat the run as
+                    // ended (the post-training scrambled IDLE stream rarely
+                    // coincides with TPS2's 10-symbol cycle).
+                    logic [8:0] exp;
+                    exp = tps2_expected(tps2_phase);
+                    if (dec_data === exp[7:0] && dec_is_k === exp[8]) begin
+                        tps2_bytes  <= tps2_bytes + 1;
+                        tps2_miss   <= 0;
+                    end else begin
+                        tps2_miss <= tps2_miss + 1;
+                        if (tps2_miss >= 4) begin
+                            mon_state <= MS_DONE;
+                        end else begin
+                            tps2_bytes <= tps2_bytes + 1;
+                            tps2_bad   <= tps2_bad + 1;
+                        end
+                    end
+                    if (tps2_phase == 9) tps2_phase <= 0;
+                    else                  tps2_phase <= tps2_phase + 1;
+                end
+                default: begin
+                    // MS_DONE — ignore.
+                end
+            endcase
+        end
+    end
+
+    // ----- Simulation control -----
+    initial begin
+        $readmemh("bootrom-rs.hex", g[0].dut.aux_subsystem.processor_rom);
+        $readmemh("bootrom-rs.hex", g[1].dut.aux_subsystem.processor_rom);
+
+        rstn   = 1'b0;
+        hpd[0] = 1'b0;
+        hpd[1] = 1'b0;
+        repeat (16) @(posedge clk);
+        rstn = 1'b1;
+
+        // Let CPU 1 (sink) initialise its replier loop before HPD asserts.
+        repeat (2000) @(posedge clk);
+        $display("[TB] asserting HPD on CPU0");
+        hpd[0] = 1'b1;
+
+        // Allow up to 100M cycles. Phase A's similar scenario completed
+        // in ~86k cycles; link training adds DPCD writes + 2 iters per
+        // phase + 200 us-equivalent waits, so an order-of-magnitude
+        // headroom is sufficient.
+        for (int t = 0; t < 100_000_000; t++) begin
+            @(posedge clk);
+            if (cpu_out[0][0] && cpu_out[1][0]) begin
+                $display("[TB] both CPUs reported done after %0d cycles", t);
+                $display("[TB] CPU0 cpu_out = %08h (cr_iters=%0d, eq_iters=%0d)",
+                         cpu_out[0],
+                         (cpu_out[0] >> 8) & 8'hFF,
+                         (cpu_out[0] >> 16) & 8'hFF);
+                $display("[TB] monitor: tps1_bytes=%0d (bad=%0d), tps2_bytes=%0d (bad=%0d), state=%0d",
+                         tps1_bytes, tps1_bad, tps2_bytes, tps2_bad, mon_state);
+
+                // Acceptance criteria.
+                if (((cpu_out[0] >> 8) & 8'hFF) != 8'd2) begin
+                    $fatal(1, "[TB] expected cr_iters=2, got %0d",
+                           (cpu_out[0] >> 8) & 8'hFF);
+                end
+                if (((cpu_out[0] >> 16) & 8'hFF) != 8'd2) begin
+                    $fatal(1, "[TB] expected eq_iters=2, got %0d",
+                           (cpu_out[0] >> 16) & 8'hFF);
+                end
+                if (tps1_bad != 0) $fatal(1, "[TB] %0d bad TPS1 bytes", tps1_bad);
+                // Allow a few transient mismatches during ADJUST_REQUEST
+                // iterations and around phase boundaries (< 1% of total).
+                if (tps2_bad > tps2_bytes / 100) begin
+                    $fatal(1, "[TB] too many bad TPS2 bytes: %0d / %0d",
+                           tps2_bad, tps2_bytes);
+                end
+                if (tps1_bytes < 8) $fatal(1, "[TB] only %0d TPS1 bytes captured", tps1_bytes);
+                if (tps2_bytes < 8) $fatal(1, "[TB] only %0d TPS2 bytes captured", tps2_bytes);
+
+                $display("[TB] PASS");
+                $finish;
+            end
+        end
+        $fatal(1, "[TB] timeout: cpu_out=[%08h,%08h]", cpu_out[0], cpu_out[1]);
+    end
+endmodule
+}}}

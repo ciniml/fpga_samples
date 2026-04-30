@@ -31,6 +31,12 @@ pub module encoder_8b10b (
     i_data:  input logic<8>,
     i_is_k:  input logic,
 
+    // When high during a valid input cycle, the running disparity is forced
+    // to RD- before encoding the current symbol. Used at the start of a
+    // link-training pattern (DP 1.2 §3.5.1.2: "the link training sequence
+    // ... must always start with negative disparity").
+    i_rd_reset: input logic,
+
     o_valid:  output logic,
     o_symbol: output logic<10>,  // bit 0 = a (LSB / first transmitted)
 ) {
@@ -219,11 +225,14 @@ pub module encoder_8b10b (
                 let d5:   logic<5>  = i_data[4:0];
                 let d3:   logic<3>  = i_data[7:5];
 
+                // Force RD = - before encoding when i_rd_reset is asserted.
+                let rd_in: logic    = if i_rd_reset ? 1'b0 : rd;
+
                 let flip5: logic    = lut5_flip(k, d5);
                 let neg5:  logic<6> = lut5_neg(k, d5);
                 let pos5:  logic<6> = lut5_pos(k, d5);
-                let out5:  logic<6> = if rd ? pos5 : neg5;
-                let rd_after5: logic = rd ^ flip5;
+                let out5:  logic<6> = if rd_in ? pos5 : neg5;
+                let rd_after5: logic = rd_in ^ flip5;
 
                 // Alternate D.x.7' is required to avoid run-length violation when
                 // entering 3b/4b with rd_after5 = 0 and EDCBA in {17,18,20}, or

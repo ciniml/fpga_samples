@@ -1,0 +1,126 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file main_link_tx_lane.veryl
+ * @brief Single-lane DisplayPort main-link TX chain.
+ *
+ *   training_pattern_gen → scrambler → encoder_8b10b → serializer_10to1
+ *
+ * The serializer's o_ready is fed back as the byte_tick that paces the
+ * upstream chain (one byte every ten system-clock cycles, matching one
+ * 10-bit symbol period).
+ *
+ * `i_rd_reset` is a CPU-issued single-cycle pulse that requests the next
+ * 8B/10B encoder input to start at RD = - (DP 1.2 §3.5.1.2 requirement).
+ * The pulse is held in `rd_reset_pending` until the next valid byte
+ * actually reaches the encoder, at which point it is consumed.
+ */
+
+pub module main_link_tx_lane (
+    i_clk:  input clock_posedge,
+    i_rstn: input reset_sync_low,
+
+    i_pattern_select: input logic<2>,
+    i_enable:         input logic,
+    i_rd_reset:       input logic,
+
+    o_bit:       output logic,
+    o_bit_valid: output logic,
+) {
+    // serializer ready → byte tick (gated by enable so the chain is silent
+    // when the main link is disabled, and rate-limited so only one byte
+    // is in flight through tpg → scrambler → encoder at a time).
+    var ser_ready: logic;
+    var pipe_busy: logic<3>; // shifts byte_tick down the pipeline
+    let pipe_idle: logic = pipe_busy == 3'b000;
+    let byte_tick: logic = i_enable && ser_ready && pipe_idle;
+
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            pipe_busy = 0;
+        } else {
+            pipe_busy = {pipe_busy[1:0], byte_tick};
+        }
+    }
+
+    // Training pattern generator
+    var tpg_valid:            logic;
+    var tpg_data:             logic<8>;
+    var tpg_is_k:             logic;
+    var tpg_scramble_disable: logic;
+
+    inst u_tpg: training_pattern_gen (
+        i_clk             : i_clk,
+        i_rstn            : i_rstn,
+        i_pattern_select  : i_pattern_select,
+        i_byte_tick       : byte_tick,
+        o_valid           : tpg_valid,
+        o_data            : tpg_data,
+        o_is_k            : tpg_is_k,
+        o_scramble_disable: tpg_scramble_disable,
+    );
+
+    // Scrambler. Phase C does not inject SR symbols yet; tie i_seed_reset = 0.
+    var sc_valid: logic;
+    var sc_data:  logic<8>;
+    var sc_is_k:  logic;
+
+    inst u_sc: scrambler (
+        i_clk             : i_clk,
+        i_rstn            : i_rstn,
+        i_seed_reset      : 1'b0,
+        i_scramble_disable: tpg_scramble_disable,
+        i_valid           : tpg_valid,
+        i_data            : tpg_data,
+        i_is_k            : tpg_is_k,
+        o_valid           : sc_valid,
+        o_data            : sc_data,
+        o_is_k            : sc_is_k,
+    );
+
+    // RD-reset request: latch CPU pulse until consumed by the encoder on
+    // the first valid byte that reaches it.
+    var rd_reset_pending: logic;
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            rd_reset_pending = 0;
+        } else {
+            if rd_reset_pending && sc_valid {
+                rd_reset_pending = 0;
+            }
+            if i_rd_reset {
+                rd_reset_pending = 1;
+            }
+        }
+    }
+    let enc_rd_reset: logic = rd_reset_pending && sc_valid;
+
+    // 8B/10B encoder
+    var enc_valid:  logic;
+    var enc_symbol: logic<10>;
+
+    inst u_enc: encoder_8b10b (
+        i_clk     : i_clk,
+        i_rstn    : i_rstn,
+        i_valid   : sc_valid,
+        i_data    : sc_data,
+        i_is_k    : sc_is_k,
+        i_rd_reset: enc_rd_reset,
+        o_valid   : enc_valid,
+        o_symbol  : enc_symbol,
+    );
+
+    // 10:1 serializer (sim-only; FPGA build replaces with vendor primitive).
+    inst u_ser: serializer_10to1 (
+        i_clk      : i_clk,
+        i_rstn     : i_rstn,
+        i_valid    : enc_valid,
+        i_data     : enc_symbol,
+        o_ready    : ser_ready,
+        o_bit      : o_bit,
+        o_bit_valid: o_bit_valid,
+    );
+}

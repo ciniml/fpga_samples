@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file main_link_tx.veryl
+ * @brief DisplayPort main-link TX wrapper. Phase C only instantiates a
+ *        single lane; later phases extend this with per-lane skew and
+ *        2/4-lane support.
+ */
+
+pub module main_link_tx (
+    i_clk:  input clock_posedge,
+    i_rstn: input reset_sync_low,
+
+    i_pattern_select: input logic<2>,
+    i_enable:         input logic,
+    i_rd_reset:       input logic,
+    // Lane count is plumbed through but only lane 0 is wired in Phase C.
+    i_lane_count:     input logic<3>,
+
+    o_lane0_bit:       output logic,
+    o_lane0_bit_valid: output logic,
+) {
+    let _unused_lane_count: logic<3> = i_lane_count;
+
+    inst u_lane0: main_link_tx_lane (
+        i_clk           : i_clk,
+        i_rstn          : i_rstn,
+        i_pattern_select: i_pattern_select,
+        i_enable        : i_enable,
+        i_rd_reset      : i_rd_reset,
+        o_bit           : o_lane0_bit,
+        o_bit_valid     : o_lane0_bit_valid,
+    );
+}
