@@ -10,24 +10,26 @@
 
 pub module aux_ch_subsystem #(
     param CLOCK_HZ: u32 = 32'd100_000_000,  // Clock frequency (default = 100MHz)
-    param MANCHESTER_CLOCK_HZ: u32 = 32'd1_000_000,  // Manchester clock frequency (default = 1MHz)
+    param MANCHESTER_CLOCK_HZ: u32 = 32'd1_000_000,  // Manchester i_clk frequency (default = 1MHz)
     param PRECHARGE_CYCLES: u32 = 32'd16,   // Number of precharge cycles
     param BUFFER_SIZE: u32 = 256,           // Buffer size
-    param DEBUG_OUT: bit = 0,               // Enable debug output messages
+    param DEBUG_OUT: logic<1> = 1'b0,               // Enable debug output messages
     param PROCESSOR_ID: u32 = 32'h01234567, // Processor ID
     param PROCESSOR_ROM_SIZE: u32 = 8192,   // Processor ROM size (default = 8kB)
     param PROCESSOR_RAM_SIZE: u32 = 8192,   // Processor RAM size (default = 8kB)
     param PROCESSOR_ROM_FILE: string = "",  // Processor ROM file
-    local REGISTER_COUNT: u32 = 32,         // Number of registers
 ) (
-    clock:   input logic,
-    aresetn: input logic,
+    i_clk:   input clock_posedge,
+    i_rstn: input reset_sync_low,
 
     // AUX_CH input
     aux_ch_in:        input logic,
     // AUX_CH output
     aux_ch_out:        output logic,
     aux_ch_out_enable: output logic,
+
+    // Hot Plug Detect (DP 1.2 §3.3)
+    hpd_in: input logic,
 
     // CPU output
     cpu_io_out: output logic<32>,
@@ -44,10 +46,10 @@ pub module aux_ch_subsystem #(
 ) {
     type U32 = logic<32>;
     
-    local PROCESSOR_ROM_ADDRESS_WIDTH: u32 = $clog2(PROCESSOR_ROM_SIZE/4);  // プロセッサのROMアドレス幅
+    const PROCESSOR_ROM_ADDRESS_WIDTH: u32 = $clog2(PROCESSOR_ROM_SIZE/4);  // プロセッサのROMアドレス幅
     type rom_address_t = logic<PROCESSOR_ROM_ADDRESS_WIDTH>;
     var processor_rom: logic<32>[PROCESSOR_ROM_SIZE/4];  // プロセッサのプログラムメモリ
-    local PROCESSOR_RAM_ADDRESS_WIDTH: u32 = $clog2(PROCESSOR_RAM_SIZE/4);  // プロセッサのRAMアドレス幅
+    const PROCESSOR_RAM_ADDRESS_WIDTH: u32 = $clog2(PROCESSOR_RAM_SIZE/4);  // プロセッサのRAMアドレス幅
     type ram_address_t = logic<PROCESSOR_RAM_ADDRESS_WIDTH>;
     var processor_ram: logic<32>[PROCESSOR_RAM_SIZE/4];  // プロセッサのメモリ
 
@@ -69,21 +71,23 @@ pub module aux_ch_subsystem #(
     var interrupt_request: logic;
     var processor_reset: logic;
 
-    // FemtoRV32のインスタンス
-    inst femtorv_inst: $sv::FemtoRV32 #(
-        RESET_ADDR: 32'h8000_0000,  // リセットアドレス = 32'h8000_0000
+    // FemtoRV32 reset は active-low。i_rstn と processor_reset の AND を渡す。
+    let femtorv_reset_n: logic = i_rstn && !processor_reset;
+
+    inst femtorv_inst: $sv::displayport_femtorv_wrap #(
+        RESET_ADDR: 32'h8000_0000,
         ADDR_WIDTH: 32,
     ) (
-        clk:    clock,    // クロック
-        reset:  aresetn && !processor_reset,  // リセット
-        mem_addr,
-        mem_wdata,
-        mem_wmask,
-        mem_rdata,
-        mem_rstrb,
-        mem_rbusy,
-        mem_wbusy,
-        interrupt_request,
+        i_clk            : i_clk            ,
+        i_reset_n        : femtorv_reset_n  ,
+        mem_addr         : mem_addr         ,
+        mem_wdata        : mem_wdata        ,
+        mem_wmask        : mem_wmask        ,
+        mem_rdata        : mem_rdata        ,
+        mem_rstrb        : mem_rstrb        ,
+        mem_rbusy        : mem_rbusy        ,
+        mem_wbusy        : mem_wbusy        ,
+        interrupt_request: interrupt_request,
     );
     
     always_comb {
@@ -94,15 +98,16 @@ pub module aux_ch_subsystem #(
     var mem_read: logic;
     assign mem_read = mem_wmask == '0;
 
-    local IBUS_MEM_SPACE: logic<4> = 4'h8;   // 命令メモリ空間   : 32'h8000_0000 ~ 32'h8fff_ffff
-    local DBUS_MEM_SPACE: logic<4> = 4'h2;   // データメモリ空間 : 32'h2000_0000 ~ 32'h2fff_ffff
-    local REG_MEM_SPACE : logic<4> = 4'h4;   // レジスタメモリ空間: 32'h4000_0000 ~ 32'h4fff_ffff
-    local REG_SPACE_SYSTEM: logic<12> = 12'h000;  // システムレジスタ
-    local REG_SPACE_AUX_CH: logic<12> = 12'h001;  // AUX_CHレジスタ
-    local REG_SYSTEM_ID      : logic<14> = 14'h0000;  // IDレジスタ
-    local REG_SYSTEM_CLOCK_HZ: logic<14> = 14'h0001;  // クロック周波数レジスタ
-    local REG_SYSTEM_OUT     : logic<14> = 14'h0002;  // OUTレジスタ
-    local REG_SYSTEM_SERIAL_OUT: logic<14> = 14'h0003;  // SERIAL_OUTレジスタ
+    const IBUS_MEM_SPACE: logic<4> = 4'h8;   // 命令メモリ空間   : 32'h8000_0000 ~ 32'h8fff_ffff
+    const DBUS_MEM_SPACE: logic<4> = 4'h2;   // データメモリ空間 : 32'h2000_0000 ~ 32'h2fff_ffff
+    const REG_MEM_SPACE : logic<4> = 4'h4;   // レジスタメモリ空間: 32'h4000_0000 ~ 32'h4fff_ffff
+    const REG_SPACE_SYSTEM: logic<12> = 12'h000;  // システムレジスタ
+    const REG_SPACE_AUX_CH: logic<12> = 12'h001;  // AUX_CHレジスタ
+    const REG_SYSTEM_ID      : logic<14> = 14'h0000;  // IDレジスタ
+    const REG_SYSTEM_CLOCK_HZ: logic<14> = 14'h0001;  // クロック周波数レジスタ
+    const REG_SYSTEM_OUT     : logic<14> = 14'h0002;  // OUTレジスタ
+    const REG_SYSTEM_SERIAL_OUT: logic<14> = 14'h0003;  // SERIAL_OUTレジスタ
+    const REG_SYSTEM_HPD       : logic<14> = 14'h0004;  // HPD ステータス (DP 1.2 §3.3)
 
     var mem_space: logic<4>;
     var is_mem_space_ibus: logic;
@@ -134,8 +139,8 @@ pub module aux_ch_subsystem #(
         BUFFER_SIZE,
         DEBUG_OUT,
     ) (
-        clock,
-        aresetn,
+        i_clk,
+        i_rstn,
 
         mcu_address   : aux_ch_address,
         mcu_read_en   : aux_ch_read_en,
@@ -147,6 +152,22 @@ pub module aux_ch_subsystem #(
         aux_ch_in,
         aux_ch_out,
         aux_ch_out_enable,
+    );
+
+    // HPD 検出 (DP 1.2 §3.3)
+    var hpd_level:        logic;
+    var hpd_event_plug:   logic;
+    var hpd_event_unplug: logic;
+    var hpd_event_plug_sticky:   logic;
+    var hpd_event_unplug_sticky: logic;
+
+    inst hpd_detect_inst: hpd_detect (
+        i_clk,
+        i_rstn,
+        hpd_in,
+        hpd_level,
+        hpd_event_plug,
+        hpd_event_unplug,
     );
 
     type aux_ch_address_t = logic<9>;
@@ -168,6 +189,7 @@ pub module aux_ch_subsystem #(
                         REG_SYSTEM_CLOCK_HZ: mem_rdata = CLOCK_HZ;
                         REG_SYSTEM_OUT: mem_rdata = cpu_io_out;
                         REG_SYSTEM_SERIAL_OUT: mem_rdata = {23'0, maxis_serial_out_tvalid, maxis_serial_out_tdata};
+                        REG_SYSTEM_HPD: mem_rdata = {29'0, hpd_event_unplug_sticky, hpd_event_plug_sticky, hpd_level};
                         default: mem_rdata = 0;
                     }
                 }
@@ -185,9 +207,14 @@ pub module aux_ch_subsystem #(
         }
     }
 
-    always_ff (clock, aresetn) {
+    always_ff (i_clk, i_rstn) {
         if_reset {
-            mem_buffer = 0;
+            mem_buffer              = 0;
+            maxis_serial_out_tvalid = 0;
+            maxis_serial_out_tdata  = 0;
+            cpu_io_out              = 0;
+            hpd_event_plug_sticky   = 0;
+            hpd_event_unplug_sticky = 0;
         } else {
             if maxis_serial_out_tvalid && maxis_serial_out_tready {
                 maxis_serial_out_tvalid = 0;
@@ -215,6 +242,17 @@ pub module aux_ch_subsystem #(
                                         maxis_serial_out_tvalid = 1;
                                     }
                                 }
+                                REG_SYSTEM_HPD: {
+                                    // W1C: writing 1 to event bits clears them
+                                    if mem_wmask[0] {
+                                        if mem_wdata[1] {
+                                            hpd_event_plug_sticky = 0;
+                                        }
+                                        if mem_wdata[2] {
+                                            hpd_event_unplug_sticky = 0;
+                                        }
+                                    }
+                                }
                                 default: {}
                             }
                         }
@@ -238,6 +276,14 @@ pub module aux_ch_subsystem #(
                         processor_ram[mem_addr[2 +: PROCESSOR_RAM_ADDRESS_WIDTH]][31:24] = mem_wdata[31:24];
                     }
                 }
+            }
+
+            // HPD sticky-bit set placed last so HW set has priority over W1C clear in the same cycle
+            if hpd_event_plug {
+                hpd_event_plug_sticky = 1;
+            }
+            if hpd_event_unplug {
+                hpd_event_unplug_sticky = 1;
             }
         }
     }
@@ -264,8 +310,8 @@ pub module aux_ch_subsystem #(
     inst loader_memory_access: stream_memory_access #(
         ADDRESS_BITS: 32,
     ) (
-        clock,
-        aresetn,
+        i_clk,
+        i_rstn,
 
         mem_address:loader_mem_address,
         mem_rreq:   loader_mem_rreq,
@@ -282,9 +328,10 @@ pub module aux_ch_subsystem #(
         saxis_serial_in_tdata : loader_saxis_serial_in_tdata,
     );
 
-    always_ff(clock, aresetn) {
+    always_ff(i_clk, i_rstn) {
         if_reset {
-            processor_reset = 0;
+            processor_reset  = 0;
+            loader_mem_rdata = 0;
         } else {
             if loader_mem_rreq {
                 case loader_mem_address[31:28] {

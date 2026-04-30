@@ -43,6 +43,8 @@ SECTIONS
   PROVIDE(end = .);
   PROVIDE(ramend = ORIGIN(dmem) + LENGTH(dmem));
 
-  .eh_frame (INFO) : { KEEP(*(.eh_frame)) }
-  .eh_frame_hdr (INFO) : { *(.eh_frame_hdr) }
+  /DISCARD/ : {
+      *(.eh_frame)
+      *(.eh_frame_hdr)
+  }
 }

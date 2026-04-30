@@ -10,11 +10,11 @@
 
 pub module aux_ch_rx #(
     param CLOCK_HZ: u32 = 32'd100_000_000,  // Clock frequency (default = 100MHz)
-    param MANCHESTER_CLOCK_HZ: u32 = 32'd1_000_000,  // Manchester clock frequency (default = 1MHz)
-    param DEBUG_OUT: bit = 0,               // Enable debug output messages
+    param MANCHESTER_CLOCK_HZ: u32 = 32'd1_000_000,  // Manchester i_clk frequency (default = 1MHz)
+    param DEBUG_OUT: logic<1> = 1'b0,               // Enable debug output messages
 ) (
-    clock: input logic,
-    aresetn: input logic,
+    i_clk: input clock_posedge,
+    i_rstn: input reset_sync_low,
 
     // AUX_CH data stream output
     maxis_data_tvalid: output logic,
@@ -25,19 +25,19 @@ pub module aux_ch_rx #(
     // AUX_CH input
     aux_ch_in:        input logic,
 ) {
-    local CLOCK_COUNT_MAX: u32 = (CLOCK_HZ / MANCHESTER_CLOCK_HZ) - 1;   // Max clock counter value
+    const CLOCK_COUNT_MAX: u32 = (CLOCK_HZ / MANCHESTER_CLOCK_HZ) - 1;   // Max i_clk counter value
     type clock_counter_t = logic<$clog2(CLOCK_COUNT_MAX + 1)>;
     type U32 = u32;
     var clock_counter: clock_counter_t;
 
     function rounded_clock_count(clock_hz: input u32, target_clock_hz: input u32) -> clock_counter_t {
         let clock_count: u32 = ((clock_hz + target_clock_hz/2 - 1) / target_clock_hz);
-        return (if clock_count == 0 { 0 } else { clock_count - 1 }) as clock_counter_t;
+        return (if clock_count == 0 ? 0 : clock_count - 1) as clock_counter_t;
     }
 
-    local CLOCK_COUNT_HALF: clock_counter_t = rounded_clock_count(CLOCK_HZ * 1, MANCHESTER_CLOCK_HZ * 2);
-    local CLOCK_COUNT_1_4 : clock_counter_t = rounded_clock_count(CLOCK_HZ * 1, MANCHESTER_CLOCK_HZ * 4);
-    local CLOCK_COUNT_3_4 : clock_counter_t = rounded_clock_count(CLOCK_HZ * 3, MANCHESTER_CLOCK_HZ * 4);
+    const CLOCK_COUNT_HALF: clock_counter_t = rounded_clock_count(CLOCK_HZ * 1, MANCHESTER_CLOCK_HZ * 2);
+    const CLOCK_COUNT_1_4 : clock_counter_t = rounded_clock_count(CLOCK_HZ * 1, MANCHESTER_CLOCK_HZ * 4);
+    const CLOCK_COUNT_3_4 : clock_counter_t = rounded_clock_count(CLOCK_HZ * 3, MANCHESTER_CLOCK_HZ * 4);
 
     var symbol_buffer: logic<16>;
     var next_valid: logic;
@@ -54,7 +54,7 @@ pub module aux_ch_rx #(
     type symbol_counter_t = logic<4>;
     var symbol_counter: symbol_counter_t;
 
-    always_ff (clock, aresetn) {
+    always_ff (i_clk, i_rstn) {
         if_reset {
             clock_counter = 0;
             
@@ -77,7 +77,7 @@ pub module aux_ch_rx #(
                 maxis_data_tvalid = 0;
             }
 
-            // default clock counter operation: increment
+            // default i_clk counter operation: increment
             clock_counter = clock_counter + 1;
 
             case state {
@@ -118,7 +118,7 @@ pub module aux_ch_rx #(
                     if clock_counter == CLOCK_COUNT_MAX as clock_counter_t {
                         clock_counter = 0;
                     }
-                    let is_sample_point: logic = clock_counter == CLOCK_COUNT_1_4 || clock_counter == CLOCK_COUNT_3_4;   // Sample at 1/4 or 3/4 of the clock period.
+                    let is_sample_point: logic = clock_counter == CLOCK_COUNT_1_4 || clock_counter == CLOCK_COUNT_3_4;   // Sample at 1/4 or 3/4 of the i_clk period.
                     
                     if is_sample_point {
                         let next_symbol_buffer: logic<16> = {symbol_buffer[14:0], aux_ch_in};

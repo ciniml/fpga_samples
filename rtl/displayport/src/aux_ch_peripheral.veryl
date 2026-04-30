@@ -10,14 +10,14 @@
 
 pub module aux_ch_peripheral #(
     param CLOCK_HZ: u32 = 32'd100_000_000,  // Clock frequency (default = 100MHz)
-    param MANCHESTER_CLOCK_HZ: u32 = 32'd1_000_000,  // Manchester clock frequency (default = 1MHz)
+    param MANCHESTER_CLOCK_HZ: u32 = 32'd1_000_000,  // Manchester i_clk frequency (default = 1MHz)
     param PRECHARGE_CYCLES: u32 = 32'd16,   // Number of precharge cycles
     param BUFFER_SIZE: u32 = 256,           // Buffer size
-    param DEBUG_OUT: bit = 0,               // Enable debug output messages
-    local REGISTER_COUNT: u32 = 32,          // Number of registers
+    param DEBUG_OUT: logic<1> = 1'b0,               // Enable debug output messages
+    param REGISTER_COUNT: u32 = 32,         // Number of registers (do not override)
 ) (
-    clock:   input logic,
-    aresetn: input logic,
+    i_clk:   input clock_posedge,
+    i_rstn: input reset_sync_low,
 
     // MCU interface
     mcu_address:    input logic<$clog2(BUFFER_SIZE + REGISTER_COUNT)>,
@@ -33,7 +33,7 @@ pub module aux_ch_peripheral #(
     aux_ch_out:        output logic,
     aux_ch_out_enable: output logic,
 ) {
-    local REGISTER_BITS: u32 = $clog2(REGISTER_COUNT);  // Number of bits for register address
+    const REGISTER_BITS: u32 = $clog2(REGISTER_COUNT);  // Number of bits for register address
 
     type address_t = logic<$clog2(BUFFER_SIZE + REGISTER_COUNT)>;  // Address type
     type buffer_index_t = logic<$clog2(BUFFER_SIZE)>;  // Buffer index type
@@ -104,10 +104,11 @@ pub module aux_ch_peripheral #(
     }
 
     // MCU access process.
-    always_ff(clock, aresetn) {
+    always_ff(i_clk, i_rstn) {
         if_reset {
             mcu_read_data = 0;
             interrupt_clear = 0;
+            tx_start = 0;
 
             rx_enable_new = 0;
             rx_enable_update = 0;
@@ -206,8 +207,8 @@ pub module aux_ch_peripheral #(
         PRECHARGE_CYCLES,
         DEBUG_OUT,
     ) (
-        clock,
-        aresetn,
+        i_clk,
+        i_rstn,
 
         saxis_data_tvalid,
         saxis_data_tready,
@@ -218,7 +219,7 @@ pub module aux_ch_peripheral #(
         aux_ch_out_enable,
     );
 
-    always_ff(clock, aresetn) {
+    always_ff(i_clk, i_rstn) {
         if_reset {
             saxis_data_tvalid = 0;
             saxis_data_tlast = 0;
@@ -294,8 +295,8 @@ pub module aux_ch_peripheral #(
         MANCHESTER_CLOCK_HZ,
         DEBUG_OUT,
     ) (
-        clock,
-        aresetn,
+        i_clk,
+        i_rstn,
         maxis_data_tvalid,
         maxis_data_tready,
         maxis_data_tdata,
@@ -303,9 +304,9 @@ pub module aux_ch_peripheral #(
         aux_ch_in,
     );
 
-    assign maxis_data_tready = aresetn && rx_state == RxState::RUNNING;
+    assign maxis_data_tready = i_rstn && rx_state == RxState::RUNNING;
 
-    always_ff(clock, aresetn) {
+    always_ff(i_clk, i_rstn) {
         if_reset {
             rx_index = 0;
             rx_count = 0;

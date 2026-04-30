@@ -5,3 +5,23 @@ version = "0.1.0"
 [build]
 clock_type = "posedge"
 reset_type = "sync_low"
+
+[test]
+# Files copied (basename only) into the temp dir where `veryl test` invokes
+# Verilator. Firmware ROM image and the FemtoRV32 source must end up here.
+include_files = [
+    "test/sw-rs/bootrom-rs.hex",
+    "../../external/learn-fpga/FemtoRV/RTL/PROCESSOR/femtorv32_gracilis.v",
+]
+
+[test.verilator]
+compile_args = [
+    "femtorv32_gracilis.v",
+    "-Wno-PINMISSING",
+    "-Wno-WIDTHEXPAND",
+    "-Wno-WIDTHTRUNC",
+    "-Wno-CASEINCOMPLETE",
+    "-Wno-UNUSEDSIGNAL",
+    "-Wno-UNDRIVEN",
+    "-Wno-ASCRANGE",
+]

@@ -1,0 +1,64 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file hpd_detect.veryl
+ * @brief Hot Plug Detect with 2-stage synchronizer and counter debounce.
+ *        DP 1.2 §3.3, Tab 3-4.
+ *        Phase A scope: level + plug/unplug edge events only.
+ *        IRQ short-pulse classification is deferred to Phase C.
+ */
+
+pub module hpd_detect #(
+    param STABLE_CYCLES: u32 = 32'd16, // Cycles required to consider hpd_in stable
+) (
+    i_clk:  input clock_posedge,
+    i_rstn: input reset_sync_low,
+
+    hpd_in: input logic,
+
+    hpd_level:        output logic,
+    hpd_event_plug:   output logic,
+    hpd_event_unplug: output logic,
+) {
+    type counter_t = logic<$clog2(STABLE_CYCLES + 1)>;
+
+    var sync_a:       logic;
+    var sync_b:       logic;
+    var stable_count: counter_t;
+
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            sync_a           = 0;
+            sync_b           = 0;
+            stable_count     = 0;
+            hpd_level        = 0;
+            hpd_event_plug   = 0;
+            hpd_event_unplug = 0;
+        } else {
+            sync_a = hpd_in;
+            sync_b = sync_a;
+
+            hpd_event_plug   = 0;
+            hpd_event_unplug = 0;
+
+            if sync_b == hpd_level {
+                stable_count = 0;
+            } else {
+                if stable_count == (STABLE_CYCLES - 1) as counter_t {
+                    stable_count = 0;
+                    hpd_level    = sync_b;
+                    if sync_b {
+                        hpd_event_plug = 1;
+                    } else {
+                        hpd_event_unplug = 1;
+                    }
+                } else {
+                    stable_count = stable_count + 1;
+                }
+            }
+        }
+    }
+}

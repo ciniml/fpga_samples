@@ -1,0 +1,116 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_phase_a.veryl
+ * @brief Phase A testbench: HPD plug -> DPCD read -> EDID-over-AUX read.
+ *        CPU0 acts as the DP source requester (HPD-driven scenario).
+ *        CPU1 acts as the mock sink replier.
+ *        Both CPUs run the same Rust firmware (`bootrom-rs.hex`),
+ *        dispatching by PROCESSOR_ID.
+ */
+
+// Anchor module so this file is recognised as part of the Veryl project.
+module TbPhaseA {}
+
+#[test(phase_a_aux_loopback)]
+embed (inline) sv{{{
+module phase_a_aux_loopback;
+    parameter int unsigned CLOCK_HZ            = 32'd100_000_000;
+    parameter int unsigned MANCHESTER_CLOCK_HZ = 32'd1_000_000;
+    parameter int unsigned PROCESSOR_ROM_SIZE  = 32'd16384;
+    parameter int unsigned PROCESSOR_RAM_SIZE  = 32'd8192;
+
+    logic clk;
+    logic rstn;
+    initial clk = 1'b0;
+    always #5 clk = ~clk;  // 100 MHz
+
+    // 2 DP source instances connected via AUX loopback.
+    logic [1:0] aux_out;
+    logic [1:0] aux_oen;
+    logic [1:0] aux_in;
+    logic [1:0] hpd;
+    logic [31:0] cpu_out [0:1];
+
+    // Tri-state-style AUX loopback: when oen=0, the line is idle (0).
+    assign aux_in[0] = aux_oen[1] ? aux_out[1] : 1'b0;
+    assign aux_in[1] = aux_oen[0] ? aux_out[0] : 1'b0;
+
+    genvar i;
+    generate
+        for (i = 0; i < 2; i++) begin: g
+            logic       ser_valid;
+            logic [7:0] ser_data;
+            displayport_dp_source_top #(
+                .CLOCK_HZ(CLOCK_HZ),
+                .MANCHESTER_CLOCK_HZ(MANCHESTER_CLOCK_HZ),
+                .PROCESSOR_ID(32'(i)),
+                .PROCESSOR_ROM_SIZE(PROCESSOR_ROM_SIZE),
+                .PROCESSOR_RAM_SIZE(PROCESSOR_RAM_SIZE)
+            ) dut (
+                .i_clk                  (clk         ),
+                .i_rstn                 (rstn        ),
+                .aux_ch_in              (aux_in[i]   ),
+                .aux_ch_out             (aux_out[i]  ),
+                .aux_ch_out_enable      (aux_oen[i]  ),
+                .hpd_in                 (hpd[i]      ),
+                .cpu_io_out             (cpu_out[i]  ),
+                .saxis_serial_in_tvalid (1'b0        ),
+                .saxis_serial_in_tready (            ),
+                .saxis_serial_in_tdata  (8'h00       ),
+                .maxis_serial_out_tvalid(ser_valid   ),
+                .maxis_serial_out_tready(1'b1        ),
+                .maxis_serial_out_tdata (ser_data    )
+            );
+
+            // Per-CPU serial console: print line-by-line.
+            string line_buf;
+            always_ff @(posedge clk) begin
+                if (!rstn) begin
+                    line_buf = "";
+                end else if (ser_valid) begin
+                    if (ser_data == 8'h0a) begin
+                        $display("[%0d] %s", i, line_buf);
+                        $fflush(1);
+                        line_buf = "";
+                    end else begin
+                        line_buf = {line_buf, ser_data};
+                    end
+                end
+            end
+        end
+    endgenerate
+
+    initial begin
+        // Pre-load both ROMs from the firmware hex (copied into cwd by veryl test).
+        $readmemh("bootrom-rs.hex", g[0].dut.aux_subsystem.processor_rom);
+        $readmemh("bootrom-rs.hex", g[1].dut.aux_subsystem.processor_rom);
+
+        rstn   = 1'b0;
+        hpd[0] = 1'b0;
+        hpd[1] = 1'b0;
+        repeat (16) @(posedge clk);
+        rstn = 1'b1;
+
+        // Let CPUs boot before asserting HPD on the source side.
+        repeat (2000) @(posedge clk);
+        $display("[TB] asserting HPD on CPU0");
+        hpd[0] = 1'b1;
+
+        // Run with a generous timeout. The Manchester PHY at 1 Mb/s needs
+        // ~100 cycles per bit at 100 MHz, and a couple of AUX transactions
+        // take ~tens of thousands of cycles.
+        for (int t = 0; t < 50_000_000; t++) begin
+            @(posedge clk);
+            if (cpu_out[0][0] && cpu_out[1][0]) begin
+                $display("[TB] both CPUs reported done after %0d cycles", t);
+                $finish;
+            end
+        end
+        $fatal(1, "[TB] timeout: cpu_out=[%08h,%08h]", cpu_out[0], cpu_out[1]);
+    end
+endmodule
+}}}

@@ -744,6 +744,9 @@ pub mod system {
         pub clock_hz: CLOCK_HZ,
         #[doc = "0x08 - "]
         pub out: OUT,
+        _reserved3: [u8; 0x04],
+        #[doc = "0x10 - Hot Plug Detect status. DP 1.2 section 3.3."]
+        pub hpd: HPD,
     }
     #[doc = "ID (rw) register accessor: an alias for `Reg<ID_SPEC>`"]
     pub type ID = crate::Reg<id::ID_SPEC>;
@@ -981,6 +984,113 @@ pub mod system {
         }
         #[doc = "`reset()` method sets OUT to value 0"]
         impl crate::Resettable for OUT_SPEC {
+            const RESET_VALUE: Self::Ux = 0;
+        }
+    }
+    #[doc = "HPD (rw) register accessor: an alias for `Reg<HPD_SPEC>`"]
+    pub type HPD = crate::Reg<hpd::HPD_SPEC>;
+    #[doc = "Hot Plug Detect status. DP 1.2 section 3.3."]
+    pub mod hpd {
+        #[doc = "Register `HPD` reader"]
+        pub struct R(crate::R<HPD_SPEC>);
+        impl core::ops::Deref for R {
+            type Target = crate::R<HPD_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl From<crate::R<HPD_SPEC>> for R {
+            #[inline(always)]
+            fn from(reader: crate::R<HPD_SPEC>) -> Self {
+                R(reader)
+            }
+        }
+        #[doc = "Register `HPD` writer"]
+        pub struct W(crate::W<HPD_SPEC>);
+        impl core::ops::Deref for W {
+            type Target = crate::W<HPD_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl core::ops::DerefMut for W {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+        impl From<crate::W<HPD_SPEC>> for W {
+            #[inline(always)]
+            fn from(writer: crate::W<HPD_SPEC>) -> Self {
+                W(writer)
+            }
+        }
+        #[doc = "Field `LEVEL` reader - Debounced HPD level. 1 = sink connected."]
+        pub type LEVEL_R = crate::BitReader;
+        #[doc = "Field `EVENT_PLUG` reader - Sticky plug event. Write 1 to clear."]
+        pub type EVENT_PLUG_R = crate::BitReader;
+        #[doc = "Field `EVENT_PLUG` writer - Sticky plug event. Write 1 to clear."]
+        pub type EVENT_PLUG_W<'a, const O: u8> = crate::BitWriter<'a, HPD_SPEC, O>;
+        #[doc = "Field `EVENT_UNPLUG` reader - Sticky unplug event. Write 1 to clear."]
+        pub type EVENT_UNPLUG_R = crate::BitReader;
+        #[doc = "Field `EVENT_UNPLUG` writer - Sticky unplug event. Write 1 to clear."]
+        pub type EVENT_UNPLUG_W<'a, const O: u8> = crate::BitWriter<'a, HPD_SPEC, O>;
+        impl R {
+            #[doc = "Bit 0 - Debounced HPD level. 1 = sink connected."]
+            #[inline(always)]
+            pub fn level(&self) -> LEVEL_R {
+                LEVEL_R::new((self.bits & 1) != 0)
+            }
+            #[doc = "Bit 1 - Sticky plug event. Write 1 to clear."]
+            #[inline(always)]
+            pub fn event_plug(&self) -> EVENT_PLUG_R {
+                EVENT_PLUG_R::new(((self.bits >> 1) & 1) != 0)
+            }
+            #[doc = "Bit 2 - Sticky unplug event. Write 1 to clear."]
+            #[inline(always)]
+            pub fn event_unplug(&self) -> EVENT_UNPLUG_R {
+                EVENT_UNPLUG_R::new(((self.bits >> 2) & 1) != 0)
+            }
+        }
+        impl W {
+            #[doc = "Bit 1 - Sticky plug event. Write 1 to clear."]
+            #[inline(always)]
+            #[must_use]
+            pub fn event_plug(&mut self) -> EVENT_PLUG_W<1> {
+                EVENT_PLUG_W::new(self)
+            }
+            #[doc = "Bit 2 - Sticky unplug event. Write 1 to clear."]
+            #[inline(always)]
+            #[must_use]
+            pub fn event_unplug(&mut self) -> EVENT_UNPLUG_W<2> {
+                EVENT_UNPLUG_W::new(self)
+            }
+            #[doc = "Writes raw bits to the register."]
+            #[inline(always)]
+            pub unsafe fn bits(&mut self, bits: u32) -> &mut Self {
+                self.0.bits(bits);
+                self
+            }
+        }
+        #[doc = "Hot Plug Detect status. DP 1.2 section 3.3.\n\nThis register you can [`read`](crate::generic::Reg::read), [`write_with_zero`](crate::generic::Reg::write_with_zero), [`reset`](crate::generic::Reg::reset), [`write`](crate::generic::Reg::write), [`modify`](crate::generic::Reg::modify). See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [hpd](index.html) module"]
+        pub struct HPD_SPEC;
+        impl crate::RegisterSpec for HPD_SPEC {
+            type Ux = u32;
+        }
+        #[doc = "`read()` method returns [hpd::R](R) reader structure"]
+        impl crate::Readable for HPD_SPEC {
+            type Reader = R;
+        }
+        #[doc = "`write(|w| ..)` method takes [hpd::W](W) writer structure"]
+        impl crate::Writable for HPD_SPEC {
+            type Writer = W;
+            const ZERO_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+            const ONE_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+        }
+        #[doc = "`reset()` method sets HPD to value 0"]
+        impl crate::Resettable for HPD_SPEC {
             const RESET_VALUE: Self::Ux = 0;
         }
     }

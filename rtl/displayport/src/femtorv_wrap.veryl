@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file femtorv_wrap.veryl
+ * @brief Thin SV wrapper around FemtoRV32 to expose ports with names that
+ *        do not collide with Veryl reserved keywords (`clk`, `reset`).
+ */
+
+// Anchor module so the file is recognised by Veryl as a project member.
+module FemtorvWrapAnchor {}
+
+embed (inline) sv{{{
+module displayport_femtorv_wrap #(
+    parameter [31:0] RESET_ADDR = 32'h8000_0000,
+    parameter        ADDR_WIDTH = 32
+) (
+    input  logic                  i_clk,
+    input  logic                  i_reset_n,        // active-low (FemtoRV32 reset is active-low)
+    output logic [ADDR_WIDTH-1:0] mem_addr,
+    output logic [31:0]           mem_wdata,
+    output logic [3:0]            mem_wmask,
+    input  logic [31:0]           mem_rdata,
+    output logic                  mem_rstrb,
+    input  logic                  mem_rbusy,
+    input  logic                  mem_wbusy,
+    input  logic                  interrupt_request
+);
+    FemtoRV32 #(
+        .RESET_ADDR(RESET_ADDR),
+        .ADDR_WIDTH(ADDR_WIDTH)
+    ) u_femtorv (
+        .clk              (i_clk            ),
+        .mem_addr         (mem_addr         ),
+        .mem_wdata        (mem_wdata        ),
+        .mem_wmask        (mem_wmask        ),
+        .mem_rdata        (mem_rdata        ),
+        .mem_rstrb        (mem_rstrb        ),
+        .mem_rbusy        (mem_rbusy        ),
+        .mem_wbusy        (mem_wbusy        ),
+        .interrupt_request(interrupt_request),
+        .reset            (i_reset_n        )
+    );
+endmodule
+}}}

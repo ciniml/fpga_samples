@@ -1,0 +1,74 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file dp_source_top.veryl
+ * @brief DisplayPort 1.2 Source IP top-level skeleton (Phase A).
+ *        Currently only the AUX CH + HPD subsystem is wired up;
+ *        main link / video pipeline are added in later phases.
+ */
+
+pub module dp_source_top #(
+    param CLOCK_HZ:           u32 = 32'd100_000_000,
+    param MANCHESTER_CLOCK_HZ: u32 = 32'd1_000_000,
+    param PRECHARGE_CYCLES:   u32 = 32'd16,
+    param BUFFER_SIZE:        u32 = 256,
+    param DEBUG_OUT:          logic<1> = 1'b0,
+    param PROCESSOR_ID:       u32 = 32'h01234567,
+    param PROCESSOR_ROM_SIZE: u32 = 8192,
+    param PROCESSOR_RAM_SIZE: u32 = 8192,
+) (
+    i_clk:  input clock_posedge,
+    i_rstn: input reset_sync_low,
+
+    // AUX CH (DP 1.2 §3.4)
+    aux_ch_in:         input  logic,
+    aux_ch_out:        output logic,
+    aux_ch_out_enable: output logic,
+
+    // Hot Plug Detect (DP 1.2 §3.3)
+    hpd_in: input logic,
+
+    // CPU GPIO output (used for DONE signaling in TB)
+    cpu_io_out: output logic<32>,
+
+    // Firmware loader / serial console
+    saxis_serial_in_tvalid:  input  logic,
+    saxis_serial_in_tready:  output logic,
+    saxis_serial_in_tdata:   input  logic<8>,
+    maxis_serial_out_tvalid: output logic,
+    maxis_serial_out_tready: input  logic,
+    maxis_serial_out_tdata:  output logic<8>,
+) {
+    inst aux_subsystem: aux_ch_subsystem #(
+        CLOCK_HZ,
+        MANCHESTER_CLOCK_HZ,
+        PRECHARGE_CYCLES,
+        BUFFER_SIZE,
+        DEBUG_OUT,
+        PROCESSOR_ID,
+        PROCESSOR_ROM_SIZE,
+        PROCESSOR_RAM_SIZE,
+    ) (
+        i_clk,
+        i_rstn,
+
+        aux_ch_in,
+        aux_ch_out,
+        aux_ch_out_enable,
+
+        hpd_in,
+
+        cpu_io_out,
+
+        saxis_serial_in_tvalid,
+        saxis_serial_in_tready,
+        saxis_serial_in_tdata,
+
+        maxis_serial_out_tvalid,
+        maxis_serial_out_tready,
+        maxis_serial_out_tdata,
+    );
+}

@@ -11,8 +11,8 @@
 pub module stream_memory_access #(
     param ADDRESS_BITS: u32 = 20,  // 1MB
 ) (
-    clock:   input logic,
-    aresetn: input logic,
+    i_clk:   input clock_posedge,
+    i_rstn: input reset_sync_low,
 
     // Memory I/O
     mem_address: output logic<ADDRESS_BITS>,
@@ -31,7 +31,7 @@ pub module stream_memory_access #(
     saxis_serial_in_tready: output logic,
     saxis_serial_in_tdata : input  logic<8>,
 ) {
-    local ADDRESS_BYTES: u32 = (ADDRESS_BITS + 7) / 8;
+    const ADDRESS_BYTES: u32 = (ADDRESS_BITS + 7) / 8;
     type address_t = logic<ADDRESS_BITS>;
     type address_byte_counter_t = logic<$clog2(ADDRESS_BYTES)>;
 
@@ -60,7 +60,7 @@ pub module stream_memory_access #(
         };
     }
 
-    always_ff(clock, aresetn) {
+    always_ff(i_clk, i_rstn) {
         if_reset {
             maxis_serial_out_tvalid = 0;
             mem_rreq = 0;

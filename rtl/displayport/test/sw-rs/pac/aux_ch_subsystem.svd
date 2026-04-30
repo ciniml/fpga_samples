@@ -60,6 +60,34 @@
                         </field>
                     </fields>
                 </register>
+                <register>
+                    <name>HPD</name>
+                    <description>Hot Plug Detect status. DP 1.2 section 3.3.</description>
+                    <addressOffset>0x10</addressOffset>
+                    <fields>
+                        <field>
+                            <name>LEVEL</name>
+                            <description>Debounced HPD level. 1 = sink connected.</description>
+                            <bitOffset>0</bitOffset>
+                            <bitWidth>1</bitWidth>
+                            <access>read-only</access>
+                        </field>
+                        <field>
+                            <name>EVENT_PLUG</name>
+                            <description>Sticky plug event. Write 1 to clear.</description>
+                            <bitOffset>1</bitOffset>
+                            <bitWidth>1</bitWidth>
+                            <access>read-write</access>
+                        </field>
+                        <field>
+                            <name>EVENT_UNPLUG</name>
+                            <description>Sticky unplug event. Write 1 to clear.</description>
+                            <bitOffset>2</bitOffset>
+                            <bitWidth>1</bitWidth>
+                            <access>read-write</access>
+                        </field>
+                    </fields>
+                </register>
             </registers>
         </peripheral>
         <peripheral>

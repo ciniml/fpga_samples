@@ -11,10 +11,10 @@
 pub module aux_ch_tx #(
     param CLOCK_HZ: u32 = 32'd100_000_000,  // Clock frequency
     param PRECHARGE_CYCLES: u32 = 32'd16,   // Number of precharge cycles
-    param DEBUG_OUT: bit = 0,               // Enable debug output messages
+    param DEBUG_OUT: logic<1> = 1'b0,               // Enable debug output messages
 ) (
-    clock: input logic,
-    aresetn: input logic,
+    i_clk: input clock_posedge,
+    i_rstn: input reset_sync_low,
 
     // DDS control input
     saxis_data_tvalid: input logic,
@@ -27,7 +27,7 @@ pub module aux_ch_tx #(
     aux_ch_out:        output logic,
     aux_ch_out_enable: output logic,
 ) {
-    local CLOCK_COUNT_2M: u32 = CLOCK_HZ / 2_000_000;   // Number of cycles for 2MHz
+    const CLOCK_COUNT_2M: u32 = CLOCK_HZ / 2_000_000;   // Number of cycles for 2MHz
     type clock_divider_t = logic<$clog2(CLOCK_COUNT_2M)>;
     var clock_divider: clock_divider_t;
     var clock_en: logic;
@@ -57,7 +57,7 @@ pub module aux_ch_tx #(
     var phase: logic;
 
     always_comb {
-        //saxis_data_tready = aresetn && clock_en && phase == 1 && bit_counter == 0 && (state == State::SYNC_END || state == State::TRANSMIT) && !is_last;
+        //saxis_data_tready = i_rstn && clock_en && phase == 1 && bit_counter == 0 && (state == State::SYNC_END || state == State::TRANSMIT) && !is_last;
         aux_ch_out_enable = state != State::IDLE;
         if bit_mode == BitMode::MANCHESTER {
             aux_ch_out = bit_buffer[msb] ^ phase;    // Mahcnester-II 0: 0->1, 1: 1->0
@@ -67,7 +67,7 @@ pub module aux_ch_tx #(
         }
     }
 
-    always_ff (clock, aresetn) {
+    always_ff (i_clk, i_rstn) {
         if_reset {
             clock_divider = 0;
             clock_en = 0;
