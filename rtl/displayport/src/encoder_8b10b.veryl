@@ -213,6 +213,19 @@ pub module encoder_8b10b (
         };
     }
 
+    // The 5b/6b and 3b/4b LUTs above store sub-symbols in MSB-first reading
+    // order: out5[5] = a, out5[0] = i; out4[3] = f, out4[0] = j. The DP 1.2
+    // line code (and the 8B/10B standard) transmits a first, j last. Our
+    // 10:1 serializer emits o_symbol[0] first, so we bit-reverse each
+    // sub-symbol when packing into o_symbol so that o_symbol[0] = a and
+    // o_symbol[9] = j on the wire.
+    function bitrev6(x: input logic<6>) -> logic<6> {
+        return {x[0], x[1], x[2], x[3], x[4], x[5]};
+    }
+    function bitrev4(x: input logic<4>) -> logic<4> {
+        return {x[0], x[1], x[2], x[3]};
+    }
+
     always_ff (i_clk, i_rstn) {
         if_reset {
             rd       = 0;
@@ -246,8 +259,10 @@ pub module encoder_8b10b (
                 let out4:  logic<4> = if rd_after5 ? pos4 : neg4;
                 let rd_after4: logic = rd_after5 ^ flip4;
 
-                // {fghj, abcdei}: bit 0 = a (first transmitted), bit 9 = j (last).
-                o_symbol = {out4, out5};
+                // bit 0 = a (first transmitted), bit 9 = j (last). The
+                // sub-symbol LUTs return MSB-first values (bit 5 = a etc.),
+                // so we bit-reverse before packing.
+                o_symbol = {bitrev4(out4), bitrev6(out5)};
                 rd       = rd_after4;
             }
         }

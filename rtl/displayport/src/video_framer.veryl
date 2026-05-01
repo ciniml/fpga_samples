@@ -23,7 +23,14 @@
  *        link symbols, with the rest as 0x00 (scrambled).
  */
 
-pub module video_framer (
+pub module video_framer #(
+    // Substitute SR (K28.0 = 0x1C) for every SR_PERIOD-th BS so that the
+    // scrambler can be re-synchronized on each SR (DP 1.2 §3.1.6). The
+    // counter is initialized to SR_PERIOD-1 so the very first emitted BS
+    // is replaced by SR, giving the sink an immediate scrambler-sync
+    // anchor at link bring-up.
+    param SR_PERIOD: u32 = 512,
+) (
     i_clk:  input clock_posedge,
     i_rstn: input reset_sync_low,
 
@@ -65,6 +72,16 @@ pub module video_framer (
     var byte_in_line: logic<18>; // 0..bytes_per_line-1
     var line:         logic<16>; // 0..vtotal-1
     var idle_counter: logic<13>; // 0..8191 for IDLE pattern
+
+    // BS-substitution counter for SR injection.
+    const BS_BITS: u32 = $clog2(SR_PERIOD);
+    type bs_count_t = logic<BS_BITS>;
+    var bs_count: bs_count_t;
+    let use_sr_now: logic = (bs_count == (SR_PERIOD - 1) as bs_count_t);
+
+    let at_video_bs: logic = i_video_enable && (byte_in_line == 18'd0);
+    let at_idle_bs:  logic = !i_video_enable && (idle_counter == 13'd0);
+    let at_any_bs:   logic = at_video_bs || at_idle_bs;
 
     let line_is_active: logic =
         (line >= i_vstart) && (line <: i_vstart + i_vheight);
@@ -160,7 +177,13 @@ pub module video_framer (
 
         if i_video_enable {
             if byte_in_line == 18'd0 {
-                o_byte = 8'hBC; // BS = K28.5
+                // BS = K28.5 normally; substitute SR = K28.0 every
+                // SR_PERIOD-th BS so both ends can re-sync the scrambler.
+                if use_sr_now {
+                    o_byte = 8'h1C;
+                } else {
+                    o_byte = 8'hBC;
+                }
                 o_is_k = 1;
             } else if byte_in_line == 18'd1 {
                 // VB-ID: bit0 = VBlank flag (rest 0 in our minimal scope)
@@ -188,7 +211,11 @@ pub module video_framer (
             // then 0x00 stuffing for the remainder of the 8192-symbol
             // window.
             if idle_counter == 13'd0 {
-                o_byte = 8'hBC;
+                if use_sr_now {
+                    o_byte = 8'h1C;
+                } else {
+                    o_byte = 8'hBC;
+                }
                 o_is_k = 1;
             } else if idle_counter == 13'd1 {
                 o_byte = 8'h08; // NoVideoStream_Flag (bit 3)
@@ -206,7 +233,18 @@ pub module video_framer (
             byte_in_line = 0;
             line         = 0;
             idle_counter = 0;
+            // Initialize so the very first emitted BS is replaced by SR.
+            // This anchors the sink scrambler at INIT from the first
+            // K-comma it sees, eliminating the startup mismatch window.
+            bs_count = (SR_PERIOD - 1) as bs_count_t;
         } else {
+            if i_byte_tick && at_any_bs {
+                if use_sr_now {
+                    bs_count = 0;
+                } else {
+                    bs_count = bs_count + (1 as bs_count_t);
+                }
+            }
             if !i_video_enable {
                 if i_byte_tick {
                     if idle_counter == 13'd8191 {

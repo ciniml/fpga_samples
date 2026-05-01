@@ -115,8 +115,14 @@ pub module decoder_8b10b (
         } else {
             o_valid = i_valid;
             if i_valid {
-                let c6: logic<6> = i_symbol[5:0];
-                let c4: logic<4> = i_symbol[9:6];
+                // The on-the-wire bit order is a, b, c, d, e, i, f, g, h, j
+                // (a in bit 0, j in bit 9). Internally the decode LUTs use
+                // MSB-first sub-symbols (bit 5 = a, bit 3 = f), so we
+                // bit-reverse each sub-symbol on the way in.
+                let c6: logic<6> = {i_symbol[0], i_symbol[1], i_symbol[2],
+                                    i_symbol[3], i_symbol[4], i_symbol[5]};
+                let c4: logic<4> = {i_symbol[6], i_symbol[7], i_symbol[8],
+                                    i_symbol[9]};
 
                 let dec5: logic<6> = decode_6b(c6);
                 let err5: logic    = dec5[5];

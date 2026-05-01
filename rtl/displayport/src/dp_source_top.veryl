@@ -19,6 +19,7 @@ pub module dp_source_top #(
     param PROCESSOR_ID:       u32 = 32'h01234567,
     param PROCESSOR_ROM_SIZE: u32 = 8192,
     param PROCESSOR_RAM_SIZE: u32 = 8192,
+    param SR_PERIOD:          u32 = 512,
 ) (
     i_clk:  input clock_posedge,
     i_rstn: input reset_sync_low,
@@ -123,7 +124,9 @@ pub module dp_source_top #(
         video_tu_active         : v_tu_active,
     );
 
-    inst main_link: main_link_tx (
+    inst main_link: main_link_tx #(
+        SR_PERIOD: SR_PERIOD,
+    ) (
         i_clk            : i_clk,
         i_rstn           : i_rstn,
         i_pattern_select : ml_pattern_select,

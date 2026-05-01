@@ -25,8 +25,11 @@ module dp_source_top_full;
     parameter int unsigned PROCESSOR_ROM_SIZE  = 32'd16384;
     parameter int unsigned PROCESSOR_RAM_SIZE  = 32'd8192;
 
-    localparam int unsigned FRAME_W = 64;
-    localparam int unsigned FRAME_H = 16;
+    localparam int unsigned FRAME_W    = 64;
+    localparam int unsigned FRAME_H    = 16;
+    localparam int unsigned NUM_FRAMES = 3;
+    localparam int unsigned BYTES_PER_FRAME = FRAME_W * FRAME_H * 3;
+    localparam int unsigned TOTAL_BYTES     = NUM_FRAMES * BYTES_PER_FRAME;
 
     logic clk;
     logic rstn;
@@ -68,7 +71,8 @@ module dp_source_top_full;
                 .MANCHESTER_CLOCK_HZ(MANCHESTER_CLOCK_HZ),
                 .PROCESSOR_ID(32'(i)),
                 .PROCESSOR_ROM_SIZE(PROCESSOR_ROM_SIZE),
-                .PROCESSOR_RAM_SIZE(PROCESSOR_RAM_SIZE)
+                .PROCESSOR_RAM_SIZE(PROCESSOR_RAM_SIZE),
+                .SR_PERIOD(32'd4)
             ) dut (
                 .i_clk                  (clk),
                 .i_rstn                 (rstn),
@@ -110,47 +114,40 @@ module dp_source_top_full;
     assign pix_tready = g[0].local_pix_tready;
 
     // ----- Sink RX chain on CPU0's lane-0 serial output -----
-    // White-box bit alignment: the TX serializer emits bit 0 of a fresh
-    // symbol on the cycle it captures a new 10-bit input. We tap that
-    // moment via the encoder's o_valid pulse (which triggers the
-    // serializer's symbol load on the next cycle) and use it to drive the
-    // sink deserializer's i_align. Held off until link training is done so
-    // the deserializer locks into the post-training byte stream.
+    // i_lock_enable is held low during link training so training-pattern
+    // K28.5 instances do not trigger a premature lock. The TB asserts it
+    // shortly after cpu_out[0][0] goes high (= firmware reports done).
     logic       sink_arm;
-    logic       sink_aligned;
-    logic       sink_align_pulse;
     logic       rx_valid;
     logic [7:0] rx_byte;
     logic       rx_is_k;
     logic       rx_code_err;
-
-    // Encoder output marks the cycle when a new 10-bit symbol is presented
-    // to the serializer. The serializer captures it and emits bit 0 on the
-    // following cycle; that next cycle is the one we want i_align high on.
-    logic enc_valid_d;
-    always_ff @(posedge clk) begin
-        if (!rstn) enc_valid_d <= 1'b0;
-        else       enc_valid_d <= g[0].dut.main_link.u_lane0.u_enc.o_valid;
-    end
-
-    assign sink_align_pulse = sink_arm && !sink_aligned && enc_valid_d &&
-                              lane0_bit_valid[0];
-    always_ff @(posedge clk) begin
-        if (!rstn) sink_aligned <= 1'b0;
-        else if (sink_align_pulse) sink_aligned <= 1'b1;
-    end
+    logic       rx_locked;
 
     displayport_dp_sink_rx_lane u_rx (
-        .i_clk      (clk),
-        .i_rstn     (rstn),
-        .i_align    (sink_align_pulse),
-        .i_bit      (lane0_bit[0]),
-        .i_bit_valid(lane0_bit_valid[0]),
-        .o_valid    (rx_valid),
-        .o_byte     (rx_byte),
-        .o_is_k     (rx_is_k),
-        .o_code_err (rx_code_err)
+        .i_clk        (clk),
+        .i_rstn       (rstn),
+        .i_lock_enable(sink_arm),
+        .i_bit        (lane0_bit[0]),
+        .i_bit_valid  (lane0_bit_valid[0]),
+        .o_valid      (rx_valid),
+        .o_byte       (rx_byte),
+        .o_is_k       (rx_is_k),
+        .o_code_err   (rx_code_err),
+        .o_locked     (rx_locked)
     );
+
+    wire sink_aligned = rx_locked;
+
+    // Count SR (K28.0 = 0x1C K=1) instances at the descrambled byte stream
+    // to confirm video_framer is actually substituting SR for every
+    // SR_PERIOD-th BS, not just emitting plain BS everywhere.
+    integer rx_sr_count;
+    always_ff @(posedge clk) begin
+        if (!rstn) rx_sr_count <= 0;
+        else if (rx_valid && rx_is_k && rx_byte == 8'h1C)
+            rx_sr_count <= rx_sr_count + 1;
+    end
 
     // ----- Frame parser (operating on RX-recovered bytes) -----
     typedef enum logic [2:0] {
@@ -169,7 +166,7 @@ module dp_source_top_full;
     logic         in_stuffing;
     integer       active_line_count;
     integer       pixels_collected_this_line;
-    logic [7:0]   recovered_bytes [0:FRAME_W * FRAME_H * 3 - 1];
+    logic [7:0]   recovered_bytes [0:TOTAL_BYTES - 1];
     integer       recovered_index;
     integer       parse_errors;
     integer       code_err_count;
@@ -189,7 +186,7 @@ module dp_source_top_full;
             if (rx_valid) begin
                 case (pstate)
                     PS_WAIT_BS: begin
-                        if (rx_is_k && rx_byte == 8'hBC) pstate <= PS_GOT_BS;
+                        if (rx_is_k && (rx_byte == 8'hBC || rx_byte == 8'h1C)) pstate <= PS_GOT_BS;
                     end
                     PS_GOT_BS: begin
                         line_is_vblank <= rx_byte[0];
@@ -201,19 +198,19 @@ module dp_source_top_full;
                         else                 pstate <= PS_WAIT_BE;
                     end
                     PS_VBLANK: begin
-                        if (rx_is_k && rx_byte == 8'hBC) pstate <= PS_GOT_BS;
+                        if (rx_is_k && (rx_byte == 8'hBC || rx_byte == 8'h1C)) pstate <= PS_GOT_BS;
                     end
                     PS_WAIT_BE: begin
                         if (rx_is_k && rx_byte == 8'hFB) begin
                             pstate                     <= PS_ACTIVE;
                             in_stuffing                <= 1'b0;
                             pixels_collected_this_line <= 0;
-                        end else if (rx_is_k && rx_byte == 8'hBC) begin
+                        end else if (rx_is_k && (rx_byte == 8'hBC || rx_byte == 8'h1C)) begin
                             pstate <= PS_GOT_BS;
                         end
                     end
                     PS_ACTIVE: begin
-                        if (rx_is_k && rx_byte == 8'hBC) begin
+                        if (rx_is_k && (rx_byte == 8'hBC || rx_byte == 8'h1C)) begin
                             if (pixels_collected_this_line != FRAME_W * 3) begin
                                 $display("[tb_dp] line %0d: collected %0d bytes (expected %0d)",
                                          active_line_count, pixels_collected_this_line, FRAME_W * 3);
@@ -226,7 +223,7 @@ module dp_source_top_full;
                         end else if (rx_is_k && rx_byte == 8'hFC) begin
                             in_stuffing <= 1'b0;
                         end else if (!rx_is_k && !in_stuffing) begin
-                            if (recovered_index < FRAME_W * FRAME_H * 3) begin
+                            if (recovered_index < TOTAL_BYTES) begin
                                 recovered_bytes[recovered_index] <= rx_byte;
                                 recovered_index                  <= recovered_index + 1;
                                 pixels_collected_this_line       <= pixels_collected_this_line + 1;
@@ -264,39 +261,41 @@ module dp_source_top_full;
         $display("[TB] cpu_out[0]=%08h. Arming sink RX.", cpu_out[0]);
         sink_arm = 1'b1;
 
-        // Wait for parser to collect a full frame (or timeout).
+        // Wait for parser to collect NUM_FRAMES frames (or timeout).
         for (int t = 0; t < 50_000_000; t++) begin
             @(posedge clk);
-            if (recovered_index >= FRAME_W * FRAME_H * 3) break;
+            if (recovered_index >= TOTAL_BYTES) break;
         end
 
         if (!sink_aligned) begin
             $fatal(1, "[TB] sink RX never aligned (code errs=%0d)", code_err_count);
         end
 
-        if (recovered_index < FRAME_W * FRAME_H * 3) begin
+        if (recovered_index < TOTAL_BYTES) begin
             $fatal(1, "[TB] parser collected only %0d / %0d bytes (code errs=%0d)",
-                   recovered_index, FRAME_W * FRAME_H * 3, code_err_count);
+                   recovered_index, TOTAL_BYTES, code_err_count);
         end
 
-        // Compare against expected.
-        for (int y = 0; y < FRAME_H; y++) begin
-            for (int x = 0; x < FRAME_W; x++) begin
-                int idx;
-                logic [7:0] er, eg, eb, xb, yb;
-                xb  = x[7:0];
-                yb  = y[7:0];
-                idx = (y * FRAME_W + x) * 3;
-                er  = xb;
-                eg  = yb;
-                eb  = (x + y) & 32'hFF;
-                if (recovered_bytes[idx]   !== er ||
-                    recovered_bytes[idx+1] !== eg ||
-                    recovered_bytes[idx+2] !== eb) begin
-                    $display("[TB] pixel (%0d,%0d) mismatch: expected (%02h,%02h,%02h) got (%02h,%02h,%02h)",
-                             x, y, er, eg, eb,
-                             recovered_bytes[idx], recovered_bytes[idx+1], recovered_bytes[idx+2]);
-                    parse_errors = parse_errors + 1;
+        // Compare each frame against its expected (frame-indexed) pattern.
+        for (int f = 0; f < NUM_FRAMES; f++) begin
+            for (int y = 0; y < FRAME_H; y++) begin
+                for (int x = 0; x < FRAME_W; x++) begin
+                    int idx;
+                    logic [7:0] er, eg, eb, xb, yb;
+                    xb  = x[7:0];
+                    yb  = y[7:0];
+                    idx = f * BYTES_PER_FRAME + (y * FRAME_W + x) * 3;
+                    er  = xb;
+                    eg  = yb;
+                    eb  = (x + y + 16 * f) & 32'hFF;
+                    if (recovered_bytes[idx]   !== er ||
+                        recovered_bytes[idx+1] !== eg ||
+                        recovered_bytes[idx+2] !== eb) begin
+                        $display("[TB] frame %0d pixel (%0d,%0d) mismatch: expected (%02h,%02h,%02h) got (%02h,%02h,%02h)",
+                                 f, x, y, er, eg, eb,
+                                 recovered_bytes[idx], recovered_bytes[idx+1], recovered_bytes[idx+2]);
+                        parse_errors = parse_errors + 1;
+                    end
                 end
             end
         end
@@ -306,8 +305,12 @@ module dp_source_top_full;
                    parse_errors, code_err_count);
         end
 
-        $display("[TB] PASS: %0d pixels reconstructed cleanly via serial loopback (code errs=%0d).",
-                 FRAME_W * FRAME_H, code_err_count);
+        if (rx_sr_count == 0) begin
+            $fatal(1, "[TB] no SR (K28.0) seen at sink — SR substitution not working");
+        end
+
+        $display("[TB] PASS: %0d frames x %0d pixels reconstructed cleanly via serial loopback (SR seen=%0d, code errs=%0d).",
+                 NUM_FRAMES, FRAME_W * FRAME_H, rx_sr_count, code_err_count);
         $finish;
     end
 
@@ -319,19 +322,25 @@ module dp_source_top_full;
     // ----- Pixel pump: stages x[7:0] / y[7:0] through 8-bit logic locals
     //       to work around a Verilator quirk where slicing an int directly
     //       inside a concatenation expression yields 0.
+    //
+    //       Each frame uses a frame-indexed B channel (B = (x+y+16*f) mod 256)
+    //       so a sink-side frame mix-up would surface as a pixel mismatch
+    //       rather than silently passing.
     initial begin
         @(posedge rstn);
         wait (hpd[0] == 1'b1);
-        for (int y = 0; y < FRAME_H; y++) begin
-            for (int x = 0; x < FRAME_W; x++) begin
-                logic [7:0] xb, yb, bb;
-                xb = x[7:0];
-                yb = y[7:0];
-                bb = (x + y) & 32'hFF;
-                pix_tdata  = {xb, yb, bb};
-                pix_tvalid = 1'b1;
-                @(posedge clk);
-                while (!pix_tready) @(posedge clk);
+        for (int f = 0; f < NUM_FRAMES; f++) begin
+            for (int y = 0; y < FRAME_H; y++) begin
+                for (int x = 0; x < FRAME_W; x++) begin
+                    logic [7:0] xb, yb, bb;
+                    xb = x[7:0];
+                    yb = y[7:0];
+                    bb = (x + y + 16 * f) & 32'hFF;
+                    pix_tdata  = {xb, yb, bb};
+                    pix_tvalid = 1'b1;
+                    @(posedge clk);
+                    while (!pix_tready) @(posedge clk);
+                end
             end
         end
         pix_tvalid = 1'b0;

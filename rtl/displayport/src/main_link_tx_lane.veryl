@@ -19,7 +19,12 @@
  * 8B/10B encoder input to start at RD = - (DP 1.2 §3.5.1.2 requirement).
  */
 
-pub module main_link_tx_lane (
+pub module main_link_tx_lane #(
+    // SR-substitution period for the embedded video_framer. See DP 1.2
+    // §3.1.6 (default = 512); tests override to a small value to exercise
+    // SR injection within a few frames.
+    param SR_PERIOD: u32 = 512,
+) (
     i_clk:  input clock_posedge,
     i_rstn: input reset_sync_low,
 
@@ -105,7 +110,9 @@ pub module main_link_tx_lane (
     var vid_is_k:             logic;
     var vid_scramble_disable: logic;
 
-    inst u_vf: video_framer (
+    inst u_vf: video_framer #(
+        SR_PERIOD: SR_PERIOD,
+    ) (
         i_clk             : i_clk,
         i_rstn            : i_rstn,
         i_byte_tick       : byte_tick,
@@ -158,11 +165,16 @@ pub module main_link_tx_lane (
     var sc_data:  logic<8>;
     var sc_is_k:  logic;
 
-    // Reset the LFSR on every BS (K28.5 = 0xBC). Phase D / E does not emit
-    // SR (the spec-mandated reset symbol), so we use BS as a per-line sync
-    // point that the sink RX can latch onto. See dp_sink_rx_lane.veryl.
+    // Reset the LFSR on every BS (K28.5 = 0xBC) AND every SR (K28.0 =
+    // 0x1C). DP 1.2 §3.1.6 strictly requires only the SR reset, but
+    // every-BS reset is a useful sim convenience: it lets the sink RX
+    // re-sync its LFSR on every line boundary without having to wait
+    // up to SR_PERIOD lines for the next SR. The on-the-wire content
+    // (SR substituted for every SR_PERIOD-th BS) remains spec-conforming;
+    // a real hardware sink that resets only on SR will still see a
+    // correctly-scrambled byte stream and sync at the next SR.
     let sc_seed_reset: logic =
-        mux_valid && mux_is_k && (mux_byte == 8'hBC);
+        mux_valid && mux_is_k && (mux_byte == 8'hBC || mux_byte == 8'h1C);
 
     inst u_sc: scrambler (
         i_clk             : i_clk,

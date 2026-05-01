@@ -7,30 +7,34 @@
  * @file dp_sink_rx_lane.veryl
  * @brief Phase E sink-side RX chain for one lane:
  *
- *     i_bit / i_bit_valid → deserializer_1to10 → decoder_8b10b
+ *     i_bit / i_bit_valid → bit aligner (K28.5 comma detector)
+ *                       → deserializer_1to10
+ *                       → decoder_8b10b
  *                       → descrambler (scrambler module reused)
  *                       → o_byte / o_is_k / o_valid
  *
- * Bit-level alignment is provided externally via `i_align` — a one-cycle
- * pulse that tells the 1:10 deserializer that the bit on `i_bit` is bit 0
- * (= 'a') of a fresh symbol. The TB drives this from a TX-side white-box
- * tap so that simulation alignment is deterministic; a future phase will
- * replace this with on-band K28.5 comma detection once a PHY model with
- * realistic bit-rate propagation is added.
+ * The bit aligner watches a sliding 10-bit window of valid bits and locks
+ * the deserializer to the first K28.5 (RD- or RD+) seen while
+ * `i_lock_enable` is high. The TB raises `i_lock_enable` only after link
+ * training completes so that training-pattern K28.5 instances do not
+ * trigger a premature lock.
  *
- * The descrambler is reset to INIT on every observed BS (K28.5) byte. The
- * TX side (main_link_tx_lane) does the same, so both ends realign their
- * scrambler LFSRs at every line boundary. This is a sim-only convention
- * adopted by Phase E in lieu of the spec's SR-based reset (DP 1.2 §3.1.6),
- * which Phase D explicitly left out of scope.
+ * The descrambler is reset to INIT on every BS (K28.5) AND every SR
+ * (K28.0). DP 1.2 §3.1.6 only mandates SR-based reset; the every-BS
+ * reset is a sim convenience that lets the sink LFSR re-sync at every
+ * line boundary instead of waiting up to SR_PERIOD lines for the next
+ * SR. video_framer still substitutes SR for every SR_PERIOD-th BS, so
+ * the on-the-wire byte stream is spec-conforming and a real (SR-only)
+ * sink would also stay in sync.
  */
 
 pub module dp_sink_rx_lane (
     i_clk:  input clock_posedge,
     i_rstn: input reset_sync_low,
 
-    // Bit-aligner pulse (sourced by the TB).
-    i_align: input logic,
+    // Gate the bit aligner so it does not lock to training-pattern K28.5
+    // bytes before the link is up.
+    i_lock_enable: input logic,
 
     i_bit:       input logic,
     i_bit_valid: input logic,
@@ -40,8 +44,68 @@ pub module dp_sink_rx_lane (
     o_byte:     output logic<8>,
     o_is_k:     output logic,
     o_code_err: output logic,
+    o_locked:   output logic,
 ) {
+    // -----------------------------------------------------------------
+    // Bit aligner: 10-bit sliding window scanning for a K28 comma.
+    // -----------------------------------------------------------------
+    //
+    // On the wire the encoder transmits bit 0 = 'a' first, bit 9 = 'j'
+    // last. Our shift register puts the newest bit at sr[0], so after a
+    // full K28 symbol it holds the bit-reverse of o_data.
+    //
+    //   K28.5 (BS) RD- :  sr = 10'h0FA   (a..j = 0,0,1,1,1,1,1,0,1,0)
+    //   K28.5 (BS) RD+ :  sr = 10'h305   (a..j = 1,1,0,0,0,0,0,1,0,1)
+    //   K28.0 (SR) RD- :  sr = 10'h0F4   (a..j = 0,0,1,1,1,1,0,1,0,0)
+    //   K28.0 (SR) RD+ :  sr = 10'h30B   (a..j = 1,1,0,0,0,0,1,0,1,1)
+    //
+    // We lock on K28.5 (BS) for bit alignment because K28.5 carries the
+    // 8B/10B "comma" — 5 consecutive identical bits at the sub-symbol
+    // boundary — that is unique within and across all valid symbol
+    // alignments. K28.0 (SR) does NOT have this comma property (only 4
+    // consecutive 1s), so locking on it could land on a wrong symbol
+    // boundary if scrambled D-byte bit windows happened to match. BS
+    // appears at every line, so worst-case lock latency is one line.
+
+    var sr:               logic<10>;
+    var locked:           logic;
+    var align_pending:    logic;
+    let k285_neg_pattern: logic<10> = 10'h0FA;
+    let k285_pos_pattern: logic<10> = 10'h305;
+
+    // Match against the post-shift value of sr — i.e. with the current
+    // valid bit included as the new sr[0]. Comparing the pre-shift value
+    // would detect the comma one bit too late.
+    let new_sr:     logic<10> = {sr[8:0], i_bit};
+    let comma_match: logic    = (new_sr == k285_neg_pattern) ||
+                                 (new_sr == k285_pos_pattern);
+
+    let align_pulse: logic = align_pending && i_bit_valid;
+
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            sr            = 0;
+            locked        = 0;
+            align_pending = 0;
+        } else {
+            if i_bit_valid {
+                sr = new_sr;
+                if i_lock_enable && !locked && !align_pending && comma_match {
+                    align_pending = 1;
+                }
+                if align_pending {
+                    align_pending = 0;
+                    locked        = 1;
+                }
+            }
+        }
+    }
+
+    assign o_locked = locked;
+
+    // -----------------------------------------------------------------
     // 1:10 deserializer
+    // -----------------------------------------------------------------
     var ds_valid: logic;
     var ds_data:  logic<10>;
 
@@ -50,12 +114,14 @@ pub module dp_sink_rx_lane (
         i_rstn     : i_rstn,
         i_bit      : i_bit,
         i_bit_valid: i_bit_valid,
-        i_align    : i_align,
+        i_align    : align_pulse,
         o_valid    : ds_valid,
         o_data     : ds_data,
     );
 
+    // -----------------------------------------------------------------
     // 8B/10B decoder
+    // -----------------------------------------------------------------
     var dec_valid:    logic;
     var dec_data:     logic<8>;
     var dec_is_k:     logic;
@@ -74,13 +140,19 @@ pub module dp_sink_rx_lane (
 
     assign o_code_err = dec_code_err;
 
-    // Descrambler. Reset LFSR on every BS (K28.5 = 0xBC).
-    let dec_is_bs: logic = dec_valid && dec_is_k && (dec_data == 8'hBC);
+    // -----------------------------------------------------------------
+    // Descrambler. Reset LFSR on every BS (K28.5 = 0xBC) AND every SR
+    // (K28.0 = 0x1C). The TX side does the same; see main_link_tx_lane
+    // for the rationale (sim-only every-BS reset on top of the spec's
+    // SR reset).
+    // -----------------------------------------------------------------
+    let dec_is_reset: logic =
+        dec_valid && dec_is_k && (dec_data == 8'hBC || dec_data == 8'h1C);
 
     inst u_desc: scrambler (
         i_clk             : i_clk,
         i_rstn            : i_rstn,
-        i_seed_reset      : dec_is_bs,
+        i_seed_reset      : dec_is_reset,
         i_scramble_disable: 1'b0,
         i_valid           : dec_valid,
         i_data            : dec_data,

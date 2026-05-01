@@ -65,7 +65,8 @@ module video_pipeline_full;
                 .MANCHESTER_CLOCK_HZ(MANCHESTER_CLOCK_HZ),
                 .PROCESSOR_ID(32'(i)),
                 .PROCESSOR_ROM_SIZE(PROCESSOR_ROM_SIZE),
-                .PROCESSOR_RAM_SIZE(PROCESSOR_RAM_SIZE)
+                .PROCESSOR_RAM_SIZE(PROCESSOR_RAM_SIZE),
+                .SR_PERIOD(32'd4)
             ) dut (
                 .i_clk                  (clk),
                 .i_rstn                 (rstn),
@@ -144,7 +145,7 @@ module video_pipeline_full;
         end else if (tx_valid) begin
             case (pstate)
                 PS_WAIT_BS: begin
-                    if (tx_is_k && tx_byte == 8'hBC) begin
+                    if (tx_is_k && (tx_byte == 8'hBC || tx_byte == 8'h1C)) begin
                         pstate <= PS_GOT_BS;
                     end
                 end
@@ -159,7 +160,7 @@ module video_pipeline_full;
                     else                 pstate <= PS_WAIT_BE;
                 end
                 PS_VBLANK: begin
-                    if (tx_is_k && tx_byte == 8'hBC) begin
+                    if (tx_is_k && (tx_byte == 8'hBC || tx_byte == 8'h1C)) begin
                         pstate <= PS_GOT_BS;
                     end
                 end
@@ -168,13 +169,13 @@ module video_pipeline_full;
                         pstate                     <= PS_ACTIVE;
                         in_stuffing                <= 1'b0;
                         pixels_collected_this_line <= 0;
-                    end else if (tx_is_k && tx_byte == 8'hBC) begin
+                    end else if (tx_is_k && (tx_byte == 8'hBC || tx_byte == 8'h1C)) begin
                         // Unexpected BS without BE — skip line.
                         pstate <= PS_GOT_BS;
                     end
                 end
                 PS_ACTIVE: begin
-                    if (tx_is_k && tx_byte == 8'hBC) begin
+                    if (tx_is_k && (tx_byte == 8'hBC || tx_byte == 8'h1C)) begin
                         // Line ended.
                         if (pixels_collected_this_line != FRAME_W * 3) begin
                             $display("[tb_video] line %0d: collected %0d bytes (expected %0d)",
