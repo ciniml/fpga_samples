@@ -1,0 +1,92 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file dp_sink_rx_lane.veryl
+ * @brief Phase E sink-side RX chain for one lane:
+ *
+ *     i_bit / i_bit_valid → deserializer_1to10 → decoder_8b10b
+ *                       → descrambler (scrambler module reused)
+ *                       → o_byte / o_is_k / o_valid
+ *
+ * Bit-level alignment is provided externally via `i_align` — a one-cycle
+ * pulse that tells the 1:10 deserializer that the bit on `i_bit` is bit 0
+ * (= 'a') of a fresh symbol. The TB drives this from a TX-side white-box
+ * tap so that simulation alignment is deterministic; a future phase will
+ * replace this with on-band K28.5 comma detection once a PHY model with
+ * realistic bit-rate propagation is added.
+ *
+ * The descrambler is reset to INIT on every observed BS (K28.5) byte. The
+ * TX side (main_link_tx_lane) does the same, so both ends realign their
+ * scrambler LFSRs at every line boundary. This is a sim-only convention
+ * adopted by Phase E in lieu of the spec's SR-based reset (DP 1.2 §3.1.6),
+ * which Phase D explicitly left out of scope.
+ */
+
+pub module dp_sink_rx_lane (
+    i_clk:  input clock_posedge,
+    i_rstn: input reset_sync_low,
+
+    // Bit-aligner pulse (sourced by the TB).
+    i_align: input logic,
+
+    i_bit:       input logic,
+    i_bit_valid: input logic,
+
+    // Decoded + descrambled byte stream.
+    o_valid:    output logic,
+    o_byte:     output logic<8>,
+    o_is_k:     output logic,
+    o_code_err: output logic,
+) {
+    // 1:10 deserializer
+    var ds_valid: logic;
+    var ds_data:  logic<10>;
+
+    inst u_ds: deserializer_1to10 (
+        i_clk      : i_clk,
+        i_rstn     : i_rstn,
+        i_bit      : i_bit,
+        i_bit_valid: i_bit_valid,
+        i_align    : i_align,
+        o_valid    : ds_valid,
+        o_data     : ds_data,
+    );
+
+    // 8B/10B decoder
+    var dec_valid:    logic;
+    var dec_data:     logic<8>;
+    var dec_is_k:     logic;
+    var dec_code_err: logic;
+
+    inst u_dec: decoder_8b10b (
+        i_clk     : i_clk,
+        i_rstn    : i_rstn,
+        i_valid   : ds_valid,
+        i_symbol  : ds_data,
+        o_valid   : dec_valid,
+        o_data    : dec_data,
+        o_is_k    : dec_is_k,
+        o_code_err: dec_code_err,
+    );
+
+    assign o_code_err = dec_code_err;
+
+    // Descrambler. Reset LFSR on every BS (K28.5 = 0xBC).
+    let dec_is_bs: logic = dec_valid && dec_is_k && (dec_data == 8'hBC);
+
+    inst u_desc: scrambler (
+        i_clk             : i_clk,
+        i_rstn            : i_rstn,
+        i_seed_reset      : dec_is_bs,
+        i_scramble_disable: 1'b0,
+        i_valid           : dec_valid,
+        i_data            : dec_data,
+        i_is_k            : dec_is_k,
+        o_valid           : o_valid,
+        o_data            : o_byte,
+        o_is_k            : o_is_k,
+    );
+}
