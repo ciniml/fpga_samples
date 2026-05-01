@@ -19,6 +19,7 @@ pub module dp_source_top #(
     param PROCESSOR_ID:       u32 = 32'h01234567,
     param PROCESSOR_ROM_SIZE: u32 = 8192,
     param PROCESSOR_RAM_SIZE: u32 = 8192,
+    param PROCESSOR_ROM_FILE: string = "",       // Hex file loaded into the firmware ROM (BlockRAM init)
     param SR_PERIOD:          u32 = 512,
 ) (
     i_clk:  input clock_posedge,
@@ -83,6 +84,7 @@ pub module dp_source_top #(
         PROCESSOR_ID,
         PROCESSOR_ROM_SIZE,
         PROCESSOR_RAM_SIZE,
+        PROCESSOR_ROM_FILE,
     ) (
         i_clk                   : i_clk,
         i_rstn                  : i_rstn,

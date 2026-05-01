@@ -6,7 +6,8 @@ RTL_DIR ?= $(ROOT_DIR)/rtl
 
 PROJECT_ADDITIONAL_ARGS := $(ROOT_DIR)/external/learn-fpga/FemtoRV/RTL/PROCESSOR
 
-SRCS := src/$(TARGET)/pins.cst $(wildcard src/$(TARGET)/*.cst) $(wildcard src/$(TARGET)/*.sdc) $(wildcard src/$(TARGET)/*.sv) project.tcl 
+FIRMWARE_HEX := $(ROOT_DIR)/rtl/displayport/test/sw-rs/bootrom-rs.hex
+SRCS := src/$(TARGET)/pins.cst $(wildcard src/$(TARGET)/*.cst) $(wildcard src/$(TARGET)/*.sdc) $(wildcard src/$(TARGET)/*.sv) project.tcl $(FIRMWARE_HEX)
 
 PMOD_PORT_OFFSET ?= 0
 PMOD_TARGETS := tangprimer25k

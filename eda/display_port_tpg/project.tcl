@@ -33,13 +33,41 @@ if {${TARGET} == "tangprimer25k"} {
     #set_option -route_option 2
 }
 
+# --- DisplayPort source IP (Veryl-generated SystemVerilog) ---
+# AUX CH subsystem (Phase A)
 add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/aux_ch_tx.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/aux_ch_rx.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/aux_ch_peripheral.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/aux_ch_subsystem.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/femtorv_wrap.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/hpd_detect.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/stream_memory_access.sv]
+# Main link PHY building blocks (Phase B)
+add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/scrambler.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/encoder_8b10b.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/serializer_10to1.sv]
+# Training pattern + lane controller (Phase C)
+add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/training_pattern_gen.sv]
+# Video framer (Phase D)
+add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/pixel_fifo.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/msa_generator.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/tu_packer.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/video_framer.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/main_link_data_mux.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/main_link_tx_lane.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/main_link_tx.sv]
+# Top
+add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/dp_source_top.sv]
+
+# --- Common helpers ---
 add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_tx.sv]
 add_file -type verilog [file normalize ${FEMTORV_DIR}/femtorv32_gracilis.v]
-#add_file -type verilog [file normalize ${RTL_DIR}/video/test_pattern_generator.sv]
+
+# --- Test pattern generator + AXI-Stream adapter (board-local) ---
+add_file -type verilog [file normalize ${RTL_DIR}/video/test_pattern_generator.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/tpg_to_axis.sv]
+
+# --- Top + reset ---
 add_file -type verilog [file normalize ${SRC_DIR}/top.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/reset_seq.sv]
 if {${TARGET} == "tangprimer25k"} {
