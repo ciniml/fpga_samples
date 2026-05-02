@@ -1,0 +1,26 @@
+[project]
+name = "dvi_out"
+version = "0.1.0"
+
+[build]
+clock_type = "posedge"
+reset_type = "sync_high"
+omit_project_prefix = true
+
+[test]
+include_files = [
+    "dviout_chisel.v",
+]
+
+[test.verilator]
+compile_args = [
+    "dviout_chisel.v",
+    "-Wno-WIDTHEXPAND",
+    "-Wno-WIDTHTRUNC",
+    "-Wno-CASEINCOMPLETE",
+    "-Wno-UNUSEDSIGNAL",
+    "-Wno-UNDRIVEN",
+    "-Wno-PINMISSING",
+    "-Wno-INITIALDLY",
+    "-Wno-TIMESCALEMOD",
+]
