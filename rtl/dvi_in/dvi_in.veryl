@@ -1,0 +1,367 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file dvi_in.veryl
+ * @brief DVI 1.0 TMDS receiver. Operates on 10-bit parallel words from
+ *        external 1:10 deserializers (LSB-first per DVI 1.0 §3.2.3).
+ *
+ * Per DVI 1.0 §3.3 the receiver must:
+ *  - recover the pixel clock (assumed external — this module runs in the
+ *    word-rate domain),
+ *  - establish data-stream synchronization (§3.3.2) — implemented here as
+ *    clock-lane pattern lock rather than the spec's data-lane control-symbol
+ *    detection, since the clock lane carries a deterministic 5/5 pattern that
+ *    matches dvi_out's dvi_clock = 10'b00000_11111 and is always valid
+ *    regardless of blanking duration,
+ *  - decode each 10-bit symbol per Figure 3-6,
+ *  - hold recovered outputs constant while sync is lost (§3.3.2).
+ *
+ * Word alignment is requested via a 1-cycle pulse (o_align_shift_req); the
+ * external 1:10 deserializer owns the bit shift register. IDELAY tap control
+ * is exposed for an external bit-level delay primitive (vendor-specific
+ * Gowin/Xilinx wrapper, instantiated in EDA projects).
+ */
+
+pub module dvi_in #(
+    param LOCK_THRESHOLD       : u32 = 32'd16 , // consecutive clock-lane matches required to lock
+    param LOSE_THRESHOLD       : u32 = 32'd16 , // consecutive mismatches before lock loss
+    param SHIFT_SETTLE_CYCLES  : u32 = 32'd4  , // wait after a shift pulse before re-observing
+    param TAP_MAX              : u32 = 32'd31 ,
+    param TAP_DWELL            : u32 = 32'd256,
+    param SIMULATION_FAST_LOCK : bit = 1'b0   , // skip DELAY_CAL when set (testbench use)
+) (
+    r#clock: input clock_posedge,
+    r#reset: input reset         ,
+
+    // Deserialized 10-bit words, LSB-first (bit[0] = first transmitted bit).
+    i_word_clock_lane: input logic<10>     ,
+    i_word_data      : input logic<10> [3] ,
+    i_word_valid     : input logic         ,
+
+    // Recovered video. Held at reset values while !o_locked.
+    o_video_data : output logic<24>,
+    o_video_de   : output logic    ,
+    o_video_hsync: output logic    ,
+    o_video_vsync: output logic    ,
+    o_video_ctl  : output logic<4> , // {CTL3, CTL2, CTL1, CTL0}
+    o_video_valid: output logic    ,
+
+    // Per-lane decode error flag, registered alongside o_video_valid.
+    o_decode_err: output logic<3>,
+
+    // Word alignment status / control.
+    o_locked         : output logic,
+    o_align_shift_req: output logic,
+
+    // External IDELAY control. o_delay_inc/dec reserved for closed-loop
+    // refinement; current sweep uses load + tap only.
+    o_delay_inc : output logic   ,
+    o_delay_dec : output logic   ,
+    o_delay_load: output logic   ,
+    o_delay_tap : output logic<5>,
+) {
+    // -------------------------------------------------------------------
+    // Constants and helper functions
+    // -------------------------------------------------------------------
+
+    // Expected clock-lane pattern: dvi_out.dvi_clock = 10'b00000_11111.
+    const EXPECTED_CLK: logic<10> = 10'b00000_11111;
+
+    type tap_t = logic<5>;
+
+    // The four TMDS control symbols (transitionMaximized outputs in dvi_out)
+    // as SV literals. In DVI §3.3.3 Figure 3-6 these correspond to:
+    //   D[0..9] = 0010101011 -> C[1:0] = 00  ==  10'b1101010100
+    //   D[0..9] = 1101010100 -> C[1:0] = 01  ==  10'b0010101011
+    //   D[0..9] = 0010101010 -> C[1:0] = 10  ==  10'b0101010100
+    //   D[0..9] = 1101010101 -> C[1:0] = 11  ==  10'b1010101011
+    const CTRL_00: logic<10> = 10'b1101010100;
+    const CTRL_01: logic<10> = 10'b0010101011;
+    const CTRL_10: logic<10> = 10'b0101010100;
+    const CTRL_11: logic<10> = 10'b1010101011;
+
+    struct ctrl_decode_t {
+        is_ctrl: logic   ,
+        ctrl   : logic<2>,
+    }
+
+    function isControlSymbol (
+        s: input logic<10>,
+    ) -> ctrl_decode_t {
+        var r: ctrl_decode_t;
+        case s {
+            CTRL_00: {
+                r.is_ctrl = 1;
+                r.ctrl    = 2'b00;
+            }
+            CTRL_01: {
+                r.is_ctrl = 1;
+                r.ctrl    = 2'b01;
+            }
+            CTRL_10: {
+                r.is_ctrl = 1;
+                r.ctrl    = 2'b10;
+            }
+            CTRL_11: {
+                r.is_ctrl = 1;
+                r.ctrl    = 2'b11;
+            }
+            default: {
+                r.is_ctrl = 0;
+                r.ctrl    = 2'b00;
+            }
+        }
+        return r;
+    }
+
+    // Decode a 10-bit TMDS data symbol per DVI §3.3.3 Figure 3-6.
+    function decodeTmdsData (
+        d: input logic<10>,
+    ) -> logic<8> {
+        var inv: logic<8>;
+        var q  : logic<8>;
+        // Step 1: invert lower 8 bits if D[9] == 1.
+        inv = if d[9] ? ~d[7:0] : d[7:0];
+        // Step 2: q[0] := inv[0]; q[i] := inv[i] XOR/XNOR inv[i-1] depending on D[8].
+        //   D[8] == 1 -> XOR (encoder used XOR transition minimization)
+        //   D[8] == 0 -> XNOR
+        q[0] = inv[0];
+        for i in 1..8 {
+            q[i] = if d[8] ? inv[i] ^ inv[i - 1] : ~(inv[i] ^ inv[i - 1]);
+        }
+        return q;
+    }
+
+    function decodeTmdsErr (
+        d        : input logic<10>,
+        expect_de: input logic    ,
+    ) -> logic {
+        var is_ctrl: logic;
+        is_ctrl = (d == CTRL_00) || (d == CTRL_01) || (d == CTRL_10) || (d == CTRL_11);
+        // Active video must not contain a control symbol; blanking must.
+        return if expect_de ? is_ctrl : !is_ctrl;
+    }
+
+    // -------------------------------------------------------------------
+    // FSM
+    // -------------------------------------------------------------------
+
+    enum State: logic<2> {
+        INIT      ,
+        DELAY_CAL ,
+        WORD_ALIGN,
+        LOCKED    ,
+    }
+
+    var state: State;
+
+    // Counters shared across states.
+    var match_count    : logic<32>; // consecutive matches in WORD_ALIGN
+    var mismatch_count : logic<32>; // consecutive mismatches in LOCKED
+    var settle_count   : logic<32>; // post-shift quarantine cycles
+
+    // Delay-cal sweep state.
+    var tap            : logic<5>;
+    var tap_dwell_count: logic<32>;
+    var tap_err_count  : logic<32>; // mismatches observed at current tap
+    var best_tap       : logic<5>;
+    var best_tap_err   : logic<32>;
+
+    var clk_match: logic;
+    assign clk_match = i_word_valid && (i_word_clock_lane == EXPECTED_CLK);
+
+    always_ff (r#clock) {
+        if r#reset {
+            state           = State::INIT;
+            match_count     = 0;
+            mismatch_count  = 0;
+            settle_count    = 0;
+            tap             = 0;
+            tap_dwell_count = 0;
+            tap_err_count   = 0;
+            best_tap        = 0;
+            best_tap_err    = '1;
+            o_locked          = 0;
+            o_align_shift_req = 0;
+            o_delay_inc       = 0;
+            o_delay_dec       = 0;
+            o_delay_load      = 0;
+            o_delay_tap       = 0;
+        } else {
+            // Default deassertions; states override.
+            o_align_shift_req = 0;
+            o_delay_inc       = 0;
+            o_delay_dec       = 0;
+            o_delay_load      = 0;
+
+            case state {
+                State::INIT: {
+                    if SIMULATION_FAST_LOCK {
+                        state = State::WORD_ALIGN;
+                    } else {
+                        state           = State::DELAY_CAL;
+                        tap             = 0;
+                        tap_dwell_count = 0;
+                        tap_err_count   = 0;
+                        best_tap        = 0;
+                        best_tap_err    = '1;
+                        o_delay_load    = 1;
+                        o_delay_tap     = 0;
+                    }
+                }
+                State::DELAY_CAL: {
+                    if i_word_valid {
+                        if !clk_match {
+                            tap_err_count = tap_err_count + 1;
+                        }
+                        tap_dwell_count = tap_dwell_count + 1;
+                        if tap_dwell_count >= TAP_DWELL - 1 {
+                            // End of dwell at this tap. Update best.
+                            if tap_err_count <: best_tap_err {
+                                best_tap     = tap;
+                                best_tap_err = tap_err_count;
+                            }
+                            tap_dwell_count = 0;
+                            tap_err_count   = 0;
+                            if tap >= (TAP_MAX as tap_t) {
+                                // Sweep done — load best tap and proceed.
+                                o_delay_load = 1;
+                                o_delay_tap  = best_tap;
+                                state        = State::WORD_ALIGN;
+                                match_count  = 0;
+                            } else {
+                                tap          = tap + 1;
+                                o_delay_load = 1;
+                                o_delay_tap  = tap + 1;
+                            }
+                        }
+                    }
+                }
+                State::WORD_ALIGN: {
+                    if settle_count != 0 {
+                        settle_count = settle_count - 1;
+                    } else if i_word_valid {
+                        if clk_match {
+                            match_count = match_count + 1;
+                            if match_count >= LOCK_THRESHOLD - 1 {
+                                state    = State::LOCKED;
+                                o_locked = 1;
+                            }
+                        } else {
+                            // Pulse the deserializer to advance bit boundary,
+                            // then quarantine for SHIFT_SETTLE_CYCLES.
+                            o_align_shift_req = 1;
+                            settle_count      = SHIFT_SETTLE_CYCLES;
+                            match_count       = 0;
+                        }
+                    }
+                }
+                State::LOCKED: {
+                    if i_word_valid {
+                        if clk_match {
+                            mismatch_count = 0;
+                        } else {
+                            mismatch_count = mismatch_count + 1;
+                            if mismatch_count >= LOSE_THRESHOLD - 1 {
+                                state          = State::WORD_ALIGN;
+                                match_count    = 0;
+                                mismatch_count = 0;
+                                o_locked       = 0;
+                            }
+                        }
+                    }
+                }
+                default: {
+                    state = State::INIT;
+                }
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Decode pipeline — depth 2 to mirror dvi_out.VIDEO_REGS_DEPTH = 2.
+    // Stage 1 latches the input words; stage 2 emits decoded video.
+    // While !o_locked all stage-2 outputs hold (per DVI §3.3.2).
+    // -------------------------------------------------------------------
+
+    var d0_q      : logic<10>;
+    var d1_q      : logic<10>;
+    var d2_q      : logic<10>;
+    var valid_q   : logic    ;
+    var locked_q  : logic    ;
+
+    var de_next      : logic    ;
+    var hsync_next   : logic    ;
+    var vsync_next   : logic    ;
+    var ctl_next     : logic<4> ;
+    var data_next    : logic<24>;
+    var err_next     : logic<3> ;
+    var ctrl0_decode : ctrl_decode_t;
+    var ctrl1_decode : ctrl_decode_t;
+    var ctrl2_decode : ctrl_decode_t;
+
+    always_comb {
+        ctrl0_decode = isControlSymbol(d0_q);
+        ctrl1_decode = isControlSymbol(d1_q);
+        ctrl2_decode = isControlSymbol(d2_q);
+        de_next      = !ctrl0_decode.is_ctrl;
+        hsync_next   = ctrl0_decode.ctrl[0];
+        vsync_next   = ctrl0_decode.ctrl[1];
+        // Channel 1 carries {CTL1, CTL0}; channel 2 carries {CTL3, CTL2}.
+        ctl_next[0] = ctrl1_decode.ctrl[0];
+        ctl_next[1] = ctrl1_decode.ctrl[1];
+        ctl_next[2] = ctrl2_decode.ctrl[0];
+        ctl_next[3] = ctrl2_decode.ctrl[1];
+        data_next   = {decodeTmdsData(d2_q), decodeTmdsData(d1_q), decodeTmdsData(d0_q)};
+        err_next[0] = decodeTmdsErr(d0_q, !ctrl0_decode.is_ctrl);
+        err_next[1] = decodeTmdsErr(d1_q, !ctrl0_decode.is_ctrl);
+        err_next[2] = decodeTmdsErr(d2_q, !ctrl0_decode.is_ctrl);
+    }
+
+    always_ff (r#clock) {
+        if r#reset {
+            d0_q     = 0;
+            d1_q     = 0;
+            d2_q     = 0;
+            valid_q  = 0;
+            locked_q = 0;
+
+            o_video_data  = 0;
+            o_video_de    = 0;
+            o_video_hsync = 0;
+            o_video_vsync = 0;
+            o_video_ctl   = 0;
+            o_video_valid = 0;
+            o_decode_err  = 0;
+        } else {
+            // Stage 1: capture inputs.
+            d0_q     = i_word_data[0];
+            d1_q     = i_word_data[1];
+            d2_q     = i_word_data[2];
+            valid_q  = i_word_valid;
+            locked_q = o_locked;
+
+            // Stage 2: emit only while locked. While not locked, hold.
+            if locked_q && valid_q {
+                o_video_data  = data_next;
+                o_video_de    = de_next;
+                o_video_valid = 1;
+                o_decode_err  = err_next;
+                // hsync/vsync/ctl only update during blanking (de == 0);
+                // hold during active video per DVI Fig 3-7.
+                if !de_next {
+                    o_video_hsync = hsync_next;
+                    o_video_vsync = vsync_next;
+                    o_video_ctl   = ctl_next;
+                }
+            } else {
+                o_video_valid = 0;
+                o_decode_err  = 0;
+            }
+        }
+    }
+
+}

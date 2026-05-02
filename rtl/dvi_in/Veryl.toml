@@ -1,0 +1,26 @@
+[project]
+name    = "dvi_in"
+version = "0.1.0"
+
+[build]
+clock_type          = "posedge"
+reset_type          = "sync_high"
+omit_project_prefix = true
+
+[test]
+include_files = [
+    "../dvi_out/dvi_out.sv",
+]
+
+[test.verilator]
+compile_args = [
+    "dvi_out.sv",
+    "-Wno-WIDTHEXPAND",
+    "-Wno-WIDTHTRUNC",
+    "-Wno-CASEINCOMPLETE",
+    "-Wno-UNUSEDSIGNAL",
+    "-Wno-UNDRIVEN",
+    "-Wno-PINMISSING",
+    "-Wno-INITIALDLY",
+    "-Wno-TIMESCALEMOD",
+]
