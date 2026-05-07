@@ -1,0 +1,26 @@
+// Tang Primer 25K — DVI receiver smoke-test pinout.
+// Pads are placeholders chosen to match available LVDS bank locations
+// on the board; verify against the actual schematic before driving real
+// hardware.
+
+IO_LOC "clock" E2;
+IO_PORT "clock" IO_TYPE=LVCMOS33;
+
+IO_LOC "reset_button" H11;
+IO_PORT "reset_button" PULL_MODE=DOWN IO_TYPE=LVCMOS33;
+
+// DVI inputs — LVDS25 differential.
+IO_LOC "dvi_clk_p" A11;
+IO_PORT "dvi_clk_p" PULL_MODE=NONE IO_TYPE=LVDS25;
+IO_LOC "dvi_d0_p"  E11;
+IO_PORT "dvi_d0_p" PULL_MODE=NONE IO_TYPE=LVDS25;
+IO_LOC "dvi_d1_p"  K11;
+IO_PORT "dvi_d1_p" PULL_MODE=NONE IO_TYPE=LVDS25;
+IO_LOC "dvi_d2_p"  L5;
+IO_PORT "dvi_d2_p" PULL_MODE=NONE IO_TYPE=LVDS25;
+
+// Status LEDs.
+IO_LOC "led_locked"     C3;
+IO_PORT "led_locked"    IO_TYPE=LVCMOS33;
+IO_LOC "led_decode_err" H8;
+IO_PORT "led_decode_err" IO_TYPE=LVCMOS33;
