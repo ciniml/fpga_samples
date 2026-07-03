@@ -4,10 +4,10 @@ TARGET := bootrom-rs
 
 all: $(TARGET).bin $(TARGET).dump $(TARGET).hex
 
-$(TARGET).bin: src/main.rs link.ld Cargo.toml .cargo/config.toml
+$(TARGET).bin: $(wildcard src/*.rs) link.ld Cargo.toml .cargo/config.toml
 	cargo objcopy --bin $(TARGET) --release  -- -O binary $@
 
-$(TARGET).dump: src/main.rs link.ld Cargo.toml .cargo/config.toml
+$(TARGET).dump: $(wildcard src/*.rs) link.ld Cargo.toml .cargo/config.toml
 	cargo objdump --bin $(TARGET) --release -- -dSC > $@
 
 

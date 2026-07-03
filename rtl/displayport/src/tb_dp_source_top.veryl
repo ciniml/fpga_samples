@@ -153,6 +153,7 @@ module dp_source_top_full;
     typedef enum logic [2:0] {
         PS_WAIT_BS    = 3'd0,
         PS_HDR        = 3'd1, // 12 header bytes: (VBID, Mvid, Maud) x 4
+        PS_BSSEQ      = 3'd2, // enhanced framing: BF BF BS/SR after group start
         PS_VBLANK     = 3'd4,
         PS_WAIT_BE    = 3'd5,
         PS_ACTIVE     = 3'd6
@@ -163,6 +164,8 @@ module dp_source_top_full;
     logic         line_is_vblank;
     logic         in_stuffing;
     integer       hdr_count;
+    integer       bsseq_count;
+    logic [7:0]   bs_first;
     logic [7:0]   vbid_ref;
     integer       active_line_count;
     integer       pixels_collected_this_line;
@@ -177,6 +180,8 @@ module dp_source_top_full;
             line_is_vblank             <= 1'b0;
             in_stuffing                <= 1'b0;
             hdr_count                  <= 0;
+            bsseq_count                <= 0;
+            bs_first                   <= 8'h00;
             vbid_ref                   <= 8'h00;
             active_line_count          <= 0;
             pixels_collected_this_line <= 0;
@@ -195,9 +200,31 @@ module dp_source_top_full;
                         // between bit lock and the first SR descramble
                         // to garbage and must not be parsed.
                         if (rx_is_k && rx_byte == 8'h1C) begin
+                            pstate      <= PS_BSSEQ;
+                            bs_first    <= rx_byte;
+                            bsseq_count <= 0;
+                        end
+                    end
+                    PS_BSSEQ: begin
+                        // Enhanced framing (Table 2-1): the group start
+                        // (BS or SR) is followed by BF, BF, then a repeat
+                        // of the start symbol.
+                        if (bsseq_count < 2) begin
+                            if (!(rx_is_k && rx_byte == 8'h7C)) begin
+                                $display("[tb_dp] BS group byte %0d: expected BF got (%02h, k=%b)",
+                                         bsseq_count + 1, rx_byte, rx_is_k);
+                                parse_errors <= parse_errors + 1;
+                            end
+                        end else begin
+                            if (!(rx_is_k && rx_byte == bs_first)) begin
+                                $display("[tb_dp] BS group byte 3: expected %02h got (%02h, k=%b)",
+                                         bs_first, rx_byte, rx_is_k);
+                                parse_errors <= parse_errors + 1;
+                            end
                             pstate    <= PS_HDR;
                             hdr_count <= 0;
                         end
+                        bsseq_count <= bsseq_count + 1;
                     end
                     PS_HDR: begin
                         // (VB-ID, Mvid7:0, Maud7:0) x 4 per Fig 2-11/2-12;
@@ -218,8 +245,9 @@ module dp_source_top_full;
                     end
                     PS_VBLANK: begin
                         if (rx_is_k && (rx_byte == 8'hBC || rx_byte == 8'h1C)) begin
-                            pstate    <= PS_HDR;
-                            hdr_count <= 0;
+                            pstate      <= PS_BSSEQ;
+                            bs_first    <= rx_byte;
+                            bsseq_count <= 0;
                         end
                     end
                     PS_WAIT_BE: begin
@@ -228,8 +256,9 @@ module dp_source_top_full;
                             in_stuffing                <= 1'b0;
                             pixels_collected_this_line <= 0;
                         end else if (rx_is_k && (rx_byte == 8'hBC || rx_byte == 8'h1C)) begin
-                            pstate    <= PS_HDR;
-                            hdr_count <= 0;
+                            pstate      <= PS_BSSEQ;
+                            bs_first    <= rx_byte;
+                            bsseq_count <= 0;
                         end
                     end
                     PS_ACTIVE: begin
@@ -240,8 +269,9 @@ module dp_source_top_full;
                                 parse_errors <= parse_errors + 1;
                             end
                             active_line_count <= active_line_count + 1;
-                            pstate            <= PS_HDR;
-                            hdr_count         <= 0;
+                            pstate            <= PS_BSSEQ;
+                            bs_first          <= rx_byte;
+                            bsseq_count       <= 0;
                         end else if (rx_is_k && rx_byte == 8'hFE) begin
                             in_stuffing <= 1'b1;
                         end else if (rx_is_k && rx_byte == 8'hF7) begin

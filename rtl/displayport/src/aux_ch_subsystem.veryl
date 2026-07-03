@@ -51,6 +51,9 @@ pub module aux_ch_subsystem #(
     main_link_rd_reset:       output logic,     // 1-cycle pulse forcing RD- on next byte
     main_link_lane_count:     output logic<3>,  // 1, 2, or 4
     main_link_lane0_drive:    output logic<8>,  // [1:0]=swing, [4:3]=preemph (informational)
+    // 1 = Enhanced Framing Mode (BS/SR sent as 4-symbol sequences, §2.2.1.2).
+    // Set by FW together with ENHANCED_FRAME_EN (DPCD 101h bit7).
+    main_link_enhanced_framing: output logic,
 
     // Video pipeline control outputs (driven from VIDEO CPU registers).
     // See DP 1.2 §2.2.4 for MSA field semantics.
@@ -213,11 +216,12 @@ pub module aux_ch_subsystem #(
     );
 
     // Main link control registers (DP 1.2 §3.5).
-    var ml_pattern_select: logic<2>;
-    var ml_enable:         logic;
-    var ml_rd_reset_pulse: logic; // 1 cycle pulse on writes with bit[5]=1
-    var ml_lane_count:     logic<3>;
-    var ml_lane0_drive:    logic<8>;
+    var ml_pattern_select:   logic<2>;
+    var ml_enable:           logic;
+    var ml_rd_reset_pulse:   logic; // 1 cycle pulse on writes with bit[5]=1
+    var ml_lane_count:       logic<3>;
+    var ml_lane0_drive:      logic<8>;
+    var ml_enhanced_framing: logic;
 
     // Video pipeline registers (DP 1.2 §2.2).
     var v_enable:    logic;
@@ -235,11 +239,12 @@ pub module aux_ch_subsystem #(
     var v_tu_active: logic<7>;
 
     always_comb {
-        main_link_pattern_select = ml_pattern_select;
-        main_link_enable         = ml_enable;
-        main_link_rd_reset       = ml_rd_reset_pulse;
-        main_link_lane_count     = ml_lane_count;
-        main_link_lane0_drive    = ml_lane0_drive;
+        main_link_pattern_select   = ml_pattern_select;
+        main_link_enable           = ml_enable;
+        main_link_rd_reset         = ml_rd_reset_pulse;
+        main_link_lane_count       = ml_lane_count;
+        main_link_lane0_drive      = ml_lane0_drive;
+        main_link_enhanced_framing = ml_enhanced_framing;
 
         video_enable    = v_enable;
         video_htotal    = v_htotal;
@@ -285,7 +290,7 @@ pub module aux_ch_subsystem #(
                 REG_SPACE_MAIN_LINK: {
                     case mem_addr[15:2] {
                         REG_MAIN_LINK_CTRL: {
-                            mem_rdata = {26'0, ml_rd_reset_pulse, ml_enable, 2'b00, ml_pattern_select};
+                            mem_rdata = {25'0, ml_enhanced_framing, ml_rd_reset_pulse, ml_enable, 2'b00, ml_pattern_select};
                         }
                         REG_MAIN_LINK_LANE_COUNT: mem_rdata = {29'0, ml_lane_count};
                         REG_MAIN_LINK_LANE0_DRIVE: mem_rdata = {24'0, ml_lane0_drive};
@@ -334,6 +339,7 @@ pub module aux_ch_subsystem #(
             ml_rd_reset_pulse       = 0;
             ml_lane_count           = 3'd1;
             ml_lane0_drive          = 0;
+            ml_enhanced_framing     = 0;
             v_enable                = 0;
             v_htotal                = 0;
             v_vtotal                = 0;
@@ -404,6 +410,8 @@ pub module aux_ch_subsystem #(
                                         if mem_wdata[5] {
                                             ml_rd_reset_pulse = 1;
                                         }
+                                        // bit[6] = enhanced framing mode (§2.2.1.2)
+                                        ml_enhanced_framing = mem_wdata[6];
                                     }
                                     REG_MAIN_LINK_LANE_COUNT: {
                                         ml_lane_count = mem_wdata[2:0];

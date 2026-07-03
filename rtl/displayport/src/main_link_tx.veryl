@@ -16,10 +16,13 @@ pub module main_link_tx #(
     i_clk:  input clock_posedge,
     i_rstn: input reset_sync_low,
 
-    i_pattern_select: input logic<2>,
-    i_enable:         input logic,
-    i_rd_reset:       input logic,
-    i_lane_count:     input logic<3>,
+    i_pattern_select:   input logic<2>,
+    i_enable:           input logic,
+    i_rd_reset:         input logic,
+    i_lane_count:       input logic<3>,
+    // Enhanced Framing Mode (DP 1.2 §2.2.1.2): BS/SR become 4-symbol
+    // sequences. Must be enabled when the sink's DPCD revision is 1.2+.
+    i_enhanced_framing: input logic,
 
     // Video pipeline inputs (forwarded to lane 0 in Phase D).
     i_video_enable: input logic,
@@ -52,12 +55,13 @@ pub module main_link_tx #(
         SR_PERIOD:            SR_PERIOD,
         CONTINUOUS_BYTE_TICK: CONTINUOUS_BYTE_TICK,
     ) (
-        i_clk           : i_clk,
-        i_rstn          : i_rstn,
-        i_pattern_select: i_pattern_select,
-        i_enable        : i_enable,
-        i_rd_reset      : i_rd_reset,
-        i_video_enable  : i_video_enable,
+        i_clk             : i_clk,
+        i_rstn            : i_rstn,
+        i_pattern_select  : i_pattern_select,
+        i_enable          : i_enable,
+        i_rd_reset        : i_rd_reset,
+        i_enhanced_framing: i_enhanced_framing,
+        i_video_enable    : i_video_enable,
         i_htotal        : i_htotal,
         i_vtotal        : i_vtotal,
         i_hstart        : i_hstart,

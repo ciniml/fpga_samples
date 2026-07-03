@@ -61,11 +61,12 @@ pub module dp_source_top #(
     s_axis_video_tdata:  input  logic<24>,
 ) {
     // Wires from aux_ch_subsystem to main_link_tx
-    var ml_pattern_select: logic<2>;
-    var ml_enable:         logic;
-    var ml_rd_reset:       logic;
-    var ml_lane_count:     logic<3>;
-    var ml_lane0_drive:    logic<8>;
+    var ml_pattern_select:   logic<2>;
+    var ml_enable:           logic;
+    var ml_rd_reset:         logic;
+    var ml_lane_count:       logic<3>;
+    var ml_lane0_drive:      logic<8>;
+    var ml_enhanced_framing: logic;
     let _unused_lane0_drive: logic<8> = ml_lane0_drive; // informational only
 
     var v_enable:    logic;
@@ -112,11 +113,12 @@ pub module dp_source_top #(
         maxis_serial_out_tready : maxis_serial_out_tready,
         maxis_serial_out_tdata  : maxis_serial_out_tdata,
 
-        main_link_pattern_select: ml_pattern_select,
-        main_link_enable        : ml_enable,
-        main_link_rd_reset      : ml_rd_reset,
-        main_link_lane_count    : ml_lane_count,
-        main_link_lane0_drive   : ml_lane0_drive,
+        main_link_pattern_select  : ml_pattern_select,
+        main_link_enable          : ml_enable,
+        main_link_rd_reset        : ml_rd_reset,
+        main_link_lane_count      : ml_lane_count,
+        main_link_lane0_drive     : ml_lane0_drive,
+        main_link_enhanced_framing: ml_enhanced_framing,
 
         video_enable            : v_enable,
         video_htotal            : v_htotal,
@@ -139,11 +141,12 @@ pub module dp_source_top #(
     ) (
         i_clk            : i_clk,
         i_rstn           : i_rstn,
-        i_pattern_select : ml_pattern_select,
-        i_enable         : ml_enable,
-        i_rd_reset       : ml_rd_reset,
-        i_lane_count     : ml_lane_count,
-        i_video_enable   : v_enable,
+        i_pattern_select   : ml_pattern_select,
+        i_enable           : ml_enable,
+        i_rd_reset         : ml_rd_reset,
+        i_lane_count       : ml_lane_count,
+        i_enhanced_framing : ml_enhanced_framing,
+        i_video_enable     : v_enable,
         i_htotal         : v_htotal,
         i_vtotal         : v_vtotal,
         i_hstart         : v_hstart,

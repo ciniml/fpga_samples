@@ -26,9 +26,15 @@ impl MainLink {
 
     /// Set the active pattern. If `rd_reset` is true, also pulse the
     /// encoder RD-reset request so the next byte starts at RD = -.
-    pub fn set_pattern(&self, pat: Pattern, rd_reset: bool) {
-        // CTRL: PATTERN_SELECT[1:0] | ENABLE[4] | RD_RESET[5]
-        let bits: u32 = (pat as u32) | (1 << 4) | (if rd_reset { 1 << 5 } else { 0 });
+    /// `enhanced_framing` selects the Enhanced Framing Mode 4-symbol
+    /// BS/SR sequences (DP 1.2 §2.2.1.2); it must match the
+    /// ENHANCED_FRAME_EN bit written to the sink's DPCD 101h.
+    pub fn set_pattern(&self, pat: Pattern, rd_reset: bool, enhanced_framing: bool) {
+        // CTRL: PATTERN_SELECT[1:0] | ENABLE[4] | RD_RESET[5] | EF[6]
+        let bits: u32 = (pat as u32)
+            | (1 << 4)
+            | (if rd_reset { 1 << 5 } else { 0 })
+            | (if enhanced_framing { 1 << 6 } else { 0 });
         unsafe {
             self.p.ctrl.write(|w| w.bits(bits));
         }

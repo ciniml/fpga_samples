@@ -19,8 +19,9 @@
  *   SE  Secondary-data End     K29.7 (0xFD)
  *
  * Note: K28.4 and K28.7 are RESERVED in Table 3-15 and must not be
- * transmitted; K28.1 (CPBS/CP) and K28.3 (CPSR/BF) are content-
- * protection symbols, out of scope here.
+ * transmitted. K28.3 (BF) is used by the Enhanced Framing Mode
+ * 4-symbol sequences (Tab 2-1: BS -> BS BF BF BS, SR -> SR BF BF SR);
+ * K28.1 (CPBS/CP) is content protection, out of scope here.
  */
 
 pub package link_pkg {
@@ -42,4 +43,5 @@ pub package link_pkg {
     const K_FE: logic<8> = 8'hF7; // K23.7
     const K_SS: logic<8> = 8'h5C; // K28.2
     const K_SE: logic<8> = 8'hFD; // K29.7
+    const K_BF: logic<8> = 8'h7C; // K28.3 (Enhanced Framing filler)
 }

@@ -9,17 +9,22 @@
  *        video pipeline (DP 1.2 §2.2). Wraps msa_generator and tu_packer
  *        and emits the proper byte sequence per line:
  *
- *          byte 0                : BS (K28.5)
- *          bytes 1..12           : (VB-ID, Mvid7:0, Maud7:0) x 4 — the
+ *          bytes 0..bs_len-1     : BS group. Default framing: single BS
+ *                                  (K28.5). Enhanced framing (§2.2.1.2):
+ *                                  BS BF BF BS (BF = K28.3); every
+ *                                  SR_PERIOD-th group becomes SR / SR BF
+ *                                  BF SR
+ *          next 12 bytes         : (VB-ID, Mvid7:0, Maud7:0) x 4 — the
  *                                  header must be transported four times
  *                                  regardless of lane count (Fig 2-11/12)
- *          bytes 13..51 (vblank) : MSA (39 symbols from msa_generator)
+ *          next 39 bytes (vblank): MSA (39 symbols from msa_generator)
  *          byte hblank_bytes-1   : BE (K27.7)        -- active lines only
  *          bytes hblank_bytes..  : TU pixel bytes    -- active lines only
  *          all other bytes       : 0x00 stuffing
  *
- *        Constraints: hblank_bytes >= 14 (BS + 4x3 header + BE) and
- *        bytes_per_line >= 52 (header + MSA on vblank lines).
+ *        Constraints: hblank_bytes >= bs_len + 13 (BS group + 4x3 header
+ *        + BE) and bytes_per_line >= bs_len + 51 (header + MSA on vblank
+ *        lines).
  *
  *        When i_video_enable = 0 the framer emits the Idle Pattern: a
  *        BS + (VB-ID, Mvid(0), Maud(0)) x 4 burst once every 8192 link
@@ -39,6 +44,11 @@ pub module video_framer #(
     i_rstn: input reset_sync_low,
 
     i_byte_tick: input logic,
+
+    // Enhanced Framing Mode (DP 1.2 §2.2.1.2): BS and SR are sent as
+    // 4-symbol sequences (BS BF BF BS / SR BF BF SR). Mandatory when the
+    // sink's DPCD revision is 1.2 or higher.
+    i_enhanced_framing: input logic,
 
     i_video_enable: input logic,
 
@@ -82,6 +92,15 @@ pub module video_framer #(
     type bs_count_t = logic<BS_BITS>;
     var bs_count: bs_count_t;
     let use_sr_now: logic = (bs_count == (SR_PERIOD - 1) as bs_count_t);
+    // bs_count updates on the tick of group byte 0, so use_sr_now is only
+    // valid at byte 0. Latch the decision there so the trailing symbol of
+    // an enhanced-framing group (byte bs_len-1) matches the leading one
+    // (SR BF BF SR / BS BF BF BS, never mixed).
+    var group_is_sr: logic;
+
+    // Length of the BS/SR group at line start: 1 symbol in default
+    // framing, 4 symbols (BS BF BF BS / SR BF BF SR) in enhanced framing.
+    let bs_len: logic<18> = if i_enhanced_framing ? 18'd4 : 18'd1;
 
     let at_video_bs: logic = i_video_enable && (byte_in_line == 18'd0);
     let at_idle_bs:  logic = !i_video_enable && (idle_counter == 13'd0);
@@ -91,16 +110,20 @@ pub module video_framer #(
         (line >= i_vstart) && (line <: i_vstart + i_vheight);
     let line_is_vblank: logic = !line_is_active;
 
-    // (VB-ID, Mvid7:0, Maud7:0) x 4 header right after BS (bytes 1..12).
+    // BS/SR group window (bytes [0..bs_len)).
+    let in_bs_window: logic = byte_in_line <: bs_len;
+
+    // (VB-ID, Mvid7:0, Maud7:0) x 4 header right after the BS group.
     let in_hdr_window: logic =
-        (byte_in_line >= 18'd1) && (byte_in_line <: 18'd13);
+        (byte_in_line >= bs_len) && (byte_in_line <: bs_len + 18'd12);
     // Position within the repeating 3-byte header group: 0=VB-ID,
     // 1=Mvid7:0, 2=Maud7:0.
-    let hdr_phase: logic<18> = (byte_in_line - 18'd1) % 18'd3;
+    let hdr_phase: logic<18> = (byte_in_line - bs_len) % 18'd3;
 
     // Window predicates (bytes inside the line).
     let in_msa_window: logic =
-        line_is_vblank && (byte_in_line >= 18'd13) && (byte_in_line <: 18'd52);
+        line_is_vblank && (byte_in_line >= bs_len + 18'd12) &&
+        (byte_in_line <: bs_len + 18'd51);
     let in_tu_window: logic =
         line_is_active && (byte_in_line >= hblank_bytes);
     let at_be: logic =
@@ -110,13 +133,14 @@ pub module video_framer #(
     // registered (1-cycle delay), so we drive their byte_ticks one byte
     // EARLIER than the slot the mux reads them at.
     //
-    // MSA mux range is byte_in_line [13..51]. Pre-emit at byte_in_line
-    // [12..50]; trigger at byte_in_line == 11 so the first byte is ready
-    // by byte_in_line == 13.
+    // MSA mux range is byte_in_line [bs_len+12..bs_len+50]. Pre-emit at
+    // [bs_len+11..bs_len+49]; trigger at bs_len+10 so the first byte is
+    // ready by bs_len+12.
     let msa_trigger: logic =
-        i_byte_tick && line_is_vblank && (byte_in_line == 18'd11);
+        i_byte_tick && line_is_vblank && (byte_in_line == bs_len + 18'd10);
     let msa_pre_window: logic =
-        line_is_vblank && (byte_in_line >= 18'd12) && (byte_in_line <: 18'd51);
+        line_is_vblank && (byte_in_line >= bs_len + 18'd11) &&
+        (byte_in_line <: bs_len + 18'd50);
     let msa_byte_tick: logic = i_byte_tick && msa_pre_window;
 
     // TU mux range is byte_in_line [hblank..bytes_per_line-1]. Pre-emit at
@@ -187,15 +211,29 @@ pub module video_framer #(
         o_is_k             = 0;
 
         if i_video_enable {
-            if byte_in_line == 18'd0 {
-                // BS = K28.5 normally; substitute SR = K28.0 every
-                // SR_PERIOD-th BS so both ends can re-sync the scrambler.
-                if use_sr_now {
-                    o_byte = 8'h1C;
-                } else {
-                    o_byte = 8'hBC;
-                }
+            if in_bs_window {
+                // BS group. Default framing: single BS (K28.5) or SR
+                // (K28.0) when use_sr_now. Enhanced framing: 4-symbol
+                // sequence BS BF BF BS (or SR BF BF SR), BF = K28.3.
                 o_is_k = 1;
+                if byte_in_line == 18'd0 {
+                    if use_sr_now {
+                        o_byte = 8'h1C;
+                    } else {
+                        o_byte = 8'hBC;
+                    }
+                } else if byte_in_line == bs_len - 18'd1 {
+                    // Trailing symbol repeats the group's leading symbol;
+                    // bs_count has already advanced, so use the latched
+                    // decision.
+                    if group_is_sr {
+                        o_byte = 8'h1C;
+                    } else {
+                        o_byte = 8'hBC;
+                    }
+                } else {
+                    o_byte = 8'h7C; // BF
+                }
             } else if in_hdr_window {
                 // (VB-ID, Mvid7:0, Maud7:0) x 4 (Fig 2-11/2-12).
                 if hdr_phase == 18'd0 {
@@ -221,20 +259,30 @@ pub module video_framer #(
                 }
             }
         } else {
-            // Idle Pattern: BS, then (VB-ID, Mvid=0, Maud=0) x 4, then
-            // 0x00 stuffing for the remainder of the 8192-symbol window.
-            // VB-ID = 0x09: NoVideoStream_Flag (bit 3) plus
+            // Idle Pattern: BS group, then (VB-ID, Mvid=0, Maud=0) x 4,
+            // then 0x00 stuffing for the remainder of the 8192-symbol
+            // window. VB-ID = 0x09: NoVideoStream_Flag (bit 3) plus
             // VerticalBlanking_Flag (bit 0), which Table 2-3 requires to
             // be set whenever bit 3 is set.
-            if idle_counter == 13'd0 {
-                if use_sr_now {
-                    o_byte = 8'h1C;
-                } else {
-                    o_byte = 8'hBC;
-                }
+            if {5'b0, idle_counter} <: bs_len {
                 o_is_k = 1;
-            } else if (idle_counter >= 13'd1) && (idle_counter <: 13'd13) {
-                if ((idle_counter - 13'd1) % 13'd3) == 13'd0 {
+                if idle_counter == 13'd0 {
+                    if use_sr_now {
+                        o_byte = 8'h1C;
+                    } else {
+                        o_byte = 8'hBC;
+                    }
+                } else if {5'b0, idle_counter} == bs_len - 18'd1 {
+                    if group_is_sr {
+                        o_byte = 8'h1C;
+                    } else {
+                        o_byte = 8'hBC;
+                    }
+                } else {
+                    o_byte = 8'h7C; // BF
+                }
+            } else if ({5'b0, idle_counter} >= bs_len) && ({5'b0, idle_counter} <: bs_len + 18'd12) {
+                if (({5'b0, idle_counter} - bs_len) % 18'd3) == 18'd0 {
                     o_byte = 8'h09; // VB-ID
                 } else {
                     o_byte = 8'h00; // Mvid7:0 / Maud7:0
@@ -249,12 +297,17 @@ pub module video_framer #(
             byte_in_line = 0;
             line         = 0;
             idle_counter = 0;
+            group_is_sr  = 0;
             // Initialize so the very first emitted BS is replaced by SR.
             // This anchors the sink scrambler at INIT from the first
             // K-comma it sees, eliminating the startup mismatch window.
             bs_count = (SR_PERIOD - 1) as bs_count_t;
         } else {
             if i_byte_tick && at_any_bs {
+                // Latch the SR decision for the rest of this group before
+                // the counter advances (non-blocking: use_sr_now still
+                // reflects the pre-update bs_count here).
+                group_is_sr = use_sr_now;
                 if use_sr_now {
                     bs_count = 0;
                 } else {

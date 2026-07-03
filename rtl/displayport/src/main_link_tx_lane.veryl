@@ -40,9 +40,10 @@ pub module main_link_tx_lane #(
     i_clk:  input clock_posedge,
     i_rstn: input reset_sync_low,
 
-    i_pattern_select: input logic<2>,
-    i_enable:         input logic,
-    i_rd_reset:       input logic,
+    i_pattern_select:   input logic<2>,
+    i_enable:           input logic,
+    i_rd_reset:         input logic,
+    i_enhanced_framing: input logic,
 
     // Video pipeline inputs (forwarded to video_framer)
     i_video_enable: input logic,
@@ -135,6 +136,7 @@ pub module main_link_tx_lane #(
         i_clk             : i_clk,
         i_rstn            : i_rstn,
         i_byte_tick       : byte_tick,
+        i_enhanced_framing: i_enhanced_framing,
         i_video_enable    : i_video_enable,
         i_htotal          : i_htotal,
         i_vtotal          : i_vtotal,

@@ -28,7 +28,9 @@ impl MockSink {
         // Receiver capability
         s.dpcd[dpcd::DPCD_REV as usize] = 0x12; // DP 1.2
         s.dpcd[dpcd::MAX_LINK_RATE as usize] = dpcd::LINK_BW_RBR;
-        s.dpcd[dpcd::MAX_LANE_COUNT as usize] = 0x01; // 1 lane
+        // 1 lane + ENHANCED_FRAME_CAP (bit 7): a DPCD 1.2 sink must
+        // support Enhanced Framing (DP 1.2 §2.2.1.2).
+        s.dpcd[dpcd::MAX_LANE_COUNT as usize] = 0x81;
         s.dpcd[dpcd::MAX_DOWNSPREAD as usize] = 0x01; // 0.5% downspread
         s.dpcd[dpcd::TRAINING_AUX_RD_INTERVAL as usize] = 0x00;
         s

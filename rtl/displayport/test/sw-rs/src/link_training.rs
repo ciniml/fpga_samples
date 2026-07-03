@@ -36,14 +36,24 @@ fn wait_aux_rd_interval(_value: u8) {
 pub fn run(aux: &AuxCh, ml: &MainLink) -> Result<Stats, Error> {
     // Sink capability
     let _max_link_rate = dpcd::read(aux, dpcd::MAX_LINK_RATE).map_err(|_| Error::DpcdRead)?;
-    let _max_lane_count =
-        dpcd::read(aux, dpcd::MAX_LANE_COUNT).map_err(|_| Error::DpcdRead)? & 0x1F;
+    let max_lane_count_raw = dpcd::read(aux, dpcd::MAX_LANE_COUNT).map_err(|_| Error::DpcdRead)?;
+    let _max_lane_count = max_lane_count_raw & 0x1F;
+    // ENHANCED_FRAME_CAP (bit 7 of MAX_LANE_COUNT). DP 1.2 §2.2.1.1
+    // requires Enhanced Framing when interoperating with a DPCD 1.2+
+    // sink, and such sinks must advertise this capability.
+    let enhanced_framing = (max_lane_count_raw & 0x80) != 0;
     let aux_rd_interval =
         dpcd::read(aux, dpcd::TRAINING_AUX_RD_INTERVAL).map_err(|_| Error::DpcdRead)?;
 
     // Phase C: RBR / 1 lane fixed
     dpcd::write(aux, dpcd::LINK_BW_SET, dpcd::LINK_BW_RBR).map_err(|_| Error::DpcdWrite)?;
-    dpcd::write(aux, dpcd::LANE_COUNT_SET, 0x01).map_err(|_| Error::DpcdWrite)?;
+    // LANE_COUNT_SET: lane count | ENHANCED_FRAME_EN (bit 7).
+    dpcd::write(
+        aux,
+        dpcd::LANE_COUNT_SET,
+        0x01 | if enhanced_framing { 0x80 } else { 0x00 },
+    )
+    .map_err(|_| Error::DpcdWrite)?;
     dpcd::write(aux, dpcd::MAIN_LINK_CHANNEL_CODING_SET, dpcd::ANSI_8B10B)
         .map_err(|_| Error::DpcdWrite)?;
     ml.set_lane_count(1);
@@ -59,7 +69,7 @@ pub fn run(aux: &AuxCh, ml: &MainLink) -> Result<Stats, Error> {
     let mut same_voltage_count: u32 = 0;
     let mut first_iter = true;
     loop {
-        ml.set_pattern(Pattern::Tps1, /* rd_reset = */ first_iter);
+        ml.set_pattern(Pattern::Tps1, /* rd_reset = */ first_iter, enhanced_framing);
         ml.set_lane0_drive(drive.voltage_swing, drive.pre_emphasis);
         dpcd::write(aux, dpcd::TRAINING_PATTERN_SET, dpcd::SCRAMBLING_DISABLE | dpcd::TPS1)
             .map_err(|_| Error::DpcdWrite)?;
@@ -90,7 +100,7 @@ pub fn run(aux: &AuxCh, ml: &MainLink) -> Result<Stats, Error> {
 
     // (4) Channel EQ loop (max 5 iterations)
     for _ in 0..5 {
-        ml.set_pattern(Pattern::Tps2, false);
+        ml.set_pattern(Pattern::Tps2, false, enhanced_framing);
         ml.set_lane0_drive(drive.voltage_swing, drive.pre_emphasis);
         dpcd::write(aux, dpcd::TRAINING_PATTERN_SET, dpcd::SCRAMBLING_DISABLE | dpcd::TPS2)
             .map_err(|_| Error::DpcdWrite)?;
@@ -107,7 +117,7 @@ pub fn run(aux: &AuxCh, ml: &MainLink) -> Result<Stats, Error> {
             && (lane_align & dpcd::INTERLANE_ALIGN_DONE) != 0
         {
             // Done. Stop training, return to IDLE.
-            ml.set_pattern(Pattern::Idle, false);
+            ml.set_pattern(Pattern::Idle, false, enhanced_framing);
             dpcd::write(aux, dpcd::TRAINING_PATTERN_SET, 0x00).map_err(|_| Error::DpcdWrite)?;
             return Ok(stats);
         }
