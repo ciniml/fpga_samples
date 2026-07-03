@@ -11,12 +11,15 @@
  * Input  : (i_data[7:0], i_is_k) — HGFEDCBA + control flag.
  * Output : 10-bit symbol with bit 0 = a (first transmitted), bit 9 = j (last).
  *
- * D-codes follow the standard 5b/6b + 3b/4b table. The alternate D.x.7'
- * substitution is NOT performed in this Phase B implementation; some
- * (D.17.7, D.18.7, D.20.7) RD- combinations therefore produce a 10-bit
- * pattern with a six-bit run that is technically a spec violation. The
- * decoder still recovers them, so round-trip verification is correct.
- * Phase C/D will add the alternate selection.
+ * D-codes follow the standard 5b/6b + 3b/4b table, including the ANSI
+ * alternate D.x.A7 3b/4b substitution. A7 replaces the primary D.x.7 form
+ * for the six code-groups mandated by the standard so that the emitted line
+ * code is byte-for-byte conformant:
+ *   - entering the 3b/4b sub-block with RD+ : D11.7, D13.7, D14.7
+ *   - entering the 3b/4b sub-block with RD- : D17.7, D18.7, D20.7
+ * (the entry RD is the running disparity after the 5b/6b sub-block). A7 and
+ * the primary form carry identical ±2 disparity, so the substitution is RD-
+ * transparent and the two forms are interchangeable for disparity tracking.
  *
  * K-codes covered: K28.0..K28.7, K23.7, K27.7, K29.7, K30.7 (the full set
  * permitted by 8B/10B). Other (i_is_k=1, i_data) combinations are illegal
@@ -247,11 +250,18 @@ pub module encoder_8b10b (
                 let out5:  logic<6> = if rd_in ? pos5 : neg5;
                 let rd_after5: logic = rd_in ^ flip5;
 
-                // Alternate D.x.7' is required to avoid run-length violation when
-                // entering 3b/4b with rd_after5 = 0 and EDCBA in {17,18,20}, or
-                // rd_after5 = 1 and EDCBA in {11,13,14}. Phase B leaves alt7 = 0
-                // (primary form always); see file header.
-                let alt7: logic = 0;
+                // ANSI 8B/10B alternate D.x.A7 selection. A7 replaces the
+                // primary D.x.7 3b/4b form for six D-code-groups so the line
+                // code matches the standard exactly:
+                //   rd_after5 = 1 (RD+ entry) and EDCBA in {11,13,14}, or
+                //   rd_after5 = 0 (RD- entry) and EDCBA in {17,18,20}.
+                // Only applies to D-context .7 (k = 0, d3 = 7); the K-code .7
+                // sub-symbols use their own dedicated 4b entries.
+                let is_d7: logic = (k == 1'b0) && (d3 == 3'b111);
+                let alt7:  logic = is_d7 && (
+                    (rd_after5 && ((d5 == 5'd11) || (d5 == 5'd13) || (d5 == 5'd14))) ||
+                    (!rd_after5 && ((d5 == 5'd17) || (d5 == 5'd18) || (d5 == 5'd20)))
+                );
 
                 let flip4: logic    = lut4_flip(k, d3);
                 let neg4:  logic<4> = lut4_neg(k, d3, alt7);

@@ -5,15 +5,26 @@
 //          https://www.boost.org/LICENSE_1_0.txt)
 /**
  * @file tb_8b10b.veryl
- * @brief Phase B unit test for the 8B/10B encoder + decoder.
+ * @brief Unit tests for the 8B/10B encoder + decoder.
  *
- * Round-trip checks:
+ * eight_b_ten_b_round_trip:
  *   1. All 256 D-byte values encode to a valid 10b symbol that decodes
  *      back to the same byte with is_k = 0 and code_err = 0.
  *   2. The 12 K-codes (K28.0..K28.7, K23.7, K27.7, K29.7, K30.7) each
  *      round-trip with is_k = 1.
- *   3. After the full pass the K28.5 (BC) symbol decodes correctly with
- *      is_k = 1 from both RD-/RD+ entry contexts.
+ *
+ * eight_b_ten_b_alt7_golden:
+ *   3. The six ANSI D.x.A7 code-groups (D11.7, D13.7, D14.7, D17.7,
+ *      D18.7, D20.7) each produce the exact standard 10b symbol at both
+ *      3b/4b entry disparities (RD- via i_rd_reset, RD+ via a primer),
+ *      compared against hand-derived golden constants.
+ *   4. The A7-form 10b symbols fed straight into the decoder yield the
+ *      correct D-byte with is_k = 0 and code_err = 0.
+ *
+ * eight_b_ten_b_run_length:
+ *   5. The concatenated encoder output bit stream (all 256 D-codes swept
+ *      from both RD- and RD+ start contexts, including every symbol
+ *      boundary) never contains a run of more than five identical bits.
  */
 
 module Tb8b10b {}
@@ -165,6 +176,266 @@ module eight_b_ten_b_round_trip;
     initial begin
         #2_000_000;
         $fatal(1, "[tb_8b10b] timeout");
+    end
+endmodule
+}}}
+
+// ---------------------------------------------------------------------------
+// D.x.A7 golden-symbol + direct A7 decode test.
+// ---------------------------------------------------------------------------
+#[test(eight_b_ten_b_alt7_golden)]
+embed (inline) sv{{{
+module eight_b_ten_b_alt7_golden;
+    logic clk;
+    logic rstn;
+    initial clk = 0;
+    always #5 clk = ~clk;
+
+    // Encoder under test (RD reset controllable).
+    logic        enc_valid;
+    logic [7:0]  enc_data;
+    logic        enc_is_k;
+    logic        enc_rd_reset;
+    logic        sym_valid;
+    logic [9:0]  sym_data;
+
+    displayport_encoder_8b10b u_enc (
+        .i_clk      (clk),
+        .i_rstn     (rstn),
+        .i_valid    (enc_valid),
+        .i_data     (enc_data),
+        .i_is_k     (enc_is_k),
+        .i_rd_reset (enc_rd_reset),
+        .o_valid    (sym_valid),
+        .o_symbol   (sym_data)
+    );
+
+    // Decoder fed directly with A7-form symbols.
+    logic        dval;
+    logic [9:0]  dsym;
+    logic        dec_valid;
+    logic [7:0]  dec_data;
+    logic        dec_is_k;
+    logic        dec_err;
+
+    displayport_decoder_8b10b u_dec (
+        .i_clk      (clk),
+        .i_rstn     (rstn),
+        .i_valid    (dval),
+        .i_symbol   (dsym),
+        .o_valid    (dec_valid),
+        .o_data     (dec_data),
+        .o_is_k     (dec_is_k),
+        .o_code_err (dec_err)
+    );
+
+    integer errors;
+
+    // Golden 10b symbols (SV literal = bit9(j)..bit0(a)); a is first on wire.
+    // *_neg = 3b/4b entered at RD-, *_pos = entered at RD+.
+    // For D11/13/14 the RD+ form is A7; for D17/18/20 the RD- form is A7.
+    localparam logic [9:0] D11_NEG = 10'b0111001011, D11_POS = 10'b0001001011;
+    localparam logic [9:0] D13_NEG = 10'b0111001101, D13_POS = 10'b0001001101;
+    localparam logic [9:0] D14_NEG = 10'b0111001110, D14_POS = 10'b0001001110;
+    localparam logic [9:0] D17_NEG = 10'b1110110001, D17_POS = 10'b1000110001;
+    localparam logic [9:0] D18_NEG = 10'b1110110010, D18_POS = 10'b1000110010;
+    localparam logic [9:0] D20_NEG = 10'b1110110100, D20_POS = 10'b1000110100;
+
+    // Encode `b` after forcing 3b/4b entry disparity, then check the symbol.
+    // want_pos = 1 selects an RD+ entry (via a +2 primer 0x03), else RD-.
+    task automatic check_golden(input logic [7:0] b,
+                                input logic        want_pos,
+                                input logic [9:0]  expect_sym,
+                                input string       name);
+        // Inputs are applied #1 after each clock edge so they are stable long
+        // before the encoder samples them (avoids a driver/clock delta race).
+        if (want_pos) begin
+            // Primer 0x03 (rd_reset forces RD- entry) exits at RD+, so the
+            // following symbol enters the 3b/4b sub-block at RD+.
+            enc_valid = 1'b1; enc_is_k = 1'b0;
+            enc_data = 8'h03; enc_rd_reset = 1'b1;
+            @(posedge clk); #1;
+            enc_data = b; enc_rd_reset = 1'b0;
+            @(posedge clk); #1;
+        end else begin
+            enc_valid = 1'b1; enc_is_k = 1'b0;
+            enc_data = b; enc_rd_reset = 1'b1;
+            @(posedge clk); #1;
+        end
+        if (sym_data !== expect_sym) begin
+            errors = errors + 1;
+            $display("[alt7] ENC MISMATCH %s (%s): expected %010b got %010b",
+                     name, want_pos ? "RD+" : "RD-", expect_sym, sym_data);
+        end
+        enc_valid = 1'b0;
+        @(posedge clk); #1;
+    endtask
+
+    // Feed an A7-form symbol straight into the decoder and check the result.
+    task automatic check_decode(input logic [9:0] sym,
+                                input logic [7:0] expect_data,
+                                input string      name);
+        // Apply the symbol #1 after a clock edge, hold it valid across the edge
+        // that latches the decode result, then sample #1 after that edge.
+        dval = 1'b1; dsym = sym;
+        @(posedge clk); #1;   // decoder latches sym; o_data <= decode(sym)
+        if (dec_err !== 1'b0 || dec_is_k !== 1'b0 || dec_data !== expect_data) begin
+            errors = errors + 1;
+            $display("[alt7] DEC MISMATCH %s: sym=%010b expected data=%02h k=0 err=0 got data=%02h k=%b err=%b",
+                     name, sym, expect_data, dec_data, dec_is_k, dec_err);
+        end
+        dval = 1'b0;
+        @(posedge clk); #1;
+    endtask
+
+    initial begin
+        rstn = 1'b0;
+        enc_valid = 1'b0; enc_data = 8'h00; enc_is_k = 1'b0; enc_rd_reset = 1'b0;
+        dval = 1'b0; dsym = 10'h000;
+        errors = 0;
+        repeat (4) @(posedge clk);
+        rstn = 1'b1;
+        @(posedge clk);
+
+        // (3) Golden symbol comparison, both entry disparities.
+        check_golden(8'hEB, 1'b0, D11_NEG, "D11.7");
+        check_golden(8'hEB, 1'b1, D11_POS, "D11.7");
+        check_golden(8'hED, 1'b0, D13_NEG, "D13.7");
+        check_golden(8'hED, 1'b1, D13_POS, "D13.7");
+        check_golden(8'hEE, 1'b0, D14_NEG, "D14.7");
+        check_golden(8'hEE, 1'b1, D14_POS, "D14.7");
+        check_golden(8'hF1, 1'b0, D17_NEG, "D17.7");
+        check_golden(8'hF1, 1'b1, D17_POS, "D17.7");
+        check_golden(8'hF2, 1'b0, D18_NEG, "D18.7");
+        check_golden(8'hF2, 1'b1, D18_POS, "D18.7");
+        check_golden(8'hF4, 1'b0, D20_NEG, "D20.7");
+        check_golden(8'hF4, 1'b1, D20_POS, "D20.7");
+
+        // (4) Direct A7-form decode. A7 form = the RD+ variant for
+        // D11/13/14 and the RD- variant for D17/18/20.
+        check_decode(D11_POS, 8'hEB, "D11.7-A7");
+        check_decode(D13_POS, 8'hED, "D13.7-A7");
+        check_decode(D14_POS, 8'hEE, "D14.7-A7");
+        check_decode(D17_NEG, 8'hF1, "D17.7-A7");
+        check_decode(D18_NEG, 8'hF2, "D18.7-A7");
+        check_decode(D20_NEG, 8'hF4, "D20.7-A7");
+
+        if (errors != 0) begin
+            $fatal(1, "[tb_8b10b] alt7_golden: %0d error(s)", errors);
+        end
+        $display("[tb_8b10b] alt7_golden PASS");
+        $finish;
+    end
+
+    initial begin
+        #2_000_000;
+        $fatal(1, "[tb_8b10b] alt7_golden timeout");
+    end
+endmodule
+}}}
+
+// ---------------------------------------------------------------------------
+// Maximum run-length assertion over the encoder output bit stream.
+// ---------------------------------------------------------------------------
+#[test(eight_b_ten_b_run_length)]
+embed (inline) sv{{{
+module eight_b_ten_b_run_length;
+    logic clk;
+    logic rstn;
+    initial clk = 0;
+    always #5 clk = ~clk;
+
+    logic        enc_valid;
+    logic [7:0]  enc_data;
+    logic        enc_is_k;
+    logic        enc_rd_reset;
+    logic        sym_valid;
+    logic [9:0]  sym_data;
+
+    displayport_encoder_8b10b u_enc (
+        .i_clk      (clk),
+        .i_rstn     (rstn),
+        .i_valid    (enc_valid),
+        .i_data     (enc_data),
+        .i_is_k     (enc_is_k),
+        .i_rd_reset (enc_rd_reset),
+        .o_valid    (sym_valid),
+        .o_symbol   (sym_data)
+    );
+
+    integer max_run;
+    integer cur_run;
+    logic   prev_bit;
+    logic   have_prev;
+    integer symbols_seen;
+
+    task automatic send(input logic [7:0] d, input logic rd_reset);
+        enc_valid    = 1'b1;
+        enc_is_k     = 1'b0;
+        enc_data     = d;
+        enc_rd_reset = rd_reset;
+        @(posedge clk);
+    endtask
+
+    initial begin
+        rstn = 1'b0;
+        enc_valid = 1'b0; enc_data = 8'h00; enc_is_k = 1'b0; enc_rd_reset = 1'b0;
+        max_run = 0; cur_run = 0; prev_bit = 1'b0; have_prev = 1'b0;
+        symbols_seen = 0;
+        repeat (4) @(posedge clk);
+        rstn = 1'b1;
+        @(posedge clk);
+
+        // Pass 1: start from RD- (force on first symbol), sweep all 256 codes.
+        send(8'h00, 1'b1);
+        for (int i = 1; i < 256; i++) begin
+            send(8'(i), 1'b0);
+        end
+        // Pass 2: start from RD+ (0x03 primer leaves RD+), sweep all 256 codes.
+        send(8'h03, 1'b1);
+        for (int i = 0; i < 256; i++) begin
+            send(8'(i), 1'b0);
+        end
+
+        enc_valid = 1'b0;
+        repeat (8) @(posedge clk);
+
+        if (symbols_seen < 512) begin
+            $fatal(1, "[tb_8b10b] run_length: only saw %0d symbols", symbols_seen);
+        end
+        if (max_run > 5) begin
+            $fatal(1, "[tb_8b10b] run_length: max run = %0d (> 5)", max_run);
+        end
+        $display("[tb_8b10b] run_length PASS (max run = %0d over %0d symbols)",
+                 max_run, symbols_seen);
+        $finish;
+    end
+
+    // Continuous run tracker. Processes the 10 bits of every emitted symbol in
+    // wire order (bit 0 = a first). prev_bit/have_prev persist across cycles so
+    // runs that straddle symbol boundaries are counted. Blocking assignments
+    // are intentional: this is test bookkeeping, not synthesizable logic.
+    always @(posedge clk) begin
+        if (rstn && sym_valid) begin
+            symbols_seen = symbols_seen + 1;
+            for (int bi = 0; bi < 10; bi++) begin
+                if (have_prev && (sym_data[bi] == prev_bit)) begin
+                    cur_run = cur_run + 1;
+                end else begin
+                    cur_run = 1;
+                end
+                have_prev = 1'b1;
+                prev_bit  = sym_data[bi];
+                if (cur_run > max_run) begin
+                    max_run = cur_run;
+                end
+            end
+        end
+    end
+
+    initial begin
+        #2_000_000;
+        $fatal(1, "[tb_8b10b] run_length timeout");
     end
 endmodule
 }}}

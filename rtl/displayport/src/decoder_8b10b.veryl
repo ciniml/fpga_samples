@@ -17,9 +17,10 @@
  * identified by the 4b alt-7 form (0111 / 1000) sitting in front of one
  * of the four matching 5b values.
  *
- * This complement to `encoder_8b10b` ignores the alternate D.x.7'
- * substitution (the encoder does not generate it). A real-link decoder
- * Phase C/D will add D.x.7' acceptance and a code-violation flag.
+ * The alternate D.x.A7 3b/4b form (fghj = 0111 / 1000) is accepted in
+ * D-context and decodes to D.x.7, matching the encoder which now emits A7
+ * for the six mandated code-groups. A7 in front of a D.23/27/29/30 5b form
+ * is instead the Kx.7 control code, so that case is resolved first.
  */
 
 pub module decoder_8b10b (
@@ -85,7 +86,8 @@ pub module decoder_8b10b (
             4'b1101, 4'b0010: 4'b0_100, // D.x.4
             4'b1010            : 4'b0_101, // D.x.5
             4'b0110            : 4'b0_110, // D.x.6
-            4'b1110, 4'b0001: 4'b0_111, // D.x.7 primary
+            4'b1110, 4'b0001: 4'b0_111, // D.x.7 primary (P7)
+            4'b0111, 4'b1000: 4'b0_111, // D.x.7 alternate (A7)
             default            : 4'b1_000,
         };
     }
