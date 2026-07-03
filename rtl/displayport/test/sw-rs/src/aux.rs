@@ -31,6 +31,29 @@ impl AuxCommand {
     }
 }
 
+/// Errors that can be raised by the AUX *requester* path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuxError {
+    /// The sink did not complete the reply within the bounded wait window.
+    /// DP 1.2 §2.7.1 specifies a 400 us reply timeout for the requester; when
+    /// the poll loop expires we surface this instead of hanging forever.
+    Timeout,
+    /// A reply arrived but was empty or otherwise malformed.
+    Protocol,
+}
+
+/// Upper bound on busy-poll iterations while waiting for a requester-side
+/// transaction to finish before declaring an `AuxError::Timeout`.
+///
+/// DP 1.2 §2.7.1 mandates that a requester wait at least 400 us for a reply.
+/// The main link clock is 162 MHz, so 400 us == 64,800 clocks. Each iteration
+/// of the poll loop performs at least one volatile MMIO register read (several
+/// clocks over the CPU bus), so even at an unrealistically optimistic 1
+/// clock/iteration this bound corresponds to 1,000,000 / 162e6 ~= 6.2 ms of
+/// wall time -- comfortably above the 400 us spec minimum with margin measured
+/// in milliseconds, while still guaranteeing termination on a dead sink.
+const AUX_WAIT_TIMEOUT_ITERS: u32 = 1_000_000;
+
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuxResponseKind {
@@ -117,6 +140,10 @@ impl AuxCh {
             .write(|w| w.tx_start().start().rx_enable().enabled());
     }
 
+    // NOTE: `wait_tx_done` / `wait_rx_complete` are the *replier*-side waits
+    // (used by `receive_request` / `send_reply`, e.g. the mock sink). A replier
+    // legitimately blocks until the requester drives the bus, so these remain
+    // unbounded busy-loops and their signatures must stay intact.
     fn wait_tx_done(&self) {
         while self.is_tx_running() {}
     }
@@ -124,12 +151,41 @@ impl AuxCh {
         while !self.is_rx_complete() {}
     }
 
-    /// Send an AUX request and wait for the reply.
+    // Requester-side, timeout-guarded variants. DP 1.2 §2.7.1: a requester must
+    // not wait indefinitely for a reply -- if the sink is absent/unresponsive we
+    // bail out with `AuxError::Timeout` after `AUX_WAIT_TIMEOUT_ITERS` polls.
+    fn wait_tx_done_timeout(&self) -> Result<(), AuxError> {
+        let mut iters = AUX_WAIT_TIMEOUT_ITERS;
+        while self.is_tx_running() {
+            if iters == 0 {
+                return Err(AuxError::Timeout);
+            }
+            iters -= 1;
+        }
+        Ok(())
+    }
+    fn wait_rx_complete_timeout(&self) -> Result<(), AuxError> {
+        let mut iters = AUX_WAIT_TIMEOUT_ITERS;
+        while !self.is_rx_complete() {
+            if iters == 0 {
+                return Err(AuxError::Timeout);
+            }
+            iters -= 1;
+        }
+        Ok(())
+    }
+
+    /// Send an AUX request and wait for the reply (requester role).
+    ///
+    /// The wait for TX completion and for the sink reply is bounded per DP 1.2
+    /// §2.7.1; an unresponsive sink yields `AuxError::Timeout` instead of a
+    /// permanent hang. Note this returns the raw reply *kind* (Ack/Nack/Defer);
+    /// DEFER retry handling per §3.5.1.2.2 lives in the `dpcd` layer.
     pub fn send_request_wait_reply(
         &self,
         request: &AuxRequest,
         out: &mut [u8],
-    ) -> Result<AuxReply, ()> {
+    ) -> Result<AuxReply, AuxError> {
         let length_minus_one = if request.command.is_read() {
             request.read_length_minus_one
         } else {
@@ -159,16 +215,16 @@ impl AuxCh {
         self.enable_rx();
 
         self.start_tx(total_len as u8);
-        self.wait_tx_done();
-        self.wait_rx_complete();
+        self.wait_tx_done_timeout()?;
+        self.wait_rx_complete_timeout()?;
         self.clear_rx_complete();
 
         let rx_count = self.get_rx_count() as usize;
         if rx_count == 0 {
-            return Err(());
+            return Err(AuxError::Protocol);
         }
         let header0 = self.buffer_read(0);
-        let kind = AuxResponseKind::try_from(header0 >> 4)?;
+        let kind = AuxResponseKind::try_from(header0 >> 4).map_err(|_| AuxError::Protocol)?;
 
         let payload_len = rx_count - 1;
         let copy_len = payload_len.min(out.len());

@@ -8,10 +8,17 @@ use crate::dpcd;
 
 const DPCD_TABLE_SIZE: usize = 0x300;
 
+/// Number of initial Native AUX requests the mock sink answers with AUX_DEFER
+/// before serving normally. This forces the source through the DP 1.2
+/// §3.5.1.2.2 DEFER-retry path on every link-training run. Kept well under the
+/// 7-retry tolerance so training still converges.
+const DEFER_INJECT_COUNT: u8 = 2;
+
 pub struct MockSink {
     dpcd: [u8; DPCD_TABLE_SIZE],
     cr_writes: u8, // count of TRAINING_PATTERN_SET writes selecting TPS1
     eq_writes: u8, // count of TRAINING_PATTERN_SET writes selecting TPS2
+    defer_budget: u8, // remaining Native AUX requests to answer with DEFER
 }
 
 const EDID_BLOCK0: [u8; 16] = [
@@ -24,6 +31,7 @@ impl MockSink {
             dpcd: [0u8; DPCD_TABLE_SIZE],
             cr_writes: 0,
             eq_writes: 0,
+            defer_budget: DEFER_INJECT_COUNT,
         };
         // Receiver capability
         s.dpcd[dpcd::DPCD_REV as usize] = 0x12; // DP 1.2
@@ -104,6 +112,18 @@ impl MockSink {
         let length = length.min(16);
 
         let mut training_done_observed = false;
+
+        // DP 1.2 §3.5.1.2.2 DEFER-retry exercise: answer the first
+        // DEFER_INJECT_COUNT Native AUX requests with AUX_DEFER (no side
+        // effects) so the source must retry. The request is not applied here;
+        // the source resends it and it is served normally once the budget is
+        // exhausted.
+        let is_native = matches!(command, AuxCommand::NativeRead | AuxCommand::NativeWrite);
+        if is_native && self.defer_budget > 0 {
+            self.defer_budget -= 1;
+            aux.send_reply(AuxResponseKind::Defer, &[]);
+            return Ok(false);
+        }
 
         match command {
             AuxCommand::NativeRead => {

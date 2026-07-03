@@ -1,6 +1,37 @@
 //! DPCD address constants + helper accessors over AUX (DP 1.2 Tab 2-75).
 
-use crate::aux::{AuxCh, AuxCommand, AuxRequest, AuxResponseKind};
+use crate::aux::{AuxCh, AuxCommand, AuxError, AuxReply, AuxRequest, AuxResponseKind};
+
+/// Maximum number of AUX DEFER retries tolerated for a single transaction.
+///
+/// DP 1.2 §3.5.1.2.2: a source shall retry a Native AUX request that is
+/// answered with AUX_DEFER, tolerating up to 7 consecutive DEFERs. If the sink
+/// still DEFERs on the 8th attempt (i.e. after 7 retries) the source gives up.
+const MAX_AUX_DEFER_RETRIES: u32 = 7;
+
+/// Run one AUX transaction with DP 1.2 §3.5.1.2.2 DEFER-retry semantics.
+///
+/// - ACK   -> return the reply.
+/// - DEFER -> resend, up to `MAX_AUX_DEFER_RETRIES` times; give up afterwards.
+/// - NACK  -> immediate error (sink rejected the request; no retry).
+/// - `AuxError` (e.g. Timeout) -> immediate error, propagated to the caller so
+///   it can decide (per §2.7.1 a timeout is not retried at this layer).
+fn transact(aux: &AuxCh, req: &AuxRequest, out: &mut [u8]) -> Result<AuxReply, ()> {
+    // 1 initial attempt + up to MAX_AUX_DEFER_RETRIES retries = 8 attempts.
+    for _ in 0..=MAX_AUX_DEFER_RETRIES {
+        match aux.send_request_wait_reply(req, out) {
+            Ok(reply) => match reply.kind {
+                AuxResponseKind::Ack => return Ok(reply),
+                AuxResponseKind::Defer => continue,
+                AuxResponseKind::Nack => return Err(()),
+            },
+            // Timeout / protocol errors are not DEFER: do not retry here.
+            Err(AuxError::Timeout) | Err(AuxError::Protocol) => return Err(()),
+        }
+    }
+    // 8th consecutive DEFER: abandon the transaction (§3.5.1.2.2).
+    Err(())
+}
 
 // Receiver Capability field
 pub const DPCD_REV: u32 = 0x00000;
@@ -88,10 +119,8 @@ pub fn read(aux: &AuxCh, address: u32) -> Result<u8, ()> {
         data: &[],
         read_length_minus_one: 0,
     };
-    let reply = aux.send_request_wait_reply(&req, &mut buf)?;
-    if reply.kind != AuxResponseKind::Ack {
-        return Err(());
-    }
+    // transact() only returns Ok on ACK (DEFER retried per §3.5.1.2.2).
+    transact(aux, &req, &mut buf)?;
     Ok(buf[0])
 }
 
@@ -104,10 +133,7 @@ pub fn write(aux: &AuxCh, address: u32, value: u8) -> Result<(), ()> {
         data: &data,
         read_length_minus_one: 0,
     };
-    let reply = aux.send_request_wait_reply(&req, &mut buf)?;
-    if reply.kind != AuxResponseKind::Ack {
-        return Err(());
-    }
+    transact(aux, &req, &mut buf)?;
     Ok(())
 }
 
@@ -119,9 +145,6 @@ pub fn read_block(aux: &AuxCh, address: u32, out: &mut [u8]) -> Result<usize, ()
         data: &[],
         read_length_minus_one: (len - 1) as u8,
     };
-    let reply = aux.send_request_wait_reply(&req, out)?;
-    if reply.kind != AuxResponseKind::Ack {
-        return Err(());
-    }
+    let reply = transact(aux, &req, out)?;
     Ok(reply.data_len.min(out.len()))
 }
