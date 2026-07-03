@@ -202,12 +202,19 @@ rtl/displayport/
 | アイドル VB-ID = 0x08 | Table 2-3 (bit3=1 なら bit0 も 1) | 0x09 に修正 |
 | FW の MISC0=0x01 (6bpc 扱い) | Table 2-45 | 0x21 (sync + 8bpc RGB) に修正 |
 
-**未修正の既知課題** (機能追加規模のもの):
+**追加で修正済み** (実機接続で問題になる項目、2026-07 後半):
 
-- **Enhanced Framing Mode 未対応**: DPCD Rev 1.2+ の Sink と接続する Source は必須 (§2.2.1.1/2.2.1.2、BS→BS+BF+BF+BS の 4 シンボル列)。実モニタ接続前に要対応
-- **8B/10B**: エンコーダの D.x.A7 代替符号未実装 (D11/13/14.7@RD+、D17/18/20.7@RD- の 6 値が ANSI 非準拠)。デコーダの代替符号受理・ディスパリティエラー検出なし
-- **HPD**: IRQ パルス (0.5–1ms) / unplug (>2ms) の幅判別未実装、`STABLE_CYCLES` が CLOCK_HZ 非連動 (16 サイクル ≒ 160ns)、FW が plug 後の HPD/IRQ (DPCD 201h) を監視しない
-- **FW 堅牢性**: AUX DEFER リトライなし (仕様は最大 7 回)、AUX 無応答時の 400µs タイムアウト未実装 (無限ループ)、CR ループの絶対上限なし、EDID 読み出し未実装
+| 項目 | 仕様参照 | 修正内容 |
+|------|---------|---------|
+| Enhanced Framing Mode 未対応 (DPCD Rev 1.2+ の Sink では必須) | §2.2.1.1/2.2.1.2, Tab 2-1 | BS/SR を 4 シンボル列 (BS BF BF BS / SR BF BF SR) で送出。MAIN_LINK CTRL bit6 で有効化し、FW が ENHANCED_FRAME_CAP を読んで ENHANCED_FRAME_EN と同時に設定。TB パーサは毎ラインの 4 シンボル列を検証 |
+| 8B/10B の D.x.A7 代替符号未実装 (6 値が ANSI 非準拠、スクランブル済みデータ中に偽コンマの可能性 → Sink アライナ誤ロック) | ANSI 8B/10B (§3.5.1 規範参照) | エンコーダで進入 RD に応じ A7 選択、デコーダで A7 受理。両 RD ゴールデン + ラン長 ≤5 アサーション追加 |
+| HPD の IRQ/unplug パルス幅判別なし・閾値が CLOCK_HZ 非連動 | §3.3, Table 3-4 | 2ms 閾値で IRQ_HPD / unplug を分類 (CLOCK_HZ から換算)、~10µs グリッチ除去、REG_SYSTEM_HPD bit3 (IRQ, W1C) 追加、単体 TB 新設 |
+| FW: AUX DEFER 即失敗・無応答で無限ループ | §2.7.1, §3.5.1.2.2 | DEFER は最大 7 回リトライ、リクエスタ側待ちにタイムアウト追加。模擬 Sink が最初の 2 件に DEFER を返し、全トレーニングテストがリトライ経路を通る |
+
+**未修正の既知課題**:
+
+- **FW**: CR ループの絶対上限なし (敵対的な交互 ADJUST 要求で無限ループの可能性)、EQ 中 CR ロスト時に CR 再突入せず即エラー、EDID 読み出し未実装、plug 後の HPD/IRQ 監視 (DPCD 201h SERVICE_IRQ_VECTOR 読み出し) 未実装 — RTL 側の IRQ 分類・sticky bit は実装済みで FW 対応待ち
 - **AUX PHY**: RX の re-arm 時 stale バイト混入ハザード、送信中の自己受信ゲートなし、TX ビットレートが `MANCHESTER_CLOCK_HZ` 非連動 (1Mbps 固定)
+- **8B/10B デコーダ**: ディスパリティエラー検出なし (RD 追跡なし。Source 用途では影響小)
 - **アーキテクチャ**: バイトレート = リンクシンボルレートの簡略化のため `tu_active=64` のみ整合 (tu_active<64 では MSA hwidth と実転送画素数が不一致)。M/N 計測ハードウェア未実装。MSA を全 vblank 行で送信 (仕様は once per frame)
-- **テストホール**: `CONTINUOUS_BYTE_TICK=1` (FPGA/OSER10 経路) が全テスト未使用、`pixel_fifo`/`hpd_detect` の単体テストなし、AUX エラー経路 (NACK/DEFER/無応答) 未検証、8b10b の両 RD 網羅・ラン長検査なし
+- **テストホール**: `CONTINUOUS_BYTE_TICK=1` (FPGA/OSER10 経路) が全テスト未使用、`pixel_fifo` の単体テストなし、AUX の NACK/無応答経路・Manchester 波形の対仕様検証なし、`dp_sink_rx_lane` の誤ロック回復なし (ロック解除機構なし)
