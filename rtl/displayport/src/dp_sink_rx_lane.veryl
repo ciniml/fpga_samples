@@ -19,13 +19,10 @@
  * training completes so that training-pattern K28.5 instances do not
  * trigger a premature lock.
  *
- * The descrambler is reset to INIT on every BS (K28.5) AND every SR
- * (K28.0). DP 1.2 §3.1.6 only mandates SR-based reset; the every-BS
- * reset is a sim convenience that lets the sink LFSR re-sync at every
- * line boundary instead of waiting up to SR_PERIOD lines for the next
- * SR. video_framer still substitutes SR for every SR_PERIOD-th BS, so
- * the on-the-wire byte stream is spec-conforming and a real (SR-only)
- * sink would also stay in sync.
+ * The descrambler is reset to INIT only on SR (K28.0), matching the
+ * spec-mandated behaviour (DP 1.2 §3.1.6). Descrambled data is therefore
+ * only meaningful from the first SR after bit lock; the TB must tolerate
+ * (or skip) the up-to-SR_PERIOD lines before that SR.
  */
 
 pub module dp_sink_rx_lane (
@@ -141,13 +138,12 @@ pub module dp_sink_rx_lane (
     assign o_code_err = dec_code_err;
 
     // -----------------------------------------------------------------
-    // Descrambler. Reset LFSR on every BS (K28.5 = 0xBC) AND every SR
-    // (K28.0 = 0x1C). The TX side does the same; see main_link_tx_lane
-    // for the rationale (sim-only every-BS reset on top of the spec's
-    // SR reset).
+    // Descrambler. Reset LFSR only on SR (K28.0 = 0x1C), per DP 1.2
+    // §3.1.6. The TX side (main_link_tx_lane) resets on SR alone as
+    // well, so both LFSRs stay in step from the first SR onward.
     // -----------------------------------------------------------------
     let dec_is_reset: logic =
-        dec_valid && dec_is_k && (dec_data == 8'hBC || dec_data == 8'h1C);
+        dec_valid && dec_is_k && (dec_data == 8'h1C);
 
     inst u_desc: scrambler (
         i_clk             : i_clk,

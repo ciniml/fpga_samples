@@ -6,8 +6,9 @@
 /**
  * @file tb_msa_generator.veryl
  * @brief Phase D unit test for msa_generator. Drives a known set of MSA
- *        fields, triggers, and compares the 33-byte output sequence
- *        against a golden vector derived from DP 1.2 Fig 2-18 (1-lane).
+ *        fields, triggers, and compares the 39-symbol output sequence
+ *        against a golden vector derived from DP 1.2 Fig 2-18 (1-lane):
+ *        SS SS + 36 attribute bytes (Mvid transported four times) + SE.
  */
 
 module TbMsaGenerator {}
@@ -61,12 +62,12 @@ module msa_generator_golden;
         .o_is_k      (out_is_k)
     );
 
-    // Golden: {is_k, byte} per row, 33 entries.
+    // Golden: {is_k, byte} per row, 39 entries (Fig 2-18, 1-lane).
     typedef struct packed {
         logic [7:0] data;
         logic       is_k;
     } sample_t;
-    sample_t golden [0:32];
+    sample_t golden [0:38];
 
     integer mismatches;
     integer checked;
@@ -85,9 +86,9 @@ module msa_generator_golden;
         vsw_vsp   = 16'h0002; // VSP=0, VSW=2
         mvid      = 24'h001234;
         nvid      = 24'h008000;
-        misc      = 16'h0001; // MISC0=0x01 (sync mode), MISC1=0x00
+        misc      = 16'h0021; // MISC0=0x21 (sync clock, 8bpc RGB), MISC1=0x00
 
-        // Build golden vector matching the table above.
+        // Build golden vector matching DP 1.2 Fig 2-18 (1-lane column).
         golden[0]  = '{data: 8'h5C, is_k: 1'b1}; // SS
         golden[1]  = '{data: 8'h5C, is_k: 1'b1}; // SS
         golden[2]  = '{data: 8'h00, is_k: 1'b0}; // Mvid23:16
@@ -99,28 +100,34 @@ module msa_generator_golden;
         golden[8]  = '{data: 8'h18, is_k: 1'b0}; // Vtotal7:0
         golden[9]  = '{data: 8'h80, is_k: 1'b0}; // HSP|HSW14:8 = 1_0000000
         golden[10] = '{data: 8'h04, is_k: 1'b0}; // HSW7:0
-        golden[11] = '{data: 8'h00, is_k: 1'b0}; // VSP|VSW14:8 = 0_0000000
-        golden[12] = '{data: 8'h02, is_k: 1'b0}; // VSW7:0
-        golden[13] = '{data: 8'h00, is_k: 1'b0}; // Hstart15:8
-        golden[14] = '{data: 8'h10, is_k: 1'b0}; // Hstart7:0
-        golden[15] = '{data: 8'h00, is_k: 1'b0}; // Vstart15:8
-        golden[16] = '{data: 8'h08, is_k: 1'b0}; // Vstart7:0
-        golden[17] = '{data: 8'h00, is_k: 1'b0}; // Hwidth15:8
-        golden[18] = '{data: 8'h40, is_k: 1'b0}; // Hwidth7:0
-        golden[19] = '{data: 8'h00, is_k: 1'b0}; // Vheight15:8
-        golden[20] = '{data: 8'h10, is_k: 1'b0}; // Vheight7:0
-        golden[21] = '{data: 8'h00, is_k: 1'b0};
-        golden[22] = '{data: 8'h00, is_k: 1'b0};
-        golden[23] = '{data: 8'h00, is_k: 1'b0}; // Mvid23:16 (redundancy)
-        golden[24] = '{data: 8'h12, is_k: 1'b0};
-        golden[25] = '{data: 8'h34, is_k: 1'b0};
-        golden[26] = '{data: 8'h00, is_k: 1'b0}; // Nvid23:16
-        golden[27] = '{data: 8'h80, is_k: 1'b0};
-        golden[28] = '{data: 8'h00, is_k: 1'b0};
-        golden[29] = '{data: 8'h01, is_k: 1'b0}; // MISC0
-        golden[30] = '{data: 8'h00, is_k: 1'b0}; // MISC1
-        golden[31] = '{data: 8'h00, is_k: 1'b0};
-        golden[32] = '{data: 8'h7C, is_k: 1'b1}; // SE
+        golden[11] = '{data: 8'h00, is_k: 1'b0}; // Mvid23:16
+        golden[12] = '{data: 8'h12, is_k: 1'b0}; // Mvid15:8
+        golden[13] = '{data: 8'h34, is_k: 1'b0}; // Mvid7:0
+        golden[14] = '{data: 8'h00, is_k: 1'b0}; // Hstart15:8
+        golden[15] = '{data: 8'h10, is_k: 1'b0}; // Hstart7:0
+        golden[16] = '{data: 8'h00, is_k: 1'b0}; // Vstart15:8
+        golden[17] = '{data: 8'h08, is_k: 1'b0}; // Vstart7:0
+        golden[18] = '{data: 8'h00, is_k: 1'b0}; // VSP|VSW14:8 = 0_0000000
+        golden[19] = '{data: 8'h02, is_k: 1'b0}; // VSW7:0
+        golden[20] = '{data: 8'h00, is_k: 1'b0}; // Mvid23:16
+        golden[21] = '{data: 8'h12, is_k: 1'b0}; // Mvid15:8
+        golden[22] = '{data: 8'h34, is_k: 1'b0}; // Mvid7:0
+        golden[23] = '{data: 8'h00, is_k: 1'b0}; // Hwidth15:8
+        golden[24] = '{data: 8'h40, is_k: 1'b0}; // Hwidth7:0
+        golden[25] = '{data: 8'h00, is_k: 1'b0}; // Vheight15:8
+        golden[26] = '{data: 8'h10, is_k: 1'b0}; // Vheight7:0
+        golden[27] = '{data: 8'h00, is_k: 1'b0}; // All 0s
+        golden[28] = '{data: 8'h00, is_k: 1'b0}; // All 0s
+        golden[29] = '{data: 8'h00, is_k: 1'b0}; // Mvid23:16
+        golden[30] = '{data: 8'h12, is_k: 1'b0}; // Mvid15:8
+        golden[31] = '{data: 8'h34, is_k: 1'b0}; // Mvid7:0
+        golden[32] = '{data: 8'h00, is_k: 1'b0}; // Nvid23:16
+        golden[33] = '{data: 8'h80, is_k: 1'b0}; // Nvid15:8
+        golden[34] = '{data: 8'h00, is_k: 1'b0}; // Nvid7:0
+        golden[35] = '{data: 8'h21, is_k: 1'b0}; // MISC0
+        golden[36] = '{data: 8'h00, is_k: 1'b0}; // MISC1
+        golden[37] = '{data: 8'h00, is_k: 1'b0}; // All 0s
+        golden[38] = '{data: 8'hFD, is_k: 1'b1}; // SE (K29.7)
 
         mismatches = 0;
         checked    = 0;
@@ -138,7 +145,7 @@ module msa_generator_golden;
 
         // Sample one byte per posedge. msa_generator should emit byte 0
         // on the first posedge after trigger captures.
-        for (int i = 0; i < 33; i++) begin
+        for (int i = 0; i < 39; i++) begin
             @(posedge clk);
             #1;
             if (valid) begin
@@ -156,8 +163,8 @@ module msa_generator_golden;
         if (mismatches != 0) begin
             $fatal(1, "[tb_msa_generator] %0d mismatches across %0d bytes", mismatches, checked);
         end
-        if (checked != 33) begin
-            $fatal(1, "[tb_msa_generator] only checked %0d bytes (expected 33)", checked);
+        if (checked != 39) begin
+            $fatal(1, "[tb_msa_generator] only checked %0d bytes (expected 39)", checked);
         end
         $display("[tb_msa_generator] PASS (%0d bytes checked)", checked);
         $finish;

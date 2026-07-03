@@ -5,11 +5,23 @@
 //          https://www.boost.org/LICENSE_1_0.txt)
 /**
  * @file tb_scrambler.veryl
- * @brief Phase B unit test for the scrambler. Verifies:
+ * @brief Phase B unit tests for the scrambler.
+ *
+ * scrambler_loopback verifies:
  *        - K-coded bytes pass through unchanged
  *        - Scrambling followed by descrambling (same module) recovers
  *          the original byte stream
  *        - Re-seeding via i_seed_reset does not break the round-trip
+ *
+ * scrambler_golden verifies the output against byte values computed with
+ * the DP 1.2 Appendix E reference C code (resetLfsr/advanceLfsr/
+ * scrambleByte). A loopback alone cannot catch a wrong LFSR topology —
+ * both sides would share the error — so this golden comparison is the
+ * test that pins the implementation to the spec:
+ *        - 16 scrambled 0x00 bytes right after SR (first byte 0xFF,
+ *          LFSR 0xFFFF -> 0xE817 -> ... per §3.1.6)
+ *        - the LFSR advances across K-coded symbols (§3.1.6: "The LFSR
+ *          advances on all symbols, both D and K")
  */
 
 module TbScrambler {}
@@ -161,6 +173,117 @@ module scrambler_loopback;
     initial begin
         #1_000_000;
         $fatal(1, "[tb_scrambler] timeout");
+    end
+endmodule
+}}}
+
+#[test(scrambler_golden)]
+embed (inline) sv{{{
+module scrambler_golden;
+    logic clk;
+    logic rstn;
+    initial clk = 0;
+    always #5 clk = ~clk;
+
+    logic       seed_reset;
+    logic       a_valid;
+    logic [7:0] a_data;
+    logic       a_is_k;
+
+    logic       b_valid;
+    logic [7:0] b_data;
+    logic       b_is_k;
+
+    displayport_scrambler u_scram (
+        .i_clk              (clk),
+        .i_rstn             (rstn),
+        .i_seed_reset       (seed_reset),
+        .i_scramble_disable (1'b0),
+        .i_valid            (a_valid),
+        .i_data             (a_data),
+        .i_is_k             (a_is_k),
+        .o_valid            (b_valid),
+        .o_data             (b_data),
+        .o_is_k             (b_is_k)
+    );
+
+    // Golden values computed with the DP 1.2 Appendix E reference code:
+    // 0x00 data bytes scrambled right after an SR seed reset. The first
+    // byte is 0xFF (LFSR = 0xFFFF) and the LFSR then advances to 0xE817,
+    // 0x0328, ... as required by §3.1.6.
+    localparam logic [7:0] GOLDEN_AFTER_SR [0:15] = '{
+        8'hFF, 8'h17, 8'hC0, 8'h14, 8'hB2, 8'hE7, 8'h02, 8'h82,
+        8'h72, 8'h6E, 8'h28, 8'hA6, 8'hBE, 8'h6D, 8'hBF, 8'h8D
+    };
+    // 0x00 data bytes following ONE K-coded symbol (which is not
+    // scrambled but must still advance the LFSR by 8 steps).
+    localparam logic [7:0] GOLDEN_AFTER_K [0:3] = '{
+        8'h40, 8'hA7, 8'hE6, 8'h2C
+    };
+
+    integer errors;
+
+    task automatic push(input logic [7:0] d, input logic k, input logic sr);
+        a_valid    = 1'b1;
+        a_data     = d;
+        a_is_k     = k;
+        seed_reset = sr;
+        @(posedge clk);
+        #1;
+    endtask
+
+    task automatic expect_out(input logic [7:0] d, input logic k, input string what);
+        if (!b_valid || b_data !== d || b_is_k !== k) begin
+            errors = errors + 1;
+            $display("[tb_scrambler_golden] MISMATCH (%s): expected (%02h, k=%b) got (valid=%b, %02h, k=%b)",
+                     what, d, k, b_valid, b_data, b_is_k);
+        end
+    endtask
+
+    initial begin
+        rstn       = 1'b0;
+        seed_reset = 1'b0;
+        a_valid    = 1'b0;
+        a_data     = 8'h00;
+        a_is_k     = 1'b0;
+        errors     = 0;
+        repeat (4) @(posedge clk);
+        rstn = 1'b1;
+        @(posedge clk);
+
+        // SR symbol with seed reset. Passes through unchanged.
+        push(8'h1C, 1'b1, 1'b1);
+        expect_out(8'h1C, 1'b1, "SR passthrough");
+
+        // 16 zero bytes: must match the Appendix E reference sequence.
+        for (int i = 0; i < 16; i++) begin
+            push(8'h00, 1'b0, 1'b0);
+            expect_out(GOLDEN_AFTER_SR[i], 1'b0, $sformatf("byte %0d after SR", i));
+        end
+
+        // One K-coded byte (BS): passes through un-scrambled but the
+        // LFSR must advance across it.
+        push(8'hBC, 1'b1, 1'b0);
+        expect_out(8'hBC, 1'b1, "K passthrough");
+
+        for (int i = 0; i < 4; i++) begin
+            push(8'h00, 1'b0, 1'b0);
+            expect_out(GOLDEN_AFTER_K[i], 1'b0, $sformatf("byte %0d after K", i));
+        end
+
+        a_valid = 1'b0;
+        repeat (4) @(posedge clk);
+
+        if (errors != 0) begin
+            $fatal(1, "[tb_scrambler_golden] %0d mismatches", errors);
+        end
+        $display("[tb_scrambler_golden] PASS");
+        $finish;
+    end
+
+    initial begin
+        #1_000_000;
+        $fatal(1, "[tb_scrambler_golden] timeout");
     end
 endmodule
 }}}

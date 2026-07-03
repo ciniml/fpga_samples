@@ -10,17 +10,21 @@
  *        and emits the proper byte sequence per line:
  *
  *          byte 0                : BS (K28.5)
- *          byte 1                : VB-ID
- *          byte 2                : Mvid7:0
- *          byte 3                : Maud (= 0)
- *          bytes 4..36 (vblank)  : MSA (33 bytes from msa_generator)
+ *          bytes 1..12           : (VB-ID, Mvid7:0, Maud7:0) x 4 — the
+ *                                  header must be transported four times
+ *                                  regardless of lane count (Fig 2-11/12)
+ *          bytes 13..51 (vblank) : MSA (39 symbols from msa_generator)
  *          byte hblank_bytes-1   : BE (K27.7)        -- active lines only
  *          bytes hblank_bytes..  : TU pixel bytes    -- active lines only
  *          all other bytes       : 0x00 stuffing
  *
+ *        Constraints: hblank_bytes >= 14 (BS + 4x3 header + BE) and
+ *        bytes_per_line >= 52 (header + MSA on vblank lines).
+ *
  *        When i_video_enable = 0 the framer emits the Idle Pattern: a
- *        BS / VB-ID(NoVideo) / Mvid(0) / Maud(0) burst once every 8192
- *        link symbols, with the rest as 0x00 (scrambled).
+ *        BS + (VB-ID, Mvid(0), Maud(0)) x 4 burst once every 8192 link
+ *        symbols (VB-ID = 0x09: VerticalBlanking_Flag | NoVideoStream_Flag
+ *        per Table 2-3), with the rest as 0x00 (scrambled).
  */
 
 pub module video_framer #(
@@ -87,9 +91,16 @@ pub module video_framer #(
         (line >= i_vstart) && (line <: i_vstart + i_vheight);
     let line_is_vblank: logic = !line_is_active;
 
+    // (VB-ID, Mvid7:0, Maud7:0) x 4 header right after BS (bytes 1..12).
+    let in_hdr_window: logic =
+        (byte_in_line >= 18'd1) && (byte_in_line <: 18'd13);
+    // Position within the repeating 3-byte header group: 0=VB-ID,
+    // 1=Mvid7:0, 2=Maud7:0.
+    let hdr_phase: logic<18> = (byte_in_line - 18'd1) % 18'd3;
+
     // Window predicates (bytes inside the line).
     let in_msa_window: logic =
-        line_is_vblank && (byte_in_line >= 18'd4) && (byte_in_line <: 18'd37);
+        line_is_vblank && (byte_in_line >= 18'd13) && (byte_in_line <: 18'd52);
     let in_tu_window: logic =
         line_is_active && (byte_in_line >= hblank_bytes);
     let at_be: logic =
@@ -99,13 +110,13 @@ pub module video_framer #(
     // registered (1-cycle delay), so we drive their byte_ticks one byte
     // EARLIER than the slot the mux reads them at.
     //
-    // MSA mux range is byte_in_line [4..36]. Pre-emit at byte_in_line
-    // [3..35]; trigger at byte_in_line == 2 so the first byte is ready
-    // by byte_in_line == 4.
+    // MSA mux range is byte_in_line [13..51]. Pre-emit at byte_in_line
+    // [12..50]; trigger at byte_in_line == 11 so the first byte is ready
+    // by byte_in_line == 13.
     let msa_trigger: logic =
-        i_byte_tick && line_is_vblank && (byte_in_line == 18'd2);
+        i_byte_tick && line_is_vblank && (byte_in_line == 18'd11);
     let msa_pre_window: logic =
-        line_is_vblank && (byte_in_line >= 18'd3) && (byte_in_line <: 18'd36);
+        line_is_vblank && (byte_in_line >= 18'd12) && (byte_in_line <: 18'd51);
     let msa_byte_tick: logic = i_byte_tick && msa_pre_window;
 
     // TU mux range is byte_in_line [hblank..bytes_per_line-1]. Pre-emit at
@@ -185,13 +196,16 @@ pub module video_framer #(
                     o_byte = 8'hBC;
                 }
                 o_is_k = 1;
-            } else if byte_in_line == 18'd1 {
-                // VB-ID: bit0 = VBlank flag (rest 0 in our minimal scope)
-                o_byte = {7'h00, line_is_vblank};
-            } else if byte_in_line == 18'd2 {
-                o_byte = i_mvid[7:0];
-            } else if byte_in_line == 18'd3 {
-                o_byte = 8'h00; // Maud
+            } else if in_hdr_window {
+                // (VB-ID, Mvid7:0, Maud7:0) x 4 (Fig 2-11/2-12).
+                if hdr_phase == 18'd0 {
+                    // VB-ID: bit0 = VBlank flag (rest 0 in our scope)
+                    o_byte = {7'h00, line_is_vblank};
+                } else if hdr_phase == 18'd1 {
+                    o_byte = i_mvid[7:0];
+                } else {
+                    o_byte = 8'h00; // Maud
+                }
             } else if at_be {
                 o_byte = 8'hFB; // BE = K27.7
                 o_is_k = 1;
@@ -207,9 +221,11 @@ pub module video_framer #(
                 }
             }
         } else {
-            // Idle Pattern: BS, VBID(NoVideoStream=1), Mvid=0, Maud=0,
-            // then 0x00 stuffing for the remainder of the 8192-symbol
-            // window.
+            // Idle Pattern: BS, then (VB-ID, Mvid=0, Maud=0) x 4, then
+            // 0x00 stuffing for the remainder of the 8192-symbol window.
+            // VB-ID = 0x09: NoVideoStream_Flag (bit 3) plus
+            // VerticalBlanking_Flag (bit 0), which Table 2-3 requires to
+            // be set whenever bit 3 is set.
             if idle_counter == 13'd0 {
                 if use_sr_now {
                     o_byte = 8'h1C;
@@ -217,12 +233,12 @@ pub module video_framer #(
                     o_byte = 8'hBC;
                 }
                 o_is_k = 1;
-            } else if idle_counter == 13'd1 {
-                o_byte = 8'h08; // NoVideoStream_Flag (bit 3)
-            } else if idle_counter == 13'd2 {
-                o_byte = 8'h00; // Mvid7:0
-            } else if idle_counter == 13'd3 {
-                o_byte = 8'h00; // Maud
+            } else if (idle_counter >= 13'd1) && (idle_counter <: 13'd13) {
+                if ((idle_counter - 13'd1) % 13'd3) == 13'd0 {
+                    o_byte = 8'h09; // VB-ID
+                } else {
+                    o_byte = 8'h00; // Mvid7:0 / Maud7:0
+                }
             }
         }
     }

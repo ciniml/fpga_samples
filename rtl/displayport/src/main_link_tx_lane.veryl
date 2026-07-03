@@ -24,6 +24,18 @@ pub module main_link_tx_lane #(
     // §3.1.6 (default = 512); tests override to a small value to exercise
     // SR injection within a few frames.
     param SR_PERIOD: u32 = 512,
+    // 0 (default, sim): byte_tick is paced by the on-chip serializer's
+    //                   o_ready and a 3-stage pipe-busy guard, so the
+    //                   chain emits one byte every ~10 system cycles
+    //                   (matching the behavioural 10:1 serializer).
+    // 1 (FPGA):         byte_tick fires every cycle when enabled. Use
+    //                   this when an external PCLK-rate serializer
+    //                   (Gowin OSER10 / Xilinx OSERDESE2) consumes the
+    //                   encoder's 10-bit symbol on every parallel-clock
+    //                   cycle. The on-chip serializer still runs but
+    //                   loses bits — drive `o_lane0_symbol` to the
+    //                   external SerDes instead of `o_lane0_bit`.
+    param CONTINUOUS_BYTE_TICK: u32 = 0,
 ) (
     i_clk:  input clock_posedge,
     i_rstn: input reset_sync_low,
@@ -52,16 +64,23 @@ pub module main_link_tx_lane #(
     s_axis_tready: output logic,
     s_axis_tdata:  input  logic<24>,
 
-    o_bit:       output logic,
-    o_bit_valid: output logic,
+    o_bit:          output logic,
+    o_bit_valid:    output logic,
+    // 10-bit encoder symbol output for off-chip / OSER10-style serializers.
+    // Valid every clock when CONTINUOUS_BYTE_TICK = 1.
+    o_symbol_valid: output logic,
+    o_symbol:       output logic<10>,
 ) {
     // serializer ready → byte tick (gated by enable so the chain is silent
     // when the main link is disabled, and rate-limited so only one byte
     // is in flight through the source path → scrambler → encoder).
     var ser_ready: logic;
     var pipe_busy: logic<3>; // shifts byte_tick down the pipeline
-    let pipe_idle: logic = pipe_busy == 3'b000;
-    let byte_tick: logic = i_enable && ser_ready && pipe_idle;
+    let pipe_idle:    logic = pipe_busy == 3'b000;
+    let byte_tick_paced:      logic = i_enable && ser_ready && pipe_idle;
+    let byte_tick_continuous: logic = i_enable;
+    let byte_tick:    logic = if (CONTINUOUS_BYTE_TICK != 0) ?
+                                  byte_tick_continuous : byte_tick_paced;
 
     always_ff (i_clk, i_rstn) {
         if_reset {
@@ -165,16 +184,14 @@ pub module main_link_tx_lane #(
     var sc_data:  logic<8>;
     var sc_is_k:  logic;
 
-    // Reset the LFSR on every BS (K28.5 = 0xBC) AND every SR (K28.0 =
-    // 0x1C). DP 1.2 §3.1.6 strictly requires only the SR reset, but
-    // every-BS reset is a useful sim convenience: it lets the sink RX
-    // re-sync its LFSR on every line boundary without having to wait
-    // up to SR_PERIOD lines for the next SR. The on-the-wire content
-    // (SR substituted for every SR_PERIOD-th BS) remains spec-conforming;
-    // a real hardware sink that resets only on SR will still see a
-    // correctly-scrambled byte stream and sync at the next SR.
+    // Reset the LFSR only on SR (K28.0 = 0x1C), per DP 1.2 §3.1.6: BS
+    // does NOT reset the scrambler; video_framer substitutes SR for
+    // every SR_PERIOD-th BS and only that SR re-seeds the LFSR. A
+    // spec-conforming sink resets on SR alone, so resetting on BS here
+    // would put the wire content out of step with such a sink for all
+    // lines between two SRs.
     let sc_seed_reset: logic =
-        mux_valid && mux_is_k && (mux_byte == 8'hBC || mux_byte == 8'h1C);
+        mux_valid && mux_is_k && (mux_byte == 8'h1C);
 
     inst u_sc: scrambler (
         i_clk             : i_clk,
@@ -220,7 +237,8 @@ pub module main_link_tx_lane #(
         o_symbol  : enc_symbol,
     );
 
-    // ----- 10:1 serializer -----
+    // ----- 10:1 serializer (sim / debug). FPGA builds typically use
+    //       OSER10 driven by `o_symbol` instead of this output.
     inst u_ser: serializer_10to1 (
         i_clk      : i_clk,
         i_rstn     : i_rstn,
@@ -230,4 +248,8 @@ pub module main_link_tx_lane #(
         o_bit      : o_bit,
         o_bit_valid: o_bit_valid,
     );
+
+    // 10-bit encoder symbol exposed for off-chip serializers.
+    assign o_symbol_valid = enc_valid;
+    assign o_symbol       = enc_symbol;
 }

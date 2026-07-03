@@ -21,6 +21,10 @@ pub module dp_source_top #(
     param PROCESSOR_RAM_SIZE: u32 = 8192,
     param PROCESSOR_ROM_FILE: string = "",       // Hex file loaded into the firmware ROM (BlockRAM init)
     param SR_PERIOD:          u32 = 512,
+    // 0 = sim default (paced by the on-chip behavioural serializer).
+    // 1 = FPGA / OSER10 mode: emit one byte per system cycle, drive an
+    //     external SerDes from o_lane0_symbol. See main_link_tx_lane.
+    param CONTINUOUS_BYTE_TICK: u32 = 0,
 ) (
     i_clk:  input clock_posedge,
     i_rstn: input reset_sync_low,
@@ -47,6 +51,9 @@ pub module dp_source_top #(
     // Main-link lane 0 serial output (Phase C: 1 lane only)
     o_lane0_bit:       output logic,
     o_lane0_bit_valid: output logic,
+    // 10-bit encoder symbol for off-chip serializers (Gowin OSER10 etc.)
+    o_lane0_symbol_valid: output logic,
+    o_lane0_symbol:       output logic<10>,
 
     // AXI-Stream pixel input (Phase D, 24bpp RGB)
     s_axis_video_tvalid: input  logic,
@@ -127,7 +134,8 @@ pub module dp_source_top #(
     );
 
     inst main_link: main_link_tx #(
-        SR_PERIOD: SR_PERIOD,
+        SR_PERIOD:            SR_PERIOD,
+        CONTINUOUS_BYTE_TICK: CONTINUOUS_BYTE_TICK,
     ) (
         i_clk            : i_clk,
         i_rstn           : i_rstn,
@@ -151,7 +159,9 @@ pub module dp_source_top #(
         s_axis_tvalid    : s_axis_video_tvalid,
         s_axis_tready    : s_axis_video_tready,
         s_axis_tdata     : s_axis_video_tdata,
-        o_lane0_bit      : o_lane0_bit,
-        o_lane0_bit_valid: o_lane0_bit_valid,
+        o_lane0_bit         : o_lane0_bit,
+        o_lane0_bit_valid   : o_lane0_bit_valid,
+        o_lane0_symbol_valid: o_lane0_symbol_valid,
+        o_lane0_symbol      : o_lane0_symbol,
     );
 }

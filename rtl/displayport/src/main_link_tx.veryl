@@ -10,7 +10,8 @@
  */
 
 pub module main_link_tx #(
-    param SR_PERIOD: u32 = 512,
+    param SR_PERIOD:            u32 = 512,
+    param CONTINUOUS_BYTE_TICK: u32 = 0,
 ) (
     i_clk:  input clock_posedge,
     i_rstn: input reset_sync_low,
@@ -40,13 +41,16 @@ pub module main_link_tx #(
     s_axis_tready: output logic,
     s_axis_tdata:  input  logic<24>,
 
-    o_lane0_bit:       output logic,
-    o_lane0_bit_valid: output logic,
+    o_lane0_bit:          output logic,
+    o_lane0_bit_valid:    output logic,
+    o_lane0_symbol_valid: output logic,
+    o_lane0_symbol:       output logic<10>,
 ) {
     let _unused_lane_count: logic<3> = i_lane_count;
 
     inst u_lane0: main_link_tx_lane #(
-        SR_PERIOD: SR_PERIOD,
+        SR_PERIOD:            SR_PERIOD,
+        CONTINUOUS_BYTE_TICK: CONTINUOUS_BYTE_TICK,
     ) (
         i_clk           : i_clk,
         i_rstn          : i_rstn,
@@ -71,5 +75,7 @@ pub module main_link_tx #(
         s_axis_tdata    : s_axis_tdata,
         o_bit           : o_lane0_bit,
         o_bit_valid     : o_lane0_bit_valid,
+        o_symbol_valid  : o_lane0_symbol_valid,
+        o_symbol        : o_lane0_symbol,
     );
 }

@@ -14,8 +14,8 @@
  *   N == 62 : 62 valid + FS + FE           (FS and FE adjacent)
  *   N <= 61 : N valid + FS + dummy(0x00) × (62 - N) + FE
  *
- * FS = K28.4 = 0x9C
- * FE = K28.7 = 0xFC
+ * FS = K30.7 = 0xFE (Table 3-15)
+ * FE = K23.7 = 0xF7 (Table 3-15)
  *
  * `i_tu_start` resets the per-TU phase counter (used by video_framer at
  * the start of each active line). Otherwise the phase wraps 0..63.
@@ -77,11 +77,11 @@ pub module tu_packer (
                     }
                 } else if {1'b0, phase} == i_active_count && i_active_count <: 7'd63 {
                     // FS (only when stuffing >= 2 symbols).
-                    o_byte = 8'h9C;
+                    o_byte = 8'hFE;
                     o_is_k = 1;
                 } else if phase == 6'd63 && i_active_count <: 7'd64 {
                     // FE (every TU with at least one stuffing symbol).
-                    o_byte = 8'hFC;
+                    o_byte = 8'hF7;
                     o_is_k = 1;
                 } else {
                     // Dummy stuffing.

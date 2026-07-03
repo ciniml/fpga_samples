@@ -186,3 +186,28 @@ rtl/displayport/
 - **AUX クロック**: `MANCHESTER_CLOCK_HZ = 1 MHz` と仕様書値 (§3.4) との整合性を Phase A 着手時に再検証
 - **電圧スイング/プリエンファシス**: シミュレーションでは数値だけ伝えれば十分だが、FPGA 移行時には外部 PHY/LVDS 出力段との結合方法を改めて検討
 - **MSA の M/N 計算**: 同期/非同期モードのどちらを優先するか。最初は同期 (ピクセルクロック = ストリームクロック) で 1 フレーム流すことを優先し、非同期は Phase D 後半で追加
+
+## 9. 仕様照合検証の結果 (2026-07)
+
+実機検証に先立ち、仕様書との突き合わせレビューを実施した。以下は**修正済み** (テストも仕様ゴールデン値ベースに更新):
+
+| 項目 | 仕様参照 | 修正内容 |
+|------|---------|---------|
+| スクランブラ LFSR 遷移式が App E と不一致 (Fibonacci 型で実装されており 2 バイト目以降全て不一致) | §3.1.6, App E (`advance(0xFFFF)=0xE817`) | Galois 型左シフトに修正。`tb_scrambler` に App E 参照値のゴールデンテスト (`scrambler_golden`) を新設 |
+| K シンボルで LFSR を進めていない | §3.1.6 "The LFSR advances on all symbols, both D and K" | K / scramble_disable 中も 8 ステップ advance |
+| スクランブラを毎 BS でリセット (実 Sink 非互換) | §3.1.6 (リセットは SR のみ) | TX/Sink モデルとも SR のみでリセット |
+| FS/FE/SE の K コード誤り (K28.4/K28.7/K28.3 は RESERVED/CP 用) | §3.5.1.1 Table 3-15 | FS=K30.7(0xFE), FE=K23.7(0xF7), SE=K29.7(0xFD) に修正 (`link_pkg`, `tu_packer`, TB パーサ) |
+| MSA が Fig 2-18 と不一致 (33 バイト・Mvid 2 回) | §2.2.4 Fig 2-18 (p76) | 1 レーン 39 シンボル構成 (SS×2 + 36 + SE、Mvid×4) に修正。golden も正解値に差し替え |
+| BS 後の VB-ID/Mvid/Maud が 1 回のみ | §2.2.1 / Fig 2-11, 2-12 ("must be transported four times, regardless of the number of lanes") | video/idle 両パスで ×4 反復。TB で 4 回一致を検証 |
+| アイドル VB-ID = 0x08 | Table 2-3 (bit3=1 なら bit0 も 1) | 0x09 に修正 |
+| FW の MISC0=0x01 (6bpc 扱い) | Table 2-45 | 0x21 (sync + 8bpc RGB) に修正 |
+
+**未修正の既知課題** (機能追加規模のもの):
+
+- **Enhanced Framing Mode 未対応**: DPCD Rev 1.2+ の Sink と接続する Source は必須 (§2.2.1.1/2.2.1.2、BS→BS+BF+BF+BS の 4 シンボル列)。実モニタ接続前に要対応
+- **8B/10B**: エンコーダの D.x.A7 代替符号未実装 (D11/13/14.7@RD+、D17/18/20.7@RD- の 6 値が ANSI 非準拠)。デコーダの代替符号受理・ディスパリティエラー検出なし
+- **HPD**: IRQ パルス (0.5–1ms) / unplug (>2ms) の幅判別未実装、`STABLE_CYCLES` が CLOCK_HZ 非連動 (16 サイクル ≒ 160ns)、FW が plug 後の HPD/IRQ (DPCD 201h) を監視しない
+- **FW 堅牢性**: AUX DEFER リトライなし (仕様は最大 7 回)、AUX 無応答時の 400µs タイムアウト未実装 (無限ループ)、CR ループの絶対上限なし、EDID 読み出し未実装
+- **AUX PHY**: RX の re-arm 時 stale バイト混入ハザード、送信中の自己受信ゲートなし、TX ビットレートが `MANCHESTER_CLOCK_HZ` 非連動 (1Mbps 固定)
+- **アーキテクチャ**: バイトレート = リンクシンボルレートの簡略化のため `tu_active=64` のみ整合 (tu_active<64 では MSA hwidth と実転送画素数が不一致)。M/N 計測ハードウェア未実装。MSA を全 vblank 行で送信 (仕様は once per frame)
+- **テストホール**: `CONTINUOUS_BYTE_TICK=1` (FPGA/OSER10 経路) が全テスト未使用、`pixel_fifo`/`hpd_detect` の単体テストなし、AUX エラー経路 (NACK/DEFER/無応答) 未検証、8b10b の両 RD 網羅・ラン長検査なし

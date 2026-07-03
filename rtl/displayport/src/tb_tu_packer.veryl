@@ -78,10 +78,10 @@ module tu_packer_layout;
             if (p < ac) begin
                 expected     = start_pixel + p[7:0];
             end else if (p == ac && ac < 63) begin
-                expected     = 8'h9C; // FS
+                expected     = 8'hFE; // FS (K30.7)
                 expected_is_k = 1'b1;
             end else if (p == 63 && ac < 64) begin
-                expected     = 8'hFC; // FE
+                expected     = 8'hF7; // FE (K23.7)
                 expected_is_k = 1'b1;
             end else begin
                 expected     = 8'h00; // dummy

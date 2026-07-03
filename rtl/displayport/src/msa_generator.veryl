@@ -5,8 +5,10 @@
 //          https://www.boost.org/LICENSE_1_0.txt)
 /**
  * @file msa_generator.veryl
- * @brief Generates the 33-byte Main Stream Attribute (MSA) sequence for a
- *        1-lane DP main link. DP 1.2 Fig 2-18 (1-lane column).
+ * @brief Generates the 39-symbol Main Stream Attribute (MSA) sequence for
+ *        a 1-lane DP main link, exactly as DP 1.2 Fig 2-18 (1-lane column):
+ *        SS SS + 36 attribute bytes + SE. Mvid23:0 is transported four
+ *        times, once at the head of each attribute group.
  *
  * Byte sequence (per i_byte_tick):
  *   00, 01: SS, SS                 (K28.2 = 0x5C)
@@ -14,17 +16,19 @@
  *   05, 06: Htotal15:8, Htotal7:0
  *   07, 08: Vtotal15:8, Vtotal7:0
  *   09, 10: HSP|HSW14:8, HSW7:0
- *   11, 12: VSP|VSW14:8, VSW7:0
- *   13, 14: Hstart15:8, Hstart7:0
- *   15, 16: Vstart15:8, Vstart7:0
- *   17, 18: Hwidth15:8, Hwidth7:0
- *   19, 20: Vheight15:8, Vheight7:0
- *   21, 22: 0x00, 0x00 (lane padding for 1-lane case)
- *   23..25: Mvid23:16, Mvid15:8, Mvid7:0   (redundancy)
- *   26..28: Nvid23:16, Nvid15:8, Nvid7:0
- *   29, 30: MISC0_7:0, MISC1_7:0
- *   31    : 0x00 (lane padding)
- *   32    : SE                      (K28.3 = 0x7C)
+ *   11..13: Mvid23:16, Mvid15:8, Mvid7:0
+ *   14, 15: Hstart15:8, Hstart7:0
+ *   16, 17: Vstart15:8, Vstart7:0
+ *   18, 19: VSP|VSW14:8, VSW7:0
+ *   20..22: Mvid23:16, Mvid15:8, Mvid7:0
+ *   23, 24: Hwidth15:8, Hwidth7:0
+ *   25, 26: Vheight15:8, Vheight7:0
+ *   27, 28: 0x00, 0x00 (All 0s)
+ *   29..31: Mvid23:16, Mvid15:8, Mvid7:0
+ *   32..34: Nvid23:16, Nvid15:8, Nvid7:0
+ *   35, 36: MISC0_7:0, MISC1_7:0
+ *   37    : 0x00 (All 0s)
+ *   38    : SE                      (K29.7 = 0xFD, Table 3-15)
  */
 
 pub module msa_generator (
@@ -33,7 +37,7 @@ pub module msa_generator (
 
     // Pacing pulse from the upstream byte clock domain (= 1 byte / pulse).
     i_byte_tick: input logic,
-    // Single-cycle trigger to start a new 33-byte MSA emission.
+    // Single-cycle trigger to start a new 39-byte MSA emission.
     i_trigger: input logic,
 
     // MSA fields. All driven from CPU-set VIDEO registers.
@@ -57,7 +61,7 @@ pub module msa_generator (
     o_byte:  output logic<8>,
     o_is_k:  output logic,
 ) {
-    var counter: logic<6>; // 0..32
+    var counter: logic<6>; // 0..38
     var active:  logic;
 
     always_ff (i_clk, i_rstn) {
@@ -92,34 +96,40 @@ pub module msa_generator (
                     6'd8:  o_byte = i_vtotal[7:0];
                     6'd9:  o_byte = {i_hsw_hsp[15], i_hsw_hsp[14:8]};
                     6'd10: o_byte = i_hsw_hsp[7:0];
-                    6'd11: o_byte = {i_vsw_vsp[15], i_vsw_vsp[14:8]};
-                    6'd12: o_byte = i_vsw_vsp[7:0];
-                    6'd13: o_byte = i_hstart[15:8];
-                    6'd14: o_byte = i_hstart[7:0];
-                    6'd15: o_byte = i_vstart[15:8];
-                    6'd16: o_byte = i_vstart[7:0];
-                    6'd17: o_byte = i_hwidth[15:8];
-                    6'd18: o_byte = i_hwidth[7:0];
-                    6'd19: o_byte = i_vheight[15:8];
-                    6'd20: o_byte = i_vheight[7:0];
-                    6'd21,
-                    6'd22: o_byte = 8'h00;
-                    6'd23: o_byte = i_mvid[23:16];
-                    6'd24: o_byte = i_mvid[15:8];
-                    6'd25: o_byte = i_mvid[7:0];
-                    6'd26: o_byte = i_nvid[23:16];
-                    6'd27: o_byte = i_nvid[15:8];
-                    6'd28: o_byte = i_nvid[7:0];
-                    6'd29: o_byte = i_misc[7:0];
-                    6'd30: o_byte = i_misc[15:8];
-                    6'd31: o_byte = 8'h00;
-                    6'd32: {
-                        o_byte = 8'h7C; // SE (K28.3)
+                    6'd11: o_byte = i_mvid[23:16];
+                    6'd12: o_byte = i_mvid[15:8];
+                    6'd13: o_byte = i_mvid[7:0];
+                    6'd14: o_byte = i_hstart[15:8];
+                    6'd15: o_byte = i_hstart[7:0];
+                    6'd16: o_byte = i_vstart[15:8];
+                    6'd17: o_byte = i_vstart[7:0];
+                    6'd18: o_byte = {i_vsw_vsp[15], i_vsw_vsp[14:8]};
+                    6'd19: o_byte = i_vsw_vsp[7:0];
+                    6'd20: o_byte = i_mvid[23:16];
+                    6'd21: o_byte = i_mvid[15:8];
+                    6'd22: o_byte = i_mvid[7:0];
+                    6'd23: o_byte = i_hwidth[15:8];
+                    6'd24: o_byte = i_hwidth[7:0];
+                    6'd25: o_byte = i_vheight[15:8];
+                    6'd26: o_byte = i_vheight[7:0];
+                    6'd27,
+                    6'd28: o_byte = 8'h00;
+                    6'd29: o_byte = i_mvid[23:16];
+                    6'd30: o_byte = i_mvid[15:8];
+                    6'd31: o_byte = i_mvid[7:0];
+                    6'd32: o_byte = i_nvid[23:16];
+                    6'd33: o_byte = i_nvid[15:8];
+                    6'd34: o_byte = i_nvid[7:0];
+                    6'd35: o_byte = i_misc[7:0];
+                    6'd36: o_byte = i_misc[15:8];
+                    6'd37: o_byte = 8'h00;
+                    6'd38: {
+                        o_byte = 8'hFD; // SE (K29.7)
                         o_is_k = 1;
                     }
                     default: o_byte = 8'h00;
                 }
-                if counter == 6'd32 {
+                if counter == 6'd38 {
                     active = 0;
                 } else {
                     counter = counter + 1;

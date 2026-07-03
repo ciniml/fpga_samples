@@ -204,7 +204,7 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &Video) {
         vsp:       false,
         mvid:      64,
         nvid:      64,
-        misc0:     0x01, // sync clock
+        misc0:     0x21, // sync clock, 8 bpc RGB (Table 2-45)
         misc1:     0x00,
         tu_active: 64, // 100% packed for the contrived 64x16 test (no FS/FE)
     };
