@@ -203,16 +203,21 @@ pub module aux_ch_subsystem #(
     var hpd_level:        logic;
     var hpd_event_plug:   logic;
     var hpd_event_unplug: logic;
+    var hpd_event_irq:    logic;
     var hpd_event_plug_sticky:   logic;
     var hpd_event_unplug_sticky: logic;
+    var hpd_event_irq_sticky:    logic;
 
-    inst hpd_detect_inst: hpd_detect (
+    inst hpd_detect_inst: hpd_detect #(
+        CLOCK_HZ,
+    ) (
         i_clk,
         i_rstn,
         hpd_in,
         hpd_level,
         hpd_event_plug,
         hpd_event_unplug,
+        hpd_event_irq,
     );
 
     // Main link control registers (DP 1.2 §3.5).
@@ -280,7 +285,7 @@ pub module aux_ch_subsystem #(
                         REG_SYSTEM_CLOCK_HZ: mem_rdata = CLOCK_HZ;
                         REG_SYSTEM_OUT: mem_rdata = cpu_io_out;
                         REG_SYSTEM_SERIAL_OUT: mem_rdata = {23'0, maxis_serial_out_tvalid, maxis_serial_out_tdata};
-                        REG_SYSTEM_HPD: mem_rdata = {29'0, hpd_event_unplug_sticky, hpd_event_plug_sticky, hpd_level};
+                        REG_SYSTEM_HPD: mem_rdata = {28'0, hpd_event_irq_sticky, hpd_event_unplug_sticky, hpd_event_plug_sticky, hpd_level};
                         default: mem_rdata = 0;
                     }
                 }
@@ -334,6 +339,7 @@ pub module aux_ch_subsystem #(
             cpu_io_out              = 0;
             hpd_event_plug_sticky   = 0;
             hpd_event_unplug_sticky = 0;
+            hpd_event_irq_sticky    = 0;
             ml_pattern_select       = 0;
             ml_enable               = 0;
             ml_rd_reset_pulse       = 0;
@@ -391,6 +397,9 @@ pub module aux_ch_subsystem #(
                                         }
                                         if mem_wdata[2] {
                                             hpd_event_unplug_sticky = 0;
+                                        }
+                                        if mem_wdata[3] {
+                                            hpd_event_irq_sticky = 0;
                                         }
                                     }
                                 }
@@ -468,6 +477,9 @@ pub module aux_ch_subsystem #(
             }
             if hpd_event_unplug {
                 hpd_event_unplug_sticky = 1;
+            }
+            if hpd_event_irq {
+                hpd_event_irq_sticky = 1;
             }
         }
     }

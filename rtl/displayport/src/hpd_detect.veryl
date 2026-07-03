@@ -5,14 +5,37 @@
 //          https://www.boost.org/LICENSE_1_0.txt)
 /**
  * @file hpd_detect.veryl
- * @brief Hot Plug Detect with 2-stage synchronizer and counter debounce.
- *        DP 1.2 §3.3, Tab 3-4.
- *        Phase A scope: level + plug/unplug edge events only.
- *        IRQ short-pulse classification is deferred to Phase C.
+ * @brief Hot Plug Detect with 2-stage synchronizer, glitch debounce and
+ *        IRQ / unplug pulse-width classification per DP 1.2 §3.3, Tab 3-4.
+ *
+ *        A stable High (held STABLE_CYCLES) emits hpd_event_plug. This plug
+ *        debounce is intentionally kept independent of, and much shorter
+ *        than, the pulse-width thresholds so the initial-plug latency
+ *        matches the original design.
+ *
+ *        Once connected (level High) a falling edge starts a low-duration
+ *        measurement:
+ *          - Low shorter than DEBOUNCE_CYCLES that returns High : glitch,
+ *            no event is emitted and the level stays High.
+ *          - Low at least DEBOUNCE_CYCLES but shorter than the 2ms
+ *            IRQ_UNPLUG_CYCLES threshold that returns High : hpd_event_irq
+ *            (single-cycle pulse, unplug is NOT asserted, level stays High).
+ *          - Low reaching the 2ms IRQ_UNPLUG_CYCLES threshold :
+ *            hpd_event_unplug at that cycle and level drops to 0.
+ *
+ *        The pulse-width thresholds are derived from CLOCK_HZ so the block
+ *        follows the real clock.
  */
 
 pub module hpd_detect #(
-    param STABLE_CYCLES: u32 = 32'd16, // Cycles required to consider hpd_in stable
+    param CLOCK_HZ: u32 = 32'd100_000_000, // System clock frequency (Hz)
+    // Stable-High debounce for plug detection (cycles). Kept as the legacy
+    // fixed debounce so initial-plug latency is unchanged.
+    param STABLE_CYCLES: u32 = 32'd16,
+    // Glitch-reject debounce width in cycles for the Low pulse classifier.
+    // Default ~10us. Also the minimum Low-pulse width classified as an IRQ.
+    // Overridable so simulations can shrink it.
+    param DEBOUNCE_CYCLES: u32 = CLOCK_HZ / 32'd100_000,
 ) (
     i_clk:  input clock_posedge,
     i_rstn: input reset_sync_low,
@@ -22,41 +45,95 @@ pub module hpd_detect #(
     hpd_level:        output logic,
     hpd_event_plug:   output logic,
     hpd_event_unplug: output logic,
+    hpd_event_irq:    output logic,
 ) {
-    type counter_t = logic<$clog2(STABLE_CYCLES + 1)>;
+    // 2ms IRQ/unplug classification threshold (DP 1.2 Tab 3-4).
+    // 2ms = CLOCK_HZ * 2 / 1000 = CLOCK_HZ / 500 cycles.
+    const IRQ_UNPLUG_CYCLES: u32 = CLOCK_HZ / 32'd500;
 
-    var sync_a:       logic;
-    var sync_b:       logic;
-    var stable_count: counter_t;
+    // Counter must hold up to the largest threshold (unplug).
+    type counter_t = logic<$clog2(IRQ_UNPLUG_CYCLES + 1)>;
+
+    enum State: logic<2> {
+        Disconnected, // level Low, waiting for a stable High to plug
+        Connected,    // level High, stable
+        LowPulse,     // was Connected, input currently Low, measuring width
+    }
+
+    var sync_a: logic;
+    var sync_b: logic;
+    var state:  State;
+    var count:  counter_t;
 
     always_ff (i_clk, i_rstn) {
         if_reset {
             sync_a           = 0;
             sync_b           = 0;
-            stable_count     = 0;
+            state            = State::Disconnected;
+            count            = 0;
             hpd_level        = 0;
             hpd_event_plug   = 0;
             hpd_event_unplug = 0;
+            hpd_event_irq    = 0;
         } else {
             sync_a = hpd_in;
             sync_b = sync_a;
 
+            // Event outputs are single-cycle pulses.
             hpd_event_plug   = 0;
             hpd_event_unplug = 0;
+            hpd_event_irq    = 0;
 
-            if sync_b == hpd_level {
-                stable_count = 0;
-            } else {
-                if stable_count == (STABLE_CYCLES - 1) as counter_t {
-                    stable_count = 0;
-                    hpd_level    = sync_b;
+            case state {
+                State::Disconnected: {
+                    // Require STABLE_CYCLES of stable High to plug.
                     if sync_b {
-                        hpd_event_plug = 1;
+                        if count == (STABLE_CYCLES - 1) as counter_t {
+                            count          = 0;
+                            hpd_level      = 1;
+                            hpd_event_plug = 1;
+                            state          = State::Connected;
+                        } else {
+                            count = count + 1;
+                        }
                     } else {
-                        hpd_event_unplug = 1;
+                        count = 0;
                     }
-                } else {
-                    stable_count = stable_count + 1;
+                }
+                State::Connected: {
+                    // Watch for a falling edge; keep level High meanwhile.
+                    if sync_b {
+                        count = 0;
+                    } else {
+                        // First Low cycle observed.
+                        count = 1;
+                        state = State::LowPulse;
+                    }
+                }
+                State::LowPulse: {
+                    if sync_b {
+                        // Returned High before the unplug threshold.
+                        // Pulses at least DEBOUNCE_CYCLES long are IRQs;
+                        // shorter ones are glitches and are ignored.
+                        if count >= DEBOUNCE_CYCLES as counter_t {
+                            hpd_event_irq = 1;
+                        }
+                        count = 0;
+                        state = State::Connected;
+                    } else {
+                        // Still Low. Reaching IRQ_UNPLUG_CYCLES => unplug.
+                        if count == (IRQ_UNPLUG_CYCLES - 1) as counter_t {
+                            count            = 0;
+                            hpd_level        = 0;
+                            hpd_event_unplug = 1;
+                            state            = State::Disconnected;
+                        } else {
+                            count = count + 1;
+                        }
+                    }
+                }
+                default: {
+                    state = State::Disconnected;
                 }
             }
         }

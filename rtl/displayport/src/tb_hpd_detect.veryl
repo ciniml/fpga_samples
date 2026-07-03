@@ -1,0 +1,137 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_hpd_detect.veryl
+ * @brief Unit tests for hpd_detect IRQ / unplug pulse-width classification
+ *        (DP 1.2 §3.3, Tab 3-4).
+ *
+ * The DUT is instantiated with CLOCK_HZ = 1MHz so the 2ms unplug threshold
+ * maps to 2000 cycles (IRQ_UNPLUG_CYCLES), keeping the simulation short.
+ * STABLE_CYCLES (plug debounce) and DEBOUNCE_CYCLES (glitch/IRQ-min width)
+ * are overridden to small explicit values.
+ *
+ * Cases:
+ *   (a) stable High           -> exactly one hpd_event_plug, level High
+ *   (d) glitch  ( 5 cyc Low)  -> no event (shorter than DEBOUNCE=10)
+ *   (b) IRQ pulse (600 cyc)   -> one hpd_event_irq, no unplug
+ *   (e) near-2ms (1995 cyc)   -> one hpd_event_irq, no unplug (boundary)
+ *   (c) >=2ms   (2050 cyc)    -> one hpd_event_unplug, level Low, no irq
+ */
+
+module TbHpdDetect {}
+
+#[test(hpd_detect_classify)]
+embed (inline) sv{{{
+module hpd_detect_classify;
+    logic clk;
+    logic rstn;
+    initial clk = 1'b0;
+    always #5 clk = ~clk;
+
+    logic hpd_in;
+    logic hpd_level;
+    logic ev_plug;
+    logic ev_unplug;
+    logic ev_irq;
+
+    // 1 MHz clock domain: 2ms = 2000 cycles (from CLOCK_HZ). Plug debounce
+    // and glitch/IRQ-min width overridden small: STABLE=8, DEBOUNCE=10.
+    displayport_hpd_detect #(
+        .CLOCK_HZ(32'd1_000_000),
+        .STABLE_CYCLES(32'd8),
+        .DEBOUNCE_CYCLES(32'd10)
+    ) dut (
+        .i_clk            (clk),
+        .i_rstn           (rstn),
+        .hpd_in           (hpd_in),
+        .hpd_level        (hpd_level),
+        .hpd_event_plug   (ev_plug),
+        .hpd_event_unplug (ev_unplug),
+        .hpd_event_irq    (ev_irq)
+    );
+
+    // Accumulate the single-cycle event pulses so the stimulus process can
+    // check how many of each fired across a stimulus window.
+    integer plug_cnt;
+    integer unplug_cnt;
+    integer irq_cnt;
+    always_ff @(posedge clk) begin
+        if (!rstn) begin
+            plug_cnt   <= 0;
+            unplug_cnt <= 0;
+            irq_cnt    <= 0;
+        end else begin
+            if (ev_plug)   plug_cnt   <= plug_cnt   + 1;
+            if (ev_unplug) unplug_cnt <= unplug_cnt + 1;
+            if (ev_irq)    irq_cnt    <= irq_cnt    + 1;
+        end
+    end
+
+    // Drive hpd_in at a level for `cycles` clocks.
+    task automatic drive(input logic val, input integer cycles);
+        hpd_in = val;
+        repeat (cycles) @(posedge clk);
+    endtask
+
+    initial begin
+        rstn   = 1'b0;
+        hpd_in = 1'b0;
+        repeat (4) @(posedge clk);
+        rstn = 1'b1;
+        @(posedge clk);
+
+        // (a) Plug: stable High must produce exactly one plug event and
+        // raise the level. 20 cycles >> DEBOUNCE (10) + sync latency.
+        drive(1'b1, 20);
+        if (plug_cnt !== 1)   $fatal(1, "[tb_hpd_detect] (a) expected 1 plug, got %0d", plug_cnt);
+        if (unplug_cnt !== 0) $fatal(1, "[tb_hpd_detect] (a) unexpected unplug %0d", unplug_cnt);
+        if (irq_cnt !== 0)    $fatal(1, "[tb_hpd_detect] (a) unexpected irq %0d", irq_cnt);
+        if (hpd_level !== 1)  $fatal(1, "[tb_hpd_detect] (a) level not High");
+
+        // (d) Glitch: Low for 5 cycles (< DEBOUNCE=10) then High again.
+        // Nothing must fire and the level must stay High.
+        drive(1'b0, 5);
+        drive(1'b1, 20);
+        if (plug_cnt !== 1)   $fatal(1, "[tb_hpd_detect] (d) plug changed %0d", plug_cnt);
+        if (unplug_cnt !== 0) $fatal(1, "[tb_hpd_detect] (d) glitch produced unplug %0d", unplug_cnt);
+        if (irq_cnt !== 0)    $fatal(1, "[tb_hpd_detect] (d) glitch produced irq %0d", irq_cnt);
+        if (hpd_level !== 1)  $fatal(1, "[tb_hpd_detect] (d) level not High");
+
+        // (b) IRQ pulse: 600 cycles Low (0.6ms, between DEBOUNCE and 2ms)
+        // then High -> exactly one irq, no unplug, level stays High.
+        drive(1'b0, 600);
+        drive(1'b1, 20);
+        if (irq_cnt !== 1)    $fatal(1, "[tb_hpd_detect] (b) expected 1 irq, got %0d", irq_cnt);
+        if (unplug_cnt !== 0) $fatal(1, "[tb_hpd_detect] (b) unexpected unplug %0d", unplug_cnt);
+        if (plug_cnt !== 1)   $fatal(1, "[tb_hpd_detect] (b) plug changed %0d", plug_cnt);
+        if (hpd_level !== 1)  $fatal(1, "[tb_hpd_detect] (b) level not High");
+
+        // (e) Near-2ms boundary: 1995 cycles Low (just under 2000) then
+        // High -> classified as irq, not unplug.
+        drive(1'b0, 1995);
+        drive(1'b1, 20);
+        if (irq_cnt !== 2)    $fatal(1, "[tb_hpd_detect] (e) expected 2 irq total, got %0d", irq_cnt);
+        if (unplug_cnt !== 0) $fatal(1, "[tb_hpd_detect] (e) boundary produced unplug %0d", unplug_cnt);
+        if (hpd_level !== 1)  $fatal(1, "[tb_hpd_detect] (e) level not High");
+
+        // (c) Unplug: hold Low well past 2000 cycles -> exactly one unplug
+        // fires (at the 2ms mark), level drops, no extra irq.
+        drive(1'b0, 2050);
+        if (unplug_cnt !== 1) $fatal(1, "[tb_hpd_detect] (c) expected 1 unplug, got %0d", unplug_cnt);
+        if (irq_cnt !== 2)    $fatal(1, "[tb_hpd_detect] (c) unexpected extra irq %0d", irq_cnt);
+        if (hpd_level !== 0)  $fatal(1, "[tb_hpd_detect] (c) level not Low after unplug");
+
+        $display("[tb_hpd_detect] PASS (plug=%0d irq=%0d unplug=%0d)", plug_cnt, irq_cnt, unplug_cnt);
+        $finish;
+    end
+
+    // Hard timeout guard.
+    initial begin
+        #1_000_000;
+        $fatal(1, "[tb_hpd_detect] timeout");
+    end
+endmodule
+}}}
