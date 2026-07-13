@@ -15,8 +15,8 @@ pub module probe_width_converter #(
     r#clock:     input clock,
     aresetn: input reset,
 
-    data_in: modport axi4s_if::<8, 1, 0>::slave,
-    data_out: modport axi4s_if::<8, 1, 0>::master,
+    data_in: modport axi4s::axi4s_if::<8, true, 0>::slave,
+    data_out: modport axi4s::axi4s_if::<8, true, 0>::master,
 ) {
     const NUMBER_OF_PHASES: u32 = (WIDTH + 6) / 7;
     const INPUT_WIDTH_WITH_PADDING: u32 = NUMBER_OF_PHASES * 7;
@@ -42,8 +42,12 @@ pub module probe_width_converter #(
         always_ff(r#clock, aresetn) {
             if_reset {
                 data_out.tvalid = 0;
+                data_out.tdata = '0;
+                data_out.tlast = 0;
+                data_out.tuser = 0;
                 in_data = '0;
                 in_last = 0;
+                phase_counter = 0;
             }
             else {
                 if data_out.tvalid && data_out.tready {
@@ -66,7 +70,9 @@ pub module probe_width_converter #(
                             if DEBUG_OUT {
                                 $info("WC: out(%d)=%h\n", phase_counter, new_out_data);
                             }
-                            data_out.tdata = new_out_data;
+                            // Zero-extend to the 8-bit stream (Chisel:
+                            // Cat(0.U(1.W), outData)).
+                            data_out.tdata = {1'b0, new_out_data};
                         }
                     }
                     data_out.tlast = phase_counter == 1 && in_last;

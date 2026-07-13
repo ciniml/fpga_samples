@@ -20,7 +20,7 @@ pub module embedded_probe #(
     trigger: input logic,
     triggered: output logic,
 
-    data_out: modport axi4s_if::<8, 1, 0>::master,    
+    data_out: modport axi4s::axi4s_if::<8, true, 0>::master,    
 ) {
     type data_t = logic<WIDTH>;
     type index_t = logic<$clog2(BUFFER_DEPTH)>;
@@ -68,11 +68,18 @@ pub module embedded_probe #(
             data_out.tvalid = 0;
             data_out.tdata = 0;
             data_out.tlast = 0;
-            
+            data_out.tuser = 0;
+
         } else {
-            if data_out.tvalid && data_out.tready {
-                
+            // Latch an early trigger pulse (Chisel: when(io.trigger)
+            // { hasTriggered := true.B }). Placed before the state case so
+            // the OUTPUT state's clear takes priority, like Chisel's
+            // last-connect semantics.
+            if trigger {
+                has_triggered = 1;
             }
+            // `triggered` is a single-cycle pulse.
+            triggered = 0;
             case state {
                 State::RESET: {
                     data_out.tvalid = 0;
@@ -119,11 +126,17 @@ pub module embedded_probe #(
                 State::OUTPUT: {
                     // Clear triggered flag
                     has_triggered = 0;
-                    data_out.tlast = buffer_empty;
                     if !data_out.tvalid || data_out.tready {
                         data_out.tvalid = !buffer_empty;
-                        data_out.tdata = buffer[buffer_head[msb-1:0]];
-                        buffer_head = buffer_next_index(buffer_head);
+                        if !buffer_empty {
+                            data_out.tdata = buffer[buffer_head[msb-1:0]];
+                            // tlast accompanies the final entry: the
+                            // buffer is empty once this pop completes
+                            // (Chisel: outLast = !buffer.valid while the
+                            // registered output holds the last data).
+                            data_out.tlast = buffer_next_index(buffer_head) == buffer_tail;
+                            buffer_head = buffer_next_index(buffer_head);
+                        }
                     }
                     if data_out.tvalid && data_out.tready && data_out.tlast {
                         state = State::RESET;

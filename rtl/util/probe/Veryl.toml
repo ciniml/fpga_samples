@@ -1,0 +1,10 @@
+[project]
+name = "probe"
+version = "0.1.0"
+
+[build]
+clock_type = "posedge"
+reset_type = "sync_low"
+
+[dependencies]
+axi4s = {path = "../../interfaces/axi4s"}

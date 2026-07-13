@@ -1,0 +1,337 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_probe.veryl
+ * @brief Veryl-native tests for embedded_probe / probe_width_converter,
+ *        ported from test/tb_probe.sv and made self-checking.
+ *
+ * probe_capture drives a free-running counter into the probe and checks,
+ * per capture round, that exactly BUFFER_DEPTH consecutive samples are
+ * streamed out, that the window is positioned so the trigger sample sits
+ * at TRIGGER_POSITION, that tlast marks the final beat, and that the
+ * probe re-arms for subsequent rounds (including a trigger pulse arriving
+ * during the pre-trigger fill, which must be latched). Output backpressure
+ * is randomized. The expected window follows the Chisel reference
+ * (chisel/src/main/scala/diag/probe.scala): TRIGGER_POSITION samples
+ * precede the trigger sample, so with the trigger sampled at value V the
+ * captured window is V-TRIGGER_POSITION .. V+(BUFFER_DEPTH-
+ * TRIGGER_POSITION-1).
+ *
+ * probe_width_conv checks the 7-bit LSb-first split of the width
+ * converter: each byte B becomes B[6:0] then {6'b0, B[7]}, with tlast
+ * only on the final beat of the final byte.
+ */
+
+module TbProbe {}
+
+#[test(probe_capture)]
+embed (inline) sv{{{
+module probe_capture;
+    localparam int unsigned BUFFER_DEPTH     = 32;
+    localparam int unsigned TRIGGER_POSITION = 16;
+    localparam int unsigned NUM_ROUNDS       = 3;
+
+    logic clock;
+    logic aresetn;
+    initial clock = 0;
+    always #5 clock = ~clock;
+
+    logic [7:0] data_in;
+    logic       trigger;
+    logic       triggered;
+
+    \{ axi4s::axi4s_if::<8, true, 0> \} probe_out();
+
+    \{ embedded_probe \} #(
+        .BUFFER_DEPTH(BUFFER_DEPTH),
+        .TRIGGER_POSITION(TRIGGER_POSITION),
+        .WIDTH(8)
+    ) dut (
+        .clock  (clock),
+        .aresetn(aresetn),
+        .data_in(data_in),
+        .trigger(trigger),
+        .triggered(triggered),
+        .data_out(probe_out)
+    );
+
+    // Tie off the width converter so it is not a Verilator top-level
+    // module (interfaced ports on top modules are unsupported); veryl
+    // test compiles every project module into each test.
+    \{ axi4s::axi4s_if::<8, true, 0> \} wc_in();
+    \{ axi4s::axi4s_if::<8, true, 0> \} wc_out();
+    assign wc_in.tvalid = 1'b0;
+    assign wc_in.tdata  = '0;
+    assign wc_in.tlast  = 1'b0;
+    assign wc_in.tuser  = '0;
+    assign wc_out.tready = 1'b0;
+    \{ probe_width_converter \} #(.WIDTH(8), .DEBUG_OUT(1'b0)) unused_wc (
+        .clock(clock), .aresetn(aresetn), .data_in(wc_in), .data_out(wc_out)
+    );
+
+    // Free-running counter input: consecutive values make window checks
+    // exact (mod 256).
+    always_ff @(posedge clock) begin
+        if (!aresetn) data_in <= '0;
+        else          data_in <= data_in + 8'd1;
+    end
+
+    // Randomized output backpressure. force_ready pins tready high so a
+    // round can deterministically exercise the buffer-empty transition
+    // with tready asserted (the case where the original port lost tlast
+    // and over-ran the head pointer).
+    logic ready_en;
+    logic force_ready;
+    assign probe_out.tready = force_ready || ready_en;
+    always_ff @(posedge clock) begin
+        if (!aresetn) ready_en <= 1'b0;
+        else          ready_en <= ($urandom_range(0, 9) < 7);
+    end
+
+    // `triggered` is a 1-cycle pulse (matching the Chisel reference), so
+    // latch it for the end-of-round check.
+    logic triggered_seen;
+    always_ff @(posedge clock) begin
+        if (!aresetn)       triggered_seen <= 1'b0;
+        else if (triggered) triggered_seen <= 1'b1;
+    end
+
+    // Frame collector.
+    logic [7:0] frame[$];
+    int         frames_done;
+    int         errors;
+    logic [7:0] exp_start;      // expected first value of current frame
+    logic       exp_start_valid; // 0 => only check length/consecutiveness
+
+    task automatic finish_frame();
+        if (frame.size() != BUFFER_DEPTH) begin
+            $display("[tb_probe] round %0d: captured %0d beats (expected %0d)",
+                     frames_done, frame.size(), BUFFER_DEPTH);
+            errors++;
+        end else begin
+            int base;
+            base = exp_start_valid ? 32'(exp_start) : 32'(frame[0]);
+            for (int k = 0; k < BUFFER_DEPTH; k++) begin
+                if (frame[k] !== 8'((base + k) & 32'hFF)) begin
+                    $display("[tb_probe] round %0d beat %0d: expected %02h got %02h",
+                             frames_done, k, 8'((base + k) & 32'hFF), frame[k]);
+                    errors++;
+                end
+            end
+        end
+        frame.delete();
+        frames_done++;
+    endtask
+
+    always_ff @(posedge clock) begin
+        if (aresetn && probe_out.tvalid && probe_out.tready) begin
+            frame.push_back(probe_out.tdata);
+            if (probe_out.tlast) finish_frame();
+            if (frame.size() > BUFFER_DEPTH) begin
+                $display("[tb_probe] runaway output: no tlast within %0d beats",
+                         frame.size());
+                $fatal(1, "[tb_probe] tlast never asserted");
+            end
+        end
+    end
+
+    task automatic wait_frame(input int n, input int timeout_cycles);
+        for (int t = 0; t < timeout_cycles; t++) begin
+            @(posedge clock);
+            if (frames_done >= n) return;
+        end
+        $fatal(1, "[tb_probe] timeout waiting for frame %0d (done=%0d, partial=%0d beats)",
+               n, frames_done, frame.size());
+    endtask
+
+    initial begin
+        aresetn          = 1'b0;
+        trigger          = 1'b0;
+        force_ready      = 1'b0;
+        frames_done      = 0;
+        errors           = 0;
+        exp_start_valid  = 1'b0;
+        repeat (10) @(posedge clock);
+        #1 aresetn = 1'b1;
+
+        // ---- Round 1: trigger well inside AWAITING_TRIGGER ----
+        repeat (60) @(posedge clock);
+        #1;
+        trigger   = 1'b1;
+        exp_start = 8'((32'(data_in) - TRIGGER_POSITION) & 32'hFF);
+        exp_start_valid = 1'b1;
+        @(posedge clock);
+        #1 trigger = 1'b0;
+
+        wait_frame(1, 2000);
+        if (!triggered_seen) begin
+            $display("[tb_probe] triggered flag never observed in round 1");
+            errors++;
+        end
+
+        // ---- Round 2: verify the probe re-armed cleanly, with tready
+        //      held high through the whole readout ----
+        repeat (100) @(posedge clock);
+        #1;
+        force_ready = 1'b1;
+        trigger   = 1'b1;
+        exp_start = 8'((32'(data_in) - TRIGGER_POSITION) & 32'hFF);
+        @(posedge clock);
+        #1 trigger = 1'b0;
+
+        wait_frame(2, 2000);
+        #1 force_ready = 1'b0;
+
+        // ---- Round 3: trigger pulse during the pre-trigger fill must be
+        //      latched (Chisel hasTriggered semantics). The capture then
+        //      fires as soon as the pre-trigger fill completes; only
+        //      length/consecutiveness is checked since the fill start
+        //      cycle is not observable from outside.
+        repeat (3) @(posedge clock); // still in RESET/FILL_PRE_TRIGGER
+        #1;
+        trigger = 1'b1;
+        exp_start_valid = 1'b0;
+        @(posedge clock);
+        #1 trigger = 1'b0;
+
+        wait_frame(3, 2000);
+
+        if (errors != 0) begin
+            $fatal(1, "[tb_probe] %0d errors across %0d rounds", errors, frames_done);
+        end
+        $display("[tb_probe] PASS (%0d capture rounds verified)", frames_done);
+        $finish;
+    end
+
+    initial begin
+        #1_000_000;
+        $fatal(1, "[tb_probe] hard timeout");
+    end
+endmodule
+}}}
+
+#[test(probe_width_conv)]
+embed (inline) sv{{{
+module probe_width_conv;
+    logic clock;
+    logic aresetn;
+    initial clock = 0;
+    always #5 clock = ~clock;
+
+    \{ axi4s::axi4s_if::<8, true, 0> \} conv_in();
+    \{ axi4s::axi4s_if::<8, true, 0> \} conv_out();
+
+    \{ probe_width_converter \} #(
+        .WIDTH(8),
+        .DEBUG_OUT(1'b0)
+    ) dut (
+        .clock   (clock),
+        .aresetn (aresetn),
+        .data_in (conv_in),
+        .data_out(conv_out)
+    );
+
+    // Tie off the probe so it is not a Verilator top-level module (see
+    // note in probe_capture).
+    logic unused_triggered;
+    \{ axi4s::axi4s_if::<8, true, 0> \} unused_probe_out();
+    assign unused_probe_out.tready = 1'b0;
+    \{ embedded_probe \} #(.BUFFER_DEPTH(32), .TRIGGER_POSITION(16), .WIDTH(8)) unused_probe (
+        .clock(clock), .aresetn(aresetn),
+        .data_in(8'h00), .trigger(1'b0), .triggered(unused_triggered),
+        .data_out(unused_probe_out)
+    );
+
+    // Input: 4 bytes, tlast on the final byte.
+    localparam int unsigned NUM_BYTES = 4;
+    logic [7:0] in_bytes [NUM_BYTES] = '{8'hA5, 8'h3C, 8'hFF, 8'h80};
+
+    // Expected: per byte B, beats B[6:0] then {6'b0, B[7]} (LSb-first
+    // 7-bit split per the Chisel reference), tlast on the very last beat.
+    logic [7:0] exp_data [2 * NUM_BYTES] = '{
+        8'h25, 8'h01,   // 0xA5
+        8'h3C, 8'h00,   // 0x3C
+        8'h7F, 8'h01,   // 0xFF
+        8'h00, 8'h01    // 0x80
+    };
+
+    // Randomized output backpressure.
+    logic ready_en;
+    assign conv_out.tready = ready_en;
+    always_ff @(posedge clock) begin
+        if (!aresetn) ready_en <= 1'b0;
+        else          ready_en <= ($urandom_range(0, 9) < 6);
+    end
+
+    int out_count;
+    int errors;
+    always_ff @(posedge clock) begin
+        if (aresetn && conv_out.tvalid && conv_out.tready) begin
+            if (out_count < 2 * NUM_BYTES) begin
+                if (conv_out.tdata !== exp_data[out_count]) begin
+                    $display("[tb_wc] beat %0d: expected %02h got %02h",
+                             out_count, exp_data[out_count], conv_out.tdata);
+                    errors++;
+                end
+                if (conv_out.tlast !== (out_count == 2 * NUM_BYTES - 1)) begin
+                    $display("[tb_wc] beat %0d: unexpected tlast=%0d",
+                             out_count, conv_out.tlast);
+                    errors++;
+                end
+            end else begin
+                $display("[tb_wc] spurious extra beat %0d: %02h", out_count, conv_out.tdata);
+                errors++;
+            end
+            out_count++;
+        end
+    end
+
+    initial begin
+        aresetn        = 1'b0;
+        conv_in.tvalid = 1'b0;
+        conv_in.tdata  = '0;
+        conv_in.tlast  = 1'b0;
+        conv_in.tuser  = '0;
+        out_count      = 0;
+        errors         = 0;
+        repeat (5) @(posedge clock);
+        #1 aresetn = 1'b1;
+        @(posedge clock);
+
+        for (int i = 0; i < NUM_BYTES; i++) begin
+            #1;
+            conv_in.tvalid = 1'b1;
+            conv_in.tdata  = in_bytes[i];
+            conv_in.tlast  = (i == NUM_BYTES - 1);
+            @(posedge clock);
+            while (!conv_in.tready) @(posedge clock);
+            #1 conv_in.tvalid = 1'b0;
+            @(posedge clock);
+        end
+
+        // Wait for all output beats.
+        for (int t = 0; t < 1000; t++) begin
+            @(posedge clock);
+            if (out_count >= 2 * NUM_BYTES) break;
+        end
+        if (out_count < 2 * NUM_BYTES) begin
+            $fatal(1, "[tb_wc] timeout: got %0d / %0d beats", out_count, 2 * NUM_BYTES);
+        end
+        repeat (10) @(posedge clock);
+
+        if (errors != 0) begin
+            $fatal(1, "[tb_wc] %0d errors", errors);
+        end
+        $display("[tb_wc] PASS (%0d beats verified)", out_count);
+        $finish;
+    end
+
+    initial begin
+        #1_000_000;
+        $fatal(1, "[tb_wc] hard timeout");
+    end
+endmodule
+}}}
