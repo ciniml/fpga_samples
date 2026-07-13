@@ -7,9 +7,7 @@
 //    (See accompanying file LICENSE_1_0.txt or copy at
 //          http://www.boost.org/LICENSE_1_0.txt)
 
-embed (inline) sv{{{
-`timescale 1ns/1ps
-}}}
+include (inline, "timescale.svh");
 module top(
     r#clock: input clock,
 
@@ -38,24 +36,22 @@ module top(
   var clock_dvi_ser: logic;
   var pll_lock_ser: logic;
 
-  var reset_button: logic<3>;
+  // Debounced "button released" shift register. Active-high (1 = S2
+  // released and stable) so that the FPGA power-on default of all-zero
+  // registers keeps reset asserted until three clean samples arrive —
+  // this replaces the previous '1-initialized active-high reset_button,
+  // which needed an initial block that Veryl 0.20+ no longer allows
+  // alongside an always_ff assignment.
+  var button_released: logic<3>;
 
-  function init_reset_signal::<W: u32 = 3>(reset_signal: output logic<W>) {
-    reset_signal = '1;
-  }
-
-  initial {
-    init_reset_signal::<3>(reset_button);
-  }
-  
   always_ff (r#clock) {
-    reset_button = {!button_s2, reset_button[2:1]};
+    button_released = {button_s2, button_released[2:1]};
   }
 
   var reset_ext: logic;
   inst reset_seq_ext: $sv::reset_seq(
     r#clock: clock_dvi,
-    reset_in: reset_button[0] || !pll_lock_main || !pll_lock_ser,
+    reset_in: !button_released[0] || !pll_lock_main || !pll_lock_ser,
     reset_out: reset_ext,
   );
 
@@ -143,8 +139,8 @@ module top(
     value_out = value;
   }
   initial {
-    for y: u32 in 0..SCREEN_HEIGHT {
-      for x: u32 in 0..SCREEN_WIDTH {
+    for y in 0..SCREEN_HEIGHT {
+      for x in 0..SCREEN_WIDTH {
         let i: u32 = y * SCREEN_WIDTH + x;
         let v: u8 = x[7:0] ^ y[7:0];
         set_vram_element(v, vram[i]);

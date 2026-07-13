@@ -9,15 +9,15 @@
  */
 
 pub module dds_core #(
-    parameter SAMPLE_BITS: u32 = 16,
-    parameter TABLE_LENGTH_BITS: u32 = 8,
-    parameter TABLE_READ_LATENCY: u32 = 1,  // table memory access latency. must be greater than or equal to 1. 1 means data is valid at the next cycle.
-    parameter PHASE_COUNTER_BITS: u32 = 14,
-    parameter MULTIPLYER_LATENCY: u32 = 1,  // multiplier latency. must be greater than or equal to 1. 1 means multiplicand output is valid at the next cycle.
-    parameter DEBUG_OUT: bit = 0,           // Enable debug output messages
+    param SAMPLE_BITS: u32 = 16,
+    param TABLE_LENGTH_BITS: u32 = 8,
+    param TABLE_READ_LATENCY: u32 = 1,  // table memory access latency. must be greater than or equal to 1. 1 means data is valid at the next cycle.
+    param PHASE_COUNTER_BITS: u32 = 14,
+    param MULTIPLYER_LATENCY: u32 = 1,  // multiplier latency. must be greater than or equal to 1. 1 means multiplicand output is valid at the next cycle.
+    param DEBUG_OUT: bit = 0,           // Enable debug output messages
 ) (
-    clock: input logic,
-    aresetn: input logic,
+    clk: input clock_posedge,
+    aresetn: input reset_sync_low,
 
     // Table access
     table_addr   : output logic<TABLE_LENGTH_BITS> [2],
@@ -37,7 +37,7 @@ pub module dds_core #(
     type sample_t = logic<SAMPLE_BITS>;
     type signed_sample_t = signed logic<SAMPLE_BITS>;
 
-    localparam TABLE_READ_LATENCY_COUNTER_BITS: u32 = if TABLE_READ_LATENCY <= 1 { 1 } else { $clog2(TABLE_READ_LATENCY) };
+    const TABLE_READ_LATENCY_COUNTER_BITS: u32 = if TABLE_READ_LATENCY <= 1 ? 1 : $clog2(TABLE_READ_LATENCY);
     type read_latency_counter_t = logic<TABLE_READ_LATENCY_COUNTER_BITS>;
     type table_addr_t = logic<TABLE_LENGTH_BITS>;
     type phase_counter_t = logic<PHASE_COUNTER_BITS>;
@@ -68,7 +68,7 @@ pub module dds_core #(
         return phase[$bits(phase_counter_t) - 1:$bits(phase_counter_t) - TABLE_LENGTH_BITS];
     }
 
-    always_ff (clock, aresetn) {
+    always_ff (clk, aresetn) {
         if_reset {
             table_addr[0] = 0;
             table_addr[1] = 0;
@@ -138,7 +138,7 @@ pub module dds_core #(
     always_comb {
         saxis_control_tready = aresetn;
     }
-    always_ff(clock, aresetn) {
+    always_ff (clk, aresetn) {
         if_reset {
             phase_increment = 0;
             new_phase_counter = 0;
@@ -164,10 +164,10 @@ pub module dds_core #(
     }
 
     // Interpolation process
-    localparam PHASE_FRACTION_BITS: u32 = PHASE_COUNTER_BITS - TABLE_LENGTH_BITS + 1;
+    const PHASE_FRACTION_BITS: u32 = PHASE_COUNTER_BITS - TABLE_LENGTH_BITS + 1;
     type phase_fraction_t = logic<PHASE_FRACTION_BITS>;
     type signed_phase_fraction_t = signed logic<PHASE_FRACTION_BITS + 1>;
-    localparam PHASE_FRACTION_MAX: phase_fraction_t = 1 << (PHASE_FRACTION_BITS - 1);
+    const PHASE_FRACTION_MAX: phase_fraction_t = 1 << (PHASE_FRACTION_BITS - 1);
     function to_phase_fraction(phase: input phase_counter_t) -> phase_fraction_t {
         return {1'b0, phase[$bits(phase_counter_t) - TABLE_LENGTH_BITS - 1:0]};
     }
@@ -183,7 +183,7 @@ pub module dds_core #(
         ADD,
     }
     var interpolation_state: InterpolationState;
-    localparam MULTIPLYER_LATENCY_BITS: u32 = if MULTIPLYER_LATENCY <= 1 { 1 } else { $clog2(MULTIPLYER_LATENCY) };
+    const MULTIPLYER_LATENCY_BITS: u32 = if MULTIPLYER_LATENCY <= 1 ? 1 : $clog2(MULTIPLYER_LATENCY);
     type multiplier_latency_count_t = logic<MULTIPLYER_LATENCY_BITS>;
     var multiplier_latency_counter: multiplier_latency_count_t;
     type multiplier_result_t = signed logic<SAMPLE_BITS + PHASE_FRACTION_BITS + 1>;
@@ -195,7 +195,7 @@ pub module dds_core #(
     always_comb {
         table_read_data_ready = aresetn && interpolation_state == InterpolationState::IDLE && (!maxis_wave_tvalid || maxis_wave_tready);
     }
-    always_ff(clock, aresetn) {
+    always_ff (clk, aresetn) {
         if_reset {
             interpolation_state = InterpolationState::IDLE;
             multiplier_latency_counter = 0;

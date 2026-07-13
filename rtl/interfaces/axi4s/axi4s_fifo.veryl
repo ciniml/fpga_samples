@@ -8,12 +8,16 @@
  * @brief Simple AXI4-Stream FIFO.
  */
 
-pub module axi4s_fifo::<DEPTH_BITS: u32, WIDTH: u32, LAST: bool, USER: u32, BUS_IF: axi4s_proto = axi4s_if::<WIDTH, LAST, USER>> (
+// Note: ports used to be `modport BUS_IF::slave/master` with a
+// `BUS_IF: axi4s_proto` generic, but veryl 0.20.2 flags generic-proto
+// modport ports as infinite instance recursion, so the concrete
+// axi4s_if modports are used directly.
+pub module axi4s_fifo::<DEPTH_BITS: u32, WIDTH: u32, LAST: bbool, USER: u32> (
     r#clock: input clock,
     r#reset: input reset,
 
-    data_in: modport BUS_IF::slave,
-    data_out: modport BUS_IF::master,
+    data_in: modport axi4s_if::<WIDTH, LAST, USER>::slave,
+    data_out: modport axi4s_if::<WIDTH, LAST, USER>::master,
 ) {
     const LAST_BITS: u32 = if LAST ? 1 : 0;
     const DATA_BITS: u32 = WIDTH + LAST_BITS + USER;

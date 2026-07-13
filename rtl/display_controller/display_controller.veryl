@@ -9,9 +9,7 @@
  */
 
 
-embed (inline) sv{{{
-`timescale 1ns/1ps
-}}}
+include (inline, "timescale.svh");
 
 pub module display_controller #(
   param SCREEN_WIDTH: u32 = 320,
@@ -41,7 +39,7 @@ pub module display_controller #(
     POST_EXECUTE_COMMAND,
   }
   var state: state_t;
-  var discarding: bool;
+  var discarding: logic;
 
   type width_t = logic<$clog2(SCREEN_WIDTH + 1)>;
   type height_t = logic<$clog2(SCREEN_HEIGHT + 1)>;
@@ -122,14 +120,14 @@ pub module display_controller #(
   );
 
   // Command and parameter buffer
-  var command: u8;
+  var command: logic<8>;
   const COMMAND_VERSION: u8 = 8'h10;
   const COMMAND_FILL_RECT: u8 = 8'h20;
   const COMMAND_WRITE_RAW: u8 = 8'h30;
   const COMMAND_WRITE_PIXEL: u8 = 8'h40;
   const MAX_PARAMETER_WORDS: u32 = 9;
   type parameter_index_t = logic<$clog2(MAX_PARAMETER_WORDS)>;
-  var parameters: u8[MAX_PARAMETER_WORDS];
+  var parameters: logic<8>[MAX_PARAMETER_WORDS];
   var parameter_index: parameter_index_t;
   var last_parameter_index_expected: parameter_index_t;
 
@@ -170,7 +168,7 @@ pub module display_controller #(
       discarding = false;
       last_parameter_index_expected = 0;
       command = 0;
-      for i:u32 in 0..MAX_PARAMETER_WORDS {
+      for i in 0..MAX_PARAMETER_WORDS {
         parameters[i] = 0;
       }
 
@@ -256,15 +254,15 @@ pub module display_controller #(
           let x: width_t = get_x();
           let y: height_t = get_y();
 
-          let x_out_of_range: bool = x >= SCREEN_WIDTH as width_t;
-          let y_out_of_range: bool = y >= SCREEN_HEIGHT as height_t;
-          let width_out_of_range: bool = x + width >= SCREEN_WIDTH as width_t;
-          let height_out_of_range: bool = y + height >= SCREEN_HEIGHT as height_t;
+          let x_out_of_range: logic = x >= SCREEN_WIDTH as width_t;
+          let y_out_of_range: logic = y >= SCREEN_HEIGHT as height_t;
+          let width_out_of_range: logic = x + width >= SCREEN_WIDTH as width_t;
+          let height_out_of_range: logic = y + height >= SCREEN_HEIGHT as height_t;
 
-          let has_coordinate: bool = inside command {COMMAND_FILL_RECT, COMMAND_WRITE_RAW, COMMAND_WRITE_PIXEL};
-          let has_area: bool = inside command {COMMAND_FILL_RECT, COMMAND_WRITE_RAW};
+          let has_coordinate: logic = inside command {COMMAND_FILL_RECT, COMMAND_WRITE_RAW, COMMAND_WRITE_PIXEL};
+          let has_area: logic = inside command {COMMAND_FILL_RECT, COMMAND_WRITE_RAW};
 
-          let invalid_parameters: bool = (has_coordinate && (x_out_of_range || y_out_of_range)) ||
+          let invalid_parameters: logic = (has_coordinate && (x_out_of_range || y_out_of_range)) ||
                                       (has_area && (width_out_of_range || height_out_of_range));
           if invalid_parameters {
             state = state_t::IDLE;
@@ -343,7 +341,7 @@ pub module display_controller #(
           }
         }
         state_t::POST_EXECUTE_COMMAND: {
-          let must_wait_vram_writer: bool = inside command {COMMAND_FILL_RECT, COMMAND_WRITE_RAW, COMMAND_WRITE_PIXEL};
+          let must_wait_vram_writer: logic = inside command {COMMAND_FILL_RECT, COMMAND_WRITE_RAW, COMMAND_WRITE_PIXEL};
           if must_wait_vram_writer {
             if vram_writer_complete {
               axis_command_out.tvalid = 0;

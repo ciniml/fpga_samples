@@ -27,7 +27,7 @@ pub module spi_slave::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> #
     axis_send: modport axi4s::axi4s_if::<SPI_WIDTH, false, 1>::slave,
 ) {
     inst fifo_in: axi4s::axi4s_if::<SPI_WIDTH, false, 1>;
-    inst fifo: axi4s::axi4s_fifo::<5, SPI_WIDTH, false, 1, axi4s::axi4s_if::<SPI_WIDTH, false, 1>> (
+    inst fifo: axi4s::axi4s_fifo::<5, SPI_WIDTH, false, 1> (
         r#clock,
         r#reset,
         data_in: fifo_in,
@@ -181,6 +181,12 @@ pub module spi_slave::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> #
         axis_send.tready = send_ready;
     }
 
+    // The data words cross from 'spi_pos guarded by the req/ack
+    // handshake (quasi-static while req is held), so the sampling FF is
+    // an intentional CDC. veryl 0.20+ propagates the source clock domain
+    // through plain unsafe(cdc) assigns, so the consumer FF itself must
+    // be inside unsafe(cdc).
+    unsafe(cdc) {
     always_ff(r#clock, r#reset) {
         if_reset {
             receive_valid = 0;
@@ -220,5 +226,6 @@ pub module spi_slave::<synchronizer_m: $std::synchronizer, SPI_WIDTH: u32 = 8> #
                 spi_out_req = 1;
             }
         }
+    }
     }
 }

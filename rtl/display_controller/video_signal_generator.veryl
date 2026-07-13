@@ -9,9 +9,7 @@
  * @brief Video signal generator with RGB332 input and configurable RGB output
  */
 
-embed (inline) sv{{{
-`timescale 1ns/1ps
-}}}
+include (inline, "timescale.svh");
 
 pub module video_signal_generator #(
     param SCREEN_WIDTH: u32 = 320,

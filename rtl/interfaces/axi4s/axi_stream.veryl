@@ -41,7 +41,7 @@ pub proto interface axi4s_proto {
     }
 }
 
-pub interface axi4s_if::<WIDTH: u32 = 8, LAST: bool = false, USER: u32 = 0> for axi4s_proto {
+pub interface axi4s_if::<WIDTH: u32 = 8, LAST: bbool = false, USER: u32 = 0> for axi4s_proto {
     const DATA_WIDTH: u32 = WIDTH;
     const HAS_TLAST: bit = LAST;
     const USER_WIDTH: u32 = USER;

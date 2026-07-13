@@ -60,7 +60,7 @@ pub module probe_width_converter #(
                 if phase_counter >: 0 && (!data_out.tvalid || data_out.tready) {
                     phase_counter = phase_counter - 1;
                     data_out.tvalid = 1;
-                    for phase: u32 in 1..=NUMBER_OF_PHASES {
+                    for phase in 1..=NUMBER_OF_PHASES {
                         if phase_counter == phase as phase_t {
                             let new_out_data: out_data_t = in_data[(NUMBER_OF_PHASES - phase) * 7 +: 7] as out_data_t;
                             if DEBUG_OUT {

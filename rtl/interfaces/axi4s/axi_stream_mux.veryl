@@ -11,7 +11,7 @@
 /**
  * Unsafe multiplexer of AXI4 Stream which may violate TVALID constraints.
  */
-pub module axi4s_unsafe_mux::<WIDTH: u32 = 8, LAST: bool = false, USER: u32 = 0> #(
+pub module axi4s_unsafe_mux::<WIDTH: u32 = 8, LAST: bbool = false, USER: u32 = 0> #(
     param N: u32 = 2,
 )(
     r#clock: input clock,
@@ -45,7 +45,7 @@ pub module axi4s_unsafe_mux::<WIDTH: u32 = 8, LAST: bool = false, USER: u32 = 0>
         port_out.tlast = 0;
         port_out.tuser = '0;
 
-        for i: u32 in 0..N {
+        for i in 0..N {
             if select == i as select_t {
                 port_out.tvalid = valid[i];
                 port_out.tdata = data[i];
@@ -60,7 +60,7 @@ pub module axi4s_unsafe_mux::<WIDTH: u32 = 8, LAST: bool = false, USER: u32 = 0>
  * AXI4 Stream Multiplexer
  * Select a channel for input.
  */
-pub module axi4s_mux::<WIDTH: u32 = 8, LAST: bool = false, USER: u32 = 0> #(
+pub module axi4s_mux::<WIDTH: u32 = 8, LAST: bbool = false, USER: u32 = 0> #(
     param N: u32 = 2,
 )(
     r#clock: input clock,
@@ -86,7 +86,7 @@ pub module axi4s_mux::<WIDTH: u32 = 8, LAST: bool = false, USER: u32 = 0> #(
         port_out.tuser = user;
         ready = port_out.tready;
         
-        for i: u32 in 0..N {
+        for i in 0..N {
             port_in[i].tready = select == i as select_t && (!valid || ready);
         }
     }

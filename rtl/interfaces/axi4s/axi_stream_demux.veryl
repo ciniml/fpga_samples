@@ -11,7 +11,7 @@
 /**
  * Unsafe demultiplexer of AXI4 Stream which may violate TVALID constraints.
  */
-pub module axi4s_unsafe_demux::<WIDTH: u32 = 8, LAST: bool = false, USER: u32 = 0> #(
+pub module axi4s_unsafe_demux::<WIDTH: u32 = 8, LAST: bbool = false, USER: u32 = 0> #(
     param N: u32 = 2,
 )(
     r#clock: input clock,
@@ -43,7 +43,7 @@ pub module axi4s_unsafe_demux::<WIDTH: u32 = 8, LAST: bool = false, USER: u32 = 
  * AXI4 Stream Demultiplexer
  * Select a channel for output.
  */
-pub module axi4s_demux::<WIDTH: u32 = 8, LAST: bool = false, USER: u32 = 0> #(
+pub module axi4s_demux::<WIDTH: u32 = 8, LAST: bbool = false, USER: u32 = 0> #(
     param N: u32 = 2,
 )(
     r#clock: input clock,
@@ -67,7 +67,7 @@ pub module axi4s_demux::<WIDTH: u32 = 8, LAST: bool = false, USER: u32 = 0> #(
     always_comb {
         port_in.tready = 0;
 
-        for i: select_t in 0..N {
+        for i in 0..N {
             // Connect internal buffers to output ports
             ready[i] = port_out[i].tready;
             port_out[i].tvalid = valid[i];
@@ -84,7 +84,7 @@ pub module axi4s_demux::<WIDTH: u32 = 8, LAST: bool = false, USER: u32 = 0> #(
 
     always_ff(r#clock, r#reset) {
         if_reset {
-            for i: select_t in 0..N {
+            for i in 0..N {
                 valid[i] = 0;
                 data[i] = '0;
                 last[i] = 0;
@@ -92,7 +92,7 @@ pub module axi4s_demux::<WIDTH: u32 = 8, LAST: bool = false, USER: u32 = 0> #(
             }
         }
         else {
-            for i: select_t in 0..N {
+            for i in 0..N {
                 if valid[i] && ready[i] {   // Clear TVALID if the current transfer completes.
                     valid[i] = 0;
                 }

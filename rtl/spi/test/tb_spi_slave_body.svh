@@ -1,0 +1,410 @@
+`timescale 1ns/1ps
+
+module tb #(
+    parameter string TEST_MODE = "single_frame",
+    parameter int VALID_RATE = 8,
+    parameter int READY_RATE = 8,
+    parameter int MAX_TRANSACTIONS = 100,
+    parameter int MAX_WORDS_PER_TRANSACTION = 8,
+    parameter int SPI_CLK_HALF_PERIOD_NS = 25,    // Default 20MHz (50ns period)
+    parameter int SPI_CLK_PHASE_OFFSET_NS = 0,     // Phase offset from main clock
+    parameter int CS_ASSERT_AFTER_WAIT_NS = 50,    // Wait after CS assert
+    parameter int CS_DEASSERT_BEFORE_WAIT_NS = 50, // Wait before CS deassert  
+    parameter int INTER_TRANSACTION_DELAY_NS = 100, // Delay between transactions
+    parameter int TIMEOUT_CYCLES = MAX_TRANSACTIONS * ((MAX_WORDS_PER_TRANSACTION*SPI_CLK_HALF_PERIOD_NS*2) + CS_ASSERT_AFTER_WAIT_NS + CS_DEASSERT_BEFORE_WAIT_NS + INTER_TRANSACTION_DELAY_NS) * 11 / 10
+)();
+    logic clock /*verilator clocker*/;
+    logic reset;
+
+    // SPI interface
+    logic spi_cs;
+    logic spi_sck;
+    logic spi_miso;
+    logic spi_mosi;
+
+    // AXI4 Stream interfaces
+    logic [7:0] axis_send_tdata;
+    logic       axis_send_tvalid;
+    logic       axis_send_tready;
+    
+    logic [7:0] axis_receive_tdata;
+    logic       axis_receive_tuser;
+    logic       axis_receive_tvalid;
+    logic       axis_receive_tready;
+
+    // DUT instantiation
+    spi_tb_spi_slave_dut dut (
+        .clock(clock),
+        .reset(!reset),
+        .spi_cs(spi_cs),
+        .spi_sck(spi_sck),
+        .spi_miso(spi_miso),
+        .spi_mosi(spi_mosi),
+        .axis_receive_tdata(axis_receive_tdata),
+        .axis_receive_tuser(axis_receive_tuser),
+        .axis_receive_tvalid(axis_receive_tvalid),
+        .axis_receive_tready(axis_receive_tready),
+        .axis_send_tdata(axis_send_tdata),
+        .axis_send_tvalid(axis_send_tvalid),
+        .axis_send_tready(axis_send_tready)
+    );
+
+    // Test variables
+    int timeout_counter = 0;
+    int send_index = 0;
+    int receive_index = 0;
+    logic test_complete = 0;
+    
+    // Variables for random data generation
+    int total_words;
+    int word_idx;
+    int send_idx;
+    int miso_idx;
+    
+    // Test patterns
+    logic [7:0] test_send_data[];
+    logic [7:0] expected_receive_data[];
+    logic expected_receive_tuser[];
+    logic [7:0] expected_miso_data[];
+    
+    // Transaction-based test patterns (fixed size)
+    logic [7:0] transaction_mosi_data[MAX_TRANSACTIONS-1:0][MAX_WORDS_PER_TRANSACTION-1:0];
+    logic [7:0] transaction_miso_data[MAX_TRANSACTIONS-1:0][MAX_WORDS_PER_TRANSACTION-1:0];
+    int transaction_count;
+    int transaction_word_count[MAX_TRANSACTIONS-1:0];
+    
+    // SPI master control variables
+    logic spi_transaction_active = 0;
+    logic [7:0] spi_mosi_shift_reg;
+    logic [7:0] spi_miso_shift_reg;
+    logic spi_sck_enable = 0;
+    
+    // Initialize test patterns based on test mode
+    initial begin
+        case (TEST_MODE)
+            "single_frame": begin
+                test_send_data = '{8'h5A, 8'hA5};
+                expected_receive_data = '{8'hA5};
+                expected_receive_tuser = '{1'b1};
+                expected_miso_data = '{8'hff, 8'h5A};
+                // Transaction format: single frame with 2 words
+                transaction_count = 1;
+                transaction_word_count[0] = 2;
+                transaction_mosi_data[0][0] = 8'hA5;
+                transaction_mosi_data[0][1] = 8'h5A;
+                transaction_miso_data[0][0] = 8'h5A;
+                transaction_miso_data[0][1] = 8'hA5;
+                $display("Test mode: single_frame");
+            end
+            "multi_byte_frame": begin
+                test_send_data = '{8'h11, 8'h22, 8'h33};
+                expected_receive_data = '{8'hAA, 8'hBB, 8'hCC};
+                expected_receive_tuser = '{1'b1, 1'b0, 1'b0};
+                expected_miso_data = '{8'hff, 8'h11, 8'h22, 8'h33};
+                // Transaction format: single frame with 4 words
+                transaction_count = 1;
+                transaction_word_count[0] = 3;
+                transaction_mosi_data[0][0] = 8'hAA;
+                transaction_mosi_data[0][1] = 8'hBB;
+                transaction_mosi_data[0][2] = 8'hCC;
+                transaction_miso_data[0][0] = 8'h11;
+                transaction_miso_data[0][1] = 8'h22;
+                transaction_miso_data[0][2] = 8'h33;
+                $display("Test mode: multi_byte_frame");
+            end
+            "multiple_frames": begin
+                // Generate random test data
+                transaction_count = $urandom_range(1, MAX_TRANSACTIONS);
+                $display("Generated %0d random transactions", transaction_count);
+                
+                // Initialize all arrays to prevent X values
+                for (int i = 0; i < MAX_TRANSACTIONS; i++) begin
+                    transaction_word_count[i] = 0;
+                    for (int j = 0; j < MAX_WORDS_PER_TRANSACTION; j++) begin
+                        transaction_mosi_data[i][j] = 8'h00;
+                        transaction_miso_data[i][j] = 8'h00;
+                    end
+                end
+                
+                // Generate random transaction data
+                total_words = 0;
+                for (int i = 0; i < transaction_count; i++) begin
+                    transaction_word_count[i] = $urandom_range(1, MAX_WORDS_PER_TRANSACTION);
+                    $display("Transaction %0d: %0d words", i, transaction_word_count[i]);
+                    
+                    for (int j = 0; j < transaction_word_count[i]; j++) begin
+                        transaction_mosi_data[i][j] = 8'($urandom());
+                        $display("  Word %0d: MOSI=0x%02h, MISO=0x%02h", j, 
+                                transaction_mosi_data[i][j], transaction_miso_data[i][j]);
+                    end
+                    total_words += transaction_word_count[i];
+                end
+                
+                // Create dynamic arrays for legacy test data format
+                test_send_data = new[total_words];
+                expected_receive_data = new[total_words];
+                expected_receive_tuser = new[total_words];
+                expected_miso_data = new[total_words];
+                
+                // Fill the arrays
+                word_idx = 0;
+                send_idx = 0;
+                miso_idx = 0;
+                
+                for (int i = 0; i < transaction_count; i++) begin
+                    for (int j = 0; j < transaction_word_count[i]; j++) begin
+                        expected_receive_data[word_idx] = transaction_mosi_data[i][j];
+                        expected_receive_tuser[word_idx] = (j == 0) ? 1'b1 : 1'b0;
+                        
+                        // Send data (MISO responses) - skip first word of each transaction
+                        if (j > 0) begin
+                            test_send_data[send_idx] = transaction_miso_data[i][j];
+                            expected_miso_data[miso_idx] = transaction_miso_data[i][j];
+                            send_idx++;
+                            miso_idx++;
+                        end
+                        
+                        word_idx++;
+                    end
+                end
+                
+                $display("Test mode: multiple_frames (random data)");
+                $display("Total words: %0d, Send data size: %0d", total_words, test_send_data.size());
+            end
+            default: begin
+                test_send_data = '{8'h5A};
+                expected_receive_data = '{8'hA5};
+                expected_receive_tuser = '{1'b1};
+                expected_miso_data = '{8'hff, 8'h5A};
+                // Transaction format: single frame with 2 words
+                transaction_count = 1;
+                transaction_word_count[0] = 2;
+                transaction_mosi_data[0][0] = 8'hA5;
+                transaction_mosi_data[0][1] = 8'h5A;
+                transaction_miso_data[0][0] = 8'hff;
+                transaction_miso_data[0][1] = 8'h5A;
+                $display("Test mode: default (single_frame)");
+            end
+        endcase
+        $display("Test data prepared: %0d transactions", transaction_count);
+    end
+
+    // SPI Clock generation with parameterized timing
+    logic spi_sck_inner;
+    initial spi_sck_inner = 0;
+    initial begin
+        #(SPI_CLK_PHASE_OFFSET_NS); // Apply phase offset
+        forever begin
+            #(SPI_CLK_HALF_PERIOD_NS) spi_sck_inner = ~spi_sck_inner;
+        end
+    end
+    assign spi_sck = spi_sck_inner && spi_sck_enable;
+
+    // SPI Master word-level transceive (no CS control)
+    task automatic spi_transceive(
+        input [7:0] mosi_data,
+        input [7:0] expected_miso,
+        output [7:0] actual_miso
+    );
+        $display("T=%0t: Starting SPI word transfer: MOSI=0x%02h, expected MISO=0x%02h", 
+                 $time, mosi_data, expected_miso);
+        
+        spi_mosi_shift_reg = mosi_data;
+        spi_miso_shift_reg = 8'h00;
+        
+        // Enable SCK and perform 8-bit transfer
+        @(negedge spi_sck_inner);
+        spi_sck_enable = 1;
+        
+        for (int bit_idx = 0; bit_idx < 8; bit_idx++) begin
+            // Setup MOSI on falling edge
+            spi_mosi = spi_mosi_shift_reg[7-bit_idx];
+            
+            // Sample MISO on rising edge
+            @(posedge spi_sck);
+            spi_miso_shift_reg[7-bit_idx] = spi_miso;
+            $display("T=%0t: SPI bit %0d: MOSI=%b, MISO=%b", $time, bit_idx, spi_mosi, spi_miso);
+            @(negedge spi_sck);
+        end
+        
+        spi_sck_enable = 0;
+        actual_miso = spi_miso_shift_reg;
+        
+        $display("T=%0t: SPI word transfer complete, received MISO=0x%02h", $time, actual_miso);
+        
+        // Verify MISO data
+        if (actual_miso != expected_miso) begin
+            $error("MISO data mismatch: expected 0x%02h, got 0x%02h", expected_miso, actual_miso);
+        end else begin
+            $display("MISO data verified: 0x%02h", actual_miso);
+        end
+    endtask
+
+    // SPI Master transaction control (handles CS and multiple words)
+    task automatic spi_transaction(
+        input [7:0] mosi_data[MAX_WORDS_PER_TRANSACTION-1:0],
+        input [7:0] expected_miso_data[MAX_WORDS_PER_TRANSACTION-1:0],
+        input int word_count
+    );
+        logic [7:0] actual_miso;
+        
+        $display("T=%0t: Starting SPI transaction with %0d words", $time, word_count);
+        
+        spi_transaction_active = 1;
+        
+        // Assert CS
+        spi_cs = 0;
+        #(CS_ASSERT_AFTER_WAIT_NS);  // CS assert-after wait
+
+        // Transfer all words
+        for (int word_idx = 0; word_idx < word_count; word_idx++) begin
+            spi_transceive(mosi_data[word_idx], expected_miso_data[word_idx], actual_miso);
+        end
+        
+        // Deassert CS
+        #(CS_DEASSERT_BEFORE_WAIT_NS); // CS deassert-before wait
+        spi_cs = 1;
+        spi_mosi = 0;
+        spi_transaction_active = 0;
+        
+        $display("T=%0t: SPI transaction complete", $time);
+        
+        #(INTER_TRANSACTION_DELAY_NS); // Inter-transaction delay
+    endtask
+
+    // SPI Master driver process
+    initial begin
+        spi_cs = 0;
+        spi_sck = 0;
+        spi_mosi = 0;
+        spi_sck_enable = 0;
+        
+        // Wait for reset deassertion
+        wait(!reset);
+        #100;
+        spi_cs = 1;
+        #100;
+        
+        // Execute SPI transactions
+        for (int i = 0; i < transaction_count; i++) begin
+            spi_transaction(transaction_mosi_data[i], transaction_miso_data[i], transaction_word_count[i]);
+        end
+        
+        // Wait for all receive data to be processed
+        while (receive_index < expected_receive_data.size()) begin
+            #50;
+        end
+        
+        test_complete = 1;
+    end
+
+    logic axis_send_tready_reg;
+    always_ff @(posedge clock) begin
+        axis_send_tready_reg <= axis_send_tready;
+    end
+
+    // AXI4 Stream send data driver (provides response data to slave for MISO)
+    always_ff @(negedge clock) begin
+        if (reset) begin
+            axis_send_tvalid <= 1'b0;
+            axis_send_tdata <= 8'h00;
+            send_index <= 0;
+        end else begin
+            if (axis_send_tvalid && axis_send_tready_reg) begin
+                // Transaction completed
+                axis_send_tvalid <= 1'b0;
+                send_index <= send_index + 1;
+                $display("T=%0t: Sent response data[%0d]: 0x%02h", $time, send_index, axis_send_tdata);
+            end
+            
+            if (!axis_send_tvalid) begin
+                // Can start new transaction
+                if (send_index < test_send_data.size()) begin
+                    if ($urandom_range(0, 10) < VALID_RATE) begin
+                        axis_send_tvalid <= 1'b1;
+                        axis_send_tdata <= test_send_data[send_index];
+                    end
+                end
+            end
+        end
+    end
+
+    // AXI4 Stream receive data ready driver
+    always_ff @(negedge clock) begin
+        if (reset) begin
+            axis_receive_tready <= 1'b0;
+        end else begin
+            axis_receive_tready <= $urandom_range(0, 10) < READY_RATE;
+        end
+    end
+
+    // AXI4 Stream receive data checker
+    always_ff @(posedge clock) begin
+        if (reset) begin
+            receive_index <= 0;
+        end else begin
+            if (receive_index < expected_receive_data.size()) begin
+                if (axis_receive_tvalid && axis_receive_tready) begin
+                    $display("T=%0t: Received data[%0d]: 0x%02h, tuser=%b", $time, receive_index, axis_receive_tdata, axis_receive_tuser);
+                    
+                    if (axis_receive_tdata != expected_receive_data[receive_index]) begin
+                        $error("Data mismatch at index %0d: expected 0x%02h, got 0x%02h", 
+                               receive_index, expected_receive_data[receive_index], axis_receive_tdata);
+                    end
+                    if (axis_receive_tuser != expected_receive_tuser[receive_index]) begin
+                        $error("TUSER mismatch at index %0d: expected %b, got %b", 
+                               receive_index, expected_receive_tuser[receive_index], axis_receive_tuser);
+                    end
+                    receive_index <= receive_index + 1;
+                end
+            end
+        end
+    end
+
+    // Debug monitoring
+    always_ff @(negedge spi_cs) begin
+        $display("T=%0t: SPI CS asserted (frame start)", $time);
+    end
+    always_ff @(posedge spi_cs) begin
+        $display("T=%0t: SPI CS deasserted (frame end)", $time);
+    end
+
+    // Timeout counter
+    always_ff @(posedge clock) begin
+        if (reset) begin
+            timeout_counter <= 0;
+        end else begin
+            timeout_counter <= timeout_counter + 1;
+        end
+    end
+    
+    // Clock generation (5ns period = 100MHz)
+    always #5 clock = ~clock;
+    
+    initial begin
+        clock = 0;
+        $dumpfile("trace.fst");
+        $dumpvars(0, tb);
+
+        // Reset sequence
+        reset = 1'b1;
+        repeat(4) @(negedge clock);
+        reset = 1'b0;
+        $display("T=%0t: Reset released", $time);
+
+        // Wait for test completion or timeout
+        while (!test_complete && timeout_counter < TIMEOUT_CYCLES) begin
+            @(posedge clock);
+        end
+        
+        if (timeout_counter >= TIMEOUT_CYCLES) begin
+            $error("Test timeout after %0d cycles", TIMEOUT_CYCLES);
+        end else begin
+            $display("Test completed successfully after %0d cycles", timeout_counter);
+        end
+        
+        // Additional cycles to observe final behavior
+        repeat(50) @(posedge clock);
+        $finish;
+    end
+endmodule

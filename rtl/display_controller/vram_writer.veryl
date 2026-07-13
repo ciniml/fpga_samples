@@ -1,6 +1,4 @@
-embed (inline) sv{{{
-`timescale 1ns/1ps
-}}}
+include (inline, "timescale.svh");
 
 package vram_writer_pkg {
   /**

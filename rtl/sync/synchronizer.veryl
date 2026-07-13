@@ -1,5 +1,6 @@
 pub module gen_synchronizer for $std::synchronizer #(
   param WIDTH: u32 = 8,
+  param INITIAL_VALUE: bit<WIDTH> = '0,
   param STAGES: u32 = 2,
 ) (
   i_rst: input 'd reset,
@@ -11,7 +12,7 @@ pub module gen_synchronizer for $std::synchronizer #(
   unsafe(cdc) {
     always_ff(i_clk, i_rst) {
       if_reset {
-        sync[0] = '0;
+        sync[0] = INITIAL_VALUE;
       } else {
         sync[0] = i_d;
       }
@@ -20,7 +21,7 @@ pub module gen_synchronizer for $std::synchronizer #(
   for i in 1..STAGES :sync_block {
     always_ff(i_clk, i_rst) {
       if_reset {
-        sync[i] = '0;
+        sync[i] = INITIAL_VALUE;
       } else {
         sync[i] = sync[i-1];
       }

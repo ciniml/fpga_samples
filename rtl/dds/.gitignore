@@ -1,4 +1,5 @@
 *.f
 dependencies
 src/*.sv
-Veryl.lock
+Veryl.lock.build/
+src/*.sv.map

@@ -15,7 +15,7 @@ module tb #(
     parameter int PHASE_COUNTER_BITS = 14,
     parameter bit USE_SINE = 0 
 )();
-    logic clock /*verilator clocker*/;
+    logic clk /*verilator clocker*/;
     logic aresetn;
 
     localparam int unsigned SAMPLE_BITS        = 16;
@@ -31,7 +31,7 @@ module tb #(
     // DDS control input
     logic                              saxis_control_tvalid;
     logic                              saxis_control_tready;
-    logic [PHASE_COUNTER_BITS + 1-1:0] saxis_control_tdata ;
+    logic [PHASE_COUNTER_BITS + 2-1:0] saxis_control_tdata ;
 
     // DDS output
     logic                   maxis_wave_tvalid;
@@ -62,7 +62,7 @@ module tb #(
         end
     end
 
-    always @(posedge clock) begin
+    always @(posedge clk) begin
         if( !aresetn ) begin
             
         end
@@ -76,10 +76,10 @@ module tb #(
     end
 
     initial begin
-        clock = 0;
+        clk = 0;
     end 
     always #(5) begin
-        clock = ~clock;
+        clk = ~clk;
     end
     
     initial begin
@@ -99,26 +99,26 @@ module tb #(
         saxis_control_tdata = 0;
         maxis_wave_tready = 0;
 
-        repeat(4) @(posedge clock);
+        repeat(4) @(posedge clk);
         aresetn = 1;
-        @(posedge clock);
+        @(posedge clk);
 
         saxis_control_tdata = 1;
         saxis_control_tvalid = 1;
-        @(posedge clock);
+        @(posedge clk);
         saxis_control_tvalid = 0;
         
         fork
             begin
                 maxis_wave_tready = 1;
                 for(int i = 0; i < NUMBER_OF_TESTS; i++) begin
-                    while( !maxis_wave_tvalid  ) @(posedge clock);
+                    while( !maxis_wave_tvalid  ) @(posedge clk);
                     $fwrite(fd, "%d\n", maxis_wave_tdata);
-                    @(posedge clock);
+                    @(posedge clk);
                 end
             end
             begin
-                for(int i = 0; i < (NUMBER_OF_TESTS*10); i++) @(posedge clock);
+                for(int i = 0; i < (NUMBER_OF_TESTS*10); i++) @(posedge clk);
                 $error("Timeout");
             end
         join_any
