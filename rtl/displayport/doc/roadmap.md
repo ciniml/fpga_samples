@@ -211,7 +211,7 @@ rtl/displayport/
 | HPD の IRQ/unplug パルス幅判別なし・閾値が CLOCK_HZ 非連動 | §3.3, Table 3-4 | 2ms 閾値で IRQ_HPD / unplug を分類 (CLOCK_HZ から換算)、~10µs グリッチ除去、REG_SYSTEM_HPD bit3 (IRQ, W1C) 追加、単体 TB 新設 |
 | FW: AUX DEFER 即失敗・無応答で無限ループ | §2.7.1, §3.5.1.2.2 | DEFER は最大 7 回リトライ、リクエスタ側待ちにタイムアウト追加。模擬 Sink が最初の 2 件に DEFER を返し、全トレーニングテストがリトライ経路を通る |
 
-**実機化の現状 (2026-07-17)**: dp_source_top を2クロック化 (CPU/AUX/HPD = sys、メインリンク = link)。CPU 制御レジスタは 2FF 同期 (rd_reset はトグル同期) で link 側へ渡す。`dp_source_top_cont` テストが sys=link/4 の分周クロックで CDC を実検証。Tang Primer 25K 向け合成は成功、27MHz ドメインはタイミングクローズ、162MHz リンクドメインは Fmax 75.4MHz (要 162)。残クリティカルパスは video_framer の窓述語コーン (byte_in_line 比較→TU/FIFO pop、コンフィグ→出力 mux)。次の一手: 窓述語を byte_in_line+1 からのルックアヘッドでレジスタ化する framer 再設計。
+**実機化の現状 (2026-07-17)**: dp_source_top を2クロック化 (CPU/AUX/HPD = sys 27MHz、メインリンク = link 162MHz)。CPU 制御レジスタは 2FF 同期 (rd_reset はトグル同期) で link 側へ渡し、`dp_source_top_cont` テストが sys=link/4 の分周クロックで CDC を実検証。**Tang Primer 25K 向けにタイミングクローズ済み** (clock_byte Fmax 162.1MHz / 要162、clock_27 29.9MHz / 要27、全パス正 slack、ビットストリーム生成済み)。クローズ手法: video_framer の窓述語を「現在位置 == 境界-1 の等値比較による set/hold/clear」のレジスタフラグ化、派生定数の多段レジスタ化、tu_packer のルックアヘッドフラグ、pixel_fifo の R/G/B 3プレーン RAM 化 (BSRAM 推論 + empty フラグレジスタ化)、msa_generator のワンホットリング化、mux→scrambler 間パイプ段、準静的コンフィグ同期出力の set_false_path、P&R 高 effort。注意: 最小 slack は +0.004ns と紙一重なので、リンクドメインに手を入れたら必ず再 P&R でクローズ確認すること。
 
 **未修正の既知課題**:
 
