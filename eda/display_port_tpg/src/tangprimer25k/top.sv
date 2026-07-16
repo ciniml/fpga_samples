@@ -13,10 +13,15 @@
  *            byte clock) → 10-bit encoder symbol → OSER10 → TLVDS_OBUF
  *
  *        Clocking (DP RBR = 1.62 Gbps target):
- *          gowin_pll_27 : 50 MHz board → 27 MHz (clock_27, AUX subsystem)
- *          gowin_pll    : 27 MHz → clock_byte (162 MHz, OSER10 PCLK)
+ *          gowin_pll_27 : 50 MHz board → 27 MHz (clock_27: CPU + AUX +
+ *                         HPD + UART — the FemtoRV32 does not close
+ *                         timing at the byte clock)
+ *          gowin_pll    : 27 MHz → clock_byte (162 MHz, main-link
+ *                                   datapath + TPG + OSER10 PCLK)
  *                                   clock_serial (810 MHz, OSER10 FCLK,
  *                                                 DDR → 1.62 Gbps)
+ *          dp_source_top synchronizes the CPU control registers across
+ *          the 27 MHz → 162 MHz boundary internally.
  *
  *        Video: 800x600 active in a 1200x750 raster (board firmware
  *        profile, `--features board`). The byte-rate framer makes the
@@ -81,6 +86,12 @@ module top(
     // -----------------------------------------------------------------
     // Resets
     // -----------------------------------------------------------------
+    logic reset_27;
+    reset_seq reset_seq_27 (
+        .clock   (clock_27),
+        .reset_in(!pll_lock_27 || !pll_lock || reset_button),
+        .reset_out(reset_27)
+    );
     logic reset_byte;
     reset_seq #(.RESET_DELAY_CYCLES(4)) reset_seq_byte (
         .clock   (clock_byte),
@@ -170,6 +181,7 @@ module top(
     // PCLK consumption rate.
     // -----------------------------------------------------------------
     localparam int CLOCK_HZ_BYTE = 162_000_000;
+    localparam int CLOCK_HZ_SYS  = 27_000_000;
 
     logic [31:0] cpu_io_out;
 
@@ -183,7 +195,7 @@ module top(
     logic [9:0]  lane0_symbol;
 
     displayport_dp_source_top #(
-        .CLOCK_HZ           (CLOCK_HZ_BYTE),
+        .CLOCK_HZ           (CLOCK_HZ_SYS),
         .MANCHESTER_CLOCK_HZ(32'd1_000_000),
         .PRECHARGE_CYCLES   (32'd16),
         .BUFFER_SIZE        (256),
@@ -197,6 +209,8 @@ module top(
     ) dp_source (
         .i_clk (clock_byte),
         .i_rstn(!reset_byte),
+        .i_clk_sys (clock_27),
+        .i_rstn_sys(!reset_27),
 
         .aux_ch_in        (aux_ch_in_drv),
         .aux_ch_out       (aux_ch_out),
@@ -261,10 +275,10 @@ module top(
     // -----------------------------------------------------------------
     uart_tx #(
         .NUMBER_OF_BITS(8),
-        .BAUD_DIVIDER(CLOCK_HZ_BYTE / 32'd115_200)
+        .BAUD_DIVIDER(CLOCK_HZ_SYS / 32'd115_200)
     ) debug_uart_tx_inst (
-        .clock(clock_byte),
-        .reset(reset_byte),
+        .clock(clock_27),
+        .reset(reset_27),
 
         .data_valid(debug_serial_tvalid),
         .data_ready(debug_serial_tready),

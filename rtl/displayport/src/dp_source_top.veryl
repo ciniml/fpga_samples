@@ -5,12 +5,37 @@
 //          https://www.boost.org/LICENSE_1_0.txt)
 /**
  * @file dp_source_top.veryl
- * @brief DisplayPort 1.2 Source IP top-level skeleton (Phase A).
- *        Currently only the AUX CH + HPD subsystem is wired up;
- *        main link / video pipeline are added in later phases.
+ * @brief DisplayPort 1.2 Source IP top level.
+ *
+ * Two clock domains:
+ *   - 'sys  (i_clk_sys):  CPU (FemtoRV32) + AUX CH + HPD + serial console.
+ *                         Runs at a modest frequency (e.g. 27 MHz on the
+ *                         Tang Primer 25K — the CPU does not close timing
+ *                         at the link byte rate).
+ *   - link  (i_clk):      main-link byte-rate datapath (framer, scrambler,
+ *                         8B/10B, serializer) and the AXI-Stream pixel
+ *                         input. 162 MHz for RBR with OSER10.
+ *
+ * CDC (sys -> link) for the CPU control registers:
+ *   - enable / video_enable / enhanced_framing / pattern_select /
+ *     lane_count: 2-FF bit synchronizers. pattern_select bits may skew
+ *     by one link clock during a transition; the resulting one-symbol
+ *     glitch during training-pattern switches is harmless (the sink
+ *     evaluates patterns over hundreds of microseconds).
+ *   - rd_reset: toggle-based pulse synchronizer.
+ *   - video timing registers (htotal .. tu_active): quasi-static — the
+ *     firmware writes them strictly before setting video_enable, and
+ *     never changes them while enabled, so they are passed through
+ *     directly (the video_enable synchronizer delay guarantees they are
+ *     stable when first consumed).
+ *
+ * Simulation may tie i_clk_sys/i_rstn_sys to i_clk/i_rstn for a
+ * single-clock setup.
  */
 
 pub module dp_source_top #(
+    // Frequency of i_clk_sys (AUX Manchester timing and HPD thresholds
+    // are derived from this).
     param CLOCK_HZ:           u32 = 32'd100_000_000,
     param MANCHESTER_CLOCK_HZ: u32 = 32'd1_000_000,
     param PRECHARGE_CYCLES:   u32 = 32'd16,
@@ -22,31 +47,36 @@ pub module dp_source_top #(
     param PROCESSOR_ROM_FILE: string = "",       // Hex file loaded into the firmware ROM (BlockRAM init)
     param SR_PERIOD:          u32 = 512,
     // 0 = sim default (paced by the on-chip behavioural serializer).
-    // 1 = FPGA / OSER10 mode: emit one byte per system cycle, drive an
+    // 1 = FPGA / OSER10 mode: emit one byte per link clock, drive an
     //     external SerDes from o_lane0_symbol. See main_link_tx_lane.
     param CONTINUOUS_BYTE_TICK: u32 = 0,
 ) (
+    // Main-link byte clock domain (default domain).
     i_clk:  input clock_posedge,
     i_rstn: input reset_sync_low,
 
+    // CPU / AUX / HPD domain.
+    i_clk_sys:  input 'sys clock_posedge,
+    i_rstn_sys: input 'sys reset_sync_low,
+
     // AUX CH (DP 1.2 §3.4)
-    aux_ch_in:         input  logic,
-    aux_ch_out:        output logic,
-    aux_ch_out_enable: output logic,
+    aux_ch_in:         input  'sys logic,
+    aux_ch_out:        output 'sys logic,
+    aux_ch_out_enable: output 'sys logic,
 
     // Hot Plug Detect (DP 1.2 §3.3)
-    hpd_in: input logic,
+    hpd_in: input 'sys logic,
 
     // CPU GPIO output (used for DONE signaling in TB)
-    cpu_io_out: output logic<32>,
+    cpu_io_out: output 'sys logic<32>,
 
     // Firmware loader / serial console
-    saxis_serial_in_tvalid:  input  logic,
-    saxis_serial_in_tready:  output logic,
-    saxis_serial_in_tdata:   input  logic<8>,
-    maxis_serial_out_tvalid: output logic,
-    maxis_serial_out_tready: input  logic,
-    maxis_serial_out_tdata:  output logic<8>,
+    saxis_serial_in_tvalid:  input  'sys logic,
+    saxis_serial_in_tready:  output 'sys logic,
+    saxis_serial_in_tdata:   input  'sys logic<8>,
+    maxis_serial_out_tvalid: output 'sys logic,
+    maxis_serial_out_tready: input  'sys logic,
+    maxis_serial_out_tdata:  output 'sys logic<8>,
 
     // Main-link lane 0 serial output (Phase C: 1 lane only)
     o_lane0_bit:       output logic,
@@ -55,33 +85,33 @@ pub module dp_source_top #(
     o_lane0_symbol_valid: output logic,
     o_lane0_symbol:       output logic<10>,
 
-    // AXI-Stream pixel input (Phase D, 24bpp RGB)
+    // AXI-Stream pixel input (Phase D, 24bpp RGB), link clock domain.
     s_axis_video_tvalid: input  logic,
     s_axis_video_tready: output logic,
     s_axis_video_tdata:  input  logic<24>,
 ) {
-    // Wires from aux_ch_subsystem to main_link_tx
-    var ml_pattern_select:   logic<2>;
-    var ml_enable:           logic;
-    var ml_rd_reset:         logic;
-    var ml_lane_count:       logic<3>;
-    var ml_lane0_drive:      logic<8>;
-    var ml_enhanced_framing: logic;
-    let _unused_lane0_drive: logic<8> = ml_lane0_drive; // informational only
+    // Wires from aux_ch_subsystem ('sys domain).
+    var ml_pattern_select:   'sys logic<2>;
+    var ml_enable:           'sys logic;
+    var ml_rd_reset:         'sys logic;
+    var ml_lane_count:       'sys logic<3>;
+    var ml_lane0_drive:      'sys logic<8>;
+    var ml_enhanced_framing: 'sys logic;
+    let _unused_lane0_drive: 'sys logic<8> = ml_lane0_drive; // informational only
 
-    var v_enable:    logic;
-    var v_htotal:    logic<16>;
-    var v_vtotal:    logic<16>;
-    var v_hstart:    logic<16>;
-    var v_vstart:    logic<16>;
-    var v_hwidth:    logic<16>;
-    var v_vheight:   logic<16>;
-    var v_hsw_hsp:   logic<16>;
-    var v_vsw_vsp:   logic<16>;
-    var v_mvid:      logic<24>;
-    var v_nvid:      logic<24>;
-    var v_misc:      logic<16>;
-    var v_tu_active: logic<7>;
+    var v_enable:    'sys logic;
+    var v_htotal:    'sys logic<16>;
+    var v_vtotal:    'sys logic<16>;
+    var v_hstart:    'sys logic<16>;
+    var v_vstart:    'sys logic<16>;
+    var v_hwidth:    'sys logic<16>;
+    var v_vheight:   'sys logic<16>;
+    var v_hsw_hsp:   'sys logic<16>;
+    var v_vsw_vsp:   'sys logic<16>;
+    var v_mvid:      'sys logic<24>;
+    var v_nvid:      'sys logic<24>;
+    var v_misc:      'sys logic<16>;
+    var v_tu_active: 'sys logic<7>;
 
     inst aux_subsystem: aux_ch_subsystem #(
         CLOCK_HZ,
@@ -94,8 +124,8 @@ pub module dp_source_top #(
         PROCESSOR_RAM_SIZE,
         PROCESSOR_ROM_FILE,
     ) (
-        i_clk                   : i_clk,
-        i_rstn                  : i_rstn,
+        i_clk                   : i_clk_sys,
+        i_rstn                  : i_rstn_sys,
 
         aux_ch_in               : aux_ch_in,
         aux_ch_out              : aux_ch_out,
@@ -135,30 +165,122 @@ pub module dp_source_top #(
         video_tu_active         : v_tu_active,
     );
 
+    // ------------------------------------------------------------------
+    // sys -> link CDC for the control registers.
+    // ------------------------------------------------------------------
+    var ml_pattern_select_l:   logic<2>;
+    var ml_enable_l:           logic;
+    var ml_rd_reset_l:         logic;
+    var ml_lane_count_l:       logic<3>;
+    var ml_enhanced_framing_l: logic;
+    var v_enable_l:            logic;
+
+    unsafe(cdc) {
+        inst sync_pattern: cdc_bit_sync #(WIDTH: 2) (
+            i_clk, i_rstn, i_d: ml_pattern_select, o_q: ml_pattern_select_l,
+        );
+        inst sync_enable: cdc_bit_sync #(WIDTH: 1) (
+            i_clk, i_rstn, i_d: ml_enable, o_q: ml_enable_l,
+        );
+        inst sync_lane_count: cdc_bit_sync #(WIDTH: 3) (
+            i_clk, i_rstn, i_d: ml_lane_count, o_q: ml_lane_count_l,
+        );
+        inst sync_ef: cdc_bit_sync #(WIDTH: 1) (
+            i_clk, i_rstn, i_d: ml_enhanced_framing, o_q: ml_enhanced_framing_l,
+        );
+        inst sync_venable: cdc_bit_sync #(WIDTH: 1) (
+            i_clk, i_rstn, i_d: v_enable, o_q: v_enable_l,
+        );
+        inst sync_rd_reset: cdc_pulse_sync (
+            i_clk_src : i_clk_sys,
+            i_rstn_src: i_rstn_sys,
+            i_pulse   : ml_rd_reset,
+            i_clk_dst : i_clk,
+            i_rstn_dst: i_rstn,
+            o_pulse   : ml_rd_reset_l,
+        );
+    }
+
+    // Video timing registers are quasi-static: the firmware programs
+    // them strictly before asserting video_enable and never changes
+    // them while enabled, so per-bit 2-FF synchronizers are sufficient
+    // (v_enable_l lags them by the same sync latency, so they are
+    // guaranteed stable when first consumed).
+    var v_htotal_l:    logic<16>;
+    var v_vtotal_l:    logic<16>;
+    var v_hstart_l:    logic<16>;
+    var v_vstart_l:    logic<16>;
+    var v_hwidth_l:    logic<16>;
+    var v_vheight_l:   logic<16>;
+    var v_hsw_hsp_l:   logic<16>;
+    var v_vsw_vsp_l:   logic<16>;
+    var v_mvid_l:      logic<24>;
+    var v_nvid_l:      logic<24>;
+    var v_misc_l:      logic<16>;
+    var v_tu_active_l: logic<7>;
+    unsafe(cdc) {
+        inst sync_htotal: cdc_bit_sync #(WIDTH: 16) (
+            i_clk, i_rstn, i_d: v_htotal, o_q: v_htotal_l,
+        );
+        inst sync_vtotal: cdc_bit_sync #(WIDTH: 16) (
+            i_clk, i_rstn, i_d: v_vtotal, o_q: v_vtotal_l,
+        );
+        inst sync_hstart: cdc_bit_sync #(WIDTH: 16) (
+            i_clk, i_rstn, i_d: v_hstart, o_q: v_hstart_l,
+        );
+        inst sync_vstart: cdc_bit_sync #(WIDTH: 16) (
+            i_clk, i_rstn, i_d: v_vstart, o_q: v_vstart_l,
+        );
+        inst sync_hwidth: cdc_bit_sync #(WIDTH: 16) (
+            i_clk, i_rstn, i_d: v_hwidth, o_q: v_hwidth_l,
+        );
+        inst sync_vheight: cdc_bit_sync #(WIDTH: 16) (
+            i_clk, i_rstn, i_d: v_vheight, o_q: v_vheight_l,
+        );
+        inst sync_hsw_hsp: cdc_bit_sync #(WIDTH: 16) (
+            i_clk, i_rstn, i_d: v_hsw_hsp, o_q: v_hsw_hsp_l,
+        );
+        inst sync_vsw_vsp: cdc_bit_sync #(WIDTH: 16) (
+            i_clk, i_rstn, i_d: v_vsw_vsp, o_q: v_vsw_vsp_l,
+        );
+        inst sync_mvid: cdc_bit_sync #(WIDTH: 24) (
+            i_clk, i_rstn, i_d: v_mvid, o_q: v_mvid_l,
+        );
+        inst sync_nvid: cdc_bit_sync #(WIDTH: 24) (
+            i_clk, i_rstn, i_d: v_nvid, o_q: v_nvid_l,
+        );
+        inst sync_misc: cdc_bit_sync #(WIDTH: 16) (
+            i_clk, i_rstn, i_d: v_misc, o_q: v_misc_l,
+        );
+        inst sync_tu_active: cdc_bit_sync #(WIDTH: 7) (
+            i_clk, i_rstn, i_d: v_tu_active, o_q: v_tu_active_l,
+        );
+    }
+
     inst main_link: main_link_tx #(
         SR_PERIOD:            SR_PERIOD,
         CONTINUOUS_BYTE_TICK: CONTINUOUS_BYTE_TICK,
     ) (
         i_clk            : i_clk,
         i_rstn           : i_rstn,
-        i_pattern_select   : ml_pattern_select,
-        i_enable           : ml_enable,
-        i_rd_reset         : ml_rd_reset,
-        i_lane_count       : ml_lane_count,
-        i_enhanced_framing : ml_enhanced_framing,
-        i_video_enable     : v_enable,
-        i_htotal         : v_htotal,
-        i_vtotal         : v_vtotal,
-        i_hstart         : v_hstart,
-        i_vstart         : v_vstart,
-        i_hwidth         : v_hwidth,
-        i_vheight        : v_vheight,
-        i_hsw_hsp        : v_hsw_hsp,
-        i_vsw_vsp        : v_vsw_vsp,
-        i_mvid           : v_mvid,
-        i_nvid           : v_nvid,
-        i_misc           : v_misc,
-        i_tu_active      : v_tu_active,
+        i_pattern_select   : ml_pattern_select_l,
+        i_enable           : ml_enable_l,
+        i_rd_reset         : ml_rd_reset_l,
+        i_lane_count       : ml_lane_count_l,
+        i_enhanced_framing : ml_enhanced_framing_l,
+        i_video_enable     : v_enable_l,
+        i_htotal         : v_htotal_l,
+        i_vtotal         : v_vtotal_l,
+        i_hstart         : v_hstart_l,
+        i_vstart         : v_vstart_l,
+        i_hwidth         : v_hwidth_l,
+        i_vheight        : v_vheight_l,
+        i_hsw_hsp        : v_hsw_hsp_l,
+        i_vsw_vsp        : v_vsw_vsp_l,
+        i_mvid           : v_mvid_l,
+        i_nvid           : v_nvid_l,
+        i_misc           : v_misc_l,
+        i_tu_active      : v_tu_active_l,
         s_axis_tvalid    : s_axis_video_tvalid,
         s_axis_tready    : s_axis_video_tready,
         s_axis_tdata     : s_axis_video_tdata,

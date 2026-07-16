@@ -18,3 +18,8 @@ create_clock -name clock -period 20 -waveform {0 10} [get_ports {clock}]
 create_generated_clock -name clock_27     -source [get_ports {clock}] -divide_by 50 -multiply_by 27 [get_pins {pll_27/PLLA_inst/CLKOUT0}]
 create_generated_clock -name clock_byte   -source [get_pins {pll_27/PLLA_inst/CLKOUT0}] -divide_by 1 -multiply_by 6 [get_pins {pll_dp/PLLA_inst/CLKOUT0}]
 create_generated_clock -name clock_serial -source [get_pins {pll_27/PLLA_inst/CLKOUT0}] -divide_by 1 -multiply_by 30 [get_pins {pll_dp/PLLA_inst/CLKOUT1}]
+
+// The CPU/AUX subsystem (clock_27) talks to the main-link datapath
+// (clock_byte) only through the synchronizers inside dp_source_top;
+// treat the domains as asynchronous.
+set_clock_groups -asynchronous -group [get_clocks {clock_27}] -group [get_clocks {clock_byte clock_serial}]

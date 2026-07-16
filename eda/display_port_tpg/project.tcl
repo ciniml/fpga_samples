@@ -41,6 +41,7 @@ add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/aux_ch_periphe
 add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/aux_ch_subsystem.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/femtorv_wrap.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/hpd_detect.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/cdc_sync.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/stream_memory_access.sv]
 # Main link PHY building blocks (Phase B)
 add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/scrambler.sv]

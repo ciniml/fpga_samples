@@ -211,10 +211,13 @@ rtl/displayport/
 | HPD の IRQ/unplug パルス幅判別なし・閾値が CLOCK_HZ 非連動 | §3.3, Table 3-4 | 2ms 閾値で IRQ_HPD / unplug を分類 (CLOCK_HZ から換算)、~10µs グリッチ除去、REG_SYSTEM_HPD bit3 (IRQ, W1C) 追加、単体 TB 新設 |
 | FW: AUX DEFER 即失敗・無応答で無限ループ | §2.7.1, §3.5.1.2.2 | DEFER は最大 7 回リトライ、リクエスタ側待ちにタイムアウト追加。模擬 Sink が最初の 2 件に DEFER を返し、全トレーニングテストがリトライ経路を通る |
 
+**実機化の現状 (2026-07-17)**: dp_source_top を2クロック化 (CPU/AUX/HPD = sys、メインリンク = link)。CPU 制御レジスタは 2FF 同期 (rd_reset はトグル同期) で link 側へ渡す。`dp_source_top_cont` テストが sys=link/4 の分周クロックで CDC を実検証。Tang Primer 25K 向け合成は成功、27MHz ドメインはタイミングクローズ、162MHz リンクドメインは Fmax 75.4MHz (要 162)。残クリティカルパスは video_framer の窓述語コーン (byte_in_line 比較→TU/FIFO pop、コンフィグ→出力 mux)。次の一手: 窓述語を byte_in_line+1 からのルックアヘッドでレジスタ化する framer 再設計。
+
 **未修正の既知課題**:
 
 - **FW**: CR ループの絶対上限なし (敵対的な交互 ADJUST 要求で無限ループの可能性)、EQ 中 CR ロスト時に CR 再突入せず即エラー、EDID 読み出し未実装、plug 後の HPD/IRQ 監視 (DPCD 201h SERVICE_IRQ_VECTOR 読み出し) 未実装 — RTL 側の IRQ 分類・sticky bit は実装済みで FW 対応待ち
 - **AUX PHY**: RX の re-arm 時 stale バイト混入ハザード、送信中の自己受信ゲートなし、TX ビットレートが `MANCHESTER_CLOCK_HZ` 非連動 (1Mbps 固定)
 - **8B/10B デコーダ**: ディスパリティエラー検出なし (RD 追跡なし。Source 用途では影響小)
 - **アーキテクチャ**: バイトレート = リンクシンボルレートの簡略化のため `tu_active=64` のみ整合 (tu_active<64 では MSA hwidth と実転送画素数が不一致)。M/N 計測ハードウェア未実装。MSA を全 vblank 行で送信 (仕様は once per frame)
+- **AUXサブシステムが CLOCK_HZ/MANCHESTER=10 で不動作**: dp_source_top_cont を sys=10MHz にすると DPCD リードが完了しない (TX/RX 単体は同比率でパス済み → peripheral/FW 層)。実機は 27MHz (比率27、比率25で検証済み) のため実害なしだが未解明
 - **テストホール**: `CONTINUOUS_BYTE_TICK=1` (FPGA/OSER10 経路) が全テスト未使用、`pixel_fifo` の単体テストなし、AUX の NACK/無応答経路・Manchester 波形の対仕様検証なし、`dp_sink_rx_lane` の誤ロック回復なし (ロック解除機構なし)

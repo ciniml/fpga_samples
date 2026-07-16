@@ -19,7 +19,10 @@ module TbDpSourceTopCont {}
 #[test(dp_source_top_cont)]
 embed (inline) sv{{{
 module dp_source_top_cont;
-    parameter int unsigned CLOCK_HZ            = 32'd100_000_000;
+    // The CPU/AUX subsystem runs on a divided clock (link/4 = 25 MHz)
+    // so this test exercises the real sys->link CDC inside
+    // dp_source_top, mirroring the FPGA topology (27 MHz vs 162 MHz).
+    parameter int unsigned CLOCK_HZ            = 32'd25_000_000;
     parameter int unsigned MANCHESTER_CLOCK_HZ = 32'd1_000_000;
     parameter int unsigned PROCESSOR_ROM_SIZE  = 32'd16384;
     parameter int unsigned PROCESSOR_RAM_SIZE  = 32'd8192;
@@ -34,6 +37,22 @@ module dp_source_top_cont;
     logic rstn;
     initial clk = 1'b0;
     always #5 clk = ~clk;
+
+    // Divided system clock (clk / 10) for the CPU/AUX domain.
+    logic       clk_sys;
+    logic [2:0] clk_sys_div;
+    initial begin
+        clk_sys     = 1'b0;
+        clk_sys_div = '0;
+    end
+    always_ff @(posedge clk) begin
+        if (clk_sys_div == 3'd1) begin
+            clk_sys_div <= '0;
+            clk_sys     <= ~clk_sys;
+        end else begin
+            clk_sys_div <= clk_sys_div + 3'd1;
+        end
+    end
 
     logic [1:0]  aux_out;
     logic [1:0]  aux_oen;
@@ -75,6 +94,8 @@ module dp_source_top_cont;
             ) dut (
                 .i_clk                  (clk),
                 .i_rstn                 (rstn),
+                .i_clk_sys              (clk_sys),
+                .i_rstn_sys             (rstn),
                 .aux_ch_in              (aux_in[i]),
                 .aux_ch_out              (aux_out[i]),
                 .aux_ch_out_enable      (aux_oen[i]),
@@ -98,7 +119,7 @@ module dp_source_top_cont;
             );
 
             string line_buf;
-            always_ff @(posedge clk) begin
+            always_ff @(posedge clk_sys) begin
                 if (!rstn) begin
                     line_buf = "";
                 end else if (ser_valid) begin
@@ -374,7 +395,7 @@ module dp_source_top_cont;
     end
 
     initial begin
-        #200_000_000;
+        #400_000_000;
         $fatal(1, "[TB] timeout");
     end
 

@@ -15,6 +15,9 @@ module tb #(
 )();
     logic clock /*verilator clocker*/;
     logic aresetn;
+    // Current module port names (post-Veryl rename).
+    wire i_clk  = clock;
+    wire i_rstn = aresetn;
 
     localparam int unsigned CLOCK_HZ         = 32'd8_000_000; // Clock frequency
     localparam int unsigned PRECHARGE_CYCLES = 32'd10       ; // Number of precharge cycles

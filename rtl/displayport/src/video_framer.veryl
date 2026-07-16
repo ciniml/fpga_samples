@@ -79,9 +79,20 @@ pub module video_framer #(
 ) {
     let _unused_hstart: logic<16> = i_hstart; // forwarded to msa_generator only
 
-    // Timing in BYTES per line / frame.
-    let bytes_per_line: logic<18> = ({2'b0, i_htotal} * 18'd3);
-    let hblank_bytes:   logic<18> = (({2'b0, i_htotal} - {2'b0, i_hwidth}) * 18'd3);
+    // Timing in BYTES per line / frame. The inputs are quasi-static CPU
+    // registers, so the derived constants are registered to keep the
+    // 16-bit multiply/subtract cones out of the per-byte timing paths.
+    var bytes_per_line: logic<18>;
+    var hblank_bytes:   logic<18>;
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            bytes_per_line = 0;
+            hblank_bytes   = 0;
+        } else {
+            bytes_per_line = ({2'b0, i_htotal} * 18'd3);
+            hblank_bytes   = (({2'b0, i_htotal} - {2'b0, i_hwidth}) * 18'd3);
+        }
+    }
 
     var byte_in_line: logic<18>; // 0..bytes_per_line-1
     var line:         logic<16>; // 0..vtotal-1

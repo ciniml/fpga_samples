@@ -76,8 +76,8 @@ pub module main_link_tx_lane #(
     // when the main link is disabled, and rate-limited so only one byte
     // is in flight through the source path → scrambler → encoder).
     var ser_ready: logic;
-    var pipe_busy: logic<3>; // shifts byte_tick down the pipeline
-    let pipe_idle:    logic = pipe_busy == 3'b000;
+    var pipe_busy: logic<4>; // shifts byte_tick down the pipeline
+    let pipe_idle:    logic = pipe_busy == 4'b0000;
     let byte_tick_paced:      logic = i_enable && ser_ready && pipe_idle;
     let byte_tick_continuous: logic = i_enable;
     let byte_tick:    logic = if (CONTINUOUS_BYTE_TICK != 0) ?
@@ -87,7 +87,7 @@ pub module main_link_tx_lane #(
         if_reset {
             pipe_busy = 0;
         } else {
-            pipe_busy = {pipe_busy[1:0], byte_tick};
+            pipe_busy = {pipe_busy[2:0], byte_tick};
         }
     }
 
@@ -181,6 +181,30 @@ pub module main_link_tx_lane #(
         o_scramble_disable      : mux_scramble_disable,
     );
 
+    // ----- Pipeline register between the framing mux and the scrambler.
+    // The framer's window predicates form a long combinational cone from
+    // the (quasi-static) video timing registers; cutting it here keeps
+    // that cone out of the scrambler's LFSR paths. The whole downstream
+    // stream shifts by one clock uniformly, which the protocol does not
+    // observe. -----
+    var mux_valid_r:            logic;
+    var mux_byte_r:             logic<8>;
+    var mux_is_k_r:             logic;
+    var mux_scramble_disable_r: logic;
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            mux_valid_r            = 0;
+            mux_byte_r             = 0;
+            mux_is_k_r             = 0;
+            mux_scramble_disable_r = 0;
+        } else {
+            mux_valid_r            = mux_valid;
+            mux_byte_r             = mux_byte;
+            mux_is_k_r             = mux_is_k;
+            mux_scramble_disable_r = mux_scramble_disable;
+        }
+    }
+
     // ----- Scrambler -----
     var sc_valid: logic;
     var sc_data:  logic<8>;
@@ -193,16 +217,16 @@ pub module main_link_tx_lane #(
     // would put the wire content out of step with such a sink for all
     // lines between two SRs.
     let sc_seed_reset: logic =
-        mux_valid && mux_is_k && (mux_byte == 8'h1C);
+        mux_valid_r && mux_is_k_r && (mux_byte_r == 8'h1C);
 
     inst u_sc: scrambler (
         i_clk             : i_clk,
         i_rstn            : i_rstn,
         i_seed_reset      : sc_seed_reset,
-        i_scramble_disable: mux_scramble_disable,
-        i_valid           : mux_valid,
-        i_data            : mux_byte,
-        i_is_k            : mux_is_k,
+        i_scramble_disable: mux_scramble_disable_r,
+        i_valid           : mux_valid_r,
+        i_data            : mux_byte_r,
+        i_is_k            : mux_is_k_r,
         o_valid           : sc_valid,
         o_data            : sc_data,
         o_is_k            : sc_is_k,

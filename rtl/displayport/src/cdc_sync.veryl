@@ -1,0 +1,81 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file cdc_sync.veryl
+ * @brief Small CDC helpers used to split the CPU/AUX subsystem clock
+ *        from the main-link byte clock in dp_source_top.
+ */
+
+/// 2-FF bit synchronizer. Bits are synchronized independently, so this
+/// is only suitable for single bits, or multi-bit values that are
+/// quasi-static (stable well before/while they are consumed).
+pub module cdc_bit_sync #(
+    param WIDTH: u32 = 1,
+) (
+    i_clk:  input clock_posedge,
+    i_rstn: input reset_sync_low,
+
+    i_d: input  logic<WIDTH>, // source-domain value (async to i_clk)
+    o_q: output logic<WIDTH>,
+) {
+    var meta: logic<WIDTH>;
+    var sync: logic<WIDTH>;
+    unsafe(cdc) {
+        always_ff (i_clk, i_rstn) {
+            if_reset {
+                meta = 0;
+                sync = 0;
+            } else {
+                meta = i_d;
+                sync = meta;
+            }
+        }
+    }
+    assign o_q = sync;
+}
+
+/// Single-cycle pulse crossing via a toggle: a pulse in the source
+/// domain becomes exactly one pulse in the destination domain (source
+/// pulses must be spaced further apart than the destination sync
+/// latency, which holds for CPU-issued register write pulses).
+pub module cdc_pulse_sync (
+    i_clk_src:  input 'src clock_posedge,
+    i_rstn_src: input 'src reset_sync_low,
+    i_pulse:    input 'src logic,
+
+    i_clk_dst:  input clock_posedge,
+    i_rstn_dst: input reset_sync_low,
+    o_pulse:    output logic,
+) {
+    var toggle: 'src logic;
+    always_ff (i_clk_src, i_rstn_src) {
+        if_reset {
+            toggle = 0;
+        } else {
+            if i_pulse {
+                toggle = !toggle;
+            }
+        }
+    }
+
+    var meta: logic;
+    var s1:   logic;
+    var s2:   logic;
+    unsafe(cdc) {
+        always_ff (i_clk_dst, i_rstn_dst) {
+            if_reset {
+                meta = 0;
+                s1   = 0;
+                s2   = 0;
+            } else {
+                meta = toggle;
+                s1   = meta;
+                s2   = s1;
+            }
+        }
+    }
+    assign o_pulse = s1 ^ s2;
+}

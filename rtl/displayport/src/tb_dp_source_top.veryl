@@ -76,6 +76,8 @@ module dp_source_top_full;
             ) dut (
                 .i_clk                  (clk),
                 .i_rstn                 (rstn),
+                .i_clk_sys              (clk),
+                .i_rstn_sys             (rstn),
                 .aux_ch_in              (aux_in[i]),
                 .aux_ch_out              (aux_out[i]),
                 .aux_ch_out_enable      (aux_oen[i]),
