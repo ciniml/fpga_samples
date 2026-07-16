@@ -6,7 +6,7 @@ RTL_DIR ?= $(ROOT_DIR)/rtl
 
 PROJECT_ADDITIONAL_ARGS := $(ROOT_DIR)/external/learn-fpga/FemtoRV/RTL/PROCESSOR
 
-FIRMWARE_HEX := $(ROOT_DIR)/rtl/displayport/test/sw-rs/bootrom-rs.hex
+FIRMWARE_HEX := $(ROOT_DIR)/rtl/displayport/test/sw-rs/bootrom-rs-board.hex
 SRCS := src/$(TARGET)/pins.cst $(wildcard src/$(TARGET)/*.cst) $(wildcard src/$(TARGET)/*.sdc) $(wildcard src/$(TARGET)/*.sv) project.tcl $(FIRMWARE_HEX)
 
 PMOD_PORT_OFFSET ?= 0
@@ -34,3 +34,6 @@ else
 src/$(TARGET)/pins.cst:
 	echo Use pre-generated pin definition.
 endif
+# Firmware (board profile) build rule.
+$(FIRMWARE_HEX): $(wildcard $(ROOT_DIR)/rtl/displayport/test/sw-rs/src/*.rs)
+	$(MAKE) -C $(ROOT_DIR)/rtl/displayport/test/sw-rs bootrom-rs-board.hex

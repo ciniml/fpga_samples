@@ -67,6 +67,9 @@ add_file -type verilog [file normalize ${FEMTORV_DIR}/femtorv32_gracilis.v]
 add_file -type verilog [file normalize ${RTL_DIR}/video/test_pattern_generator.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/tpg_to_axis.sv]
 
+# --- OSER10 wrapper for lane 0 ---
+add_file -type verilog [file normalize ${SRC_DIR}/oser10_lane.sv]
+
 # --- Top + reset ---
 add_file -type verilog [file normalize ${SRC_DIR}/top.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/reset_seq.sv]

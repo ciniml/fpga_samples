@@ -191,6 +191,7 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &Video) {
     };
 
     // Phase D: configure MSA and enable the video pipeline.
+    #[cfg(not(feature = "board"))]
     let cfg = VideoConfig {
         htotal:    80,
         vtotal:    24,
@@ -207,6 +208,30 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &Video) {
         misc0:     0x21, // sync clock, 8 bpc RGB (Table 2-45)
         misc1:     0x00,
         tu_active: 64, // 100% packed for the contrived 64x16 test (no FS/FE)
+    };
+    // Board profile: 800x600 active in a 1200x750 raster. The byte-rate
+    // framer emits htotal*3 symbols per line, so the effective pixel
+    // clock is LS_Clk/3 = 54 MHz and 1200*750 pixels/frame gives exactly
+    // 60 Hz. Synchronous clock mode with the small static ratio
+    // Mvid/Nvid = 54/162 = 1/3 (DP 1.2 section 2.2.3 explicitly allows
+    // small static M/N values in synchronous mode).
+    #[cfg(feature = "board")]
+    let cfg = VideoConfig {
+        htotal:    1200,
+        vtotal:    750,
+        hstart:    260, // HSW 40 + HBACK 220
+        vstart:    105, // VSW 5 + VBACK 100
+        hwidth:    800,
+        vheight:   600,
+        hsw:       40,
+        hsp:       false,
+        vsw:       5,
+        vsp:       false,
+        mvid:      1,
+        nvid:      3,
+        misc0:     0x21, // sync clock, 8 bpc RGB (Table 2-45)
+        misc1:     0x00,
+        tu_active: 64, // byte-rate architecture: TU window carries only valid bytes
     };
     vid.setup_and_enable(&cfg);
     println!("[SRC] video pipeline enabled");

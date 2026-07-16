@@ -106,6 +106,7 @@ test_pattern_generator #(
 ) tpg_inst (
   .clock(clock_dvi),
   .reset(reset_dvi),
+  .enable(1'b1),
   .*
 );
 

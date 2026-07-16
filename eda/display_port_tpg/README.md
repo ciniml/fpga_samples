@@ -23,23 +23,43 @@ clock_dvi─┼──► main_link_tx                │
                tpg_to_axis (DE-gated → AXI-Stream)
 ```
 
-## 重要な制限事項（実機 DP モニタは動かない）
+## 動作概要 (RBR 1.62 Gbps 対応)
 
-このデザインは **構造的統合の検証用** であり、現状そのままでは実 DP
-モニタは画を出しません。理由:
+* **シリアライザ**: Gowin OSER10 プリミティブを `oser10_lane.sv` でラップ。
+  PCLK = 162 MHz バイトクロック、FCLK = 810 MHz、DDR で 1.62 Gbps を出力。
+* **DP IP**: `dp_source_top` は `CONTINUOUS_BYTE_TICK = 1` で動作し、毎
+  PCLK サイクルに 1 シンボル出力。エンコーダの 10-bit シンボルを
+  `o_lane0_symbol` として OSER10 に直結。
+* **クロック**: 50 MHz ボードクロック → `gowin_pll_27` で 27 MHz →
+  `gowin_pll` で `clock_byte` (162 MHz) と `clock_serial` (810 MHz) を生成。
 
-* `serializer_10to1` がシミュレーション用ビヘイビアモデルで、`clock_dvi`
-  あたり 1 bit しか出さない。実 RBR は 1.62 Gbps が必要 → Gowin OSER10
-  プリミティブのラッパで置き換えが必要。
-* メインリンクの bit clock (1.62 GHz) を生成する PLL 設定が未対応。
-* 電圧スイング/プリエンファシスの実 PHY 制御が未実装。
+検証ポイント:
 
-検証可能なのは:
+* AUX CH 電気特性 + DPCD/EDID 読出し
+* リンクトレーニング (CR → EQ → IDLE)
+* オシロで lane 0 が 1.62 Gbps DDR を出しているか
+* 実 DP モニタが画を出すか
 
-* AUX CH の電気特性（DP モニタ → AUX 解析器 や Pmod ドングル）
-* HPD 検出と DPCD 読出しシーケンス
-* Gowin EDA でのフル合成・配置配線が通るか
-* `lane0_bit` がトグルしているか（オシロで観測）
+## 重要な手動作業
+
+`gowin_pll` の IP ファイルは現状 旧 DVI 用の周波数で生成されています。
+**Gowin IP Core Generator** で開いて以下の値に再構成してください:
+
+* CLKOUT0 = **162 MHz** (clock_byte, OSER10 PCLK)
+* CLKOUT1 = **810 MHz** (clock_serial, OSER10 FCLK)
+* 入力 = 27 MHz (CLKIN_FREQUENCY = 27 MHz)
+* CLKFB_SEL = INTERNAL
+
+`gowin_pll_27` は 50 MHz → 27 MHz のままで OK。
+
+## 既知の制限
+
+* 1 lane only。マルチレーン化は OSER10 を 4 個並べる + DP IP のレーン
+  分配対応が必要。
+* 電圧スイング/プリエンファシスの動的制御は未実装 (Gowin LVDS の DRIVE
+  値で固定値のみ)。
+* HBR/HBR2 (2.7/5.4 Gbps) は OSER10 単体では届かない (~1.25 Gbps 帯が
+  限界)。GW5AT-25 のシリアル GTP/GTH ブロックが必要。
 
 ## 合成の準備
 
@@ -75,25 +95,25 @@ $ make TARGET=tangprimer25k
 
 | ファイル | 役割 |
 |---------|------|
-| `src/tangprimer25k/top.sv` | トップモジュール。`displayport_dp_source_top` を中心に PLL/リセット/TPG/AXI-Stream/LVDS パッドを束ねる |
+| `src/tangprimer25k/top.sv` | トップモジュール。`displayport_dp_source_top` を中心に PLL/リセット/TPG/AXI-Stream/OSER10/LVDS を束ねる |
+| `src/tangprimer25k/oser10_lane.sv` | Gowin OSER10 ラッパ (10-bit @ PCLK → 1-bit @ 10×PCLK DDR) |
 | `src/tangprimer25k/tpg_to_axis.sv` | `test_pattern_generator` の `video_de + RGB` を AXI-Stream 24bpp に変換 |
 | `src/tangprimer25k/reset_seq.sv` | PLL ロック後の同期解除リセット |
 | `src/tangprimer25k/pins.cst.template` | ボード固有ピン (clock, reset_button, uart_tx, etc.) |
-| `src/tangprimer25k/timing.sdc` | クロック制約 |
-| `src/tangprimer25k/ip/gowin_pll/` | クロック PLL (50 → clock_dvi / clock_dvi_ser) |
-| `src/tangprimer25k/ip/gowin_pll_27/` | 27 MHz クロック生成 |
+| `src/tangprimer25k/timing.sdc` | クロック制約 (162 MHz / 810 MHz) |
+| `src/tangprimer25k/ip/gowin_pll/` | DP クロック PLL (27 → 162 / 810 MHz) ※要再構成 |
+| `src/tangprimer25k/ip/gowin_pll_27/` | 50 → 27 MHz クロック生成 |
 | `project.tcl` | 全 RTL ファイルを Gowin EDA に登録 |
 
 ## 次のステップ（実機動作のために）
 
-1. **OSER10 ラッパで `serializer_10to1` を置き換え** — `clock_dvi` を 162 MHz、
-   `clock_dvi_ser` を 1.62 GHz に PLL を再構成。10-bit エンコーダ出力を OSER10 へ。
+1. **PLL 再構成** — 上記 162 / 810 MHz の値で `gowin_pll.ipc` から再生成。
 2. **電圧スイング/プリエンファシス** — Gowin LVDS の DRIVE/SLEW 設定を CPU から
    切替できるよう wiring。
 3. **実 DP モニタとリンクトレーニング** — DPCD レスポンスを観測し、ADJUST_REQUEST
    ループの実機調整。
 4. **マルチレーン対応** — `main_link_tx` を 2/4 lane に拡張、`pixel_steering`
-   (DP 1.2 §2.2.1 Tab 2-2) 実装、レーン間 align。
+   (DP 1.2 §2.2.1 Tab 2-2) 実装、レーン間 align。OSER10 をレーン数分複製。
 
 ## Tang Nano 9K ターゲット
 

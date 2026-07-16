@@ -26,6 +26,10 @@ module test_pattern_generator #(
 )(
     input wire clock,
     input wire reset,
+    // Raster advance enable. Tie to 1'b1 for a free-running generator;
+    // deassert to stall the raster (and hold all outputs) for a cycle,
+    // e.g. to pace pixel production to a stream consumer.
+    input wire enable,
 
     output logic  [23:0] video_data,
     output logic         video_de,
@@ -107,7 +111,7 @@ always_ff @(posedge clock) begin
         logo_top <= VSYNC + VBACK;
         logo_bottom <= VSYNC + VBACK + LOGO_HEIGHT - 1;
     end
-    else begin
+    else if( enable ) begin
         if( within_logo ) begin
             logo_address <= logo_address + 1;
         end
