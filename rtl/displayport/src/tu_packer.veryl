@@ -45,41 +45,72 @@ pub module tu_packer (
 ) {
     var phase: logic<6>; // 0..63
 
+    // Quasi-static helpers derived from i_active_count (a CPU register),
+    // registered so the 7-bit compares stay out of per-byte paths.
+    var ac_nonzero: logic;
+    var ac_lt63:    logic;
+    var ac_lt64:    logic;
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            ac_nonzero = 0;
+            ac_lt63    = 0;
+            ac_lt64    = 0;
+        } else {
+            ac_nonzero = (i_active_count != 7'd0);
+            ac_lt63    = (i_active_count <: 7'd63);
+            ac_lt64    = (i_active_count <: 7'd64);
+        }
+    }
+
+    // Look-ahead flags describing the CURRENT phase slot, updated one
+    // tick ahead (from phase_next) so the emit path and the pop gate see
+    // only registered 1-bit flags instead of the 7-bit compares.
+    var f_active: logic; // phase <  active_count
+    var f_fs:     logic; // phase == active_count && stuffing >= 2
+    var f_fe:     logic; // phase == 63 && at least one stuffing symbol
+    let phase_next: logic<6> = if phase == 6'd63 ? 6'd0 : phase + 6'd1;
+
     // o_pixel_pop is combinational so the upstream FIFO advances within the
     // same cycle the byte is consumed. This avoids a 2-stage NBA delay.
     let in_active_region: logic =
-        i_emit_enable && i_byte_tick && !i_tu_start &&
-        {1'b0, phase} <: i_active_count;
+        i_emit_enable && i_byte_tick && !i_tu_start && f_active;
     assign o_pixel_pop = in_active_region && !i_pixel_empty;
 
     always_ff (i_clk, i_rstn) {
         if_reset {
-            phase   = 0;
-            o_valid = 0;
-            o_byte  = 0;
-            o_is_k  = 0;
+            phase    = 0;
+            f_active = 0;
+            f_fs     = 0;
+            f_fe     = 0;
+            o_valid  = 0;
+            o_byte   = 0;
+            o_is_k   = 0;
         } else {
             // Sticky outputs: only the emit branch updates o_byte/o_is_k.
             // The upstream mux reads these registers on the NEXT byte_tick,
             // so they must persist between ticks rather than being cleared.
             if i_tu_start {
-                phase = 0;
+                phase    = 0;
+                // Flags for phase 0.
+                f_active = ac_nonzero;
+                f_fs     = !ac_nonzero && ac_lt63;
+                f_fe     = 0;
             } else if i_emit_enable && i_byte_tick {
                 o_valid = 1;
                 o_is_k  = 0;
 
-                if {1'b0, phase} <: i_active_count {
+                if f_active {
                     // Active region — pull from pixel FIFO when available.
                     if i_pixel_empty {
                         o_byte = 8'h00;
                     } else {
                         o_byte = i_pixel_byte;
                     }
-                } else if {1'b0, phase} == i_active_count && i_active_count <: 7'd63 {
+                } else if f_fs {
                     // FS (only when stuffing >= 2 symbols).
                     o_byte = 8'hFE;
                     o_is_k = 1;
-                } else if phase == 6'd63 && i_active_count <: 7'd64 {
+                } else if f_fe {
                     // FE (every TU with at least one stuffing symbol).
                     o_byte = 8'hF7;
                     o_is_k = 1;
@@ -88,11 +119,10 @@ pub module tu_packer (
                     o_byte = 8'h00;
                 }
 
-                if phase == 6'd63 {
-                    phase = 0;
-                } else {
-                    phase = phase + 6'd1;
-                }
+                phase    = phase_next;
+                f_active = ({1'b0, phase_next} <: i_active_count);
+                f_fs     = ({1'b0, phase_next} == i_active_count) && ac_lt63;
+                f_fe     = (phase_next == 6'd63) && ac_lt64;
             }
         }
     }

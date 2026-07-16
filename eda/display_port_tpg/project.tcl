@@ -29,8 +29,10 @@ if {${TARGET} == "tangprimer20k"} {
 }
 if {${TARGET} == "tangprimer25k"} {
     set_option -use_cpu_as_gpio 1
-    #set_option -place_option 1
-    #set_option -route_option 2
+    # Higher place/route effort: the 162 MHz link domain closes only
+    # with these enabled.
+    set_option -place_option 1
+    set_option -route_option 2
 }
 
 # --- DisplayPort source IP (Veryl-generated SystemVerilog) ---

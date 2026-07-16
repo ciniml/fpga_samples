@@ -61,12 +61,73 @@ pub module msa_generator (
     o_byte:  output logic<8>,
     o_is_k:  output logic,
 ) {
-    var counter: logic<6>; // 0..38
-    var active:  logic;
+    // One-hot slot ring (39 slots). A shift register instead of a
+    // binary counter keeps the per-byte output selection a flat AND-OR
+    // over disjoint one-hot terms rather than a 6-bit compare/decode
+    // cone per case arm.
+    var oh:     logic<39>;
+    var active: logic;
+
+    // Field-select terms (each slot bit appears in exactly one group).
+    let sel_ss:     logic = oh[0] | oh[1];
+    let sel_mvid_h: logic = oh[2] | oh[11] | oh[20] | oh[29];
+    let sel_mvid_m: logic = oh[3] | oh[12] | oh[21] | oh[30];
+    let sel_mvid_l: logic = oh[4] | oh[13] | oh[22] | oh[31];
+    let sel_htot_h: logic = oh[5];
+    let sel_htot_l: logic = oh[6];
+    let sel_vtot_h: logic = oh[7];
+    let sel_vtot_l: logic = oh[8];
+    let sel_hsw_h:  logic = oh[9];
+    let sel_hsw_l:  logic = oh[10];
+    let sel_hst_h:  logic = oh[14];
+    let sel_hst_l:  logic = oh[15];
+    let sel_vst_h:  logic = oh[16];
+    let sel_vst_l:  logic = oh[17];
+    let sel_vsw_h:  logic = oh[18];
+    let sel_vsw_l:  logic = oh[19];
+    let sel_hw_h:   logic = oh[23];
+    let sel_hw_l:   logic = oh[24];
+    let sel_vh_h:   logic = oh[25];
+    let sel_vh_l:   logic = oh[26];
+    let sel_nvid_h: logic = oh[32];
+    let sel_nvid_m: logic = oh[33];
+    let sel_nvid_l: logic = oh[34];
+    let sel_misc0:  logic = oh[35];
+    let sel_misc1:  logic = oh[36];
+    let sel_se:     logic = oh[38];
+    // (slots 27, 28, 37 are the All-0s bytes)
+
+    let mux_byte: logic<8> =
+        (if sel_ss     ? 8'h5C                          : 8'h00) |
+        (if sel_mvid_h ? i_mvid[23:16]                  : 8'h00) |
+        (if sel_mvid_m ? i_mvid[15:8]                   : 8'h00) |
+        (if sel_mvid_l ? i_mvid[7:0]                    : 8'h00) |
+        (if sel_htot_h ? i_htotal[15:8]                 : 8'h00) |
+        (if sel_htot_l ? i_htotal[7:0]                  : 8'h00) |
+        (if sel_vtot_h ? i_vtotal[15:8]                 : 8'h00) |
+        (if sel_vtot_l ? i_vtotal[7:0]                  : 8'h00) |
+        (if sel_hsw_h  ? {i_hsw_hsp[15], i_hsw_hsp[14:8]} : 8'h00) |
+        (if sel_hsw_l  ? i_hsw_hsp[7:0]                 : 8'h00) |
+        (if sel_hst_h  ? i_hstart[15:8]                 : 8'h00) |
+        (if sel_hst_l  ? i_hstart[7:0]                  : 8'h00) |
+        (if sel_vst_h  ? i_vstart[15:8]                 : 8'h00) |
+        (if sel_vst_l  ? i_vstart[7:0]                  : 8'h00) |
+        (if sel_vsw_h  ? {i_vsw_vsp[15], i_vsw_vsp[14:8]} : 8'h00) |
+        (if sel_vsw_l  ? i_vsw_vsp[7:0]                 : 8'h00) |
+        (if sel_hw_h   ? i_hwidth[15:8]                 : 8'h00) |
+        (if sel_hw_l   ? i_hwidth[7:0]                  : 8'h00) |
+        (if sel_vh_h   ? i_vheight[15:8]                : 8'h00) |
+        (if sel_vh_l   ? i_vheight[7:0]                 : 8'h00) |
+        (if sel_nvid_h ? i_nvid[23:16]                  : 8'h00) |
+        (if sel_nvid_m ? i_nvid[15:8]                   : 8'h00) |
+        (if sel_nvid_l ? i_nvid[7:0]                    : 8'h00) |
+        (if sel_misc0  ? i_misc[7:0]                    : 8'h00) |
+        (if sel_misc1  ? i_misc[15:8]                   : 8'h00) |
+        (if sel_se     ? 8'hFD                          : 8'h00);
 
     always_ff (i_clk, i_rstn) {
         if_reset {
-            counter = 0;
+            oh      = 39'd1;
             active  = 0;
             o_valid = 0;
             o_byte  = 0;
@@ -76,63 +137,16 @@ pub module msa_generator (
             // Mux upstream samples them on the NEXT byte_tick, so the
             // registered value must persist between ticks.
             if !active && i_trigger {
-                active  = 1;
-                counter = 0;
+                active = 1;
+                oh     = 39'd1;
             } else if active && i_byte_tick {
                 o_valid = 1;
-                o_is_k  = 0;
-                case counter {
-                    6'd0,
-                    6'd1:  {
-                        o_byte = 8'h5C; // SS (K28.2)
-                        o_is_k = 1;
-                    }
-                    6'd2:  o_byte = i_mvid[23:16];
-                    6'd3:  o_byte = i_mvid[15:8];
-                    6'd4:  o_byte = i_mvid[7:0];
-                    6'd5:  o_byte = i_htotal[15:8];
-                    6'd6:  o_byte = i_htotal[7:0];
-                    6'd7:  o_byte = i_vtotal[15:8];
-                    6'd8:  o_byte = i_vtotal[7:0];
-                    6'd9:  o_byte = {i_hsw_hsp[15], i_hsw_hsp[14:8]};
-                    6'd10: o_byte = i_hsw_hsp[7:0];
-                    6'd11: o_byte = i_mvid[23:16];
-                    6'd12: o_byte = i_mvid[15:8];
-                    6'd13: o_byte = i_mvid[7:0];
-                    6'd14: o_byte = i_hstart[15:8];
-                    6'd15: o_byte = i_hstart[7:0];
-                    6'd16: o_byte = i_vstart[15:8];
-                    6'd17: o_byte = i_vstart[7:0];
-                    6'd18: o_byte = {i_vsw_vsp[15], i_vsw_vsp[14:8]};
-                    6'd19: o_byte = i_vsw_vsp[7:0];
-                    6'd20: o_byte = i_mvid[23:16];
-                    6'd21: o_byte = i_mvid[15:8];
-                    6'd22: o_byte = i_mvid[7:0];
-                    6'd23: o_byte = i_hwidth[15:8];
-                    6'd24: o_byte = i_hwidth[7:0];
-                    6'd25: o_byte = i_vheight[15:8];
-                    6'd26: o_byte = i_vheight[7:0];
-                    6'd27,
-                    6'd28: o_byte = 8'h00;
-                    6'd29: o_byte = i_mvid[23:16];
-                    6'd30: o_byte = i_mvid[15:8];
-                    6'd31: o_byte = i_mvid[7:0];
-                    6'd32: o_byte = i_nvid[23:16];
-                    6'd33: o_byte = i_nvid[15:8];
-                    6'd34: o_byte = i_nvid[7:0];
-                    6'd35: o_byte = i_misc[7:0];
-                    6'd36: o_byte = i_misc[15:8];
-                    6'd37: o_byte = 8'h00;
-                    6'd38: {
-                        o_byte = 8'hFD; // SE (K29.7)
-                        o_is_k = 1;
-                    }
-                    default: o_byte = 8'h00;
-                }
-                if counter == 6'd38 {
+                o_byte  = mux_byte;
+                o_is_k  = sel_ss | sel_se;
+                if oh[38] {
                     active = 0;
                 } else {
-                    counter = counter + 1;
+                    oh = {oh[37:0], 1'b0};
                 }
             }
         }

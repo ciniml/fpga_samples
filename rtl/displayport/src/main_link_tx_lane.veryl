@@ -78,8 +78,20 @@ pub module main_link_tx_lane #(
     var ser_ready: logic;
     var pipe_busy: logic<4>; // shifts byte_tick down the pipeline
     let pipe_idle:    logic = pipe_busy == 4'b0000;
-    let byte_tick_paced:      logic = i_enable && ser_ready && pipe_idle;
-    let byte_tick_continuous: logic = i_enable;
+    // Local re-register of the (CDC-synchronized) enable: it fans out
+    // into every per-byte gate, so one more register stage keeps the
+    // synchronizer flop out of those timing paths. Enable is a level
+    // that changes once at link bring-up; the extra cycle is harmless.
+    var enable_r: logic;
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            enable_r = 0;
+        } else {
+            enable_r = i_enable;
+        }
+    }
+    let byte_tick_paced:      logic = enable_r && ser_ready && pipe_idle;
+    let byte_tick_continuous: logic = enable_r;
     let byte_tick:    logic = if (CONTINUOUS_BYTE_TICK != 0) ?
                                   byte_tick_continuous : byte_tick_paced;
 

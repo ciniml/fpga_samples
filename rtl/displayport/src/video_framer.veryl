@@ -80,17 +80,72 @@ pub module video_framer #(
     let _unused_hstart: logic<16> = i_hstart; // forwarded to msa_generator only
 
     // Timing in BYTES per line / frame. The inputs are quasi-static CPU
-    // registers, so the derived constants are registered to keep the
-    // 16-bit multiply/subtract cones out of the per-byte timing paths.
+    // registers (programmed strictly before video_enable), so every
+    // derived constant is registered: the multiply/subtract/add cones
+    // settle once and stay out of the per-byte timing paths.
     var bytes_per_line: logic<18>;
     var hblank_bytes:   logic<18>;
+    var bpl_m1:         logic<18>; // bytes_per_line - 1 (line wrap slot)
+    var bpl_m2:         logic<18>; // bytes_per_line - 2
+    var hblank_m1:      logic<18>; // hblank_bytes - 1 (BE slot)
+    var hblank_m2:      logic<18>; // hblank_bytes - 2 (TU phase reset slot)
+    var hblank_m3:      logic<18>; // hblank_bytes - 3
+    var bs_len_m1:      logic<18>; // last slot of the BS group
+    var bs_len_m2:      logic<18>; // slot before the BS group's last
+    var hdr_leave_at:   logic<18>; // last header slot   (bs_len + 11)
+    var msa_leave_at:   logic<18>; // last MSA slot      (bs_len + 50)
+    var msa_trig_prev:  logic<18>; // slot before trigger (bs_len + 9)
+    var msa_pre_enter:  logic<18>; // slot before msa_pre (bs_len + 10)
+    var msa_pre_leave:  logic<18>; // last msa_pre slot   (bs_len + 49)
+    var vend:           logic<16>; // vstart + vheight
+    var vtotal_m1:      logic<16>;
+    var idle_bs_m1:     logic<13>;
+    var idle_bs_m2:     logic<13>;
+    var idle_hdr_leave: logic<13>;
     always_ff (i_clk, i_rstn) {
         if_reset {
             bytes_per_line = 0;
             hblank_bytes   = 0;
+            bpl_m1         = 0;
+            bpl_m2         = 0;
+            hblank_m1      = 0;
+            hblank_m2      = 0;
+            hblank_m3      = 0;
+            bs_len_m1      = 0;
+            bs_len_m2      = 0;
+            hdr_leave_at   = 12;
+            msa_leave_at   = 51;
+            msa_trig_prev  = 10;
+            msa_pre_enter  = 11;
+            msa_pre_leave  = 50;
+            vend           = 0;
+            vtotal_m1      = 0;
+            idle_bs_m1     = 0;
+            idle_bs_m2     = 0;
+            idle_hdr_leave = 12;
         } else {
+            // Stage 1: from the quasi-static inputs.
             bytes_per_line = ({2'b0, i_htotal} * 18'd3);
             hblank_bytes   = (({2'b0, i_htotal} - {2'b0, i_hwidth}) * 18'd3);
+            // Stage 2: from the stage-1 registers, so no path runs the
+            // whole multiply/subtract cone in one cycle.
+            bpl_m1         = bytes_per_line - 18'd1;
+            bpl_m2         = bytes_per_line - 18'd2;
+            hblank_m1      = hblank_bytes - 18'd1;
+            hblank_m2      = hblank_bytes - 18'd2;
+            hblank_m3      = hblank_bytes - 18'd3;
+            bs_len_m1      = if i_enhanced_framing ? 18'd3 : 18'd0;
+            bs_len_m2      = if i_enhanced_framing ? 18'd2 : 18'd0;
+            hdr_leave_at   = if i_enhanced_framing ? 18'd15 : 18'd12;
+            msa_leave_at   = if i_enhanced_framing ? 18'd54 : 18'd51;
+            msa_trig_prev  = if i_enhanced_framing ? 18'd13 : 18'd10;
+            msa_pre_enter  = if i_enhanced_framing ? 18'd14 : 18'd11;
+            msa_pre_leave  = if i_enhanced_framing ? 18'd53 : 18'd50;
+            vend           = i_vstart + i_vheight;
+            vtotal_m1      = i_vtotal - 16'd1;
+            idle_bs_m1     = if i_enhanced_framing ? 13'd3 : 13'd0;
+            idle_bs_m2     = if i_enhanced_framing ? 13'd2 : 13'd0;
+            idle_hdr_leave = if i_enhanced_framing ? 13'd15 : 13'd12;
         }
     }
 
@@ -102,66 +157,216 @@ pub module video_framer #(
     const BS_BITS: u32 = $clog2(SR_PERIOD);
     type bs_count_t = logic<BS_BITS>;
     var bs_count: bs_count_t;
-    let use_sr_now: logic = (bs_count == (SR_PERIOD - 1) as bs_count_t);
-    // bs_count updates on the tick of group byte 0, so use_sr_now is only
-    // valid at byte 0. Latch the decision there so the trailing symbol of
-    // an enhanced-framing group (byte bs_len-1) matches the leading one
-    // (SR BF BF SR / BS BF BF BS, never mixed).
+    // Registered copy of the SR decision. bs_count only changes on the
+    // tick that emits a group's first symbol, hundreds of ticks apart,
+    // and the registered copy still holds the pre-update value on that
+    // very tick (non-blocking), so it is always coherent where used.
+    var use_sr_now_r: logic;
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            use_sr_now_r = 0;
+        } else {
+            use_sr_now_r = (bs_count == (SR_PERIOD - 1) as bs_count_t);
+        }
+    }
+    // bs_count updates on the tick of group byte 0. Latch the decision
+    // there so the trailing symbol of an enhanced-framing group (byte
+    // bs_len-1) matches the leading one (SR BF BF SR / BS BF BF BS,
+    // never mixed).
     var group_is_sr: logic;
 
-    // Length of the BS/SR group at line start: 1 symbol in default
-    // framing, 4 symbols (BS BF BF BS / SR BF BF SR) in enhanced framing.
-    let bs_len: logic<18> = if i_enhanced_framing ? 18'd4 : 18'd1;
-
-    let at_video_bs: logic = i_video_enable && (byte_in_line == 18'd0);
-    let at_idle_bs:  logic = !i_video_enable && (idle_counter == 13'd0);
-    let at_any_bs:   logic = at_video_bs || at_idle_bs;
-
-    let line_is_active: logic =
-        (line >= i_vstart) && (line <: i_vstart + i_vheight);
-    let line_is_vblank: logic = !line_is_active;
-
-    // BS/SR group window (bytes [0..bs_len)).
-    let in_bs_window: logic = byte_in_line <: bs_len;
-
-    // (VB-ID, Mvid7:0, Maud7:0) x 4 header right after the BS group.
-    let in_hdr_window: logic =
-        (byte_in_line >= bs_len) && (byte_in_line <: bs_len + 18'd12);
-    // Position within the repeating 3-byte header group: 0=VB-ID,
-    // 1=Mvid7:0, 2=Maud7:0.
-    let hdr_phase: logic<18> = (byte_in_line - bs_len) % 18'd3;
-
-    // Window predicates (bytes inside the line).
-    let in_msa_window: logic =
-        line_is_vblank && (byte_in_line >= bs_len + 18'd12) &&
-        (byte_in_line <: bs_len + 18'd51);
-    let in_tu_window: logic =
-        line_is_active && (byte_in_line >= hblank_bytes);
-    let at_be: logic =
-        line_is_active && (byte_in_line == hblank_bytes - 18'd1);
-
-    // Trigger / start pulses for submodules. Submodule outputs are
-    // registered (1-cycle delay), so we drive their byte_ticks one byte
-    // EARLIER than the slot the mux reads them at.
+    // ------------------------------------------------------------------
+    // Look-ahead per-slot flags.
     //
-    // MSA mux range is byte_in_line [bs_len+12..bs_len+50]. Pre-emit at
-    // [bs_len+11..bs_len+49]; trigger at bs_len+10 so the first byte is
-    // ready by bs_len+12.
-    let msa_trigger: logic =
-        i_byte_tick && line_is_vblank && (byte_in_line == bs_len + 18'd10);
-    let msa_pre_window: logic =
-        line_is_vblank && (byte_in_line >= bs_len + 18'd11) &&
-        (byte_in_line <: bs_len + 18'd50);
-    let msa_byte_tick: logic = i_byte_tick && msa_pre_window;
+    // All per-byte window predicates are registered flags maintained by
+    // set/hold/clear rules keyed on EQUALITY compares of the current
+    // position against (boundary - 1) constants: "the next slot enters
+    // window W" is detected as `byte_in_line == first(W) - 1` on a tick,
+    // with the line wrap handled as an explicit case. This avoids both
+    // an increment adder and magnitude compares in the per-byte paths;
+    // each flag path is one 18-bit equality plus a small select. When no
+    // tick fires the flags hold, so they stay coherent for paced
+    // (non-continuous) byte ticks too.
+    // ------------------------------------------------------------------
+    let wrap_v:        logic = (byte_in_line == bpl_m1);
+    let line_wrap_now: logic = i_byte_tick && wrap_v && i_video_enable;
+    let wrap_i:        logic = (idle_counter == 13'd8191);
 
-    // TU mux range is byte_in_line [hblank..bytes_per_line-1]. Pre-emit at
-    // byte_in_line [hblank-1..bytes_per_line-1]; reset phase at hblank-2.
-    // The hblank-1 emit is masked at the mux because at_be takes priority.
-    let tu_pre_window: logic =
-        line_is_active && (byte_in_line + 18'd1 >= hblank_bytes) &&
-        (byte_in_line + 18'd1 <: bytes_per_line);
-    let tu_start_pulse: logic =
-        i_byte_tick && line_is_active && (byte_in_line + 18'd2 == hblank_bytes);
+    // Registered per-line helpers: `line` is stable for a whole line, so
+    // these deep compares settle long before the line wraps.
+    var frame_wrap_r:        logic;     // line == vtotal-1
+    var line_p1:             logic<16>; // line + 1 (stage 1)
+    var np1_ge_vstart:       logic;     // stage 2
+    var np1_lt_vend:         logic;     // stage 2
+    var next_line_is_vblank: logic;     // stage 3: vblank-ness of line+1
+    var line0_is_vblank:     logic;     // vblank-ness of line 0
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            frame_wrap_r        = 0;
+            line_p1             = 1;
+            np1_ge_vstart       = 0;
+            np1_lt_vend         = 0;
+            next_line_is_vblank = 1;
+            line0_is_vblank     = 1;
+        } else {
+            frame_wrap_r        = (line == vtotal_m1);
+            line_p1             = line + 16'd1;
+            np1_ge_vstart       = (line_p1 >= i_vstart);
+            np1_lt_vend         = (line_p1 <: vend);
+            next_line_is_vblank = !(np1_ge_vstart && np1_lt_vend);
+            line0_is_vblank     = (i_vstart != 16'd0);
+        }
+    }
+
+    // Per-slot flags (describe the slot the mux emits on the NEXT cycle,
+    // which by construction is byte_in_line / idle_counter then).
+    var f_line_vblank: logic;
+    var f_v_bs_first:  logic;
+    var f_v_bs_last:   logic;
+    var f_v_bs_in:     logic;
+    var f_v_hdr_in:    logic;
+    var f_v_msa_in:    logic;
+    var f_v_at_be:     logic;
+    var f_v_tu_in:     logic;
+    var f_v_msa_trig:  logic;
+    var f_v_msa_pre:   logic;
+    var f_v_tu_pre:    logic;
+    var f_v_tu_start:  logic;
+    var hdr_phase_v:   logic<2>;
+    var f_i_bs_first:  logic;
+    var f_i_bs_last:   logic;
+    var f_i_bs_in:     logic;
+    var f_i_hdr_in:    logic;
+    var hdr_phase_i:   logic<2>;
+
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            f_line_vblank = 1;
+            f_v_bs_first  = 1;
+            f_v_bs_last   = 0;
+            f_v_bs_in     = 1;
+            f_v_hdr_in    = 0;
+            f_v_msa_in    = 0;
+            f_v_at_be     = 0;
+            f_v_tu_in     = 0;
+            f_v_msa_trig  = 0;
+            f_v_msa_pre   = 0;
+            f_v_tu_pre    = 0;
+            f_v_tu_start  = 0;
+            hdr_phase_v   = 0;
+            f_i_bs_first  = 1;
+            f_i_bs_last   = 0;
+            f_i_bs_in     = 1;
+            f_i_hdr_in    = 0;
+            hdr_phase_i   = 0;
+        } else {
+            // ---- video-path flags ----
+            if !i_video_enable {
+                // Park at slot 0 so the first enabled tick emits a
+                // correct BS group start.
+                f_v_bs_first = 1;
+                f_v_bs_last  = bs_len_m1 == 18'd0;
+                f_v_bs_in    = 1;
+                f_v_hdr_in   = 0;
+                f_v_msa_in   = 0;
+                f_v_at_be    = 0;
+                f_v_tu_in    = 0;
+                f_v_msa_trig = 0;
+                f_v_msa_pre  = 0;
+                f_v_tu_pre   = 0;
+                f_v_tu_start = 0;
+                hdr_phase_v  = 0;
+            } else if i_byte_tick {
+                // next == K  <=>  byte_in_line == K-1 (or wrap for K=0).
+                f_v_bs_first = wrap_v;
+                f_v_bs_last  = if bs_len_m1 == 18'd0 ?
+                                   wrap_v : (byte_in_line == bs_len_m2);
+                f_v_msa_trig = (byte_in_line == msa_trig_prev);
+                f_v_at_be    = (byte_in_line == hblank_m2);
+                f_v_tu_start = (byte_in_line == hblank_m3);
+                // Range flags: set on entering, clear on leaving.
+                if wrap_v {
+                    f_v_bs_in = 1;
+                } else if byte_in_line == bs_len_m1 {
+                    f_v_bs_in = 0;
+                }
+                if byte_in_line == bs_len_m1 {
+                    f_v_hdr_in = 1;
+                } else if byte_in_line == hdr_leave_at {
+                    f_v_hdr_in = 0;
+                }
+                if byte_in_line == hdr_leave_at {
+                    f_v_msa_in = 1;
+                } else if byte_in_line == msa_leave_at {
+                    f_v_msa_in = 0;
+                }
+                if byte_in_line == hblank_m1 {
+                    f_v_tu_in = 1;
+                } else if wrap_v {
+                    f_v_tu_in = 0;
+                }
+                if byte_in_line == msa_pre_enter {
+                    f_v_msa_pre = 1;
+                } else if byte_in_line == msa_pre_leave {
+                    f_v_msa_pre = 0;
+                }
+                if byte_in_line == hblank_m2 {
+                    f_v_tu_pre = 1;
+                } else if byte_in_line == bpl_m2 {
+                    f_v_tu_pre = 0;
+                }
+                // Header byte phase: 0 = VB-ID, 1 = Mvid, 2 = Maud.
+                if byte_in_line == bs_len_m1 {
+                    hdr_phase_v = 0;
+                } else if f_v_hdr_in {
+                    hdr_phase_v = if hdr_phase_v == 2'd2 ? 2'd0 : hdr_phase_v + 2'd1;
+                }
+            }
+
+            if !i_video_enable {
+                f_line_vblank = line0_is_vblank;
+            } else if line_wrap_now {
+                f_line_vblank = if frame_wrap_r ? line0_is_vblank : next_line_is_vblank;
+            }
+
+            // ---- idle-path flags ----
+            if i_video_enable {
+                f_i_bs_first = 1;
+                f_i_bs_last  = idle_bs_m1 == 13'd0;
+                f_i_bs_in    = 1;
+                f_i_hdr_in   = 0;
+                hdr_phase_i  = 0;
+            } else if i_byte_tick {
+                f_i_bs_first = wrap_i;
+                f_i_bs_last  = if idle_bs_m1 == 13'd0 ?
+                                   wrap_i : (idle_counter == idle_bs_m2);
+                if wrap_i {
+                    f_i_bs_in = 1;
+                } else if idle_counter == idle_bs_m1 {
+                    f_i_bs_in = 0;
+                }
+                if idle_counter == idle_bs_m1 {
+                    f_i_hdr_in = 1;
+                } else if idle_counter == idle_hdr_leave {
+                    f_i_hdr_in = 0;
+                }
+                if idle_counter == idle_bs_m1 {
+                    hdr_phase_i = 0;
+                } else if f_i_hdr_in {
+                    hdr_phase_i = if hdr_phase_i == 2'd2 ? 2'd0 : hdr_phase_i + 2'd1;
+                }
+            }
+        }
+    }
+
+    // Submodule tick gates. Submodule outputs are registered (1-cycle
+    // delay), so their windows run one byte EARLIER (msa_pre / tu_pre)
+    // than the slot the mux reads them at, exactly as before — the
+    // pre-window flags encode the same ranges.
+    let msa_trigger:   logic = i_byte_tick && f_line_vblank && f_v_msa_trig;
+    let msa_byte_tick: logic = i_byte_tick && f_line_vblank && f_v_msa_pre;
+    let tu_pre_window: logic = i_video_enable && !f_line_vblank && f_v_tu_pre;
+    let tu_start_pulse: logic = i_byte_tick && !f_line_vblank && f_v_tu_start && i_video_enable;
     let tu_byte_tick:  logic = i_byte_tick && tu_pre_window;
 
     // ------ MSA generator ------
@@ -214,7 +419,7 @@ pub module video_framer #(
         o_is_k        : tu_is_k,
     );
 
-    // ------ Output mux ------
+    // ------ Output mux (flag-based, shallow) ------
     always_comb {
         o_scramble_disable = 0;
         o_valid            = i_byte_tick;
@@ -222,18 +427,18 @@ pub module video_framer #(
         o_is_k             = 0;
 
         if i_video_enable {
-            if in_bs_window {
+            if f_v_bs_in {
                 // BS group. Default framing: single BS (K28.5) or SR
-                // (K28.0) when use_sr_now. Enhanced framing: 4-symbol
+                // (K28.0) when use_sr_now_r. Enhanced framing: 4-symbol
                 // sequence BS BF BF BS (or SR BF BF SR), BF = K28.3.
                 o_is_k = 1;
-                if byte_in_line == 18'd0 {
-                    if use_sr_now {
+                if f_v_bs_first {
+                    if use_sr_now_r {
                         o_byte = 8'h1C;
                     } else {
                         o_byte = 8'hBC;
                     }
-                } else if byte_in_line == bs_len - 18'd1 {
+                } else if f_v_bs_last {
                     // Trailing symbol repeats the group's leading symbol;
                     // bs_count has already advanced, so use the latched
                     // decision.
@@ -245,25 +450,25 @@ pub module video_framer #(
                 } else {
                     o_byte = 8'h7C; // BF
                 }
-            } else if in_hdr_window {
+            } else if f_v_hdr_in {
                 // (VB-ID, Mvid7:0, Maud7:0) x 4 (Fig 2-11/2-12).
-                if hdr_phase == 18'd0 {
+                if hdr_phase_v == 2'd0 {
                     // VB-ID: bit0 = VBlank flag (rest 0 in our scope)
-                    o_byte = {7'h00, line_is_vblank};
-                } else if hdr_phase == 18'd1 {
+                    o_byte = {7'h00, f_line_vblank};
+                } else if hdr_phase_v == 2'd1 {
                     o_byte = i_mvid[7:0];
                 } else {
                     o_byte = 8'h00; // Maud
                 }
-            } else if at_be {
+            } else if !f_line_vblank && f_v_at_be {
                 o_byte = 8'hFB; // BE = K27.7
                 o_is_k = 1;
-            } else if in_msa_window {
+            } else if f_line_vblank && f_v_msa_in {
                 if msa_valid {
                     o_byte = msa_byte;
                     o_is_k = msa_is_k;
                 }
-            } else if in_tu_window {
+            } else if !f_line_vblank && f_v_tu_in {
                 if tu_valid {
                     o_byte = tu_byte;
                     o_is_k = tu_is_k;
@@ -275,15 +480,15 @@ pub module video_framer #(
             // window. VB-ID = 0x09: NoVideoStream_Flag (bit 3) plus
             // VerticalBlanking_Flag (bit 0), which Table 2-3 requires to
             // be set whenever bit 3 is set.
-            if {5'b0, idle_counter} <: bs_len {
+            if f_i_bs_in {
                 o_is_k = 1;
-                if idle_counter == 13'd0 {
-                    if use_sr_now {
+                if f_i_bs_first {
+                    if use_sr_now_r {
                         o_byte = 8'h1C;
                     } else {
                         o_byte = 8'hBC;
                     }
-                } else if {5'b0, idle_counter} == bs_len - 18'd1 {
+                } else if f_i_bs_last {
                     if group_is_sr {
                         o_byte = 8'h1C;
                     } else {
@@ -292,8 +497,8 @@ pub module video_framer #(
                 } else {
                     o_byte = 8'h7C; // BF
                 }
-            } else if ({5'b0, idle_counter} >= bs_len) && ({5'b0, idle_counter} <: bs_len + 18'd12) {
-                if (({5'b0, idle_counter} - bs_len) % 18'd3) == 18'd0 {
+            } else if f_i_hdr_in {
+                if hdr_phase_i == 2'd0 {
                     o_byte = 8'h09; // VB-ID
                 } else {
                     o_byte = 8'h00; // Mvid7:0 / Maud7:0
@@ -314,39 +519,30 @@ pub module video_framer #(
             // K-comma it sees, eliminating the startup mismatch window.
             bs_count = (SR_PERIOD - 1) as bs_count_t;
         } else {
-            if i_byte_tick && at_any_bs {
+            if i_byte_tick &&
+               ((i_video_enable && f_v_bs_first) || (!i_video_enable && f_i_bs_first)) {
                 // Latch the SR decision for the rest of this group before
-                // the counter advances (non-blocking: use_sr_now still
+                // the counter advances (non-blocking: use_sr_now_r still
                 // reflects the pre-update bs_count here).
-                group_is_sr = use_sr_now;
-                if use_sr_now {
+                group_is_sr = use_sr_now_r;
+                if use_sr_now_r {
                     bs_count = 0;
                 } else {
                     bs_count = bs_count + (1 as bs_count_t);
                 }
             }
             if !i_video_enable {
-                if i_byte_tick {
-                    if idle_counter == 13'd8191 {
-                        idle_counter = 0;
-                    } else {
-                        idle_counter = idle_counter + 13'd1;
-                    }
-                }
                 byte_in_line = 0;
                 line         = 0;
+                if i_byte_tick {
+                    idle_counter = if wrap_i ? 13'd0 : idle_counter + 13'd1;
+                }
             } else {
                 idle_counter = 0;
                 if i_byte_tick {
-                    if byte_in_line + 18'd1 >= bytes_per_line {
-                        byte_in_line = 0;
-                        if line + 16'd1 >= i_vtotal {
-                            line = 0;
-                        } else {
-                            line = line + 16'd1;
-                        }
-                    } else {
-                        byte_in_line = byte_in_line + 18'd1;
+                    byte_in_line = if wrap_v ? 18'd0 : byte_in_line + 18'd1;
+                    if wrap_v {
+                        line = if frame_wrap_r ? 16'd0 : line + 16'd1;
                     }
                 }
             }

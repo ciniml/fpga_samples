@@ -6,18 +6,25 @@
 /**
  * @file pixel_fifo.veryl
  * @brief AXI-Stream 24bpp pixel input → byte-stream FIFO. Each accepted
- *        AXI beat loads three bytes (R, G, B) into the FIFO, popped one
- *        byte per pop pulse.
+ *        AXI beat loads one pixel (R, G, B), popped one byte per pop
+ *        pulse in R, G, B order.
  *
- * Phase D scope: 1-lane / 24bpp / depth = 256 bytes (~85 pixels). Depth
- * is sized for the small-frame test; raise via parameter if needed.
+ * Implementation: three byte-plane RAMs (R/G/B), each written exactly
+ * once per accepted beat at the same word address, and read through a
+ * word pointer plus a 0..2 byte-phase counter. A single write port per
+ * plane lets synthesis map the storage to LUT RAM (the previous
+ * byte-array version wrote three consecutive byte addresses per beat,
+ * which degenerated into a register file with deep enable decoders and
+ * dominated the link-clock timing).
  *
  * Pixel-byte ordering matches DP 1.2 Tab 2-7 (24bpp RGB on 1 lane): the
  * three bytes per pixel are emitted in the order R, G, B.
  */
 
 pub module pixel_fifo #(
-    param DEPTH: u32 = 256,
+    // FIFO depth in pixels (power of two keeps the pointer/occupancy
+    // logic trivial).
+    param DEPTH_PIXELS: u32 = 64,
 ) (
     i_clk:  input clock_posedge,
     i_rstn: input reset_sync_low,
@@ -32,50 +39,75 @@ pub module pixel_fifo #(
     o_pop_empty: output logic,
     i_pop:       input  logic,
 ) {
-    const PTR_BITS:   u32 = $clog2(DEPTH);
-    const COUNT_BITS: u32 = $clog2(DEPTH + 1);
+    const PTR_BITS:   u32 = $clog2(DEPTH_PIXELS);
+    const COUNT_BITS: u32 = $clog2(DEPTH_PIXELS + 1);
     type ptr_t   = logic<PTR_BITS>;
     type count_t = logic<COUNT_BITS>;
 
-    var mem:    logic<8>[DEPTH];
-    var wr_ptr: ptr_t;
-    var rd_ptr: ptr_t;
-    var count:  count_t;
+    var mem_r: logic<8>[DEPTH_PIXELS];
+    var mem_g: logic<8>[DEPTH_PIXELS];
+    var mem_b: logic<8>[DEPTH_PIXELS];
 
-    // Push acceptance: need at least 3 free entries.
-    let push_accept: logic = s_axis_tvalid && (count <: (DEPTH - 2) as count_t);
-    assign s_axis_tready = (count <: (DEPTH - 2) as count_t);
+    var wr_ptr:   ptr_t;
+    var rd_ptr:   ptr_t;
+    var rd_phase: logic<2>;   // 0 = R, 1 = G, 2 = B
+    var count:    count_t;    // occupied pixel words (front word is
+                              // complete because pushes are whole pixels)
 
-    assign o_pop_byte  = mem[rd_ptr];
-    assign o_pop_empty = (count == 0);
+    let push_accept: logic = s_axis_tvalid && (count <: DEPTH_PIXELS as count_t);
+    assign s_axis_tready = (count <: DEPTH_PIXELS as count_t);
+
+    always_comb {
+        case rd_phase {
+            2'd0:    o_pop_byte = mem_r[rd_ptr];
+            2'd1:    o_pop_byte = mem_g[rd_ptr];
+            default: o_pop_byte = mem_b[rd_ptr];
+        }
+    }
+    // Registered empty flag: the (count == 0) compare would otherwise sit
+    // in the per-byte pop path (empty -> pop gate -> pointers/count).
+    var empty_r: logic;
+    assign o_pop_empty = empty_r;
 
     always_ff (i_clk, i_rstn) {
         if_reset {
-            wr_ptr = 0;
-            rd_ptr = 0;
-            count  = 0;
+            wr_ptr   = 0;
+            rd_ptr   = 0;
+            rd_phase = 0;
+            count    = 0;
+            empty_r  = 1;
         } else {
-            let pop_now: logic = i_pop && (count != 0);
+            let pop_now:       logic = i_pop && !empty_r;
+            let word_consumed: logic = pop_now && (rd_phase == 2'd2);
 
-            // Push: 3 bytes per accepted beat (R, G, B).
             if push_accept {
-                mem[wr_ptr]                  = s_axis_tdata[23:16]; // R
-                mem[(wr_ptr + 1) as ptr_t]   = s_axis_tdata[15:8];  // G
-                mem[(wr_ptr + 2) as ptr_t]   = s_axis_tdata[7:0];   // B
-                wr_ptr                       = (wr_ptr + 3) as ptr_t;
+                empty_r = 0;
+            } else if word_consumed {
+                empty_r = (count == (1 as count_t));
+            }
+
+            if push_accept {
+                mem_r[wr_ptr] = s_axis_tdata[23:16];
+                mem_g[wr_ptr] = s_axis_tdata[15:8];
+                mem_b[wr_ptr] = s_axis_tdata[7:0];
+                wr_ptr        = wr_ptr + (1 as ptr_t);
             }
 
             if pop_now {
-                rd_ptr = (rd_ptr + 1) as ptr_t;
+                if rd_phase == 2'd2 {
+                    rd_phase = 0;
+                    rd_ptr   = rd_ptr + (1 as ptr_t);
+                } else {
+                    rd_phase = rd_phase + 2'd1;
+                }
             }
 
-            // Update count.
-            if push_accept && pop_now {
-                count = count + 2 as count_t; // +3 -1
+            if push_accept && word_consumed {
+                // count unchanged
             } else if push_accept {
-                count = count + 3 as count_t;
-            } else if pop_now {
-                count = count - 1 as count_t;
+                count = count + (1 as count_t);
+            } else if word_consumed {
+                count = count - (1 as count_t);
             }
         }
     }
