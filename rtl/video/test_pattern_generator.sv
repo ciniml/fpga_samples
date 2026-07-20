@@ -106,6 +106,8 @@ always_ff @(posedge clock) begin
     if( reset ) begin
         hcounter <= '0;
         vcounter <= '0;
+        h_last   <= (HTOTAL == 1);
+        v_last   <= (VTOTAL == 1);
         logo_address <= '0;
         video_de <= 0;
         video_hsync <= 0;
@@ -166,6 +168,7 @@ always_ff @(posedge clock) begin
                 vcounter_next = vcounter + vcounter_t'(1);
                 logo_address <= (logo_address + logo_address_t'(7)) & ~logo_address_t'(7);
                 vcounter <= vcounter_next;
+                v_last   <= (vcounter_next == VTOTAL - 1);
                 if( vcounter == logo_top_m1 ) within_logo_v <= 1'b1;
                 else if( vcounter == logo_bottom ) within_logo_v <= 1'b0;
             end

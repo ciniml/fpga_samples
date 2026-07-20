@@ -1,0 +1,106 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_tpg_raster.veryl
+ * @brief Raster-integrity unit test for test_pattern_generator: with
+ *        enable held high, every frame must produce exactly
+ *        HACTIVE*VACTIVE DE pixels in exactly HTOTAL*VTOTAL cycles
+ *        (this is the invariant the demand-paced DP pixel path relies
+ *        on for its rate budget — a broken frame wrap starves the
+ *        link and shows up as vertical rolling on the monitor).
+ */
+
+module TbTpgRaster {}
+
+#[test(tpg_raster)]
+embed (inline) sv{{{
+module tpg_raster;
+    localparam int HSYNC = 4, HBACK = 3, HACTIVE = 16, HFRONT = 2;
+    localparam int VSYNC = 2, VBACK = 1, VACTIVE = 8,  VFRONT = 1;
+    localparam int HTOTAL = HSYNC + HBACK + HACTIVE + HFRONT;
+    localparam int VTOTAL = VSYNC + VBACK + VACTIVE + VFRONT;
+
+    logic clk;
+    logic rstn;
+    initial clk = 0;
+    always #5 clk = ~clk;
+
+    logic [23:0] video_data;
+    logic        video_de, video_hsync, video_vsync;
+
+    test_pattern_generator #(
+        .HSYNC(HSYNC), .HBACK(HBACK), .HACTIVE(HACTIVE), .HFRONT(HFRONT),
+        .VSYNC(VSYNC), .VBACK(VBACK), .VACTIVE(VACTIVE), .VFRONT(VFRONT),
+        .BOUNCE_LOGO(0), .LOGO_PATH(""), .LOGO_WIDTH(4), .LOGO_HEIGHT(2)
+    ) dut (
+        .clock(clk),
+        .reset(!rstn),
+        .enable(1'b1),
+        .video_data(video_data),
+        .video_de(video_de),
+        .video_hsync(video_hsync),
+        .video_vsync(video_vsync)
+    );
+
+    integer errors = 0;
+
+    initial begin
+        automatic int de_count;
+        automatic int cyc;
+        rstn = 0;
+        repeat (4) @(posedge clk);
+        rstn = 1;
+
+        // Skip the partial first frame: wait for a vsync rising edge.
+        @(posedge clk);
+        while (!video_vsync) @(posedge clk);
+        while (video_vsync) @(posedge clk);
+        // Now inside frame body right after vsync deasserts. Measure
+        // from the NEXT vsync assert over 3 full frames.
+        while (!video_vsync) @(posedge clk);
+
+        for (int f = 0; f < 3; f++) begin
+            de_count = 0;
+            cyc = 0;
+            // One frame = from this vsync rising edge to the next:
+            // ride out the current vsync, then count until it rises
+            // again.
+            while (video_vsync) begin
+                @(posedge clk);
+                cyc++;
+                if (video_de) de_count++;
+            end
+            while (!video_vsync) begin
+                @(posedge clk);
+                cyc++;
+                if (video_de) de_count++;
+            end
+            if (de_count != HACTIVE * VACTIVE) begin
+                $display("ERROR: frame %0d: %0d DE pixels (expected %0d)",
+                         f, de_count, HACTIVE * VACTIVE);
+                errors++;
+            end
+            if (cyc != HTOTAL * VTOTAL) begin
+                $display("ERROR: frame %0d: period %0d cycles (expected %0d)",
+                         f, cyc, HTOTAL * VTOTAL);
+                errors++;
+            end
+        end
+
+        if (errors == 0) begin
+            $display("PASS: tpg_raster");
+        end else begin
+            $fatal(1, "FAIL: %0d errors", errors);
+        end
+        $finish;
+    end
+
+    initial begin
+        #2_000_000;
+        $fatal(1, "[tb_tpg] timeout");
+    end
+endmodule
+}}}

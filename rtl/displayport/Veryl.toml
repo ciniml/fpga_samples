@@ -14,11 +14,13 @@ include_files = [
     "test/sw-rs/bootrom-rs-4lane.hex",
     "test/sw-rs/bootrom-rs-2lane.hex",
     "../../external/learn-fpga/FemtoRV/RTL/PROCESSOR/femtorv32_gracilis.v",
+    "../video/test_pattern_generator.sv",
 ]
 
 [test.verilator]
 compile_args = [
     "femtorv32_gracilis.v",
+    "test_pattern_generator.sv",
     "-Wno-PINMISSING",
     "-Wno-WIDTHEXPAND",
     "-Wno-WIDTHTRUNC",
@@ -26,4 +28,5 @@ compile_args = [
     "-Wno-UNUSEDSIGNAL",
     "-Wno-UNDRIVEN",
     "-Wno-ASCRANGE",
+    "-Wno-MULTIDRIVEN",
 ]
