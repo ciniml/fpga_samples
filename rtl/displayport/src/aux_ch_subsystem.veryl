@@ -58,6 +58,7 @@ pub module aux_ch_subsystem #(
     // Video pipeline control outputs (driven from VIDEO CPU registers).
     // See DP 1.2 §2.2.4 for MSA field semantics.
     video_enable:    output logic,
+    video_half_rate: output logic,
     video_htotal:    output logic<16>,
     video_vtotal:    output logic<16>,
     video_hstart:    output logic<16>,
@@ -140,7 +141,7 @@ pub module aux_ch_subsystem #(
     const REG_MAIN_LINK_CTRL       : logic<14> = 14'h0000;  // [1:0]=pattern, [4]=enable, [5]=rd_reset (W1P)
     const REG_MAIN_LINK_LANE_COUNT : logic<14> = 14'h0001;  // [2:0]=1/2/4
     const REG_MAIN_LINK_LANE0_DRIVE: logic<14> = 14'h0002;  // [1:0]=swing, [4:3]=preemphasis
-    const REG_VIDEO_CTRL     : logic<14> = 14'h0000;  // [0]=enable
+    const REG_VIDEO_CTRL     : logic<14> = 14'h0000;  // [0]=enable, [1]=half_rate (1 pixel = 6 link symbols)
     const REG_VIDEO_HTOTAL   : logic<14> = 14'h0001;
     const REG_VIDEO_VTOTAL   : logic<14> = 14'h0002;
     const REG_VIDEO_HSTART   : logic<14> = 14'h0003;
@@ -239,6 +240,7 @@ pub module aux_ch_subsystem #(
 
     // Video pipeline registers (DP 1.2 §2.2).
     var v_enable:    logic;
+    var v_half_rate: logic;
     var v_htotal:    logic<16>;
     var v_vtotal:    logic<16>;
     var v_hstart:    logic<16>;
@@ -261,6 +263,7 @@ pub module aux_ch_subsystem #(
         main_link_enhanced_framing = ml_enhanced_framing;
 
         video_enable    = v_enable;
+        video_half_rate = v_half_rate;
         video_htotal    = v_htotal;
         video_vtotal    = v_vtotal;
         video_hstart    = v_hstart;
@@ -321,7 +324,7 @@ pub module aux_ch_subsystem #(
                 }
                 REG_SPACE_VIDEO: {
                     case mem_addr[15:2] {
-                        REG_VIDEO_CTRL    : mem_rdata = {31'0, v_enable};
+                        REG_VIDEO_CTRL    : mem_rdata = {30'0, v_half_rate, v_enable};
                         REG_VIDEO_HTOTAL  : mem_rdata = {16'0, v_htotal};
                         REG_VIDEO_VTOTAL  : mem_rdata = {16'0, v_vtotal};
                         REG_VIDEO_HSTART  : mem_rdata = {16'0, v_hstart};
@@ -364,6 +367,7 @@ pub module aux_ch_subsystem #(
             ml_lane0_drive          = 0;
             ml_enhanced_framing     = 0;
             v_enable                = 0;
+            v_half_rate             = 0;
             v_htotal                = 0;
             v_vtotal                = 0;
             v_hstart                = 0;
@@ -452,7 +456,10 @@ pub module aux_ch_subsystem #(
                         REG_SPACE_VIDEO: {
                             if mem_wmask[0] {
                                 case mem_addr[15:2] {
-                                    REG_VIDEO_CTRL:     v_enable    = mem_wdata[0];
+                                    REG_VIDEO_CTRL:     {
+                                        v_enable    = mem_wdata[0];
+                                        v_half_rate = mem_wdata[1];
+                                    }
                                     REG_VIDEO_HTOTAL:   v_htotal    = mem_wdata[15:0];
                                     REG_VIDEO_VTOTAL:   v_vtotal    = mem_wdata[15:0];
                                     REG_VIDEO_HSTART:   v_hstart    = mem_wdata[15:0];

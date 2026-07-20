@@ -70,6 +70,11 @@ pub module video_framer #(
     i_nvid:      input logic<24>,
     i_misc:      input logic<16>,
     i_tu_active: input logic<7>,
+    // 0: 1 pixel = 3 link symbols (tu_active must be 64).
+    // 1: 1 pixel = 6 link symbols (tu_active must be 32) — real
+    //    27 Mpix/s CEA modes (720x480p59.94 / 720x576p50) on a
+    //    162 MHz link.
+    i_half_rate: input logic,
 
     // Pixel input from pixel_fifo
     i_pixel_byte:  input  logic<8>,
@@ -89,6 +94,8 @@ pub module video_framer #(
     // derived constant is registered: the multiply/subtract/add cones
     // settle once and stay out of the per-byte timing paths.
     var bytes_per_line: logic<18>;
+    var data_bytes:     logic<18>; // hwidth * 3 (pixel bytes per line)
+    var active_window:  logic<18>; // link symbols occupied by the TU region
     var hblank_bytes:   logic<18>;
     var bpl_m1:         logic<18>; // bytes_per_line - 1 (line wrap slot)
     var bpl_m2:         logic<18>; // bytes_per_line - 2
@@ -110,6 +117,8 @@ pub module video_framer #(
     always_ff (i_clk, i_rstn) {
         if_reset {
             bytes_per_line = 0;
+            data_bytes     = 0;
+            active_window  = 0;
             hblank_bytes   = 0;
             bpl_m1         = 0;
             bpl_m2         = 0;
@@ -130,10 +139,32 @@ pub module video_framer #(
             idle_hdr_leave = 12;
         } else {
             // Stage 1: from the quasi-static inputs.
-            bytes_per_line = ({2'b0, i_htotal} * 18'd3);
-            hblank_bytes   = (({2'b0, i_htotal} - {2'b0, i_hwidth}) * 18'd3);
-            // Stage 2: from the stage-1 registers, so no path runs the
-            // whole multiply/subtract cone in one cycle.
+            //
+            // Full rate (i_half_rate = 0): 1 pixel = 3 link symbols, the
+            // TU window carries exactly hwidth*3 data bytes (tu_active
+            // must be 64).
+            //
+            // Half rate (i_half_rate = 1): 1 pixel = 6 link symbols
+            // (e.g. 27 Mpix/s on a 162 MHz link, the CEA 720x480p /
+            // 720x576p modes). tu_active must be 32, so each 64-symbol
+            // TU carries 32 data bytes. The active window is sized to
+            // consume exactly B = hwidth*3 bytes:
+            //   W = (B / 32) * 64 + (B % 32)
+            // (a final truncated TU is cut by the BS per §2.2.1.4); the
+            // remainder of the line is absorbed into the hblank window,
+            // i.e. BE simply moves later — the sink reconstructs timing
+            // from the MSA, not from the BE position.
+            bytes_per_line = ({2'b0, i_htotal} * (if i_half_rate ? 18'd6 : 18'd3));
+            data_bytes     = ({2'b0, i_hwidth} * 18'd3);
+            // Stage 2: TU-region size from the stage-1 data_bytes.
+            // Half rate: floor(B/32) full TUs of 64 symbols plus the
+            // truncated tail (B % 32 symbols, all data).
+            active_window  = if i_half_rate ?
+                ({data_bytes[16:5], 6'b0} + {13'b0, data_bytes[4:0]}) :
+                data_bytes;
+            // Stage 2/3: from the earlier-stage registers, so no path
+            // runs the whole multiply/subtract cone in one cycle.
+            hblank_bytes   = bytes_per_line - active_window;
             bpl_m1         = bytes_per_line - 18'd1;
             bpl_m2         = bytes_per_line - 18'd2;
             hblank_m1      = hblank_bytes - 18'd1;

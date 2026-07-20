@@ -43,3 +43,7 @@ set_false_path -from [get_pins {dp_source/sync_tu_active/sync*/Q}]
 // (sync_lane_count is optimized away — lane_count is unused until
 // multi-lane support — so it must not appear here.)
 set_false_path -from [get_pins {dp_source/sync_ef/sync*/Q}]
+// half_rate is quasi-static like the timing registers (written before
+// video_enable). Its consumer is the registered-constant pipeline in
+// video_framer, never a per-byte path.
+set_false_path -from [get_pins {dp_source/sync_halfrate/sync*/Q}]

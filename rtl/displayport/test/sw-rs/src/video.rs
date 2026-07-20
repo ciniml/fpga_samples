@@ -19,6 +19,8 @@ pub struct VideoConfig {
     pub misc0:     u8,
     pub misc1:     u8,
     pub tu_active: u8,  // 1..64
+    /// 1 pixel = 6 link symbols (27 Mpix/s on RBR; tu_active must be 32).
+    pub half_rate: bool,
 }
 
 pub struct Video {
@@ -49,7 +51,9 @@ impl Video {
             self.p
                 .tu_active
                 .write(|w| w.value().bits(c.tu_active & 0x7F));
-            self.p.ctrl.write(|w| w.enable().set_bit());
+            self.p
+                .ctrl
+                .write(|w| w.bits(0x1 | ((c.half_rate as u32) << 1)));
         }
     }
 }

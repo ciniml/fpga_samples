@@ -266,6 +266,10 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &Video) {
     };
 
     // Phase D: configure MSA and enable the video pipeline.
+    // Sim profile: exercises the half-rate path (1 pixel = 6 link
+    // symbols, tu_active = 32) that the board now uses. 64x16 active in
+    // an 80x24 raster: B = 192 bytes/line -> 6 full TUs (384 symbols),
+    // line = 480 symbols, hblank window = 96.
     #[cfg(not(feature = "board"))]
     let cfg = VideoConfig {
         htotal:    80,
@@ -278,36 +282,38 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &Video) {
         hsp:       false,
         vsw:       2,
         vsp:       false,
-        mvid:      64,
-        nvid:      64,
-        misc0:     0x21, // sync clock, 8 bpc RGB (Table 2-45)
-        misc1:     0x00,
-        tu_active: 64, // 100% packed for the contrived 64x16 test (no FS/FE)
-    };
-    // Board profile: 800x600 active in a 1200x750 raster. The byte-rate
-    // framer emits htotal*3 symbols per line, so the effective pixel
-    // clock is LS_Clk/3 = 54 MHz and 1200*750 pixels/frame gives exactly
-    // 60 Hz. Synchronous clock mode. Nvid uses the conventional fixed
-    // value 0x8000 (32768) that sink TCONs commonly assume; Mvid =
-    // round(0x8000 / 3) = 0x2AAB (~+30 ppm, absorbed by the sink's
-    // elastic buffer).
-    #[cfg(feature = "board")]
-    let cfg = VideoConfig {
-        htotal:    1200,
-        vtotal:    750,
-        hstart:    260, // HSW 40 + HBACK 220
-        vstart:    105, // VSW 5 + VBACK 100
-        hwidth:    800,
-        vheight:   600,
-        hsw:       40,
-        hsp:       false,
-        vsw:       5,
-        vsp:       false,
-        mvid:      0x2AAB,
+        mvid:      0x1555, // 1/6 against Nvid = 0x8000
         nvid:      0x8000,
         misc0:     0x21, // sync clock, 8 bpc RGB (Table 2-45)
         misc1:     0x00,
-        tu_active: 64, // byte-rate architecture: TU window carries only valid bytes
+        tu_active: 32,
+        half_rate: true,
+    };
+    // Board profile: CEA-861 720x480p @ 59.94 (VIC 2/3), the exact
+    // 27 MHz mode advertised in the monitor's EDID extension block
+    // (the Philips 242P6V rejects timings outside its discrete mode
+    // table). Half-rate: 1 pixel = 6 link symbols (162/27 = 6),
+    // tu_active = 32. 858x525 raster, hsync 62 + hback 60, vsync 6 +
+    // vback 30, both sync polarities negative. Mvid/Nvid = 27/162 =
+    // 1/6 with the conventional Nvid = 0x8000.
+    #[cfg(feature = "board")]
+    let cfg = VideoConfig {
+        htotal:    858,
+        vtotal:    525,
+        hstart:    122, // HSW 62 + HBACK 60
+        vstart:    36,  // VSW 6 + VBACK 30
+        hwidth:    720,
+        vheight:   480,
+        hsw:       62,
+        hsp:       true, // negative sync polarity
+        vsw:       6,
+        vsp:       true,
+        mvid:      0x1555, // round(0x8000 / 6)
+        nvid:      0x8000,
+        misc0:     0x21, // sync clock, 8 bpc RGB (Table 2-45)
+        misc1:     0x00,
+        tu_active: 32,
+        half_rate: true,
     };
     vid.setup_and_enable(&cfg);
     println!("[SRC] video pipeline enabled");

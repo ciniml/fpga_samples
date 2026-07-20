@@ -23,7 +23,7 @@
  *          dp_source_top synchronizes the CPU control registers across
  *          the 27 MHz → 162 MHz boundary internally.
  *
- *        Video: 800x600 active in a 1200x750 raster (board firmware
+ *        Video: CEA 720x480p59.94 half-rate (board firmware
  *        profile, `--features board`). The byte-rate framer makes the
  *        effective pixel clock LS_Clk/3 = 54 MHz, so the frame rate is
  *        exactly 60 Hz. The TPG is demand-paced through tpg_to_axis
@@ -102,18 +102,18 @@ module top(
 
     // -----------------------------------------------------------------
     // Test pattern generator, demand-paced on the byte clock: the active
-    // area matches the firmware board profile (800x600); the TPG's own
+    // area matches the firmware board profile (720x480, CEA 480p); the TPG's own
     // blanking is kept minimal since tpg_to_axis stalls the raster
     // whenever the DP IP is not accepting pixels (the DP raster timing
     // lives in the firmware MSA profile, not here).
     // -----------------------------------------------------------------
     localparam int HSYNC   = 8;
     localparam int HBACK   = 8;
-    localparam int HACTIVE = 800;
+    localparam int HACTIVE = 720;
     localparam int HFRONT  = 8;
     localparam int VSYNC   = 2;
     localparam int VBACK   = 2;
-    localparam int VACTIVE = 600;
+    localparam int VACTIVE = 480;
     localparam int VFRONT  = 2;
 
     logic [23:0] tpg_video_data;
