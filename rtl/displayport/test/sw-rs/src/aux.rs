@@ -125,6 +125,13 @@ impl AuxCh {
     fn get_rx_count(&self) -> u8 {
         self.aux_ch.rx_count.read().value().bits()
     }
+
+    /// Diagnostic: bytes decoded by the AUX RX in the current/last
+    /// transaction window (0 after a reply timeout = the sink never
+    /// answered / the Manchester RX never locked).
+    pub fn rx_count(&self) -> u8 {
+        self.get_rx_count()
+    }
     fn buffer_write(&self, index: usize, value: u8) {
         self.aux_ch.buffer[index].write(|w| w.data().bits(value));
     }

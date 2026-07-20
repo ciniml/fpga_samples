@@ -168,10 +168,39 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &Video) {
         clear_hpd_events();
     }
 
-    // Phase A reads (still useful as integration smoke).
+    // Phase A reads (still useful as integration smoke). A real monitor
+    // may need some time after HPD before its AUX replier is awake, so
+    // retry with a delay and report the detailed failure cause of each
+    // attempt (Timeout with rx_count == 0 means the sink never answered
+    // at all -> electrical / polarity problem; rx_count > 0 means bytes
+    // arrived but the reply could not be decoded).
     let mut buf = [0u8; 16];
-    if dpcd::read_block(aux, dpcd::DPCD_REV, &mut buf).is_ok() {
-        println!("[SRC] DPCD[0..]: {:02X?}", &buf[..16]);
+    let mut dpcd_ok = false;
+    for attempt in 0..10u32 {
+        match dpcd::read_block(aux, dpcd::DPCD_REV, &mut buf) {
+            Ok(_) => {
+                println!("[SRC] DPCD[0..]: {:02X?}", &buf[..16]);
+                dpcd_ok = true;
+                break;
+            }
+            Err(e) => {
+                println!(
+                    "[SRC] DPCD read attempt {} failed: {:?} (rx_count={})",
+                    attempt,
+                    e,
+                    aux.rx_count()
+                );
+                // ~10 ms at 27 MHz between attempts.
+                for _ in 0..90_000 {
+                    unsafe { core::arch::asm!("nop") };
+                }
+            }
+        }
+    }
+    if !dpcd_ok {
+        println!("[SRC] giving up: AUX/DPCD unreachable");
+        write_system_out(0x0000_0002);
+        return;
     }
 
     // Phase C link training.

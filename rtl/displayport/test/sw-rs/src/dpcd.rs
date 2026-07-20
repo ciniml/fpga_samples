@@ -2,6 +2,19 @@
 
 use crate::aux::{AuxCh, AuxCommand, AuxError, AuxReply, AuxRequest, AuxResponseKind};
 
+/// Detailed failure cause of a DPCD transaction, for bring-up logging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DpcdError {
+    /// No reply within the AUX timeout (sink silent / RX never locked).
+    Timeout,
+    /// Reply framing was invalid.
+    Protocol,
+    /// Sink answered AUX_NACK.
+    Nack,
+    /// Sink kept answering AUX_DEFER beyond the retry budget.
+    DeferExhausted,
+}
+
 /// Maximum number of AUX DEFER retries tolerated for a single transaction.
 ///
 /// DP 1.2 §3.5.1.2.2: a source shall retry a Native AUX request that is
@@ -16,21 +29,22 @@ const MAX_AUX_DEFER_RETRIES: u32 = 7;
 /// - NACK  -> immediate error (sink rejected the request; no retry).
 /// - `AuxError` (e.g. Timeout) -> immediate error, propagated to the caller so
 ///   it can decide (per §2.7.1 a timeout is not retried at this layer).
-fn transact(aux: &AuxCh, req: &AuxRequest, out: &mut [u8]) -> Result<AuxReply, ()> {
+fn transact(aux: &AuxCh, req: &AuxRequest, out: &mut [u8]) -> Result<AuxReply, DpcdError> {
     // 1 initial attempt + up to MAX_AUX_DEFER_RETRIES retries = 8 attempts.
     for _ in 0..=MAX_AUX_DEFER_RETRIES {
         match aux.send_request_wait_reply(req, out) {
             Ok(reply) => match reply.kind {
                 AuxResponseKind::Ack => return Ok(reply),
                 AuxResponseKind::Defer => continue,
-                AuxResponseKind::Nack => return Err(()),
+                AuxResponseKind::Nack => return Err(DpcdError::Nack),
             },
             // Timeout / protocol errors are not DEFER: do not retry here.
-            Err(AuxError::Timeout) | Err(AuxError::Protocol) => return Err(()),
+            Err(AuxError::Timeout) => return Err(DpcdError::Timeout),
+            Err(AuxError::Protocol) => return Err(DpcdError::Protocol),
         }
     }
     // 8th consecutive DEFER: abandon the transaction (§3.5.1.2.2).
-    Err(())
+    Err(DpcdError::DeferExhausted)
 }
 
 // Receiver Capability field
@@ -111,7 +125,7 @@ impl DriveSetting {
     }
 }
 
-pub fn read(aux: &AuxCh, address: u32) -> Result<u8, ()> {
+pub fn read(aux: &AuxCh, address: u32) -> Result<u8, DpcdError> {
     let mut buf = [0u8; 1];
     let req = AuxRequest {
         command: AuxCommand::NativeRead,
@@ -124,7 +138,7 @@ pub fn read(aux: &AuxCh, address: u32) -> Result<u8, ()> {
     Ok(buf[0])
 }
 
-pub fn write(aux: &AuxCh, address: u32, value: u8) -> Result<(), ()> {
+pub fn write(aux: &AuxCh, address: u32, value: u8) -> Result<(), DpcdError> {
     let mut buf = [0u8; 4];
     let data = [value];
     let req = AuxRequest {
@@ -137,7 +151,7 @@ pub fn write(aux: &AuxCh, address: u32, value: u8) -> Result<(), ()> {
     Ok(())
 }
 
-pub fn read_block(aux: &AuxCh, address: u32, out: &mut [u8]) -> Result<usize, ()> {
+pub fn read_block(aux: &AuxCh, address: u32, out: &mut [u8]) -> Result<usize, DpcdError> {
     let len = out.len().min(16);
     let req = AuxRequest {
         command: AuxCommand::NativeRead,
