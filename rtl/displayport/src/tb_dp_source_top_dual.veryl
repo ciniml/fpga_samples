@@ -1,0 +1,464 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_dp_source_top_dual.veryl
+ * @brief 4-lane E2E test of the CONTINUOUS_BYTE_TICK path. Firmware
+ *        bootrom-rs-2lane.hex trains 4 lanes against the mock sink and
+ *        enables a 64x16 miniature of the 1080p60 structure (12/11 rate
+ *        ratio, tu_active = 44, line = 96 symbols/lane). The sink model
+ *        decodes and descrambles each lane independently, removes the
+ *        mandatory 2N-symbol inter-lane skew, re-assembles pixels per
+ *        the DP steering (pixel 4N+L on lane L, R/G/B down each lane)
+ *        and verifies 3 frames bit-exactly, plus cross-lane alignment
+ *        of all framing symbols.
+ */
+
+module TbDpSourceTopDual {}
+
+#[test(dp_source_top_dual)]
+embed (inline) sv{{{
+module dp_source_top_dual;
+    parameter int unsigned CLOCK_HZ            = 32'd25_000_000;
+    parameter int unsigned MANCHESTER_CLOCK_HZ = 32'd1_000_000;
+    parameter int unsigned PROCESSOR_ROM_SIZE  = 32'd16384;
+    parameter int unsigned PROCESSOR_RAM_SIZE  = 32'd8192;
+
+    localparam int unsigned FRAME_W    = 64;
+    localparam int unsigned FRAME_H    = 16;
+    localparam int unsigned NUM_FRAMES = 3;
+    localparam int unsigned BYTES_PER_FRAME = FRAME_W * FRAME_H * 3;
+    localparam int unsigned TOTAL_BYTES     = NUM_FRAMES * BYTES_PER_FRAME;
+    localparam int unsigned COLS_PER_LINE   = FRAME_W * 3 / 2; // 96
+
+    logic clk;
+    logic rstn;
+    initial clk = 1'b0;
+    always #5 clk = ~clk;
+
+    logic       clk_sys;
+    logic [2:0] clk_sys_div;
+    initial begin
+        clk_sys     = 1'b0;
+        clk_sys_div = '0;
+    end
+    always_ff @(posedge clk) begin
+        if (clk_sys_div == 3'd1) begin
+            clk_sys_div <= '0;
+            clk_sys     <= ~clk_sys;
+        end else begin
+            clk_sys_div <= clk_sys_div + 3'd1;
+        end
+    end
+
+    logic [1:0]  aux_out;
+    logic [1:0]  aux_oen;
+    logic [1:0]  aux_in;
+    logic [1:0]  hpd;
+    logic [31:0] cpu_out [0:1];
+
+    logic [1:0] sym_valid;
+    logic [9:0] sym [0:1][0:3];
+
+    assign aux_in[0] = aux_oen[1] ? aux_out[1] : 1'b0;
+    assign aux_in[1] = aux_oen[0] ? aux_out[0] : 1'b0;
+
+    logic        pix_tvalid;
+    logic        pix_tready;
+    logic [23:0] pix_tdata;
+
+    genvar i;
+    generate
+        for (i = 0; i < 2; i++) begin: g
+            logic       ser_valid;
+            logic [7:0] ser_data;
+
+            logic        local_pix_tvalid;
+            logic        local_pix_tready;
+            logic [23:0] local_pix_tdata;
+            assign local_pix_tvalid = (i == 0) ? pix_tvalid : 1'b0;
+            assign local_pix_tdata  = (i == 0) ? pix_tdata  : 24'h000000;
+
+            displayport_dp_source_top #(
+                .CLOCK_HZ(CLOCK_HZ),
+                .MANCHESTER_CLOCK_HZ(MANCHESTER_CLOCK_HZ),
+                .PROCESSOR_ID(32'(i)),
+                .PROCESSOR_ROM_SIZE(PROCESSOR_ROM_SIZE),
+                .PROCESSOR_RAM_SIZE(PROCESSOR_RAM_SIZE),
+                .SR_PERIOD(32'd4),
+                .CONTINUOUS_BYTE_TICK(32'd1)
+            ) dut (
+                .i_clk                  (clk),
+                .i_rstn                 (rstn),
+                .i_clk_sys              (clk_sys),
+                .i_rstn_sys             (rstn),
+                .aux_ch_in              (aux_in[i]),
+                .aux_ch_out              (aux_out[i]),
+                .aux_ch_out_enable      (aux_oen[i]),
+                .hpd_in                 (hpd[i]),
+                .cpu_io_out             (cpu_out[i]),
+                .saxis_serial_in_tvalid (1'b0),
+                .saxis_serial_in_tready (),
+                .saxis_serial_in_tdata  (8'h00),
+                .maxis_serial_out_tvalid(ser_valid),
+                .maxis_serial_out_tready(1'b1),
+                .maxis_serial_out_tdata (ser_data),
+                .o_lane0_bit            (),
+                .o_lane0_bit_valid      (),
+                .o_lane0_symbol_valid   (sym_valid[i]),
+                .o_lane0_symbol         (sym[i][0]),
+                .o_lane1_symbol         (sym[i][1]),
+                .o_lane2_symbol         (sym[i][2]),
+                .o_lane3_symbol         (sym[i][3]),
+                .s_axis_video_tvalid    (local_pix_tvalid),
+                .s_axis_video_tready    (local_pix_tready),
+                .s_axis_video_tdata     (local_pix_tdata)
+            );
+
+            string line_buf;
+            always_ff @(posedge clk_sys) begin
+                if (!rstn) begin
+                    line_buf = "";
+                end else if (ser_valid) begin
+                    if (ser_data == 8'h0a) begin
+                        $display("[%0d] %s", i, line_buf);
+                        $fflush(1);
+                        line_buf = "";
+                    end else begin
+                        line_buf = {line_buf, ser_data};
+                    end
+                end
+            end
+        end
+    endgenerate
+
+    assign pix_tready = g[0].local_pix_tready;
+
+    // ----- Per-lane RX chains (decode + descramble), then deskew -----
+    logic       lane_valid   [0:1];
+    logic [7:0] lane_byte    [0:1];
+    logic       lane_is_k    [0:1];
+    integer     code_err_count;
+
+    genvar l;
+    generate
+        for (l = 0; l < 2; l++) begin: rx
+            logic       dec_valid;
+            logic [7:0] dec_byte;
+            logic       dec_is_k;
+            logic       dec_code_err;
+
+            displayport_decoder_8b10b u_dec (
+                .i_clk     (clk),
+                .i_rstn    (rstn),
+                .i_valid   (sym_valid[0]),
+                .i_symbol  (sym[0][l]),
+                .o_valid   (dec_valid),
+                .o_data    (dec_byte),
+                .o_is_k    (dec_is_k),
+                .o_code_err(dec_code_err)
+            );
+
+            wire dec_sr = dec_valid && dec_is_k && (dec_byte == 8'h1C);
+
+            logic        ds_valid;
+            logic [31:0] ds_data;
+            logic        ds_is_k;
+
+            displayport_scrambler u_desc (
+                .i_clk             (clk),
+                .i_rstn            (rstn),
+                .i_seed_reset      (dec_sr),
+                .i_scramble_disable(1'b0),
+                .i_valid           (dec_valid),
+                .i_data            ({24'h0, dec_byte}),
+                .i_is_k            (dec_is_k),
+                .o_valid           (ds_valid),
+                .o_data            (ds_data),
+                .o_is_k            (ds_is_k)
+            );
+
+            // Undo the TX inter-lane skew (lane N delayed 2N): delay
+            // lane l by (2 - 2*l) symbols so both lanes align.
+            localparam int DEPTH = 2 - 2 * l;
+            if (DEPTH > 0) begin: dly
+                logic [9:0] pipe [0:DEPTH-1]; // {valid, is_k, byte}
+                integer d;
+                always_ff @(posedge clk) begin
+                    if (!rstn) begin
+                        for (d = 0; d < DEPTH; d++) pipe[d] <= '0;
+                    end else if (ds_valid) begin
+                        pipe[0] <= {ds_valid, ds_is_k, ds_data[7:0]};
+                        for (d = 1; d < DEPTH; d++) pipe[d] <= pipe[d-1];
+                    end
+                end
+                assign lane_valid[l] = ds_valid && pipe[DEPTH-1][9];
+                assign lane_is_k[l]  = pipe[DEPTH-1][8];
+                assign lane_byte[l]  = pipe[DEPTH-1][7:0];
+            end else begin: nodly
+                assign lane_valid[l] = ds_valid;
+                assign lane_is_k[l]  = ds_is_k;
+                assign lane_byte[l]  = ds_data[7:0];
+            end
+
+            always_ff @(posedge clk) begin
+                if (cpu_out[0][0] && dec_valid && dec_code_err)
+                    code_err_count <= code_err_count + 1;
+            end
+        end
+    endgenerate
+
+    initial code_err_count = 0;
+
+
+
+    wire        col_valid = lane_valid[0];
+    wire [7:0]  c0 = lane_byte[0];
+    wire        k0 = lane_is_k[0];
+
+    integer rx_sr_count;
+    always_ff @(posedge clk) begin
+        if (!rstn) rx_sr_count <= 0;
+        else if (col_valid && k0 && c0 == 8'h1C)
+            rx_sr_count <= rx_sr_count + 1;
+    end
+
+    // ----- Column parser -----
+    typedef enum logic [2:0] {
+        PS_WAIT_BS = 3'd0,
+        PS_HDR     = 3'd1,
+        PS_BSSEQ   = 3'd2,
+        PS_VBLANK  = 3'd4,
+        PS_WAIT_BE = 3'd5,
+        PS_ACTIVE  = 3'd6
+    } parse_state_t;
+
+    parse_state_t pstate;
+    logic         line_is_vblank;
+    logic         in_stuffing;
+    integer       hdr_count;
+    integer       bsseq_count;
+    logic [7:0]   bs_first;
+    integer       active_line_count;
+    integer       cols_this_line;
+    integer       comp;         // color component phase 0..2
+    integer       pix_in_line;  // base pixel of the current 4-group
+    logic [7:0]   recovered_bytes [0:TOTAL_BYTES - 1];
+    integer       recovered_count;
+    integer       parse_errors;
+
+    // Cross-lane alignment: outside the MSA and TU-data columns every
+    // lane must carry the same symbol in the same (deskewed) column.
+    function automatic bit lanes_equal();
+        return (lane_byte[1] === lane_byte[0]) && (lane_is_k[1] === lane_is_k[0]);
+    endfunction
+
+    always_ff @(posedge clk) begin
+        if (!rstn) begin
+            pstate            <= PS_WAIT_BS;
+            line_is_vblank    <= 1'b0;
+            in_stuffing       <= 1'b0;
+            hdr_count         <= 0;
+            bsseq_count       <= 0;
+            bs_first          <= 8'h00;
+            active_line_count <= 0;
+            cols_this_line    <= 0;
+            comp              <= 0;
+            pix_in_line       <= 0;
+            recovered_count   <= 0;
+            parse_errors      <= 0;
+        end else if (col_valid) begin
+            case (pstate)
+                PS_WAIT_BS: begin
+                    if (k0 && c0 == 8'h1C) begin
+                        pstate      <= PS_BSSEQ;
+                        bs_first    <= c0;
+                        bsseq_count <= 0;
+                    end
+                end
+                PS_BSSEQ: begin
+                    if (!lanes_equal()) begin
+                        $display("[tb_dual] BS group column %0d: lanes disagree (%02h %02h)",
+                                 bsseq_count + 1, lane_byte[0], lane_byte[1]);
+                        parse_errors <= parse_errors + 1;
+                    end
+                    if (bsseq_count < 2) begin
+                        if (!(k0 && c0 == 8'h7C)) begin
+                            $display("[tb_dual] BS group column %0d: expected BF got (%02h, k=%b)",
+                                     bsseq_count + 1, c0, k0);
+                            parse_errors <= parse_errors + 1;
+                        end
+                    end else begin
+                        if (!(k0 && c0 == bs_first)) begin
+                            $display("[tb_dual] BS group column 3: expected %02h got (%02h, k=%b)",
+                                     bs_first, c0, k0);
+                            parse_errors <= parse_errors + 1;
+                        end
+                        pstate    <= PS_HDR;
+                        hdr_count <= 0;
+                    end
+                    bsseq_count <= bsseq_count + 1;
+                end
+                PS_HDR: begin
+                    // 2-lane: (VB-ID, Mvid7:0, Maud7:0) twice per lane,
+                    // identical across lanes.
+                    if (!lanes_equal()) begin
+                        $display("[tb_dual] header column %0d: lanes disagree", hdr_count);
+                        parse_errors <= parse_errors + 1;
+                    end
+                    if (hdr_count == 0) line_is_vblank <= c0[0];
+                    if (hdr_count == 5) begin
+                        if (line_is_vblank) pstate <= PS_VBLANK;
+                        else                 pstate <= PS_WAIT_BE;
+                    end
+                    hdr_count <= hdr_count + 1;
+                end
+                PS_VBLANK: begin
+                    if (k0 && (c0 == 8'hBC || c0 == 8'h1C)) begin
+                        pstate      <= PS_BSSEQ;
+                        bs_first    <= c0;
+                        bsseq_count <= 0;
+                    end
+                end
+                PS_WAIT_BE: begin
+                    if (k0 && c0 == 8'hFB) begin
+                        pstate         <= PS_ACTIVE;
+                        in_stuffing    <= 1'b0;
+                        cols_this_line <= 0;
+                        comp           <= 0;
+                        pix_in_line    <= 0;
+                    end else if (k0 && (c0 == 8'hBC || c0 == 8'h1C)) begin
+                        pstate      <= PS_BSSEQ;
+                        bs_first    <= c0;
+                        bsseq_count <= 0;
+                    end
+                end
+                PS_ACTIVE: begin
+                    if (k0 && (c0 == 8'hBC || c0 == 8'h1C)) begin
+                        if (cols_this_line != COLS_PER_LINE) begin
+                            $display("[tb_dual] line %0d: %0d data columns (expected %0d)",
+                                     active_line_count, cols_this_line, COLS_PER_LINE);
+                            parse_errors <= parse_errors + 1;
+                        end
+                        active_line_count <= active_line_count + 1;
+                        pstate            <= PS_BSSEQ;
+                        bs_first          <= c0;
+                        bsseq_count       <= 0;
+                    end else if (k0 && c0 == 8'hFE) begin
+                        in_stuffing <= 1'b1;
+                    end else if (k0 && c0 == 8'hF7) begin
+                        in_stuffing <= 1'b0;
+                    end else if (!k0 && !in_stuffing) begin
+                        // Data column: component `comp` of pixels
+                        // (pix_in_line + L). Recovered index in raster
+                        // byte order.
+                        for (int lb = 0; lb < 2; lb++) begin
+                            automatic int idx =
+                                (active_line_count * FRAME_W + pix_in_line + lb) * 3 + comp;
+                            if (idx < TOTAL_BYTES) begin
+                                recovered_bytes[idx] <= lane_byte[lb];
+                            end
+                        end
+                        recovered_count <= recovered_count + 2;
+                        cols_this_line  <= cols_this_line + 1;
+                        if (comp == 2) begin
+                            comp        <= 0;
+                            pix_in_line <= pix_in_line + 2;
+                        end else begin
+                            comp <= comp + 1;
+                        end
+                    end
+                end
+                default: pstate <= PS_WAIT_BS;
+            endcase
+        end
+    end
+
+    // ----- TB stimulus -----
+    initial begin
+        $readmemh("bootrom-rs-2lane.hex", g[0].dut.aux_subsystem.processor_rom);
+        $readmemh("bootrom-rs-2lane.hex", g[1].dut.aux_subsystem.processor_rom);
+
+        rstn       = 1'b0;
+        hpd[0]     = 1'b0;
+        hpd[1]     = 1'b0;
+        repeat (16) @(posedge clk);
+        rstn = 1'b1;
+
+        repeat (2000) @(posedge clk);
+        $display("[TB] asserting HPD on CPU0");
+        hpd[0] = 1'b1;
+
+        for (int t = 0; t < 50_000_000; t++) begin
+            @(posedge clk);
+            if (recovered_count >= TOTAL_BYTES) break;
+        end
+
+        if (recovered_count < TOTAL_BYTES) begin
+            $fatal(1, "[TB] parser collected only %0d / %0d bytes (code errs=%0d)",
+                   recovered_count, TOTAL_BYTES, code_err_count);
+        end
+
+        for (int f = 0; f < NUM_FRAMES; f++) begin
+            for (int y = 0; y < FRAME_H; y++) begin
+                for (int x = 0; x < FRAME_W; x++) begin
+                    int idx;
+                    logic [7:0] er, eg, eb, xb, yb;
+                    xb  = x[7:0];
+                    yb  = y[7:0];
+                    idx = f * BYTES_PER_FRAME + (y * FRAME_W + x) * 3;
+                    er  = xb;
+                    eg  = yb;
+                    eb  = (x + y + 16 * f) & 32'hFF;
+                    if (recovered_bytes[idx]   !== er ||
+                        recovered_bytes[idx+1] !== eg ||
+                        recovered_bytes[idx+2] !== eb) begin
+                        $display("[TB] frame %0d pixel (%0d,%0d) mismatch: expected (%02h,%02h,%02h) got (%02h,%02h,%02h)",
+                                 f, x, y, er, eg, eb,
+                                 recovered_bytes[idx], recovered_bytes[idx+1], recovered_bytes[idx+2]);
+                        parse_errors = parse_errors + 1;
+                    end
+                end
+            end
+        end
+
+        if (parse_errors != 0) begin
+            $fatal(1, "[TB] %0d mismatches (code errs=%0d)", parse_errors, code_err_count);
+        end
+        if (rx_sr_count == 0) begin
+            $fatal(1, "[TB] no SR seen at sink");
+        end
+        if (code_err_count != 0) begin
+            $fatal(1, "[TB] %0d 8B/10B code errors while video active", code_err_count);
+        end
+
+        $display("[TB] PASS: %0d frames reconstructed over 2 lanes (SR seen=%0d).",
+                 NUM_FRAMES, rx_sr_count);
+        $finish;
+    end
+
+    // ----- Pixel pump: fully synchronous pusher (no event-scheduling
+    // races: the index advances on the same sampled tvalid&&tready the
+    // DUT sees; data is a combinational function of the index).
+    localparam int unsigned TOTAL_PX = NUM_FRAMES * FRAME_W * FRAME_H;
+    integer pump_idx;
+    wire [31:0] pump_f  = pump_idx / (FRAME_W * FRAME_H);
+    wire [31:0] pump_r  = pump_idx % (FRAME_W * FRAME_H);
+    wire [31:0] pump_y  = pump_r / FRAME_W;
+    wire [31:0] pump_x  = pump_r % FRAME_W;
+    assign pix_tvalid = rstn && hpd[0] && (pump_idx < TOTAL_PX);
+    assign pix_tdata  = {pump_x[7:0], pump_y[7:0],
+                         8'((pump_x + pump_y + 16 * pump_f) & 32'hFF)};
+    always_ff @(posedge clk) begin
+        if (!rstn) pump_idx <= 0;
+        else if (pix_tvalid && pix_tready) pump_idx <= pump_idx + 1;
+    end
+
+    initial begin
+        #400_000_000;
+        $fatal(1, "[TB] timeout");
+    end
+endmodule
+}}}

@@ -7,6 +7,7 @@ edition = "2021"
 
 [features]
 lanes4 = []
+lanes2 = []
 # Board bring-up profile (Tang Primer 25K + Pmod DP): selects a monitor-
 # viable 800x600@60 video configuration instead of the small simulation
 # frame. Build via `make bootrom-rs-board.hex`.

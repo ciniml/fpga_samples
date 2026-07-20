@@ -22,6 +22,9 @@
 
 pub module pixel_fifo_quad #(
     param DEPTH_WORDS: u32 = 32, // 32 words = 128 pixels
+    // Pixels per word = lanes served (4 or 2). o_bytes[8*L +: 8]
+    // carries lane L; with LANES = 2 the upper 16 bits are zero.
+    param LANES: u32 = 4,
 ) (
     i_clk:  input clock_posedge,
     i_rstn: input reset_sync_low,
@@ -42,16 +45,19 @@ pub module pixel_fifo_quad #(
     type ptr_t = logic<ADDR_BITS>;
     type cnt_t = logic<ADDR_BITS + 1>;
 
-    // 4 pixels x 24 bit per word.
-    var mem: logic<96>[DEPTH_WORDS];
+    // LANES pixels x 24 bit per word.
+    const WORD_BITS: u32 = LANES * 24;
+    var mem: logic<WORD_BITS>[DEPTH_WORDS];
 
     var wr_ptr: ptr_t;
     var rd_ptr: ptr_t;
     var count:  cnt_t; // words
 
-    // Write-side packer: accumulate 4 pixels, then commit one word.
-    var pack:     logic<72>; // pixels 0..2 of the word in flight
-    var pack_cnt: logic<2>;
+    // Write-side packer: accumulate LANES pixels, then commit one word.
+    type pk_t = logic<2>;
+    const PACK_LAST: pk_t = (LANES - 1) as pk_t;
+    var pack:     logic<WORD_BITS - 24>; // pixels 0..LANES-2 in flight
+    var pack_cnt: pk_t;
 
     // Registered, conservative ready: computed from last cycle's count
     // with a 3-word margin, so the comb path from the word counter to
@@ -61,10 +67,10 @@ pub module pixel_fifo_quad #(
     var tready_r: logic;
     assign s_axis_tready = tready_r;
     let accept: logic = s_axis_tvalid && tready_r;
-    let push_word: logic = accept && (pack_cnt == 2'd3);
+    let push_word: logic = accept && (pack_cnt == PACK_LAST);
 
     // Read side: registered word + component phase.
-    var rd_word:  logic<96>;
+    var rd_word:  logic<WORD_BITS>;
     var rd_phase: logic<2>;
     var empty_r:  logic;
     let word_consumed: logic = i_pop && !empty_r && (rd_phase == 2'd2);
@@ -72,17 +78,9 @@ pub module pixel_fifo_quad #(
     // Component extraction: phase 0 = R ([23:16] of each pixel),
     // 1 = G, 2 = B. Lane L = pixel L of the word.
     function comp (
-        word:  input logic<96>,
-        lane:  input logic<2>,
+        px:    input logic<24>,
         phase: input logic<2>,
     ) -> logic<8> {
-        var px: logic<24>;
-        px = case lane {
-            2'd0:    word[23:0],
-            2'd1:    word[47:24],
-            2'd2:    word[71:48],
-            default: word[95:72],
-        };
         return case phase {
             2'd0:    px[23:16],
             2'd1:    px[15:8],
@@ -91,10 +89,10 @@ pub module pixel_fifo_quad #(
     }
 
     always_comb {
-        o_bytes[7:0]   = comp(rd_word, 2'd0, rd_phase);
-        o_bytes[15:8]  = comp(rd_word, 2'd1, rd_phase);
-        o_bytes[23:16] = comp(rd_word, 2'd2, rd_phase);
-        o_bytes[31:24] = comp(rd_word, 2'd3, rd_phase);
+        o_bytes = 0;
+        for l in 0..LANES {
+            o_bytes[8 * l +: 8] = comp(rd_word[24 * l +: 24], rd_phase);
+        }
     }
     assign o_empty = empty_r;
 
@@ -128,16 +126,16 @@ pub module pixel_fifo_quad #(
         } else {
             tready_r = (count <: ((DEPTH_WORDS - 2) as cnt_t));
             if accept {
-                if pack_cnt == 2'd3 {
+                if pack_cnt == PACK_LAST {
                     mem[wr_ptr] = {s_axis_tdata, pack};
                     wr_ptr      = wr_ptr + (1 as ptr_t);
                     pack_cnt    = 0;
                 } else {
-                    pack = case pack_cnt {
-                        2'd0:    {pack[71:24], s_axis_tdata},
-                        2'd1:    {pack[71:48], s_axis_tdata, pack[23:0]},
-                        default: {s_axis_tdata, pack[47:0]},
-                    };
+                    for l in 0..(LANES - 1) {
+                        if pack_cnt == (l as pk_t) {
+                            pack[24 * l +: 24] = s_axis_tdata;
+                        }
+                    }
                     pack_cnt = pack_cnt + 2'd1;
                 }
             }

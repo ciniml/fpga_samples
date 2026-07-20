@@ -163,10 +163,12 @@ fn panic(info: &PanicInfo) -> ! {
 
 // Active lane count for this build. 480p (27 Mpix) fits 1 lane;
 // the 1080p60 profile uses all 4.
-#[cfg(not(feature = "lanes4"))]
+#[cfg(all(not(feature = "lanes4"), not(feature = "lanes2")))]
 const LANE_COUNT: u8 = 1;
 #[cfg(feature = "lanes4")]
 const LANE_COUNT: u8 = 4;
+#[cfg(all(feature = "lanes2", not(feature = "lanes4")))]
+const LANE_COUNT: u8 = 2;
 
 fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video) {
     println!("[SRC] waiting for HPD");
@@ -273,6 +275,27 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video) {
     };
 
     // Phase D: configure MSA and enable the video pipeline.
+    // 2-lane sim profile: 64x16 active, 12/11 rate ratio, tu_active =
+    // 44. B = 96 bytes/lane/line -> 2 full TUs + 8-symbol tail =
+    // 136 symbols; line = 143 * 12 / 11 = 156 symbols/lane.
+    #[cfg(all(not(feature = "board"), feature = "lanes2", not(feature = "lanes4")))]
+    let cfg = VideoConfig {
+        htotal:    143,
+        vtotal:    24,
+        hstart:    40,
+        vstart:    8,
+        hwidth:    64,
+        vheight:   16,
+        hsw:       4,
+        hsp:       false,
+        vsw:       2,
+        vsp:       false,
+        mvid:      0x7555,
+        nvid:      0x8000,
+        misc0:     0x21,
+        misc1:     0x00,
+        tu_active: 44,
+    };
     // 4-lane sim profile: miniature version of the 1080p60 structure.
     // 64x16 active in an 88x24 raster at the 12/11 rate ratio:
     // B = 48 bytes/lane/line, tu_active = 44 -> W = 64 + 4 = 68
@@ -299,7 +322,7 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video) {
     // symbols, tu_active = 32) that the board now uses. 64x16 active in
     // an 80x24 raster: B = 192 bytes/line -> 6 full TUs (384 symbols),
     // line = 480 symbols, hblank window = 96.
-    #[cfg(all(not(feature = "board"), not(feature = "lanes4")))]
+    #[cfg(all(not(feature = "board"), not(feature = "lanes4"), not(feature = "lanes2")))]
     let cfg = VideoConfig {
         htotal:    80,
         vtotal:    24,
@@ -368,7 +391,9 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video) {
     // Line-accounting rate: LS_clk/pixel_clk as a fraction, plus lanes.
     #[cfg(feature = "lanes4")]
     vid.set_rate(12, 11, 4);
-    #[cfg(not(feature = "lanes4"))]
+    #[cfg(all(feature = "lanes2", not(feature = "lanes4")))]
+    vid.set_rate(12, 11, 2);
+    #[cfg(all(not(feature = "lanes4"), not(feature = "lanes2")))]
     vid.set_rate(6, 1, 1);
     vid.setup_and_enable(&cfg);
     println!("[SRC] video pipeline enabled");

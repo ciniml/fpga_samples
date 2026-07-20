@@ -1037,6 +1037,10 @@ pub mod system {
         pub type EVENT_UNPLUG_R = crate::BitReader;
         #[doc = "Field `EVENT_UNPLUG` writer - Sticky unplug event. Write 1 to clear."]
         pub type EVENT_UNPLUG_W<'a, const O: u8> = crate::BitWriter<'a, HPD_SPEC, O>;
+        #[doc = "Field `VHPD` reader - Virtual HPD level (Type-C alt mode: FW mirrors the PD Attention HPD state here; ORed with the physical pin). Note: any write to this register updates VHPD from bit 4."]
+        pub type VHPD_R = crate::BitReader;
+        #[doc = "Field `VHPD` writer - Virtual HPD level (Type-C alt mode: FW mirrors the PD Attention HPD state here; ORed with the physical pin). Note: any write to this register updates VHPD from bit 4."]
+        pub type VHPD_W<'a, const O: u8> = crate::BitWriter<'a, HPD_SPEC, O>;
         impl R {
             #[doc = "Bit 0 - Debounced HPD level. 1 = sink connected."]
             #[inline(always)]
@@ -1053,6 +1057,11 @@ pub mod system {
             pub fn event_unplug(&self) -> EVENT_UNPLUG_R {
                 EVENT_UNPLUG_R::new(((self.bits >> 2) & 1) != 0)
             }
+            #[doc = "Bit 4 - Virtual HPD level (Type-C alt mode: FW mirrors the PD Attention HPD state here; ORed with the physical pin). Note: any write to this register updates VHPD from bit 4."]
+            #[inline(always)]
+            pub fn vhpd(&self) -> VHPD_R {
+                VHPD_R::new(((self.bits >> 4) & 1) != 0)
+            }
         }
         impl W {
             #[doc = "Bit 1 - Sticky plug event. Write 1 to clear."]
@@ -1066,6 +1075,12 @@ pub mod system {
             #[must_use]
             pub fn event_unplug(&mut self) -> EVENT_UNPLUG_W<2> {
                 EVENT_UNPLUG_W::new(self)
+            }
+            #[doc = "Bit 4 - Virtual HPD level (Type-C alt mode: FW mirrors the PD Attention HPD state here; ORed with the physical pin). Note: any write to this register updates VHPD from bit 4."]
+            #[inline(always)]
+            #[must_use]
+            pub fn vhpd(&mut self) -> VHPD_W<4> {
+                VHPD_W::new(self)
             }
             #[doc = "Writes raw bits to the register."]
             #[inline(always)]
@@ -2281,6 +2296,10 @@ pub mod main_link {
         pub type RD_RESET_R = crate::BitReader;
         #[doc = "Field `RD_RESET` writer - Write 1 to force the next encoder input to start at RD=- (DP 1.2 §3.5.1.2). Self-clearing."]
         pub type RD_RESET_W<'a, const O: u8> = crate::BitWriter<'a, CTRL_SPEC, O>;
+        #[doc = "Field `ASSR` reader - eDP Alternate Scrambler Seed Reset: scramble with seed 0xFFFE."]
+        pub type ASSR_R = crate::BitReader;
+        #[doc = "Field `ASSR` writer - eDP Alternate Scrambler Seed Reset: scramble with seed 0xFFFE."]
+        pub type ASSR_W<'a, const O: u8> = crate::BitWriter<'a, CTRL_SPEC, O>;
         impl R {
             #[doc = "Bits 0:1 - 00=IDLE, 01=TPS1, 10=TPS2 (DP 1.2 Tab 3-16)"]
             #[inline(always)]
@@ -2296,6 +2315,11 @@ pub mod main_link {
             #[inline(always)]
             pub fn rd_reset(&self) -> RD_RESET_R {
                 RD_RESET_R::new(((self.bits >> 5) & 1) != 0)
+            }
+            #[doc = "Bit 7 - eDP Alternate Scrambler Seed Reset: scramble with seed 0xFFFE."]
+            #[inline(always)]
+            pub fn assr(&self) -> ASSR_R {
+                ASSR_R::new(((self.bits >> 7) & 1) != 0)
             }
         }
         impl W {
@@ -2316,6 +2340,12 @@ pub mod main_link {
             #[must_use]
             pub fn rd_reset(&mut self) -> RD_RESET_W<5> {
                 RD_RESET_W::new(self)
+            }
+            #[doc = "Bit 7 - eDP Alternate Scrambler Seed Reset: scramble with seed 0xFFFE."]
+            #[inline(always)]
+            #[must_use]
+            pub fn assr(&mut self) -> ASSR_W<7> {
+                ASSR_W::new(self)
             }
             #[doc = "Writes raw bits to the register."]
             #[inline(always)]

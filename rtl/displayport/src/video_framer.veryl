@@ -90,6 +90,10 @@ pub module video_framer #(
     // (Fig 2-18), and the pixel input is one color component of four
     // consecutive pixels per pop (pixel_fifo_quad).
     i_four_lane: input logic,
+    // 1: 2-lane mode — header triple twice per lane (Fig 2-12), MSA
+    //    21-symbol layout (Fig 2-18), pixel input = one component of
+    //    two consecutive pixels per pop.
+    i_two_lane: input logic,
 
     // Pixel input from pixel_fifo (1-lane: [7:0]) / pixel_fifo_quad.
     i_pixel_bytes: input  logic<32>,
@@ -174,28 +178,30 @@ pub module video_framer #(
             // per lane at 1 lane, 3 slots per lane at 4 lanes. The MSA
             // occupies 39 slots (1 lane) / 12 slots (4 lanes, Fig 2-18)
             // right after the header.
+            // Header slots per lane: 12 (x1), 6 (x2), 3 (x4); MSA slots
+            // per lane: 39 (x1), 21 (x2), 12 (x4).
             hdr_leave_at   = if i_enhanced_framing ?
-                (if i_four_lane ? 18'd6 : 18'd15) :
-                (if i_four_lane ? 18'd3 : 18'd12);
+                (if i_four_lane ? 18'd6 : (if i_two_lane ? 18'd9 : 18'd15)) :
+                (if i_four_lane ? 18'd3 : (if i_two_lane ? 18'd6 : 18'd12));
             msa_leave_at   = if i_enhanced_framing ?
-                (if i_four_lane ? 18'd18 : 18'd54) :
-                (if i_four_lane ? 18'd15 : 18'd51);
+                (if i_four_lane ? 18'd18 : (if i_two_lane ? 18'd30 : 18'd54)) :
+                (if i_four_lane ? 18'd15 : (if i_two_lane ? 18'd27 : 18'd51));
             msa_trig_prev  = if i_enhanced_framing ?
-                (if i_four_lane ? 18'd4 : 18'd13) :
-                (if i_four_lane ? 18'd1 : 18'd10);
+                (if i_four_lane ? 18'd4 : (if i_two_lane ? 18'd7 : 18'd13)) :
+                (if i_four_lane ? 18'd1 : (if i_two_lane ? 18'd4 : 18'd10));
             msa_pre_enter  = if i_enhanced_framing ?
-                (if i_four_lane ? 18'd5 : 18'd14) :
-                (if i_four_lane ? 18'd2 : 18'd11);
+                (if i_four_lane ? 18'd5 : (if i_two_lane ? 18'd8 : 18'd14)) :
+                (if i_four_lane ? 18'd2 : (if i_two_lane ? 18'd5 : 18'd11));
             msa_pre_leave  = if i_enhanced_framing ?
-                (if i_four_lane ? 18'd17 : 18'd53) :
-                (if i_four_lane ? 18'd14 : 18'd50);
+                (if i_four_lane ? 18'd17 : (if i_two_lane ? 18'd29 : 18'd53)) :
+                (if i_four_lane ? 18'd14 : (if i_two_lane ? 18'd26 : 18'd50));
             vend           = i_vstart + i_vheight;
             vtotal_m1      = i_vtotal - 16'd1;
             idle_bs_m1     = if i_enhanced_framing ? 13'd3 : 13'd0;
             idle_bs_m2     = if i_enhanced_framing ? 13'd2 : 13'd0;
             idle_hdr_leave = if i_enhanced_framing ?
-                (if i_four_lane ? 13'd6 : 13'd15) :
-                (if i_four_lane ? 13'd3 : 13'd12);
+                (if i_four_lane ? 13'd6 : (if i_two_lane ? 13'd9 : 13'd15)) :
+                (if i_four_lane ? 13'd3 : (if i_two_lane ? 13'd6 : 13'd12));
         }
     }
 
@@ -470,6 +476,7 @@ pub module video_framer #(
         i_nvid     : i_nvid,
         i_misc     : i_misc,
         i_four_lane: i_four_lane,
+        i_two_lane : i_two_lane,
         o_busy     : msa_busy,
         o_valid    : msa_valid,
         o_byte     : msa_byte,

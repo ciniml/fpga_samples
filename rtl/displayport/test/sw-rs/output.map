@@ -1,17 +1,17 @@
      VMA      LMA     Size Align Out     In      Symbol
 80000000 80000000        4     1 .isr_vector
 80000000 80000000        0     1         . = ALIGN(4)
-80000000 80000000        4     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.isr_vector)
+80000000 80000000        4     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.isr_vector)
 80000000 80000000        0     1                 $x
 80000004 80000004        0     1         . = ALIGN(4)
-80000004 80000004     2838     2 .text
+80000004 80000004     27c0     2 .text
 80000004 80000004        0     1         . = ALIGN(4)
-80000004 80000004       1e     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text)
+80000004 80000004       1e     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text)
 80000004 80000004        0     1                 _start
 80000004 80000004        0     1                 .Lpcrel_hi0
 80000004 80000004        0     1                 $x
-80000022 80000022       38     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._ZN10bootrom_rs3aux5AuxCh10send_reply17he612a8dbb92fddacE)
-80000022 80000022       38     1                 bootrom_rs::aux::AuxCh::send_reply::he612a8dbb92fddac
+80000022 80000022       38     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._ZN10bootrom_rs3aux5AuxCh10send_reply17h84e94e564ba0d46dE)
+80000022 80000022       38     1                 bootrom_rs::aux::AuxCh::send_reply::h84e94e564ba0d46d
 80000022 80000022        0     1                 .L0 
 80000022 80000022        0     1                 .L0 
 80000022 80000022        0     1                 $x
@@ -30,8 +30,8 @@
 80000050 80000050        0     1                 .L0 
 80000054 80000054        0     1                 .L0 
 8000005a 8000005a        0     1                 .L0 
-8000005a 8000005a      1c0     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._ZN10bootrom_rs3aux5AuxCh23send_request_wait_reply17h7e5bf00b2166dfe2E)
-8000005a 8000005a      1c0     1                 bootrom_rs::aux::AuxCh::send_request_wait_reply::h7e5bf00b2166dfe2
+8000005a 8000005a      1c0     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._ZN10bootrom_rs3aux5AuxCh23send_request_wait_reply17hd0686742d3a37d3cE)
+8000005a 8000005a      1c0     1                 bootrom_rs::aux::AuxCh::send_request_wait_reply::hd0686742d3a37d3c
 8000005a 8000005a        0     1                 .L0 
 8000005a 8000005a        0     1                 .L0 
 8000005a 8000005a        0     1                 $x
@@ -101,8 +101,8 @@
 80000208 80000208        0     1                 .L0 
 8000021a 8000021a        0     1                 .L0 
 8000021a 8000021a        0     1                 .L0 
-8000021a 8000021a       7e     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._ZN10bootrom_rs4edid8transact17hdf06ffa224d671f8E)
-8000021a 8000021a       7e     1                 bootrom_rs::edid::transact::hdf06ffa224d671f8
+8000021a 8000021a       7e     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._ZN10bootrom_rs4edid8transact17h94d05537d87a6a73E)
+8000021a 8000021a       7e     1                 bootrom_rs::edid::transact::h94d05537d87a6a73
 8000021a 8000021a        0     1                 .L0 
 8000021a 8000021a        0     1                 .L0 
 8000021a 8000021a        0     1                 $x
@@ -114,36 +114,36 @@
 8000026e 8000026e        0     1                 .L0 
 80000286 80000286        0     1                 .L0 
 80000298 80000298        0     1                 .L0 
-80000298 80000298       14     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._ZN42_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$3fmt17h3c2453347ba28b6fE)
-80000298 80000298       14     1                 _$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$::fmt::h3c2453347ba28b6f
+80000298 80000298       7c     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._ZN42_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$3fmt17hb8c721513c3f39d6E)
+80000298 80000298       7c     1                 _$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$::fmt::hb8c721513c3f39d6
 80000298 80000298        0     1                 .L0 
 80000298 80000298        0     1                 .L0 
 80000298 80000298        0     1                 $x
 80000298 80000298        0     1                 .L0 
-800002ac 800002ac        0     1                 .L0 
-800002ac 800002ac       7c     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._ZN42_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$3fmt17h4d8779f3d59cdeb6E)
-800002ac 800002ac       7c     1                 _$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$::fmt::h4d8779f3d59cdeb6
-800002ac 800002ac        0     1                 .L0 
-800002ac 800002ac        0     1                 .L0 
-800002ac 800002ac        0     1                 $x
-800002ac 800002ac        0     1                 .L0 
-800002ce 800002ce        0     1                 .L0 
-800002f0 800002f0        0     1                 .L0 
-80000302 80000302        0     1                 .L0 
-8000031a 8000031a        0     1                 .L0 
-80000320 80000320        0     1                 .L0 
+800002ba 800002ba        0     1                 .L0 
+800002dc 800002dc        0     1                 .L0 
+800002ee 800002ee        0     1                 .L0 
+80000306 80000306        0     1                 .L0 
+8000030c 8000030c        0     1                 .L0 
+80000314 80000314        0     1                 .L0 
+80000314 80000314        0     1                 .L0 
+80000314 80000314       14     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._ZN42_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$3fmt17he62feb4a5ecba799E)
+80000314 80000314       14     1                 _$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$::fmt::he62feb4a5ecba799
+80000314 80000314        0     1                 .L0 
+80000314 80000314        0     1                 .L0 
+80000314 80000314        0     1                 $x
+80000314 80000314        0     1                 .L0 
 80000328 80000328        0     1                 .L0 
-80000328 80000328        0     1                 .L0 
-80000328 80000328       10     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._ZN44_$LT$$RF$T$u20$as$u20$core..fmt..Display$GT$3fmt17ha607a1a43b671d62E)
-80000328 80000328       10     1                 _$LT$$RF$T$u20$as$u20$core..fmt..Display$GT$::fmt::ha607a1a43b671d62
+80000328 80000328       10     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._ZN44_$LT$$RF$T$u20$as$u20$core..fmt..Display$GT$3fmt17h58814cacca545d1aE)
+80000328 80000328       10     1                 _$LT$$RF$T$u20$as$u20$core..fmt..Display$GT$::fmt::h58814cacca545d1a
 80000328 80000328        0     1                 .L0 
 80000328 80000328        0     1                 .L0 
 80000328 80000328        0     1                 $x
 80000328 80000328        0     1                 .L0 
 8000032e 8000032e        0     1                 .L0 
 80000338 80000338        0     1                 .L0 
-80000338 80000338       b2     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._ZN44_$LT$$RF$T$u20$as$u20$core..fmt..Display$GT$3fmt17he2cfe8eafbb42040E)
-80000338 80000338       b2     1                 _$LT$$RF$T$u20$as$u20$core..fmt..Display$GT$::fmt::he2cfe8eafbb42040
+80000338 80000338       b2     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._ZN44_$LT$$RF$T$u20$as$u20$core..fmt..Display$GT$3fmt17hb6b30607ae0fe4dfE)
+80000338 80000338       b2     1                 _$LT$$RF$T$u20$as$u20$core..fmt..Display$GT$::fmt::hb6b30607ae0fe4df
 80000338 80000338        0     1                 .L0 
 80000338 80000338        0     1                 .L0 
 80000338 80000338        0     1                 $x
@@ -160,8 +160,8 @@
 800003be 800003be        0     1                 .L0 
 800003c8 800003c8        0     1                 .L0 
 800003ea 800003ea        0     1                 .L0 
-800003ea 800003ea      134     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._ZN48_$LT$$u5b$T$u5d$$u20$as$u20$core..fmt..Debug$GT$3fmt17hcd08fa0cc021e042E)
-800003ea 800003ea      134     1                 _$LT$$u5b$T$u5d$$u20$as$u20$core..fmt..Debug$GT$::fmt::hcd08fa0cc021e042
+800003ea 800003ea      134     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._ZN48_$LT$$u5b$T$u5d$$u20$as$u20$core..fmt..Debug$GT$3fmt17h43dc6bb1fca20f60E)
+800003ea 800003ea      134     1                 _$LT$$u5b$T$u5d$$u20$as$u20$core..fmt..Debug$GT$::fmt::h43dc6bb1fca20f60
 800003ea 800003ea        0     1                 .L0 
 800003ea 800003ea        0     1                 .L0 
 800003ea 800003ea        0     1                 $x
@@ -189,16 +189,16 @@
 800004e2 800004e2        0     1                 .L0 
 800004e6 800004e6        0     1                 .L0 
 8000051e 8000051e        0     1                 .L0 
-8000051e 8000051e        c     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._ZN4core5array69_$LT$impl$u20$core..fmt..Debug$u20$for$u20$$u5b$T$u3b$$u20$N$u5d$$GT$3fmt17h0c590d66f77a9894E)
-8000051e 8000051e        c     1                 core::array::_$LT$impl$u20$core..fmt..Debug$u20$for$u20$$u5b$T$u3b$$u20$N$u5d$$GT$::fmt::h0c590d66f77a9894
+8000051e 8000051e        c     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._ZN4core5array69_$LT$impl$u20$core..fmt..Debug$u20$for$u20$$u5b$T$u3b$$u20$N$u5d$$GT$3fmt17h788004dd57ed36d5E)
+8000051e 8000051e        c     1                 core::array::_$LT$impl$u20$core..fmt..Debug$u20$for$u20$$u5b$T$u3b$$u20$N$u5d$$GT$::fmt::h788004dd57ed36d5
 8000051e 8000051e        0     1                 .L0 
 8000051e 8000051e        0     1                 .L0 
 8000051e 8000051e        0     1                 $x
 8000051e 8000051e        0     1                 .L0 
 80000520 80000520        0     1                 .L0 
 8000052a 8000052a        0     1                 .L0 
-8000052a 8000052a       64     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._ZN10bootrom_rs4dpcd10read_block17hd0eda9310b5a7b5dE)
-8000052a 8000052a       64     1                 bootrom_rs::dpcd::read_block::hd0eda9310b5a7b5d
+8000052a 8000052a       64     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._ZN10bootrom_rs4dpcd10read_block17h5b504821b8c1e6b5E)
+8000052a 8000052a       64     1                 bootrom_rs::dpcd::read_block::h5b504821b8c1e6b5
 8000052a 8000052a        0     1                 .L0 
 8000052a 8000052a        0     1                 .L0 
 8000052a 8000052a        0     1                 $x
@@ -212,8 +212,8 @@
 80000572 80000572        0     1                 .L0 
 80000582 80000582        0     1                 .L0 
 8000058e 8000058e        0     1                 .L0 
-8000058e 8000058e       a6     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._ZN10bootrom_rs4dpcd8transact17h72073c0b8dcbacfeE)
-8000058e 8000058e       a6     1                 bootrom_rs::dpcd::transact::h72073c0b8dcbacfe
+8000058e 8000058e       a6     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._ZN10bootrom_rs4dpcd8transact17ha8fc969084200f7bE)
+8000058e 8000058e       a6     1                 bootrom_rs::dpcd::transact::ha8fc969084200f7b
 8000058e 8000058e        0     1                 .L0 
 8000058e 8000058e        0     1                 .L0 
 8000058e 8000058e        0     1                 $x
@@ -230,8 +230,8 @@
 80000618 80000618        0     1                 .L0 
 8000061c 8000061c        0     1                 .L0 
 80000634 80000634        0     1                 .L0 
-80000634 80000634       4a     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._ZN10bootrom_rs4dpcd4read17hc0889c6082c57738E)
-80000634 80000634       4a     1                 bootrom_rs::dpcd::read::hc0889c6082c57738
+80000634 80000634       4a     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._ZN10bootrom_rs4dpcd4read17hd2444bca14c3ef75E)
+80000634 80000634       4a     1                 bootrom_rs::dpcd::read::hd2444bca14c3ef75
 80000634 80000634        0     1                 .L0 
 80000634 80000634        0     1                 .L0 
 80000634 80000634        0     1                 $x
@@ -244,8 +244,8 @@
 80000672 80000672        0     1                 .L0 
 80000678 80000678        0     1                 .L0 
 8000067e 8000067e        0     1                 .L0 
-8000067e 8000067e       4a     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._ZN10bootrom_rs4dpcd5write17h57402573650c1ffdE)
-8000067e 8000067e       4a     1                 bootrom_rs::dpcd::write::h57402573650c1ffd
+8000067e 8000067e       4a     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._ZN10bootrom_rs4dpcd5write17h153ed2923f968938E)
+8000067e 8000067e       4a     1                 bootrom_rs::dpcd::write::h153ed2923f968938
 8000067e 8000067e        0     1                 .L0 
 8000067e 8000067e        0     1                 .L0 
 8000067e 8000067e        0     1                 $x
@@ -255,24 +255,24 @@
 8000069c 8000069c        0     1                 .L0 
 800006b0 800006b0        0     1                 .L0 
 800006c8 800006c8        0     1                 .L0 
-800006c8 800006c8       28     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._ZN42_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$3fmt17hbf36497552316817E)
-800006c8 800006c8       28     1                 _$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$::fmt::hbf36497552316817
+800006c8 800006c8       28     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._ZN42_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$3fmt17h7f7e4ab7f6d6b6d7E)
+800006c8 800006c8       28     1                 _$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$::fmt::h7f7e4ab7f6d6b6d7
 800006c8 800006c8        0     1                 .L0 
 800006c8 800006c8        0     1                 .L0 
 800006c8 800006c8        0     1                 $x
 800006c8 800006c8        0     1                 .L0 
 800006e6 800006e6        0     1                 .L0 
 800006f0 800006f0        0     1                 .L0 
-800006f0 800006f0       14     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._ZN4core3fmt5Write9write_fmt17h005d4e19ec0b55adE)
-800006f0 800006f0       14     1                 core::fmt::Write::write_fmt::h005d4e19ec0b55ad
+800006f0 800006f0       14     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._ZN4core3fmt5Write9write_fmt17hf6d8d5f6a0bc22f2E)
+800006f0 800006f0       14     1                 core::fmt::Write::write_fmt::hf6d8d5f6a0bc22f2
 800006f0 800006f0        0     1                 .L0 
 800006f0 800006f0        0     1                 .L0 
 800006f0 800006f0        0     1                 $x
 800006f0 800006f0        0     1                 .L0 
 800006f4 800006f4        0     1                 .L0 
 80000704 80000704        0     1                 .L0 
-80000704 80000704       24     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._ZN106_$LT$bootrom_rs..serialout..SerialOut$LT$bootrom_pac..SYSTEM_SERIALOUT$GT$$u20$as$u20$core..fmt..Write$GT$9write_str17hf7c54bf8a21d9adfE)
-80000704 80000704       24     1                 _$LT$bootrom_rs..serialout..SerialOut$LT$bootrom_pac..SYSTEM_SERIALOUT$GT$$u20$as$u20$core..fmt..Write$GT$::write_str::hf7c54bf8a21d9adf
+80000704 80000704       24     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._ZN106_$LT$bootrom_rs..serialout..SerialOut$LT$bootrom_pac..SYSTEM_SERIALOUT$GT$$u20$as$u20$core..fmt..Write$GT$9write_str17h2e7f89afb7c30451E)
+80000704 80000704       24     1                 _$LT$bootrom_rs..serialout..SerialOut$LT$bootrom_pac..SYSTEM_SERIALOUT$GT$$u20$as$u20$core..fmt..Write$GT$::write_str::h2e7f89afb7c30451
 80000704 80000704        0     1                 .L0 
 80000704 80000704        0     1                 .L0 
 80000704 80000704        0     1                 $x
@@ -286,8 +286,8 @@
 80000720 80000720        0     1                 .L0 
 80000724 80000724        0     1                 .L0 
 80000728 80000728        0     1                 .L0 
-80000728 80000728       a6     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._ZN4core3fmt5Write10write_char17h508a7269d1fd4921E)
-80000728 80000728       a6     1                 core::fmt::Write::write_char::h508a7269d1fd4921
+80000728 80000728       a6     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._ZN4core3fmt5Write10write_char17hd7b20ce4254444f1E)
+80000728 80000728       a6     1                 core::fmt::Write::write_char::hd7b20ce4254444f1
 80000728 80000728        0     1                 .L0 
 80000728 80000728        0     1                 .L0 
 80000728 80000728        0     1                 $x
@@ -318,7 +318,7 @@
 800007c4 800007c4        0     1                 .L0 
 800007c8 800007c8        0     1                 .L0 
 800007ce 800007ce        0     1                 .L0 
-800007ce 800007ce       3a     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._RNvCsGIExRX8pES_7___rustc17rust_begin_unwind)
+800007ce 800007ce       3a     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._RNvCsGIExRX8pES_7___rustc17rust_begin_unwind)
 800007ce 800007ce       3a     1                 __rustc::rust_begin_unwind
 800007ce 800007ce        0     1                 .L0 
 800007ce 800007ce        0     1                 .L0 
@@ -328,8 +328,8 @@
 800007f4 800007f4        0     1                 .L0 
 80000804 80000804        0     1                 .L0 
 80000808 80000808        0     1                 .L0 
-80000808 80000808       40     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._ZN10bootrom_rs9print_fmt17h4a5d51966ddc5996E)
-80000808 80000808       40     1                 bootrom_rs::print_fmt::h4a5d51966ddc5996
+80000808 80000808       40     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._ZN10bootrom_rs9print_fmt17hdb74bc91f75a486cE)
+80000808 80000808       40     1                 bootrom_rs::print_fmt::hdb74bc91f75a486c
 80000808 80000808        0     1                 .L0 
 80000808 80000808        0     1                 .L0 
 80000808 80000808        0     1                 $x
@@ -340,7 +340,7 @@
 80000838 80000838        0     1                 .L0 
 80000840 80000840        0     1                 .L0 
 80000848 80000848        0     1                 .L0 
-80000848 80000848       48     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text.init)
+80000848 80000848       48     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text.init)
 80000848 80000848        0     1                 .L0 
 80000848 80000848        0     1                 .L0 
 80000848 80000848        0     1                 $x
@@ -354,12 +354,12 @@
 80000886 80000886        0     1                 .L0 
 80000888 80000888        0     1                 .L0 
 80000890 80000890        0     1                 .L0 
-80000890 80000890      dc0     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text.main)
+80000890 80000890      d46     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text.main)
 80000890 80000890        0     1                 .L0 
 80000890 80000890        0     1                 .L0 
 80000890 80000890        0     1                 $x
 80000890 80000890        0     1                 .L0 
-80000890 80000890      dc0     1                 main
+80000890 80000890      d46     1                 main
 800008c8 800008c8        0     1                 .L0 
 800008cc 800008cc        0     1                 .L0 
 800008d8 800008d8        0     1                 .L0 
@@ -532,705 +532,702 @@
 80000f20 80000f20        0     1                 .L0 
 80000f28 80000f28        0     1                 .L0 
 80000f42 80000f42        0     1                 .L0 
-80000f76 80000f76        0     1                 .L0 
-80000f7a 80000f7a        0     1                 .L0 
-80000fa2 80000fa2        0     1                 .L0 
-80000fa8 80000fa8        0     1                 .L0 
-80000fb0 80000fb0        0     1                 .L0 
+80000f6c 80000f6c        0     1                 .L0 
+80000f70 80000f70        0     1                 .L0 
+80000f98 80000f98        0     1                 .L0 
+80000f9e 80000f9e        0     1                 .L0 
+80000fa6 80000fa6        0     1                 .L0 
+80000fd4 80000fd4        0     1                 .L0 
 80000fd6 80000fd6        0     1                 .L0 
-80000fd8 80000fd8        0     1                 .L0 
-80000fe4 80000fe4        0     1                 .L0 
-8000104a 8000104a        0     1                 .L0 
-8000104e 8000104e        0     1                 .L0 
-8000105e 8000105e        0     1                 .L0 
+80000fe2 80000fe2        0     1                 .L0 
+8000104c 8000104c        0     1                 .L0 
+80001050 80001050        0     1                 .L0 
+80001060 80001060        0     1                 .L0 
 80001066 80001066        0     1                 .L0 
 8000106a 8000106a        0     1                 .L0 
 80001070 80001070        0     1                 .L0 
 80001074 80001074        0     1                 .L0 
-8000107c 8000107c        0     1                 .L0 
-80001080 80001080        0     1                 .L0 
-80001084 80001084        0     1                 .L0 
-80001088 80001088        0     1                 .L0 
-8000108c 8000108c        0     1                 .L0 
+8000107a 8000107a        0     1                 .L0 
+8000107e 8000107e        0     1                 .L0 
+80001082 80001082        0     1                 .L0 
+80001086 80001086        0     1                 .L0 
+8000108a 8000108a        0     1                 .L0 
+80001098 80001098        0     1                 .L0 
 8000109a 8000109a        0     1                 .L0 
-8000109c 8000109c        0     1                 .L0 
-800010d4 800010d4        0     1                 .L0 
-800010d8 800010d8        0     1                 .L0 
-800010dc 800010dc        0     1                 .L0 
-800010f8 800010f8        0     1                 .L0 
-800010fc 800010fc        0     1                 .L0 
-800010fe 800010fe        0     1                 .L0 
-8000111e 8000111e        0     1                 .L0 
-8000112e 8000112e        0     1                 .L0 
-80001132 80001132        0     1                 .L0 
+800010c8 800010c8        0     1                 .L0 
+800010cc 800010cc        0     1                 .L0 
+800010d0 800010d0        0     1                 .L0 
+800010ec 800010ec        0     1                 .L0 
+800010f0 800010f0        0     1                 .L0 
+800010f2 800010f2        0     1                 .L0 
+8000110c 8000110c        0     1                 .L0 
+8000110e 8000110e        0     1                 .L0 
+80001110 80001110        0     1                 .L0 
+8000112c 8000112c        0     1                 .L0 
+80001134 80001134        0     1                 .L0 
 80001136 80001136        0     1                 .L0 
-80001158 80001158        0     1                 .L0 
-80001160 80001160        0     1                 .L0 
+80001138 80001138        0     1                 .L0 
 80001162 80001162        0     1                 .L0 
-80001164 80001164        0     1                 .L0 
-80001182 80001182        0     1                 .L0 
+80001166 80001166        0     1                 .L0 
 8000118a 8000118a        0     1                 .L0 
+8000118c 8000118c        0     1                 .L0 
+80001190 80001190        0     1                 .L0 
+80001194 80001194        0     1                 .L0 
+80001198 80001198        0     1                 .L0 
+8000119c 8000119c        0     1                 .L0 
+8000119e 8000119e        0     1                 .L0 
 800011a2 800011a2        0     1                 .L0 
-800011a4 800011a4        0     1                 .L0 
-800011e6 800011e6        0     1                 .L0 
-800011e8 800011e8        0     1                 .L0 
-800011ec 800011ec        0     1                 .L0 
-800011f0 800011f0        0     1                 .L0 
-800011f4 800011f4        0     1                 .L0 
-800011f8 800011f8        0     1                 .L0 
-800011fa 800011fa        0     1                 .L0 
-800011fe 800011fe        0     1                 .L0 
-80001202 80001202        0     1                 .L0 
-80001206 80001206        0     1                 .L0 
+800011a6 800011a6        0     1                 .L0 
+800011aa 800011aa        0     1                 .L0 
+800011b6 800011b6        0     1                 .L0 
+800011b8 800011b8        0     1                 .L0 
+800011ea 800011ea        0     1                 .L0 
+800011ee 800011ee        0     1                 .L0 
 80001212 80001212        0     1                 .L0 
 80001214 80001214        0     1                 .L0 
-80001244 80001244        0     1                 .L0 
-80001246 80001246        0     1                 .L0 
-8000124a 8000124a        0     1                 .L0 
-8000126c 8000126c        0     1                 .L0 
+8000122a 8000122a        0     1                 .L0 
+8000123a 8000123a        0     1                 .L0 
+8000124c 8000124c        0     1                 .L0 
+80001262 80001262        0     1                 .L0 
 8000126e 8000126e        0     1                 .L0 
-80001284 80001284        0     1                 .L0 
-80001296 80001296        0     1                 .L0 
-800012a6 800012a6        0     1                 .L0 
-800012be 800012be        0     1                 .L0 
-800012d4 800012d4        0     1                 .L0 
-800012e0 800012e0        0     1                 .L0 
-80001300 80001300        0     1                 .L0 
-80001302 80001302        0     1                 .L0 
-8000132a 8000132a        0     1                 .L0 
+80001272 80001272        0     1                 .L0 
+80001280 80001280        0     1                 .L0 
+80001282 80001282        0     1                 .L0 
+80001290 80001290        0     1                 .L0 
+80001292 80001292        0     1                 .L0 
+800012b8 800012b8        0     1                 .L0 
+800012d2 800012d2        0     1                 .L0 
+800012d8 800012d8        0     1                 .L0 
+800012da 800012da        0     1                 .L0 
+800012ea 800012ea        0     1                 .L0 
+800012f6 800012f6        0     1                 .L0 
+80001330 80001330        0     1                 .L0 
+80001334 80001334        0     1                 .L0 
 8000133a 8000133a        0     1                 .L0 
+8000133e 8000133e        0     1                 .L0 
+80001344 80001344        0     1                 .L0 
+80001348 80001348        0     1                 .L0 
+8000134c 8000134c        0     1                 .L0 
 80001350 80001350        0     1                 .L0 
-80001356 80001356        0     1                 .L0 
 80001358 80001358        0     1                 .L0 
+8000135c 8000135c        0     1                 .L0 
+80001362 80001362        0     1                 .L0 
 80001368 80001368        0     1                 .L0 
+8000136e 8000136e        0     1                 .L0 
 80001374 80001374        0     1                 .L0 
-800013b0 800013b0        0     1                 .L0 
-800013b4 800013b4        0     1                 .L0 
-800013b8 800013b8        0     1                 .L0 
-800013ba 800013ba        0     1                 .L0 
-800013c0 800013c0        0     1                 .L0 
-800013c4 800013c4        0     1                 .L0 
-800013c8 800013c8        0     1                 .L0 
-800013cc 800013cc        0     1                 .L0 
-800013d4 800013d4        0     1                 .L0 
-800013da 800013da        0     1                 .L0 
-800013e0 800013e0        0     1                 .L0 
-800013e6 800013e6        0     1                 .L0 
-800013ec 800013ec        0     1                 .L0 
-800013f0 800013f0        0     1                 .L0 
+80001378 80001378        0     1                 .L0 
+8000139e 8000139e        0     1                 .L0 
 800013f2 800013f2        0     1                 .L0 
-80001418 80001418        0     1                 .L0 
-8000146c 8000146c        0     1                 .L0 
-8000146e 8000146e        0     1                 .L0 
-8000147a 8000147a        0     1                 .L0 
-8000149a 8000149a        0     1                 .L0 
-800014a2 800014a2        0     1                 .L0 
-800014a6 800014a6        0     1                 .L0 
-800014aa 800014aa        0     1                 .L0 
-800014c6 800014c6        0     1                 .L0 
-800014d8 800014d8        0     1                 .L0 
-8000150a 8000150a        0     1                 .L0 
-8000150c 8000150c        0     1                 .L0 
-80001510 80001510        0     1                 .L0 
-80001512 80001512        0     1                 .L0 
-80001550 80001550        0     1                 .L0 
-80001598 80001598        0     1                 .L0 
-8000160a 8000160a        0     1                 .L0 
-80001614 80001614        0     1                 .L0 
-80001624 80001624        0     1                 .L0 
-80001638 80001638        0     1                 .L0 
+800013f4 800013f4        0     1                 .L0 
+80001400 80001400        0     1                 .L0 
+80001420 80001420        0     1                 .L0 
+80001428 80001428        0     1                 .L0 
+8000142c 8000142c        0     1                 .L0 
+80001430 80001430        0     1                 .L0 
+8000144c 8000144c        0     1                 .L0 
+8000145e 8000145e        0     1                 .L0 
+80001490 80001490        0     1                 .L0 
+80001492 80001492        0     1                 .L0 
+80001496 80001496        0     1                 .L0 
+80001498 80001498        0     1                 .L0 
+800014d6 800014d6        0     1                 .L0 
+8000151e 8000151e        0     1                 .L0 
+80001590 80001590        0     1                 .L0 
+8000159a 8000159a        0     1                 .L0 
+800015aa 800015aa        0     1                 .L0 
+800015be 800015be        0     1                 .L0 
+800015c0 800015c0        0     1                 .L0 
+800015c4 800015c4        0     1                 .L0 
+800015c8 800015c8        0     1                 .L0 
+800015cc 800015cc        0     1                 .L0 
+800015d4 800015d4        0     1                 .L0 
+800015d4 800015d4        0     1                 .L0 
+800015d6 800015d6        0     1                 .L0 
+800015d6 800015d6        0     1                 .L0 
+800015d6 800015d6       26     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._ZN64_$LT$bootrom_rs..dpcd..DpcdError$u20$as$u20$core..fmt..Debug$GT$3fmt17hdbf377632bb0773eE)
+800015d6 800015d6       26     1                 _$LT$bootrom_rs..dpcd..DpcdError$u20$as$u20$core..fmt..Debug$GT$::fmt::hdbf377632bb0773e
+800015d6 800015d6        0     1                 .L0 
+800015d6 800015d6        0     1                 .L0 
+800015d6 800015d6        0     1                 $x
+800015d6 800015d6        0     1                 .L0 
+800015f8 800015f8        0     1                 .L0 
+800015fc 800015fc        0     1                 .L0 
+800015fc 800015fc       82     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._ZN69_$LT$bootrom_rs..link_training..Error$u20$as$u20$core..fmt..Debug$GT$3fmt17h69beb5b62d7dbfdaE)
+800015fc 800015fc       82     1                 _$LT$bootrom_rs..link_training..Error$u20$as$u20$core..fmt..Debug$GT$::fmt::h69beb5b62d7dbfda
+800015fc 800015fc        0     1                 .L0 
+800015fc 800015fc        0     1                 .L0 
+800015fc 800015fc        0     1                 $x
+800015fc 800015fc        0     1                 .L0 
+80001616 80001616        0     1                 .L0 
+80001618 80001618        0     1                 .L0 
+80001626 80001626        0     1                 .L0 
+8000162a 8000162a        0     1                 .L0 
+80001636 80001636        0     1                 .L0 
 8000163a 8000163a        0     1                 .L0 
-8000163e 8000163e        0     1                 .L0 
-80001642 80001642        0     1                 .L0 
-80001646 80001646        0     1                 .L0 
-8000164e 8000164e        0     1                 .L0 
-8000164e 8000164e        0     1                 .L0 
-80001650 80001650        0     1                 .L0 
-80001650 80001650        0     1                 .L0 
-80001650 80001650       26     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._ZN64_$LT$bootrom_rs..dpcd..DpcdError$u20$as$u20$core..fmt..Debug$GT$3fmt17hf6dfaf388ce92c90E)
-80001650 80001650       26     1                 _$LT$bootrom_rs..dpcd..DpcdError$u20$as$u20$core..fmt..Debug$GT$::fmt::hf6dfaf388ce92c90
-80001650 80001650        0     1                 .L0 
-80001650 80001650        0     1                 .L0 
-80001650 80001650        0     1                 $x
-80001650 80001650        0     1                 .L0 
-80001672 80001672        0     1                 .L0 
-80001676 80001676        0     1                 .L0 
-80001676 80001676       82     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._ZN69_$LT$bootrom_rs..link_training..Error$u20$as$u20$core..fmt..Debug$GT$3fmt17h9553d38f470e0f02E)
-80001676 80001676       82     1                 _$LT$bootrom_rs..link_training..Error$u20$as$u20$core..fmt..Debug$GT$::fmt::h9553d38f470e0f02
-80001676 80001676        0     1                 .L0 
-80001676 80001676        0     1                 .L0 
-80001676 80001676        0     1                 $x
-80001676 80001676        0     1                 .L0 
-80001690 80001690        0     1                 .L0 
-80001692 80001692        0     1                 .L0 
-800016a0 800016a0        0     1                 .L0 
+80001644 80001644        0     1                 .L0 
+80001648 80001648        0     1                 .L0 
+80001648 80001648        0     1                 .L0 
+8000164c 8000164c        0     1                 .L0 
+80001658 80001658        0     1                 .L0 
+8000165e 8000165e        0     1                 .L0 
+8000165e 8000165e        0     1                 .L0 
+80001660 80001660        0     1                 .L0 
+8000167e 8000167e        0     1                 .L0 
+8000167e 8000167e       26     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._ZN62_$LT$bootrom_rs..aux..AuxError$u20$as$u20$core..fmt..Debug$GT$3fmt17h9b464bb5ac0611a2E)
+8000167e 8000167e       26     1                 _$LT$bootrom_rs..aux..AuxError$u20$as$u20$core..fmt..Debug$GT$::fmt::h9b464bb5ac0611a2
+8000167e 8000167e        0     1                 .L0 
+8000167e 8000167e        0     1                 .L0 
+8000167e 8000167e        0     1                 $x
+8000167e 8000167e        0     1                 .L0 
+8000169e 8000169e        0     1                 .L0 
 800016a4 800016a4        0     1                 .L0 
-800016b0 800016b0        0     1                 .L0 
-800016b4 800016b4        0     1                 .L0 
+800016a4 800016a4       14     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text.start_rust)
+800016a4 800016a4        0     1                 .L0 
+800016a4 800016a4        0     1                 .L0 
+800016a4 800016a4        0     1                 $x
+800016a4 800016a4        0     1                 .L0 
+800016a4 800016a4       14     1                 start_rust
+800016b8 800016b8        0     1                 .L0 
+800016b8 800016b8       10     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._RNvXs1i_NtCsddV114GBTEg_4core3fmtReNtB6_7Display3fmtB8_)
+800016b8 800016b8       10     1                 <&str as core::fmt::Display>::fmt
+800016b8 800016b8        0     1                 .L0 
+800016b8 800016b8        0     1                 .L0 
+800016b8 800016b8        0     1                 $x
+800016b8 800016b8        0     1                 .L0 
 800016be 800016be        0     1                 .L0 
-800016c2 800016c2        0     1                 .L0 
-800016c2 800016c2        0     1                 .L0 
-800016c6 800016c6        0     1                 .L0 
-800016d2 800016d2        0     1                 .L0 
-800016d8 800016d8        0     1                 .L0 
-800016d8 800016d8        0     1                 .L0 
-800016da 800016da        0     1                 .L0 
-800016f8 800016f8        0     1                 .L0 
-800016f8 800016f8       26     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._ZN62_$LT$bootrom_rs..aux..AuxError$u20$as$u20$core..fmt..Debug$GT$3fmt17hdca9404709b1924aE)
-800016f8 800016f8       26     1                 _$LT$bootrom_rs..aux..AuxError$u20$as$u20$core..fmt..Debug$GT$::fmt::hdca9404709b1924a
-800016f8 800016f8        0     1                 .L0 
-800016f8 800016f8        0     1                 .L0 
-800016f8 800016f8        0     1                 $x
-800016f8 800016f8        0     1                 .L0 
-80001718 80001718        0     1                 .L0 
-8000171e 8000171e        0     1                 .L0 
-8000171e 8000171e       14     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text.start_rust)
-8000171e 8000171e        0     1                 .L0 
-8000171e 8000171e        0     1                 .L0 
-8000171e 8000171e        0     1                 $x
-8000171e 8000171e        0     1                 .L0 
-8000171e 8000171e       14     1                 start_rust
-80001732 80001732        0     1                 .L0 
-80001732 80001732       10     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._RNvXs1i_NtCsddV114GBTEg_4core3fmtReNtB6_7Display3fmtB8_)
-80001732 80001732       10     1                 <&str as core::fmt::Display>::fmt
-80001732 80001732        0     1                 .L0 
-80001732 80001732        0     1                 .L0 
-80001732 80001732        0     1                 $x
-80001732 80001732        0     1                 .L0 
-80001738 80001738        0     1                 .L0 
-80001742 80001742        0     1                 .L0 
-80001742 80001742       2e     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text.unlikely._RNvNtCsddV114GBTEg_4core9panicking9panic_fmt)
-80001742 80001742       2e     1                 core::panicking::panic_fmt
-80001742 80001742        0     1                 .L0 
-80001742 80001742        0     1                 .L0 
-80001742 80001742        0     1                 $x
-80001742 80001742        0     1                 .L0 
-80001758 80001758        0     1                 .L0 
-80001770 80001770        0     1                 .L0 
-80001770 80001770      1d6     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._RNvNtCsddV114GBTEg_4core3fmt5write)
-80001770 80001770      1d6     1                 core::fmt::write
-80001770 80001770        0     1                 .L0 
-80001770 80001770        0     1                 .L0 
-80001770 80001770        0     1                 $x
-80001770 80001770        0     1                 .L0 
-80001790 80001790        0     1                 .L0 
-8000179a 8000179a        0     1                 .L0 
+800016c8 800016c8        0     1                 .L0 
+800016c8 800016c8       2e     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text.unlikely._RNvNtCsddV114GBTEg_4core9panicking9panic_fmt)
+800016c8 800016c8       2e     1                 core::panicking::panic_fmt
+800016c8 800016c8        0     1                 .L0 
+800016c8 800016c8        0     1                 .L0 
+800016c8 800016c8        0     1                 $x
+800016c8 800016c8        0     1                 .L0 
+800016de 800016de        0     1                 .L0 
+800016f6 800016f6        0     1                 .L0 
+800016f6 800016f6      1d6     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._RNvNtCsddV114GBTEg_4core3fmt5write)
+800016f6 800016f6      1d6     1                 core::fmt::write
+800016f6 800016f6        0     1                 .L0 
+800016f6 800016f6        0     1                 .L0 
+800016f6 800016f6        0     1                 $x
+800016f6 800016f6        0     1                 .L0 
+80001716 80001716        0     1                 .L0 
+80001720 80001720        0     1                 .L0 
+80001724 80001724        0     1                 .L0 
+80001740 80001740        0     1                 .L0 
+80001748 80001748        0     1                 .L0 
+8000174c 8000174c        0     1                 .L0 
+8000175c 8000175c        0     1                 .L0 
+80001766 80001766        0     1                 .L0 
+80001768 80001768        0     1                 .L0 
+8000176e 8000176e        0     1                 .L0 
+80001776 80001776        0     1                 .L0 
+80001786 80001786        0     1                 .L0 
+8000178a 8000178a        0     1                 .L0 
+8000178c 8000178c        0     1                 .L0 
+8000178e 8000178e        0     1                 .L0 
 8000179e 8000179e        0     1                 .L0 
-800017ba 800017ba        0     1                 .L0 
-800017c2 800017c2        0     1                 .L0 
-800017c6 800017c6        0     1                 .L0 
-800017d6 800017d6        0     1                 .L0 
-800017e0 800017e0        0     1                 .L0 
-800017e2 800017e2        0     1                 .L0 
-800017e8 800017e8        0     1                 .L0 
-800017f0 800017f0        0     1                 .L0 
+800017bc 800017bc        0     1                 .L0 
+800017ce 800017ce        0     1                 .L0 
+800017da 800017da        0     1                 .L0 
+800017e4 800017e4        0     1                 .L0 
+800017f2 800017f2        0     1                 .L0 
+800017fe 800017fe        0     1                 .L0 
 80001800 80001800        0     1                 .L0 
+80001802 80001802        0     1                 .L0 
 80001804 80001804        0     1                 .L0 
-80001806 80001806        0     1                 .L0 
-80001808 80001808        0     1                 .L0 
-80001818 80001818        0     1                 .L0 
-80001836 80001836        0     1                 .L0 
-80001848 80001848        0     1                 .L0 
-80001854 80001854        0     1                 .L0 
-8000185e 8000185e        0     1                 .L0 
-8000186c 8000186c        0     1                 .L0 
-80001878 80001878        0     1                 .L0 
-8000187a 8000187a        0     1                 .L0 
-8000187c 8000187c        0     1                 .L0 
-8000187e 8000187e        0     1                 .L0 
-8000188a 8000188a        0     1                 .L0 
-8000189a 8000189a        0     1                 .L0 
-800018a8 800018a8        0     1                 .L0 
-800018b6 800018b6        0     1                 .L0 
-800018ba 800018ba        0     1                 .L0 
-800018be 800018be        0     1                 .L0 
-800018c6 800018c6        0     1                 .L0 
-800018ca 800018ca        0     1                 .L0 
-800018de 800018de        0     1                 .L0 
-800018e4 800018e4        0     1                 .L0 
-800018ea 800018ea        0     1                 .L0 
-800018ee 800018ee        0     1                 .L0 
-800018fe 800018fe        0     1                 .L0 
-80001902 80001902        0     1                 .L0 
-80001946 80001946        0     1                 .L0 
-80001946 80001946      2f0     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._RNvMsa_NtCsddV114GBTEg_4core3fmtNtB5_9Formatter3pad)
-80001946 80001946      2f0     1                 <core::fmt::Formatter>::pad
-80001946 80001946        0     1                 .L0 
-80001946 80001946        0     1                 .L0 
-80001946 80001946        0     1                 $x
-80001946 80001946        0     1                 .L0 
-80001976 80001976        0     1                 .L0 
+80001810 80001810        0     1                 .L0 
+80001820 80001820        0     1                 .L0 
+8000182e 8000182e        0     1                 .L0 
+8000183c 8000183c        0     1                 .L0 
+80001840 80001840        0     1                 .L0 
+80001844 80001844        0     1                 .L0 
+8000184c 8000184c        0     1                 .L0 
+80001850 80001850        0     1                 .L0 
+80001864 80001864        0     1                 .L0 
+8000186a 8000186a        0     1                 .L0 
+80001870 80001870        0     1                 .L0 
+80001874 80001874        0     1                 .L0 
+80001884 80001884        0     1                 .L0 
+80001888 80001888        0     1                 .L0 
+800018cc 800018cc        0     1                 .L0 
+800018cc 800018cc      2f0     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._RNvMsa_NtCsddV114GBTEg_4core3fmtNtB5_9Formatter3pad)
+800018cc 800018cc      2f0     1                 <core::fmt::Formatter>::pad
+800018cc 800018cc        0     1                 .L0 
+800018cc 800018cc        0     1                 .L0 
+800018cc 800018cc        0     1                 $x
+800018cc 800018cc        0     1                 .L0 
+800018fc 800018fc        0     1                 .L0 
+80001904 80001904        0     1                 .L0 
+80001906 80001906        0     1                 .L0 
+8000190c 8000190c        0     1                 .L0 
+8000191c 8000191c        0     1                 .L0 
+80001924 80001924        0     1                 .L0 
+8000192c 8000192c        0     1                 .L0 
+80001930 80001930        0     1                 .L0 
+80001944 80001944        0     1                 .L0 
+80001948 80001948        0     1                 .L0 
+8000194c 8000194c        0     1                 .L0 
+8000194e 8000194e        0     1                 .L0 
+80001954 80001954        0     1                 .L0 
+80001956 80001956        0     1                 .L0 
 8000197e 8000197e        0     1                 .L0 
-80001980 80001980        0     1                 .L0 
-80001986 80001986        0     1                 .L0 
-80001996 80001996        0     1                 .L0 
-8000199e 8000199e        0     1                 .L0 
-800019a6 800019a6        0     1                 .L0 
-800019aa 800019aa        0     1                 .L0 
+8000198c 8000198c        0     1                 .L0 
+80001994 80001994        0     1                 .L0 
+8000199c 8000199c        0     1                 .L0 
+800019a2 800019a2        0     1                 .L0 
+800019ae 800019ae        0     1                 .L0 
+800019b6 800019b6        0     1                 .L0 
 800019be 800019be        0     1                 .L0 
-800019c2 800019c2        0     1                 .L0 
-800019c6 800019c6        0     1                 .L0 
-800019c8 800019c8        0     1                 .L0 
-800019ce 800019ce        0     1                 .L0 
-800019d0 800019d0        0     1                 .L0 
-800019f8 800019f8        0     1                 .L0 
-80001a06 80001a06        0     1                 .L0 
-80001a0e 80001a0e        0     1                 .L0 
-80001a16 80001a16        0     1                 .L0 
-80001a1c 80001a1c        0     1                 .L0 
-80001a28 80001a28        0     1                 .L0 
-80001a30 80001a30        0     1                 .L0 
-80001a38 80001a38        0     1                 .L0 
-80001a4c 80001a4c        0     1                 .L0 
-80001a54 80001a54        0     1                 .L0 
-80001a7e 80001a7e        0     1                 .L0 
+800019d2 800019d2        0     1                 .L0 
+800019da 800019da        0     1                 .L0 
+80001a04 80001a04        0     1                 .L0 
+80001a12 80001a12        0     1                 .L0 
+80001a20 80001a20        0     1                 .L0 
+80001a2c 80001a2c        0     1                 .L0 
+80001a34 80001a34        0     1                 .L0 
+80001a3a 80001a3a        0     1                 .L0 
+80001a3e 80001a3e        0     1                 .L0 
+80001a40 80001a40        0     1                 .L0 
+80001a4e 80001a4e        0     1                 .L0 
+80001a7a 80001a7a        0     1                 .L0 
+80001a7c 80001a7c        0     1                 .L0 
+80001a88 80001a88        0     1                 .L0 
 80001a8c 80001a8c        0     1                 .L0 
-80001a9a 80001a9a        0     1                 .L0 
-80001aa6 80001aa6        0     1                 .L0 
-80001aae 80001aae        0     1                 .L0 
-80001ab4 80001ab4        0     1                 .L0 
+80001a8e 80001a8e        0     1                 .L0 
+80001a90 80001a90        0     1                 .L0 
+80001a96 80001a96        0     1                 .L0 
+80001aa8 80001aa8        0     1                 .L0 
+80001ab0 80001ab0        0     1                 .L0 
+80001ab2 80001ab2        0     1                 .L0 
 80001ab8 80001ab8        0     1                 .L0 
-80001aba 80001aba        0     1                 .L0 
-80001ac8 80001ac8        0     1                 .L0 
+80001abe 80001abe        0     1                 .L0 
+80001ac2 80001ac2        0     1                 .L0 
+80001ae0 80001ae0        0     1                 .L0 
+80001ae8 80001ae8        0     1                 .L0 
+80001aec 80001aec        0     1                 .L0 
+80001aee 80001aee        0     1                 .L0 
 80001af4 80001af4        0     1                 .L0 
-80001af6 80001af6        0     1                 .L0 
-80001b02 80001b02        0     1                 .L0 
-80001b06 80001b06        0     1                 .L0 
 80001b08 80001b08        0     1                 .L0 
-80001b0a 80001b0a        0     1                 .L0 
-80001b10 80001b10        0     1                 .L0 
-80001b22 80001b22        0     1                 .L0 
-80001b2a 80001b2a        0     1                 .L0 
+80001b18 80001b18        0     1                 .L0 
+80001b20 80001b20        0     1                 .L0 
+80001b24 80001b24        0     1                 .L0 
+80001b26 80001b26        0     1                 .L0 
 80001b2c 80001b2c        0     1                 .L0 
-80001b32 80001b32        0     1                 .L0 
-80001b38 80001b38        0     1                 .L0 
-80001b3c 80001b3c        0     1                 .L0 
-80001b5a 80001b5a        0     1                 .L0 
-80001b62 80001b62        0     1                 .L0 
-80001b66 80001b66        0     1                 .L0 
-80001b68 80001b68        0     1                 .L0 
+80001b2e 80001b2e        0     1                 .L0 
+80001b56 80001b56        0     1                 .L0 
+80001b5e 80001b5e        0     1                 .L0 
+80001b60 80001b60        0     1                 .L0 
 80001b6e 80001b6e        0     1                 .L0 
-80001b82 80001b82        0     1                 .L0 
-80001b92 80001b92        0     1                 .L0 
-80001b9a 80001b9a        0     1                 .L0 
-80001b9e 80001b9e        0     1                 .L0 
-80001ba0 80001ba0        0     1                 .L0 
-80001ba6 80001ba6        0     1                 .L0 
-80001ba8 80001ba8        0     1                 .L0 
-80001bd0 80001bd0        0     1                 .L0 
-80001bd8 80001bd8        0     1                 .L0 
-80001bda 80001bda        0     1                 .L0 
-80001be8 80001be8        0     1                 .L0 
-80001bea 80001bea        0     1                 .L0 
-80001bec 80001bec        0     1                 .L0 
-80001bee 80001bee        0     1                 .L0 
-80001bfa 80001bfa        0     1                 .L0 
-80001c04 80001c04        0     1                 .L0 
-80001c34 80001c34        0     1                 .L0 
-80001c36 80001c36        0     1                 .L0 
-80001c36 80001c36        0     1                 .L0 
-80001c36 80001c36      1e8     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._RNvXs0_NtNtCsddV114GBTEg_4core3fmt8buildersNtB5_10PadAdapterNtB7_5Write9write_str)
-80001c36 80001c36      1e8     1                 <core::fmt::builders::PadAdapter as core::fmt::Write>::write_str
-80001c36 80001c36        0     1                 .L0 
-80001c36 80001c36        0     1                 .L0 
-80001c36 80001c36        0     1                 $x
-80001c36 80001c36        0     1                 .L0 
-80001c94 80001c94        0     1                 .L0 
-80001c98 80001c98        0     1                 .L0 
-80001ca2 80001ca2        0     1                 .L0 
-80001cc0 80001cc0        0     1                 .L0 
-80001cc4 80001cc4        0     1                 .L0 
-80001ccc 80001ccc        0     1                 .L0 
-80001cda 80001cda        0     1                 .L0 
-80001cde 80001cde        0     1                 .L0 
-80001ce4 80001ce4        0     1                 .L0 
-80001d06 80001d06        0     1                 .L0 
-80001d1a 80001d1a        0     1                 .L0 
-80001d2e 80001d2e        0     1                 .L0 
-80001d34 80001d34        0     1                 .L0 
-80001d50 80001d50        0     1                 .L0 
-80001d6a 80001d6a        0     1                 .L0 
+80001b70 80001b70        0     1                 .L0 
+80001b72 80001b72        0     1                 .L0 
+80001b74 80001b74        0     1                 .L0 
+80001b80 80001b80        0     1                 .L0 
+80001b8a 80001b8a        0     1                 .L0 
+80001bba 80001bba        0     1                 .L0 
+80001bbc 80001bbc        0     1                 .L0 
+80001bbc 80001bbc        0     1                 .L0 
+80001bbc 80001bbc      1e8     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._RNvXs0_NtNtCsddV114GBTEg_4core3fmt8buildersNtB5_10PadAdapterNtB7_5Write9write_str)
+80001bbc 80001bbc      1e8     1                 <core::fmt::builders::PadAdapter as core::fmt::Write>::write_str
+80001bbc 80001bbc        0     1                 .L0 
+80001bbc 80001bbc        0     1                 .L0 
+80001bbc 80001bbc        0     1                 $x
+80001bbc 80001bbc        0     1                 .L0 
+80001c1a 80001c1a        0     1                 .L0 
+80001c1e 80001c1e        0     1                 .L0 
+80001c28 80001c28        0     1                 .L0 
+80001c46 80001c46        0     1                 .L0 
+80001c4a 80001c4a        0     1                 .L0 
+80001c52 80001c52        0     1                 .L0 
+80001c60 80001c60        0     1                 .L0 
+80001c64 80001c64        0     1                 .L0 
+80001c6a 80001c6a        0     1                 .L0 
+80001c8c 80001c8c        0     1                 .L0 
+80001ca0 80001ca0        0     1                 .L0 
+80001cb4 80001cb4        0     1                 .L0 
+80001cba 80001cba        0     1                 .L0 
+80001cd6 80001cd6        0     1                 .L0 
+80001cf0 80001cf0        0     1                 .L0 
+80001cf4 80001cf4        0     1                 .L0 
+80001cfa 80001cfa        0     1                 .L0 
+80001d18 80001d18        0     1                 .L0 
+80001d1e 80001d1e        0     1                 .L0 
+80001d22 80001d22        0     1                 .L0 
+80001d30 80001d30        0     1                 .L0 
+80001d32 80001d32        0     1                 .L0 
 80001d6e 80001d6e        0     1                 .L0 
-80001d74 80001d74        0     1                 .L0 
-80001d92 80001d92        0     1                 .L0 
-80001d98 80001d98        0     1                 .L0 
-80001d9c 80001d9c        0     1                 .L0 
-80001daa 80001daa        0     1                 .L0 
-80001dac 80001dac        0     1                 .L0 
-80001de8 80001de8        0     1                 .L0 
-80001df0 80001df0        0     1                 .L0 
-80001df2 80001df2        0     1                 .L0 
-80001e1e 80001e1e        0     1                 .L0 
-80001e1e 80001e1e       6e     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._RNvXs0_NtNtCsddV114GBTEg_4core3fmt8buildersNtB5_10PadAdapterNtB7_5Write10write_char)
-80001e1e 80001e1e       6e     1                 <core::fmt::builders::PadAdapter as core::fmt::Write>::write_char
-80001e1e 80001e1e        0     1                 .L0 
-80001e1e 80001e1e        0     1                 .L0 
-80001e1e 80001e1e        0     1                 $x
-80001e1e 80001e1e        0     1                 .L0 
-80001e56 80001e56        0     1                 .L0 
-80001e8c 80001e8c        0     1                 .L0 
-80001e8c 80001e8c       14     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._RNvYNtNtNtCsddV114GBTEg_4core3fmt8builders10PadAdapterNtB6_5Write9write_fmtB8_)
-80001e8c 80001e8c       14     1                 <core::fmt::builders::PadAdapter as core::fmt::Write>::write_fmt
-80001e8c 80001e8c        0     1                 .L0 
-80001e8c 80001e8c        0     1                 .L0 
-80001e8c 80001e8c        0     1                 $x
-80001e8c 80001e8c        0     1                 .L0 
-80001e90 80001e90        0     1                 .L0 
-80001ea0 80001ea0        0     1                 .L0 
-80001ea0 80001ea0      224     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._RNvMsa_NtCsddV114GBTEg_4core3fmtNtB5_9Formatter12pad_integral)
-80001ea0 80001ea0      224     1                 <core::fmt::Formatter>::pad_integral
-80001ea0 80001ea0        0     1                 .L0 
-80001ea0 80001ea0        0     1                 .L0 
-80001ea0 80001ea0        0     1                 $x
-80001ea0 80001ea0        0     1                 .L0 
-80001f08 80001f08        0     1                 .L0 
-80001f34 80001f34        0     1                 .L0 
-80001f44 80001f44        0     1                 .L0 
-80001f4c 80001f4c        0     1                 .L0 
-80001f68 80001f68        0     1                 .L0 
-80001f70 80001f70        0     1                 .L0 
+80001d76 80001d76        0     1                 .L0 
+80001d78 80001d78        0     1                 .L0 
+80001da4 80001da4        0     1                 .L0 
+80001da4 80001da4       6e     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._RNvXs0_NtNtCsddV114GBTEg_4core3fmt8buildersNtB5_10PadAdapterNtB7_5Write10write_char)
+80001da4 80001da4       6e     1                 <core::fmt::builders::PadAdapter as core::fmt::Write>::write_char
+80001da4 80001da4        0     1                 .L0 
+80001da4 80001da4        0     1                 .L0 
+80001da4 80001da4        0     1                 $x
+80001da4 80001da4        0     1                 .L0 
+80001ddc 80001ddc        0     1                 .L0 
+80001e12 80001e12        0     1                 .L0 
+80001e12 80001e12       14     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._RNvYNtNtNtCsddV114GBTEg_4core3fmt8builders10PadAdapterNtB6_5Write9write_fmtB8_)
+80001e12 80001e12       14     1                 <core::fmt::builders::PadAdapter as core::fmt::Write>::write_fmt
+80001e12 80001e12        0     1                 .L0 
+80001e12 80001e12        0     1                 .L0 
+80001e12 80001e12        0     1                 $x
+80001e12 80001e12        0     1                 .L0 
+80001e16 80001e16        0     1                 .L0 
+80001e26 80001e26        0     1                 .L0 
+80001e26 80001e26      224     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._RNvMsa_NtCsddV114GBTEg_4core3fmtNtB5_9Formatter12pad_integral)
+80001e26 80001e26      224     1                 <core::fmt::Formatter>::pad_integral
+80001e26 80001e26        0     1                 .L0 
+80001e26 80001e26        0     1                 .L0 
+80001e26 80001e26        0     1                 $x
+80001e26 80001e26        0     1                 .L0 
+80001e8e 80001e8e        0     1                 .L0 
+80001eba 80001eba        0     1                 .L0 
+80001eca 80001eca        0     1                 .L0 
+80001ed2 80001ed2        0     1                 .L0 
+80001eee 80001eee        0     1                 .L0 
+80001ef6 80001ef6        0     1                 .L0 
+80001efc 80001efc        0     1                 .L0 
+80001f06 80001f06        0     1                 .L0 
+80001f1c 80001f1c        0     1                 .L0 
+80001f24 80001f24        0     1                 .L0 
+80001f54 80001f54        0     1                 .L0 
+80001f5c 80001f5c        0     1                 .L0 
+80001f60 80001f60        0     1                 .L0 
+80001f62 80001f62        0     1                 .L0 
+80001f72 80001f72        0     1                 .L0 
 80001f76 80001f76        0     1                 .L0 
 80001f80 80001f80        0     1                 .L0 
-80001f96 80001f96        0     1                 .L0 
-80001f9e 80001f9e        0     1                 .L0 
-80001fce 80001fce        0     1                 .L0 
+80001f90 80001f90        0     1                 .L0 
+80001fbe 80001fbe        0     1                 .L0 
+80001fc6 80001fc6        0     1                 .L0 
+80001fca 80001fca        0     1                 .L0 
+80001fcc 80001fcc        0     1                 .L0 
+80001fd2 80001fd2        0     1                 .L0 
 80001fd6 80001fd6        0     1                 .L0 
-80001fda 80001fda        0     1                 .L0 
-80001fdc 80001fdc        0     1                 .L0 
 80001fec 80001fec        0     1                 .L0 
-80001ff0 80001ff0        0     1                 .L0 
-80001ffa 80001ffa        0     1                 .L0 
-8000200a 8000200a        0     1                 .L0 
-80002038 80002038        0     1                 .L0 
-80002040 80002040        0     1                 .L0 
-80002044 80002044        0     1                 .L0 
-80002046 80002046        0     1                 .L0 
-8000204c 8000204c        0     1                 .L0 
-80002050 80002050        0     1                 .L0 
-80002066 80002066        0     1                 .L0 
+80001ffc 80001ffc        0     1                 .L0 
+80002010 80002010        0     1                 .L0 
+80002018 80002018        0     1                 .L0 
+8000201c 8000201c        0     1                 .L0 
+8000201e 8000201e        0     1                 .L0 
+80002024 80002024        0     1                 .L0 
+8000204a 8000204a        0     1                 .L0 
+8000204a 8000204a       60     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._RNvNvMsa_NtCsddV114GBTEg_4core3fmtNtB7_9Formatter12pad_integral12write_prefix)
+8000204a 8000204a       60     1                 <core::fmt::Formatter>::pad_integral::write_prefix
+8000204a 8000204a        0     1                 .L0 
+8000204a 8000204a        0     1                 .L0 
+8000204a 8000204a        0     1                 $x
+8000204a 8000204a        0     1                 .L0 
 80002076 80002076        0     1                 .L0 
-8000208a 8000208a        0     1                 .L0 
-80002092 80002092        0     1                 .L0 
-80002096 80002096        0     1                 .L0 
-80002098 80002098        0     1                 .L0 
-8000209e 8000209e        0     1                 .L0 
-800020c4 800020c4        0     1                 .L0 
-800020c4 800020c4       60     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._RNvNvMsa_NtCsddV114GBTEg_4core3fmtNtB7_9Formatter12pad_integral12write_prefix)
-800020c4 800020c4       60     1                 <core::fmt::Formatter>::pad_integral::write_prefix
-800020c4 800020c4        0     1                 .L0 
-800020c4 800020c4        0     1                 .L0 
-800020c4 800020c4        0     1                 $x
-800020c4 800020c4        0     1                 .L0 
-800020f0 800020f0        0     1                 .L0 
-80002124 80002124        0     1                 .L0 
-80002124 80002124       10     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text.unlikely._RNvNtCsddV114GBTEg_4core6option13unwrap_failed)
-80002124 80002124       10     1                 core::option::unwrap_failed
-80002124 80002124        0     1                 .L0 
-80002124 80002124        0     1                 .L0 
-80002124 80002124        0     1                 $x
-80002124 80002124        0     1                 .L0 
-80002134 80002134        0     1                 .L0 
-80002134 80002134       24     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text.unlikely._RNvNtCsddV114GBTEg_4core9panicking5panic)
-80002134 80002134       24     1                 core::panicking::panic
-80002134 80002134        0     1                 .L0 
-80002134 80002134        0     1                 .L0 
-80002134 80002134        0     1                 $x
-80002134 80002134        0     1                 .L0 
-80002158 80002158        0     1                 .L0 
-80002158 80002158       42     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text.unlikely._RNvNtCsddV114GBTEg_4core9panicking18panic_bounds_check)
-80002158 80002158       42     1                 core::panicking::panic_bounds_check
-80002158 80002158        0     1                 .L0 
-80002158 80002158        0     1                 .L0 
-80002158 80002158        0     1                 $x
-80002158 80002158        0     1                 .L0 
-8000219a 8000219a        0     1                 .L0 
-8000219a 8000219a       dc     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._RNvMsa_NtCsddV114GBTEg_4core3fmtNtB5_9Formatter25debug_tuple_field1_finish)
-8000219a 8000219a       dc     1                 <core::fmt::Formatter>::debug_tuple_field1_finish
-8000219a 8000219a        0     1                 .L0 
-8000219a 8000219a        0     1                 .L0 
-8000219a 8000219a        0     1                 $x
-8000219a 8000219a        0     1                 .L0 
-800021b2 800021b2        0     1                 .L0 
-800021c4 800021c4        0     1                 .L0 
-800021c6 800021c6        0     1                 .L0 
-800021dc 800021dc        0     1                 .L0 
-800021e6 800021e6        0     1                 .L0 
-800021f6 800021f6        0     1                 .L0 
-800021f8 800021f8        0     1                 .L0 
-80002208 80002208        0     1                 .L0 
-8000220c 8000220c        0     1                 .L0 
-8000221a 8000221a        0     1                 .L0 
-80002222 80002222        0     1                 .L0 
+800020aa 800020aa        0     1                 .L0 
+800020aa 800020aa       10     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text.unlikely._RNvNtCsddV114GBTEg_4core6option13unwrap_failed)
+800020aa 800020aa       10     1                 core::option::unwrap_failed
+800020aa 800020aa        0     1                 .L0 
+800020aa 800020aa        0     1                 .L0 
+800020aa 800020aa        0     1                 $x
+800020aa 800020aa        0     1                 .L0 
+800020ba 800020ba        0     1                 .L0 
+800020ba 800020ba       24     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text.unlikely._RNvNtCsddV114GBTEg_4core9panicking5panic)
+800020ba 800020ba       24     1                 core::panicking::panic
+800020ba 800020ba        0     1                 .L0 
+800020ba 800020ba        0     1                 .L0 
+800020ba 800020ba        0     1                 $x
+800020ba 800020ba        0     1                 .L0 
+800020de 800020de        0     1                 .L0 
+800020de 800020de       42     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text.unlikely._RNvNtCsddV114GBTEg_4core9panicking18panic_bounds_check)
+800020de 800020de       42     1                 core::panicking::panic_bounds_check
+800020de 800020de        0     1                 .L0 
+800020de 800020de        0     1                 .L0 
+800020de 800020de        0     1                 $x
+800020de 800020de        0     1                 .L0 
+80002120 80002120        0     1                 .L0 
+80002120 80002120       dc     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._RNvMsa_NtCsddV114GBTEg_4core3fmtNtB5_9Formatter25debug_tuple_field1_finish)
+80002120 80002120       dc     1                 <core::fmt::Formatter>::debug_tuple_field1_finish
+80002120 80002120        0     1                 .L0 
+80002120 80002120        0     1                 .L0 
+80002120 80002120        0     1                 $x
+80002120 80002120        0     1                 .L0 
+80002138 80002138        0     1                 .L0 
+8000214a 8000214a        0     1                 .L0 
+8000214c 8000214c        0     1                 .L0 
+80002162 80002162        0     1                 .L0 
+8000216c 8000216c        0     1                 .L0 
+8000217c 8000217c        0     1                 .L0 
+8000217e 8000217e        0     1                 .L0 
+8000218e 8000218e        0     1                 .L0 
+80002192 80002192        0     1                 .L0 
+800021a0 800021a0        0     1                 .L0 
+800021a8 800021a8        0     1                 .L0 
+800021ac 800021ac        0     1                 .L0 
+800021b0 800021b0        0     1                 .L0 
+800021bc 800021bc        0     1                 .L0 
+800021d0 800021d0        0     1                 .L0 
+800021d2 800021d2        0     1                 .L0 
+800021e8 800021e8        0     1                 .L0 
+800021ea 800021ea        0     1                 .L0 
+800021fc 800021fc        0     1                 .L0 
+800021fc 800021fc        0     1                 .L0 
+800021fc 800021fc      16a     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._RNvXs8_NtNtNtCsddV114GBTEg_4core3fmt3num3impmNtB9_7Display3fmt)
+800021fc 800021fc      16a     1                 <u32 as core::fmt::Display>::fmt
+800021fc 800021fc        0     1                 .L0 
+800021fc 800021fc        0     1                 .L0 
+800021fc 800021fc        0     1                 $x
+800021fc 800021fc        0     1                 .L0 
 80002226 80002226        0     1                 .L0 
-8000222a 8000222a        0     1                 .L0 
-80002236 80002236        0     1                 .L0 
-8000224a 8000224a        0     1                 .L0 
-8000224c 8000224c        0     1                 .L0 
-80002262 80002262        0     1                 .L0 
-80002264 80002264        0     1                 .L0 
-80002276 80002276        0     1                 .L0 
-80002276 80002276        0     1                 .L0 
-80002276 80002276      16a     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._RNvXs8_NtNtNtCsddV114GBTEg_4core3fmt3num3impmNtB9_7Display3fmt)
-80002276 80002276      16a     1                 <u32 as core::fmt::Display>::fmt
-80002276 80002276        0     1                 .L0 
-80002276 80002276        0     1                 .L0 
-80002276 80002276        0     1                 $x
-80002276 80002276        0     1                 .L0 
-800022a0 800022a0        0     1                 .L0 
-8000232a 8000232a        0     1                 .L0 
-8000232e 8000232e        0     1                 .L0 
+800022b0 800022b0        0     1                 .L0 
+800022b4 800022b4        0     1                 .L0 
+800022b8 800022b8        0     1                 .L0 
+800022bc 800022bc        0     1                 .L0 
+80002312 80002312        0     1                 .L0 
+80002316 80002316        0     1                 .L0 
 80002332 80002332        0     1                 .L0 
-80002336 80002336        0     1                 .L0 
-8000238c 8000238c        0     1                 .L0 
-80002390 80002390        0     1                 .L0 
-800023ac 800023ac        0     1                 .L0 
-800023b6 800023b6        0     1                 .L0 
-800023b8 800023b8        0     1                 .L0 
-800023e0 800023e0        0     1                 .L0 
-800023e0 800023e0       8c     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._RNvXNtNtNtCsddV114GBTEg_4core3fmt3num3imphNtB6_7Display3fmt)
-800023e0 800023e0       8c     1                 <u8 as core::fmt::Display>::fmt
-800023e0 800023e0        0     1                 .L0 
-800023e0 800023e0        0     1                 .L0 
-800023e0 800023e0        0     1                 $x
-800023e0 800023e0        0     1                 .L0 
-800023f8 800023f8        0     1                 .L0 
-80002420 80002420        0     1                 .L0 
+8000233c 8000233c        0     1                 .L0 
+8000233e 8000233e        0     1                 .L0 
+80002366 80002366        0     1                 .L0 
+80002366 80002366       8c     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._RNvXNtNtNtCsddV114GBTEg_4core3fmt3num3imphNtB6_7Display3fmt)
+80002366 80002366       8c     1                 <u8 as core::fmt::Display>::fmt
+80002366 80002366        0     1                 .L0 
+80002366 80002366        0     1                 .L0 
+80002366 80002366        0     1                 $x
+80002366 80002366        0     1                 .L0 
+8000237e 8000237e        0     1                 .L0 
+800023a6 800023a6        0     1                 .L0 
+800023aa 800023aa        0     1                 .L0 
+800023ce 800023ce        0     1                 .L0 
+800023d8 800023d8        0     1                 .L0 
+800023da 800023da        0     1                 .L0 
+800023f2 800023f2        0     1                 .L0 
+800023f2 800023f2       62     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._RNvXsg_NtNtCsddV114GBTEg_4core3fmt3numhNtB7_8UpperHex3fmt)
+800023f2 800023f2       62     1                 <u8 as core::fmt::UpperHex>::fmt
+800023f2 800023f2        0     1                 .L0 
+800023f2 800023f2        0     1                 .L0 
+800023f2 800023f2        0     1                 $x
+800023f2 800023f2        0     1                 .L0 
 80002424 80002424        0     1                 .L0 
-80002448 80002448        0     1                 .L0 
-80002452 80002452        0     1                 .L0 
+80002436 80002436        0     1                 .L0 
 80002454 80002454        0     1                 .L0 
-8000246c 8000246c        0     1                 .L0 
-8000246c 8000246c       62     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._RNvXsg_NtNtCsddV114GBTEg_4core3fmt3numhNtB7_8UpperHex3fmt)
-8000246c 8000246c       62     1                 <u8 as core::fmt::UpperHex>::fmt
-8000246c 8000246c        0     1                 .L0 
-8000246c 8000246c        0     1                 .L0 
-8000246c 8000246c        0     1                 $x
-8000246c 8000246c        0     1                 .L0 
-8000249e 8000249e        0     1                 .L0 
-800024b0 800024b0        0     1                 .L0 
+80002454 80002454      116     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._RNvXs3_NtNtNtCsddV114GBTEg_4core3fmt3num3imptNtB9_7Display3fmt)
+80002454 80002454      116     1                 <u16 as core::fmt::Display>::fmt
+80002454 80002454        0     1                 .L0 
+80002454 80002454        0     1                 .L0 
+80002454 80002454        0     1                 $x
+80002454 80002454        0     1                 .L0 
+80002466 80002466        0     1                 .L0 
+800024ca 800024ca        0     1                 .L0 
 800024ce 800024ce        0     1                 .L0 
-800024ce 800024ce      116     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._RNvXs3_NtNtNtCsddV114GBTEg_4core3fmt3num3imptNtB9_7Display3fmt)
-800024ce 800024ce      116     1                 <u16 as core::fmt::Display>::fmt
-800024ce 800024ce        0     1                 .L0 
-800024ce 800024ce        0     1                 .L0 
-800024ce 800024ce        0     1                 $x
-800024ce 800024ce        0     1                 .L0 
-800024e0 800024e0        0     1                 .L0 
-80002544 80002544        0     1                 .L0 
+800024d2 800024d2        0     1                 .L0 
+800024d6 800024d6        0     1                 .L0 
+80002518 80002518        0     1                 .L0 
+8000251c 8000251c        0     1                 .L0 
 80002548 80002548        0     1                 .L0 
-8000254c 8000254c        0     1                 .L0 
-80002550 80002550        0     1                 .L0 
-80002592 80002592        0     1                 .L0 
-80002596 80002596        0     1                 .L0 
-800025c2 800025c2        0     1                 .L0 
-800025cc 800025cc        0     1                 .L0 
+80002552 80002552        0     1                 .L0 
+80002554 80002554        0     1                 .L0 
+8000256a 8000256a        0     1                 .L0 
+8000256a 8000256a       5c     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.text._RNvXs8_NtNtCsddV114GBTEg_4core3fmt3numjNtB7_8UpperHex3fmt)
+8000256a 8000256a       5c     1                 <usize as core::fmt::UpperHex>::fmt
+8000256a 8000256a        0     1                 .L0 
+8000256a 8000256a        0     1                 .L0 
+8000256a 8000256a        0     1                 $x
+8000256a 8000256a        0     1                 .L0 
+80002598 80002598        0     1                 .L0 
+800025a8 800025a8        0     1                 .L0 
+800025c6 800025c6        0     1                 .L0 
+800025c6 800025c6        8     2         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.186.rcgu.o):(.text.memcpy)
+800025c6 800025c6        0     1                 .L0 
+800025c6 800025c6        0     1                 .L0 
+800025c6 800025c6        0     1                 $x
+800025c6 800025c6        0     1                 .L0 
+800025c6 800025c6        8     1                 memcpy
+800025ce 800025ce      188     2         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.014.rcgu.o):(.text._RNvNtCs8SrWuf8EPoW_17compiler_builtins3mem6memcpy)
 800025ce 800025ce        0     1                 .L0 
-800025e4 800025e4        0     1                 .L0 
-800025e4 800025e4       5c     2         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.text._RNvXs8_NtNtCsddV114GBTEg_4core3fmt3numjNtB7_8UpperHex3fmt)
-800025e4 800025e4       5c     1                 <usize as core::fmt::UpperHex>::fmt
-800025e4 800025e4        0     1                 .L0 
-800025e4 800025e4        0     1                 .L0 
-800025e4 800025e4        0     1                 $x
-800025e4 800025e4        0     1                 .L0 
-80002612 80002612        0     1                 .L0 
-80002622 80002622        0     1                 .L0 
-80002640 80002640        0     1                 .L0 
-80002640 80002640        8     2         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.186.rcgu.o):(.text.memcpy)
-80002640 80002640        0     1                 .L0 
-80002640 80002640        0     1                 .L0 
-80002640 80002640        0     1                 $x
-80002640 80002640        0     1                 .L0 
-80002640 80002640        8     1                 memcpy
-80002648 80002648      188     2         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.014.rcgu.o):(.text._RNvNtCs8SrWuf8EPoW_17compiler_builtins3mem6memcpy)
+800025ce 800025ce        0     1                 .L0 
+800025ce 800025ce        0     1                 $x
+800025ce 800025ce        0     1                 .L0 
+800025ce 800025ce      188     1                 compiler_builtins::mem::memcpy
+800025d2 800025d2        0     1                 .L0 
+800025d6 800025d6        0     1                 .L0 
+800025de 800025de        0     1                 .L0 
+800025f6 800025f6        0     1                 .L0 
+800025f8 800025f8        0     1                 .L0 
+800025fc 800025fc        0     1                 .L0 
+80002610 80002610        0     1                 .L0 
+8000261c 8000261c        0     1                 .L0 
+8000261e 8000261e        0     1                 .L0 
+80002624 80002624        0     1                 .L0 
+80002626 80002626        0     1                 .L0 
+8000262a 8000262a        0     1                 .L0 
+8000263e 8000263e        0     1                 .L0 
 80002648 80002648        0     1                 .L0 
-80002648 80002648        0     1                 .L0 
-80002648 80002648        0     1                 $x
-80002648 80002648        0     1                 .L0 
-80002648 80002648      188     1                 compiler_builtins::mem::memcpy
-8000264c 8000264c        0     1                 .L0 
-80002650 80002650        0     1                 .L0 
+8000264a 8000264a        0     1                 .L0 
+8000264e 8000264e        0     1                 .L0 
+80002656 80002656        0     1                 .L0 
 80002658 80002658        0     1                 .L0 
-80002670 80002670        0     1                 .L0 
+80002660 80002660        0     1                 .L0 
+80002664 80002664        0     1                 .L0 
+80002668 80002668        0     1                 .L0 
+8000266c 8000266c        0     1                 .L0 
 80002672 80002672        0     1                 .L0 
-80002676 80002676        0     1                 .L0 
-8000268a 8000268a        0     1                 .L0 
+80002674 80002674        0     1                 .L0 
+80002678 80002678        0     1                 .L0 
+8000267c 8000267c        0     1                 .L0 
+80002686 80002686        0     1                 .L0 
+80002690 80002690        0     1                 .L0 
 80002696 80002696        0     1                 .L0 
-80002698 80002698        0     1                 .L0 
 8000269e 8000269e        0     1                 .L0 
-800026a0 800026a0        0     1                 .L0 
 800026a4 800026a4        0     1                 .L0 
-800026b8 800026b8        0     1                 .L0 
-800026c2 800026c2        0     1                 .L0 
-800026c4 800026c4        0     1                 .L0 
+800026a6 800026a6        0     1                 .L0 
+800026aa 800026aa        0     1                 .L0 
+800026ae 800026ae        0     1                 .L0 
 800026c8 800026c8        0     1                 .L0 
-800026d0 800026d0        0     1                 .L0 
-800026d2 800026d2        0     1                 .L0 
-800026da 800026da        0     1                 .L0 
-800026de 800026de        0     1                 .L0 
-800026e2 800026e2        0     1                 .L0 
-800026e6 800026e6        0     1                 .L0 
-800026ec 800026ec        0     1                 .L0 
-800026ee 800026ee        0     1                 .L0 
-800026f2 800026f2        0     1                 .L0 
-800026f6 800026f6        0     1                 .L0 
-80002700 80002700        0     1                 .L0 
-8000270a 8000270a        0     1                 .L0 
-80002710 80002710        0     1                 .L0 
-80002718 80002718        0     1                 .L0 
-8000271e 8000271e        0     1                 .L0 
-80002720 80002720        0     1                 .L0 
-80002724 80002724        0     1                 .L0 
-80002728 80002728        0     1                 .L0 
-80002742 80002742        0     1                 .L0 
-8000275a 8000275a        0     1                 .L0 
+800026e0 800026e0        0     1                 .L0 
+800026ea 800026ea        0     1                 .L0 
+8000270e 8000270e        0     1                 .L0 
+80002714 80002714        0     1                 .L0 
+8000272c 8000272c        0     1                 .L0 
+80002734 80002734        0     1                 .L0 
+80002738 80002738        0     1                 .L0 
+80002746 80002746        0     1                 .L0 
+80002748 80002748        0     1                 .L0 
+8000274c 8000274c        0     1                 .L0 
+80002756 80002756        0     1                 .L0 
+80002756 80002756        0     1                 .L0 
+80002756 80002756       6c     2         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.233.rcgu.o):(.text.memset)
+80002756 80002756        0     1                 .L0 
+80002756 80002756        0     1                 .L0 
+80002756 80002756        0     1                 $x
+80002756 80002756        0     1                 .L0 
+80002756 80002756       6c     1                 memset
+8000275c 8000275c        0     1                 .L0 
 80002764 80002764        0     1                 .L0 
-80002788 80002788        0     1                 .L0 
-8000278e 8000278e        0     1                 .L0 
-800027a6 800027a6        0     1                 .L0 
-800027ae 800027ae        0     1                 .L0 
-800027b2 800027b2        0     1                 .L0 
-800027c0 800027c0        0     1                 .L0 
-800027c2 800027c2        0     1                 .L0 
-800027c6 800027c6        0     1                 .L0 
-800027d0 800027d0        0     1                 .L0 
-800027d0 800027d0        0     1                 .L0 
-800027d0 800027d0       6c     2         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.233.rcgu.o):(.text.memset)
-800027d0 800027d0        0     1                 .L0 
-800027d0 800027d0        0     1                 .L0 
-800027d0 800027d0        0     1                 $x
-800027d0 800027d0        0     1                 .L0 
-800027d0 800027d0       6c     1                 memset
-800027d6 800027d6        0     1                 .L0 
-800027de 800027de        0     1                 .L0 
-800027f0 800027f0        0     1                 .L0 
-800027fc 800027fc        0     1                 .L0 
-80002814 80002814        0     1                 .L0 
-8000282a 8000282a        0     1                 .L0 
-8000283c 8000283c        0     1         . = ALIGN(4)
-8000283c 8000283c      588     4 .rodata
-8000283c 8000283c        0     1         . = ALIGN(4)
-8000283c 8000283c       28     4         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata.main)
-8000283c 8000283c        0     1                 .LJTI20_0
-8000283c 8000283c        0     1                 $d
-80002864 80002864       14     4         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata._ZN69_$LT$bootrom_rs..link_training..Error$u20$as$u20$core..fmt..Debug$GT$3fmt17h9553d38f470e0f02E)
-80002864 80002864        0     1                 .LJTI22_0
-80002864 80002864        0     1                 $d
-80002878 80002878      175     1         <internal>:(.rodata.str1.1)
-800029f0 800029f0       10     4         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.044f1f8752d24f3821d022b727a598e8.1)
-800029f0 800029f0       10     1                 .Lanon.044f1f8752d24f3821d022b727a598e8.1
+80002776 80002776        0     1                 .L0 
+80002782 80002782        0     1                 .L0 
+8000279a 8000279a        0     1                 .L0 
+800027b0 800027b0        0     1                 .L0 
+800027c2 800027c2        2     1         . = ALIGN(4)
+800027c4 800027c4      588     4 .rodata
+800027c4 800027c4        0     1         . = ALIGN(4)
+800027c4 800027c4       28     4         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata.main)
+800027c4 800027c4        0     1                 .LJTI20_0
+800027c4 800027c4        0     1                 $d
+800027ec 800027ec       14     4         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata._ZN69_$LT$bootrom_rs..link_training..Error$u20$as$u20$core..fmt..Debug$GT$3fmt17h69beb5b62d7dbfdaE)
+800027ec 800027ec        0     1                 .LJTI22_0
+800027ec 800027ec        0     1                 $d
+80002800 80002800      175     1         <internal>:(.rodata.str1.1)
+80002978 80002978       10     4         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.dec6c8569e5370d35f44e786e4426ec4.1)
+80002978 80002978       10     1                 .Lanon.dec6c8569e5370d35f44e786e4426ec4.1
+80002978 80002978        0     1                 $d
+80002988 80002988       10     4         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.dec6c8569e5370d35f44e786e4426ec4.2)
+80002988 80002988       10     1                 .Lanon.dec6c8569e5370d35f44e786e4426ec4.2
+80002988 80002988        0     1                 $d
+80002998 80002998       40     4         <internal>:(.rodata.cst16)
+800029d8 800029d8       18     4         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.ad07e7697d00ff494e7226909baa6552.8)
+800029d8 800029d8       18     1                 .Lanon.ad07e7697d00ff494e7226909baa6552.8
+800029d8 800029d8        0     1                 $d
+800029f0 800029f0       15     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.1)
+800029f0 800029f0       15     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.1
 800029f0 800029f0        0     1                 $d
-80002a00 80002a00       10     4         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.044f1f8752d24f3821d022b727a598e8.2)
-80002a00 80002a00       10     1                 .Lanon.044f1f8752d24f3821d022b727a598e8.2
-80002a00 80002a00        0     1                 $d
-80002a10 80002a10       40     4         <internal>:(.rodata.cst16)
-80002a50 80002a50       18     4         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.13cdef66b3442099156009d2bbf42b2c.8)
-80002a50 80002a50       18     1                 .Lanon.13cdef66b3442099156009d2bbf42b2c.8
+80002a05 80002a05       36     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.2)
+80002a05 80002a05       36     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.2
+80002a05 80002a05        0     1                 $d
+80002a3b 80002a3b       15     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.3)
+80002a3b 80002a3b       15     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.3
+80002a3b 80002a3b        0     1                 $d
+80002a50 80002a50       17     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.4)
+80002a50 80002a50       17     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.4
 80002a50 80002a50        0     1                 $d
-80002a68 80002a68       15     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.1)
-80002a68 80002a68       15     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.1
-80002a68 80002a68        0     1                 $d
-80002a7d 80002a7d       36     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.2)
-80002a7d 80002a7d       36     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.2
-80002a7d 80002a7d        0     1                 $d
-80002ab3 80002ab3       15     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.3)
-80002ab3 80002ab3       15     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.3
-80002ab3 80002ab3        0     1                 $d
-80002ac8 80002ac8       17     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.4)
-80002ac8 80002ac8       17     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.4
-80002ac8 80002ac8        0     1                 $d
-80002adf 80002adf       25     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.5)
-80002adf 80002adf       25     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.5
-80002adf 80002adf        0     1                 $d
-80002b04 80002b04       1a     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.7)
-80002b04 80002b04       1a     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.7
-80002b04 80002b04        0     1                 $d
-80002b1e 80002b1e       26     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.8)
-80002b1e 80002b1e       26     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.8
-80002b1e 80002b1e        0     1                 $d
-80002b44 80002b44       1c     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.10)
-80002b44 80002b44       1c     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.10
-80002b44 80002b44        0     1                 $d
-80002b60 80002b60       2d     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.11)
-80002b60 80002b60       2d     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.11
-80002b60 80002b60        0     1                 $d
-80002b8d 80002b8d        7     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.12)
-80002b8d 80002b8d        7     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.12
-80002b8d 80002b8d        0     1                 $d
-80002b94 80002b94       4f     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.13)
-80002b94 80002b94       4f     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.13
-80002b94 80002b94        0     1                 $d
-80002be3 80002be3       1e     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.16)
-80002be3 80002be3       1e     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.16
-80002be3 80002be3        0     1                 $d
-80002c01 80002c01        7     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.20)
-80002c01 80002c01        7     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.20
-80002c01 80002c01        0     1                 $d
-80002c08 80002c08       20     1         <internal>:(.rodata.cst8)
-80002c28 80002c28        8     1         <internal>:(.rodata.cst4)
-80002c30 80002c30        e     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.23)
-80002c30 80002c30        e     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.23
-80002c30 80002c30        0     1                 $d
-80002c3e 80002c3e        9     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.26)
-80002c3e 80002c3e        9     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.26
-80002c3e 80002c3e        0     1                 $d
-80002c47 80002c47        6     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.28)
-80002c47 80002c47        6     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.28
-80002c47 80002c47        0     1                 $d
-80002c50 80002c50       10     4         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.30)
-80002c50 80002c50       10     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.30
-80002c50 80002c50        0     1                 $d
-80002c60 80002c60       1b     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.32)
-80002c60 80002c60       1b     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.32
-80002c60 80002c60        0     1                 $d
-80002c7b 80002c7b        2     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.35)
-80002c7b 80002c7b        2     1                 .Lanon.923384997e615e59193c02823937d1cb.35
-80002c7b 80002c7b        0     1                 $d
-80002c7d 80002c7d        2     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.38)
-80002c7d 80002c7d        2     1                 .Lanon.923384997e615e59193c02823937d1cb.38
-80002c7d 80002c7d        0     1                 $d
-80002c7f 80002c7f        1     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.39)
-80002c7f 80002c7f        1     1                 .Lanon.923384997e615e59193c02823937d1cb.39
-80002c7f 80002c7f        0     1                 $d
-80002c80 80002c80        2     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.40)
-80002c80 80002c80        2     1                 .Lanon.923384997e615e59193c02823937d1cb.40
-80002c80 80002c80        0     1                 $d
-80002c82 80002c82        1     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.41)
-80002c82 80002c82        1     1                 .Lanon.923384997e615e59193c02823937d1cb.41
-80002c82 80002c82        0     1                 $d
-80002c83 80002c83        1     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.57)
-80002c83 80002c83        1     1                 .Lanon.923384997e615e59193c02823937d1cb.57
-80002c83 80002c83        0     1                 $d
-80002c84 80002c84        1     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.63)
-80002c84 80002c84        1     1                 .Lanon.923384997e615e59193c02823937d1cb.63
-80002c84 80002c84        0     1                 $d
-80002c88 80002c88       18     4         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.98)
-80002c88 80002c88       18     1                 .Lanon.923384997e615e59193c02823937d1cb.98
-80002c88 80002c88        0     1                 $d
-80002ca0 80002ca0       2b     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.128)
-80002ca0 80002ca0       2b     1                 .Lanon.923384997e615e59193c02823937d1cb.128
-80002ca0 80002ca0        0     1                 $d
-80002ccb 80002ccb       c8     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.145)
-80002ccb 80002ccb       c8     1                 .Lanon.923384997e615e59193c02823937d1cb.145
-80002ccb 80002ccb        0     1                 $d
-80002d93 80002d93        1     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.149)
-80002d93 80002d93        1     1                 .Lanon.923384997e615e59193c02823937d1cb.149
-80002d93 80002d93        0     1                 $d
-80002d94 80002d94        2     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.343)
-80002d94 80002d94        2     1                 .Lanon.923384997e615e59193c02823937d1cb.343
-80002d94 80002d94        0     1                 $d
-80002d96 80002d96        c     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.381)
-80002d96 80002d96        c     1                 .Lanon.923384997e615e59193c02823937d1cb.381
-80002d96 80002d96        0     1                 $d
-80002da2 80002da2        2     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.382)
-80002da2 80002da2        2     1                 .Lanon.923384997e615e59193c02823937d1cb.382
-80002da2 80002da2        0     1                 $d
-80002da4 80002da4       10     4         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lswitch.table._ZN42_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$3fmt17hbf36497552316817E.77)
-80002da4 80002da4       10     1                 .Lswitch.table._ZN42_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$3fmt17hbf36497552316817E.77
-80002da4 80002da4        0     1                 $d
-80002db4 80002db4       10     4         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.rodata..Lswitch.table._ZN64_$LT$bootrom_rs..dpcd..DpcdError$u20$as$u20$core..fmt..Debug$GT$3fmt17hf6dfaf388ce92c90E.78)
-80002db4 80002db4       10     1                 .Lswitch.table._ZN64_$LT$bootrom_rs..dpcd..DpcdError$u20$as$u20$core..fmt..Debug$GT$3fmt17hf6dfaf388ce92c90E.78
-80002db4 80002db4        0     1                 $d
-80002dc4 80002dc4        0     1         . = ALIGN(4)
+80002a67 80002a67       25     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.5)
+80002a67 80002a67       25     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.5
+80002a67 80002a67        0     1                 $d
+80002a8c 80002a8c       1a     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.7)
+80002a8c 80002a8c       1a     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.7
+80002a8c 80002a8c        0     1                 $d
+80002aa6 80002aa6       26     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.8)
+80002aa6 80002aa6       26     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.8
+80002aa6 80002aa6        0     1                 $d
+80002acc 80002acc       1c     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.10)
+80002acc 80002acc       1c     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.10
+80002acc 80002acc        0     1                 $d
+80002ae8 80002ae8       2d     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.11)
+80002ae8 80002ae8       2d     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.11
+80002ae8 80002ae8        0     1                 $d
+80002b15 80002b15        7     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.12)
+80002b15 80002b15        7     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.12
+80002b15 80002b15        0     1                 $d
+80002b1c 80002b1c       4f     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.13)
+80002b1c 80002b1c       4f     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.13
+80002b1c 80002b1c        0     1                 $d
+80002b6b 80002b6b       1e     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.16)
+80002b6b 80002b6b       1e     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.16
+80002b6b 80002b6b        0     1                 $d
+80002b89 80002b89        7     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.20)
+80002b89 80002b89        7     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.20
+80002b89 80002b89        0     1                 $d
+80002b90 80002b90       20     1         <internal>:(.rodata.cst8)
+80002bb0 80002bb0        8     1         <internal>:(.rodata.cst4)
+80002bb8 80002bb8        e     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.23)
+80002bb8 80002bb8        e     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.23
+80002bb8 80002bb8        0     1                 $d
+80002bc6 80002bc6        9     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.26)
+80002bc6 80002bc6        9     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.26
+80002bc6 80002bc6        0     1                 $d
+80002bcf 80002bcf        6     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.28)
+80002bcf 80002bcf        6     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.28
+80002bcf 80002bcf        0     1                 $d
+80002bd8 80002bd8       10     4         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.30)
+80002bd8 80002bd8       10     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.30
+80002bd8 80002bd8        0     1                 $d
+80002be8 80002be8       1b     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.c9e955d39c895c54c66d660d32960f20.32)
+80002be8 80002be8       1b     1                 .Lanon.c9e955d39c895c54c66d660d32960f20.32
+80002be8 80002be8        0     1                 $d
+80002c03 80002c03        2     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.35)
+80002c03 80002c03        2     1                 .Lanon.923384997e615e59193c02823937d1cb.35
+80002c03 80002c03        0     1                 $d
+80002c05 80002c05        2     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.38)
+80002c05 80002c05        2     1                 .Lanon.923384997e615e59193c02823937d1cb.38
+80002c05 80002c05        0     1                 $d
+80002c07 80002c07        1     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.39)
+80002c07 80002c07        1     1                 .Lanon.923384997e615e59193c02823937d1cb.39
+80002c07 80002c07        0     1                 $d
+80002c08 80002c08        2     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.40)
+80002c08 80002c08        2     1                 .Lanon.923384997e615e59193c02823937d1cb.40
+80002c08 80002c08        0     1                 $d
+80002c0a 80002c0a        1     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.41)
+80002c0a 80002c0a        1     1                 .Lanon.923384997e615e59193c02823937d1cb.41
+80002c0a 80002c0a        0     1                 $d
+80002c0b 80002c0b        1     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.57)
+80002c0b 80002c0b        1     1                 .Lanon.923384997e615e59193c02823937d1cb.57
+80002c0b 80002c0b        0     1                 $d
+80002c0c 80002c0c        1     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.63)
+80002c0c 80002c0c        1     1                 .Lanon.923384997e615e59193c02823937d1cb.63
+80002c0c 80002c0c        0     1                 $d
+80002c10 80002c10       18     4         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.98)
+80002c10 80002c10       18     1                 .Lanon.923384997e615e59193c02823937d1cb.98
+80002c10 80002c10        0     1                 $d
+80002c28 80002c28       2b     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.128)
+80002c28 80002c28       2b     1                 .Lanon.923384997e615e59193c02823937d1cb.128
+80002c28 80002c28        0     1                 $d
+80002c53 80002c53       c8     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.145)
+80002c53 80002c53       c8     1                 .Lanon.923384997e615e59193c02823937d1cb.145
+80002c53 80002c53        0     1                 $d
+80002d1b 80002d1b        1     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.149)
+80002d1b 80002d1b        1     1                 .Lanon.923384997e615e59193c02823937d1cb.149
+80002d1b 80002d1b        0     1                 $d
+80002d1c 80002d1c        2     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.343)
+80002d1c 80002d1c        2     1                 .Lanon.923384997e615e59193c02823937d1cb.343
+80002d1c 80002d1c        0     1                 $d
+80002d1e 80002d1e        c     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.381)
+80002d1e 80002d1e        c     1                 .Lanon.923384997e615e59193c02823937d1cb.381
+80002d1e 80002d1e        0     1                 $d
+80002d2a 80002d2a        2     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lanon.923384997e615e59193c02823937d1cb.382)
+80002d2a 80002d2a        2     1                 .Lanon.923384997e615e59193c02823937d1cb.382
+80002d2a 80002d2a        0     1                 $d
+80002d2c 80002d2c       10     4         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lswitch.table._ZN42_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$3fmt17h7f7e4ab7f6d6b6d7E.76)
+80002d2c 80002d2c       10     1                 .Lswitch.table._ZN42_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$3fmt17h7f7e4ab7f6d6b6d7E.76
+80002d2c 80002d2c        0     1                 $d
+80002d3c 80002d3c       10     4         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.rodata..Lswitch.table._ZN64_$LT$bootrom_rs..dpcd..DpcdError$u20$as$u20$core..fmt..Debug$GT$3fmt17hdbf377632bb0773eE.77)
+80002d3c 80002d3c       10     1                 .Lswitch.table._ZN64_$LT$bootrom_rs..dpcd..DpcdError$u20$as$u20$core..fmt..Debug$GT$3fmt17hdbf377632bb0773eE.77
+80002d3c 80002d3c        0     1                 $d
+80002d4c 80002d4c        0     1         . = ALIGN(4)
 20000000 20000000        0     1 .data
 20000000 20000000        0     1         PROVIDE(_data_start = .)
 20000000 20000000        0     1         PROVIDE(_data_rom_start = LOADADDR(.data))
@@ -1239,17 +1236,17 @@
 20000000 20000000        0     1         PROVIDE(_data_end = .)
 20000000 20000000        4     1 .bss
 20000000 20000000        0     1         PROVIDE(_bss_start = .)
-20000000 20000000        3     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.bss..L_MergedGlobals)
+20000000 20000000        3     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.bss..L_MergedGlobals)
 20000000 20000000        3     1                 .L_MergedGlobals
 20000000 20000000        0     1                 $d
-20000000 20000000        1     1                 bootrom_rs::SERIAL_OUT::h8bcff0949027e320
-20000001 20000001        1     1                 bootrom_rs::SYSTEM::h76a6a34b356840ba (.0)
+20000000 20000000        1     1                 bootrom_rs::SERIAL_OUT::h8323c2ba48e0ff8c
+20000001 20000001        1     1                 bootrom_rs::SYSTEM::h1adde27266192ad5 (.0)
 20000002 20000002        1     1                 DEVICE_PERIPHERALS
 20000003 20000003        1     1         . = ALIGN(4)
 20000004 20000004        0     1         PROVIDE(_bss_end = .)
 20000004 20000004        0     1 PROVIDE(ramend = ORIGIN(dmem) + LENGTH(dmem))
-       0        0     2ecf     1 .debug_loc
-       0        0     2ecf     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.debug_loc)
+       0        0     2f5e     1 .debug_loc
+       0        0     2f5e     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.debug_loc)
        0        0        0     1                 .L0 
        0        0        0     1                 $d
       2f       2f        0     1                 .L0 
@@ -1292,9 +1289,9 @@
      7dc      7dc        0     1                 .L0 
      821      821        0     1                 .L0 
      83e      83e        0     1                 .L0 
-     867      867        0     1                 .L0 
+     872      872        0     1                 .L0 
      898      898        0     1                 .L0 
-     8cc      8cc        0     1                 .L0 
+     8c1      8c1        0     1                 .L0 
      8f2      8f2        0     1                 .L0 
      91b      91b        0     1                 .L0 
      941      941        0     1                 .L0 
@@ -1352,185 +1349,191 @@
     119e     119e        0     1                 .L0 
     11b9     11b9        0     1                 .L0 
     11d4     11d4        0     1                 .L0 
-    1226     1226        0     1                 .L0 
-    1243     1243        0     1                 .L0 
-    128b     128b        0     1                 .L0 
-    12e1     12e1        0     1                 .L0 
-    131d     131d        0     1                 .L0 
-    1338     1338        0     1                 .L0 
-    1354     1354        0     1                 .L0 
-    137e     137e        0     1                 .L0 
-    13a8     13a8        0     1                 .L0 
-    13d2     13d2        0     1                 .L0 
-    13f8     13f8        0     1                 .L0 
-    141e     141e        0     1                 .L0 
-    1444     1444        0     1                 .L0 
-    146a     146a        0     1                 .L0 
-    14a9     14a9        0     1                 .L0 
-    14cd     14cd        0     1                 .L0 
-    1514     1514        0     1                 .L0 
-    153a     153a        0     1                 .L0 
-    15a5     15a5        0     1                 .L0 
-    15ec     15ec        0     1                 .L0 
-    1633     1633        0     1                 .L0 
-    167f     167f        0     1                 .L0 
-    169b     169b        0     1                 .L0 
-    16b7     16b7        0     1                 .L0 
-    16d9     16d9        0     1                 .L0 
-    16f6     16f6        0     1                 .L0 
-    1713     1713        0     1                 .L0 
-    172f     172f        0     1                 .L0 
-    1750     1750        0     1                 .L0 
-    1771     1771        0     1                 .L0 
-    178e     178e        0     1                 .L0 
-    17af     17af        0     1                 .L0 
-    17cc     17cc        0     1                 .L0 
-    17ed     17ed        0     1                 .L0 
-    180e     180e        0     1                 .L0 
-    182a     182a        0     1                 .L0 
-    184b     184b        0     1                 .L0 
-    1867     1867        0     1                 .L0 
-    1889     1889        0     1                 .L0 
-    18aa     18aa        0     1                 .L0 
-    18cb     18cb        0     1                 .L0 
-    18e7     18e7        0     1                 .L0 
-    1908     1908        0     1                 .L0 
-    1924     1924        0     1                 .L0 
-    1947     1947        0     1                 .L0 
-    1966     1966        0     1                 .L0 
-    1989     1989        0     1                 .L0 
-    19a8     19a8        0     1                 .L0 
-    19ca     19ca        0     1                 .L0 
-    19eb     19eb        0     1                 .L0 
-    1a0c     1a0c        0     1                 .L0 
-    1a28     1a28        0     1                 .L0 
-    1a49     1a49        0     1                 .L0 
-    1a65     1a65        0     1                 .L0 
-    1a91     1a91        0     1                 .L0 
-    1ac2     1ac2        0     1                 .L0 
-    1b01     1b01        0     1                 .L0 
-    1b34     1b34        0     1                 .L0 
-    1b67     1b67        0     1                 .L0 
-    1ba3     1ba3        0     1                 .L0 
-    1bc4     1bc4        0     1                 .L0 
-    1be2     1be2        0     1                 .L0 
-    1c06     1c06        0     1                 .L0 
-    1c21     1c21        0     1                 .L0 
-    1c45     1c45        0     1                 .L0 
-    1c76     1c76        0     1                 .L0 
-    1c98     1c98        0     1                 .L0 
-    1cb9     1cb9        0     1                 .L0 
-    1cda     1cda        0     1                 .L0 
-    1cf6     1cf6        0     1                 .L0 
-    1d17     1d17        0     1                 .L0 
-    1d33     1d33        0     1                 .L0 
-    1d63     1d63        0     1                 .L0 
-    1d7e     1d7e        0     1                 .L0 
-    1d99     1d99        0     1                 .L0 
-    1dd9     1dd9        0     1                 .L0 
-    1e27     1e27        0     1                 .L0 
-    1e69     1e69        0     1                 .L0 
-    1ea0     1ea0        0     1                 .L0 
-    1ebe     1ebe        0     1                 .L0 
-    1f04     1f04        0     1                 .L0 
-    1f40     1f40        0     1                 .L0 
-    1f66     1f66        0     1                 .L0 
-    1f81     1f81        0     1                 .L0 
-    1fa7     1fa7        0     1                 .L0 
-    1fc4     1fc4        0     1                 .L0 
-    1fe1     1fe1        0     1                 .L0 
-    2007     2007        0     1                 .L0 
-    202d     202d        0     1                 .L0 
-    2059     2059        0     1                 .L0 
-    207f     207f        0     1                 .L0 
-    20a0     20a0        0     1                 .L0 
-    20c1     20c1        0     1                 .L0 
-    20e2     20e2        0     1                 .L0 
-    2124     2124        0     1                 .L0 
-    2141     2141        0     1                 .L0 
+    11fc     11fc        0     1                 .L0 
+    124e     124e        0     1                 .L0 
+    126b     126b        0     1                 .L0 
+    12b3     12b3        0     1                 .L0 
+    1309     1309        0     1                 .L0 
+    1345     1345        0     1                 .L0 
+    1360     1360        0     1                 .L0 
+    137c     137c        0     1                 .L0 
+    13a6     13a6        0     1                 .L0 
+    13d0     13d0        0     1                 .L0 
+    13fa     13fa        0     1                 .L0 
+    1420     1420        0     1                 .L0 
+    1446     1446        0     1                 .L0 
+    146c     146c        0     1                 .L0 
+    1492     1492        0     1                 .L0 
+    14d1     14d1        0     1                 .L0 
+    14f5     14f5        0     1                 .L0 
+    153c     153c        0     1                 .L0 
+    1562     1562        0     1                 .L0 
+    15cd     15cd        0     1                 .L0 
+    1614     1614        0     1                 .L0 
+    165b     165b        0     1                 .L0 
+    16a7     16a7        0     1                 .L0 
+    16c3     16c3        0     1                 .L0 
+    16df     16df        0     1                 .L0 
+    1701     1701        0     1                 .L0 
+    171e     171e        0     1                 .L0 
+    173b     173b        0     1                 .L0 
+    1757     1757        0     1                 .L0 
+    1778     1778        0     1                 .L0 
+    1799     1799        0     1                 .L0 
+    17b6     17b6        0     1                 .L0 
+    17d7     17d7        0     1                 .L0 
+    17f4     17f4        0     1                 .L0 
+    1815     1815        0     1                 .L0 
+    1836     1836        0     1                 .L0 
+    1852     1852        0     1                 .L0 
+    1873     1873        0     1                 .L0 
+    188f     188f        0     1                 .L0 
+    18b1     18b1        0     1                 .L0 
+    18d2     18d2        0     1                 .L0 
+    18f3     18f3        0     1                 .L0 
+    190f     190f        0     1                 .L0 
+    1930     1930        0     1                 .L0 
+    194c     194c        0     1                 .L0 
+    196f     196f        0     1                 .L0 
+    198e     198e        0     1                 .L0 
+    19b1     19b1        0     1                 .L0 
+    19d0     19d0        0     1                 .L0 
+    19f2     19f2        0     1                 .L0 
+    1a13     1a13        0     1                 .L0 
+    1a34     1a34        0     1                 .L0 
+    1a50     1a50        0     1                 .L0 
+    1a71     1a71        0     1                 .L0 
+    1a8d     1a8d        0     1                 .L0 
+    1ab9     1ab9        0     1                 .L0 
+    1aea     1aea        0     1                 .L0 
+    1b29     1b29        0     1                 .L0 
+    1b5c     1b5c        0     1                 .L0 
+    1b8f     1b8f        0     1                 .L0 
+    1bcb     1bcb        0     1                 .L0 
+    1bec     1bec        0     1                 .L0 
+    1c0a     1c0a        0     1                 .L0 
+    1c2e     1c2e        0     1                 .L0 
+    1c49     1c49        0     1                 .L0 
+    1c6d     1c6d        0     1                 .L0 
+    1c9e     1c9e        0     1                 .L0 
+    1cc0     1cc0        0     1                 .L0 
+    1ce1     1ce1        0     1                 .L0 
+    1d02     1d02        0     1                 .L0 
+    1d1e     1d1e        0     1                 .L0 
+    1d3f     1d3f        0     1                 .L0 
+    1d5b     1d5b        0     1                 .L0 
+    1d8b     1d8b        0     1                 .L0 
+    1da6     1da6        0     1                 .L0 
+    1dc1     1dc1        0     1                 .L0 
+    1e01     1e01        0     1                 .L0 
+    1e4f     1e4f        0     1                 .L0 
+    1e91     1e91        0     1                 .L0 
+    1ec8     1ec8        0     1                 .L0 
+    1ee6     1ee6        0     1                 .L0 
+    1f2c     1f2c        0     1                 .L0 
+    1f68     1f68        0     1                 .L0 
+    1f8e     1f8e        0     1                 .L0 
+    1fa9     1fa9        0     1                 .L0 
+    1fcf     1fcf        0     1                 .L0 
+    1fec     1fec        0     1                 .L0 
+    2009     2009        0     1                 .L0 
+    202f     202f        0     1                 .L0 
+    2055     2055        0     1                 .L0 
+    2081     2081        0     1                 .L0 
+    20a7     20a7        0     1                 .L0 
+    20c8     20c8        0     1                 .L0 
+    20e9     20e9        0     1                 .L0 
+    210a     210a        0     1                 .L0 
+    214c     214c        0     1                 .L0 
     2169     2169        0     1                 .L0 
-    218f     218f        0     1                 .L0 
-    21c6     21c6        0     1                 .L0 
-    21e1     21e1        0     1                 .L0 
-    2200     2200        0     1                 .L0 
-    22d0     22d0        0     1                 .L0 
-    2302     2302        0     1                 .L0 
-    239d     239d        0     1                 .L0 
-    23d0     23d0        0     1                 .L0 
-    23eb     23eb        0     1                 .L0 
-    2406     2406        0     1                 .L0 
-    2421     2421        0     1                 .L0 
-    2447     2447        0     1                 .L0 
-    246e     246e        0     1                 .L0 
-    248e     248e        0     1                 .L0 
-    24ae     24ae        0     1                 .L0 
-    2502     2502        0     1                 .L0 
-    251d     251d        0     1                 .L0 
-    253a     253a        0     1                 .L0 
-    2555     2555        0     1                 .L0 
-    2570     2570        0     1                 .L0 
-    258b     258b        0     1                 .L0 
-    25a6     25a6        0     1                 .L0 
-    25c5     25c5        0     1                 .L0 
-    25ec     25ec        0     1                 .L0 
-    2613     2613        0     1                 .L0 
-    263a     263a        0     1                 .L0 
-    268e     268e        0     1                 .L0 
-    26a9     26a9        0     1                 .L0 
-    26c4     26c4        0     1                 .L0 
-    26e4     26e4        0     1                 .L0 
-    2704     2704        0     1                 .L0 
+    2191     2191        0     1                 .L0 
+    21b7     21b7        0     1                 .L0 
+    21ee     21ee        0     1                 .L0 
+    2209     2209        0     1                 .L0 
+    2228     2228        0     1                 .L0 
+    2244     2244        0     1                 .L0 
+    2265     2265        0     1                 .L0 
+    2286     2286        0     1                 .L0 
+    22a2     22a2        0     1                 .L0 
+    22c3     22c3        0     1                 .L0 
+    22df     22df        0     1                 .L0 
+    239a     239a        0     1                 .L0 
+    23cc     23cc        0     1                 .L0 
+    245a     245a        0     1                 .L0 
+    248d     248d        0     1                 .L0 
+    24a8     24a8        0     1                 .L0 
+    24c3     24c3        0     1                 .L0 
+    24de     24de        0     1                 .L0 
+    2504     2504        0     1                 .L0 
+    252b     252b        0     1                 .L0 
+    254b     254b        0     1                 .L0 
+    256b     256b        0     1                 .L0 
+    25ae     25ae        0     1                 .L0 
+    25c9     25c9        0     1                 .L0 
+    25e6     25e6        0     1                 .L0 
+    2602     2602        0     1                 .L0 
+    261d     261d        0     1                 .L0 
+    2638     2638        0     1                 .L0 
+    2657     2657        0     1                 .L0 
+    267e     267e        0     1                 .L0 
+    26a5     26a5        0     1                 .L0 
+    26cc     26cc        0     1                 .L0 
+    2705     2705        0     1                 .L0 
+    2720     2720        0     1                 .L0 
     273b     273b        0     1                 .L0 
-    2756     2756        0     1                 .L0 
-    2773     2773        0     1                 .L0 
-    2799     2799        0     1                 .L0 
-    27b4     27b4        0     1                 .L0 
-    27cf     27cf        0     1                 .L0 
+    275b     275b        0     1                 .L0 
+    277b     277b        0     1                 .L0 
+    27b2     27b2        0     1                 .L0 
+    27cd     27cd        0     1                 .L0 
     27ea     27ea        0     1                 .L0 
-    2805     2805        0     1                 .L0 
-    2820     2820        0     1                 .L0 
-    283b     283b        0     1                 .L0 
-    2856     2856        0     1                 .L0 
-    2871     2871        0     1                 .L0 
+    2810     2810        0     1                 .L0 
+    2838     2838        0     1                 .L0 
+    2853     2853        0     1                 .L0 
+    2877     2877        0     1                 .L0 
     2892     2892        0     1                 .L0 
-    28b3     28b3        0     1                 .L0 
-    28d4     28d4        0     1                 .L0 
-    28f0     28f0        0     1                 .L0 
-    2911     2911        0     1                 .L0 
-    2932     2932        0     1                 .L0 
-    294e     294e        0     1                 .L0 
-    296f     296f        0     1                 .L0 
-    298b     298b        0     1                 .L0 
-    29ca     29ca        0     1                 .L0 
-    2a0d     2a0d        0     1                 .L0 
-    2a3a     2a3a        0     1                 .L0 
+    28ad     28ad        0     1                 .L0 
+    28c8     28c8        0     1                 .L0 
+    28e3     28e3        0     1                 .L0 
+    28fe     28fe        0     1                 .L0 
+    291f     291f        0     1                 .L0 
+    2940     2940        0     1                 .L0 
+    2961     2961        0     1                 .L0 
+    297d     297d        0     1                 .L0 
+    299e     299e        0     1                 .L0 
+    29bf     29bf        0     1                 .L0 
+    29db     29db        0     1                 .L0 
+    29fc     29fc        0     1                 .L0 
+    2a18     2a18        0     1                 .L0 
+    2a57     2a57        0     1                 .L0 
     2a9a     2a9a        0     1                 .L0 
-    2ab5     2ab5        0     1                 .L0 
-    2ad0     2ad0        0     1                 .L0 
-    2aeb     2aeb        0     1                 .L0 
-    2b06     2b06        0     1                 .L0 
-    2b27     2b27        0     1                 .L0 
-    2b48     2b48        0     1                 .L0 
-    2b69     2b69        0     1                 .L0 
-    2ba8     2ba8        0     1                 .L0 
-    2bc4     2bc4        0     1                 .L0 
-    2bfd     2bfd        0     1                 .L0 
-    2c1e     2c1e        0     1                 .L0 
-    2c3f     2c3f        0     1                 .L0 
-    2c60     2c60        0     1                 .L0 
-    2c96     2c96        0     1                 .L0 
-    2cb1     2cb1        0     1                 .L0 
-    2d33     2d33        0     1                 .L0 
-    2d5c     2d5c        0     1                 .L0 
-    2d85     2d85        0     1                 .L0 
-    2dae     2dae        0     1                 .L0 
-    2e22     2e22        0     1                 .L0 
-    2e4b     2e4b        0     1                 .L0 
-    2e74     2e74        0     1                 .L0 
-    2e8f     2e8f        0     1                 .L0 
-    2eaf     2eaf        0     1                 .L0 
+    2ac7     2ac7        0     1                 .L0 
+    2b29     2b29        0     1                 .L0 
+    2b44     2b44        0     1                 .L0 
+    2b5f     2b5f        0     1                 .L0 
+    2b7a     2b7a        0     1                 .L0 
+    2b95     2b95        0     1                 .L0 
+    2bb6     2bb6        0     1                 .L0 
+    2bd7     2bd7        0     1                 .L0 
+    2bf8     2bf8        0     1                 .L0 
+    2c37     2c37        0     1                 .L0 
+    2c53     2c53        0     1                 .L0 
+    2c8c     2c8c        0     1                 .L0 
+    2cad     2cad        0     1                 .L0 
+    2cce     2cce        0     1                 .L0 
+    2cef     2cef        0     1                 .L0 
+    2d25     2d25        0     1                 .L0 
+    2d40     2d40        0     1                 .L0 
+    2dc2     2dc2        0     1                 .L0 
+    2deb     2deb        0     1                 .L0 
+    2e14     2e14        0     1                 .L0 
+    2e3d     2e3d        0     1                 .L0 
+    2eb1     2eb1        0     1                 .L0 
+    2eda     2eda        0     1                 .L0 
+    2f03     2f03        0     1                 .L0 
+    2f1e     2f1e        0     1                 .L0 
+    2f3e     2f3e        0     1                 .L0 
        0        0      b05     1 .debug_abbrev
-       0        0      8bd     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.debug_abbrev)
+       0        0      8bd     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.debug_abbrev)
        0        0        0     1                 $d
      8bd      8bd       2e     1         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.186.rcgu.o):(.debug_abbrev)
      8bd      8bd        0     1                 $d
@@ -1538,26 +1541,26 @@
      8eb      8eb        0     1                 $d
      a1c      a1c       e9     1         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.233.rcgu.o):(.debug_abbrev)
      a1c      a1c        0     1                 $d
-       0        0     fcc6     1 .debug_info
-       0        0     eb4d     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.debug_info)
+       0        0     fcfa     1 .debug_info
+       0        0     eb81     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.debug_info)
        0        0        0     1                 .L0 
        0        0        0     1                 $d
-    464e     464e        0     1                 .L0 
-    468f     468f        0     1                 .L0 
-    70b1     70b1        0     1                 .L0 
-    c8e8     c8e8        0     1                 .L0 
-    e928     e928        0     1                 .L0 
-    eb4d     eb4d       4b     1         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.186.rcgu.o):(.debug_info)
-    eb4d     eb4d        0     1                 .L0 
-    eb4d     eb4d        0     1                 $d
-    eb98     eb98      eab     1         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.014.rcgu.o):(.debug_info)
-    eb98     eb98        0     1                 .L0 
-    eb98     eb98        0     1                 $d
-    fa43     fa43      283     1         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.233.rcgu.o):(.debug_info)
-    fa43     fa43        0     1                 .L0 
-    fa43     fa43        0     1                 $d
+    465a     465a        0     1                 .L0 
+    469b     469b        0     1                 .L0 
+    70c9     70c9        0     1                 .L0 
+    c91c     c91c        0     1                 .L0 
+    e95c     e95c        0     1                 .L0 
+    eb81     eb81       4b     1         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.186.rcgu.o):(.debug_info)
+    eb81     eb81        0     1                 .L0 
+    eb81     eb81        0     1                 $d
+    ebcc     ebcc      eab     1         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.014.rcgu.o):(.debug_info)
+    ebcc     ebcc        0     1                 .L0 
+    ebcc     ebcc        0     1                 $d
+    fa77     fa77      283     1         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.233.rcgu.o):(.debug_info)
+    fa77     fa77        0     1                 .L0 
+    fa77     fa77        0     1                 $d
        0        0      288     1 .debug_aranges
-       0        0      218     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.debug_aranges)
+       0        0      218     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.debug_aranges)
        0        0        0     1                 $d
      218      218       20     1         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.186.rcgu.o):(.debug_aranges)
      218      218        0     1                 $d
@@ -1565,8 +1568,8 @@
      238      238        0     1                 $d
      268      268       20     1         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.233.rcgu.o):(.debug_aranges)
      268      268        0     1                 $d
-       0        0     16c8     1 .debug_ranges
-       0        0     12d0     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.debug_ranges)
+       0        0     16b0     1 .debug_ranges
+       0        0     12b8     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.debug_ranges)
        0        0        0     1                 .L0 
        0        0        0     1                 $d
       18       18        0     1                 .L0 
@@ -1702,41 +1705,41 @@
      e68      e68        0     1                 .L0 
      e80      e80        0     1                 .L0 
      e98      e98        0     1                 .L0 
-     eb0      eb0        0     1                 .L0 
+     eb8      eb8        0     1                 .L0 
      ed0      ed0        0     1                 .L0 
-     ee8      ee8        0     1                 .L0 
+     ef0      ef0        0     1                 .L0 
      f08      f08        0     1                 .L0 
-     f20      f20        0     1                 .L0 
+     f28      f28        0     1                 .L0 
      f40      f40        0     1                 .L0 
-     f58      f58        0     1                 .L0 
-     f78      f78        0     1                 .L0 
+     f60      f60        0     1                 .L0 
+     f80      f80        0     1                 .L0 
      f98      f98        0     1                 .L0 
      fb0      fb0        0     1                 .L0 
-     fc8      fc8        0     1                 .L0 
+     fd0      fd0        0     1                 .L0 
      fe8      fe8        0     1                 .L0 
     1000     1000        0     1                 .L0 
     1018     1018        0     1                 .L0 
     1030     1030        0     1                 .L0 
-    1048     1048        0     1                 .L0 
-    1068     1068        0     1                 .L0 
+    1050     1050        0     1                 .L0 
+    1070     1070        0     1                 .L0 
     1088     1088        0     1                 .L0 
     10a0     10a0        0     1                 .L0 
     10b8     10b8        0     1                 .L0 
-    10d0     10d0        0     1                 .L0 
+    10d8     10d8        0     1                 .L0 
     10f0     10f0        0     1                 .L0 
     1108     1108        0     1                 .L0 
     1120     1120        0     1                 .L0 
-    1138     1138        0     1                 .L0 
-    1188     1188        0     1                 .L0 
-    11d0     11d0        0     1                 .L0 
-    1220     1220        0     1                 .L0 
+    1170     1170        0     1                 .L0 
+    11b8     11b8        0     1                 .L0 
+    1208     1208        0     1                 .L0 
+    12a0     12a0        0     1                 .L0 
+    12b8     12b8      3b0     1         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.014.rcgu.o):(.debug_ranges)
     12b8     12b8        0     1                 .L0 
-    12d0     12d0      3b0     1         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.014.rcgu.o):(.debug_ranges)
+    12b8     12b8        0     1                 $d
     12d0     12d0        0     1                 .L0 
-    12d0     12d0        0     1                 $d
     12e8     12e8        0     1                 .L0 
-    1300     1300        0     1                 .L0 
-    1320     1320        0     1                 .L0 
+    1308     1308        0     1                 .L0 
+    1328     1328        0     1                 .L0 
     1340     1340        0     1                 .L0 
     1358     1358        0     1                 .L0 
     1370     1370        0     1                 .L0 
@@ -1745,62 +1748,61 @@
     13b8     13b8        0     1                 .L0 
     13d0     13d0        0     1                 .L0 
     13e8     13e8        0     1                 .L0 
-    1400     1400        0     1                 .L0 
+    1418     1418        0     1                 .L0 
     1430     1430        0     1                 .L0 
-    1448     1448        0     1                 .L0 
-    1468     1468        0     1                 .L0 
-    1490     1490        0     1                 .L0 
-    14b0     14b0        0     1                 .L0 
+    1450     1450        0     1                 .L0 
+    1478     1478        0     1                 .L0 
+    1498     1498        0     1                 .L0 
+    14b8     14b8        0     1                 .L0 
     14d0     14d0        0     1                 .L0 
     14e8     14e8        0     1                 .L0 
-    1500     1500        0     1                 .L0 
-    1520     1520        0     1                 .L0 
-    1540     1540        0     1                 .L0 
+    1508     1508        0     1                 .L0 
+    1528     1528        0     1                 .L0 
+    1550     1550        0     1                 .L0 
     1568     1568        0     1                 .L0 
     1580     1580        0     1                 .L0 
-    1598     1598        0     1                 .L0 
-    15b8     15b8        0     1                 .L0 
+    15a0     15a0        0     1                 .L0 
+    15c0     15c0        0     1                 .L0 
     15d8     15d8        0     1                 .L0 
     15f0     15f0        0     1                 .L0 
     1608     1608        0     1                 .L0 
-    1620     1620        0     1                 .L0 
-    1640     1640        0     1                 .L0 
-    1660     1660        0     1                 .L0 
-    1680     1680       48     1         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.233.rcgu.o):(.debug_ranges)
+    1628     1628        0     1                 .L0 
+    1648     1648        0     1                 .L0 
+    1668     1668       48     1         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.233.rcgu.o):(.debug_ranges)
+    1668     1668        0     1                 .L0 
+    1668     1668        0     1                 $d
     1680     1680        0     1                 .L0 
-    1680     1680        0     1                 $d
     1698     1698        0     1                 .L0 
-    16b0     16b0        0     1                 .L0 
-       0        0     e788     1 .debug_str
-       0        0     e788     1         <internal>:(.debug_str)
+       0        0     e78d     1 .debug_str
+       0        0     e78d     1         <internal>:(.debug_str)
        0        0       8b     1 .comment
        0        0       8b     1         <internal>:(.comment)
        0        0       36     1 .riscv.attributes
        0        0       36     1         <internal>:(.riscv.attributes)
-       0        0     4443     1 .debug_line
-       0        0     38fd     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-3df706e2faa0f1dc.bootrom_rs.8001855ce7bf4b60-cgu.0.rcgu.o:(.debug_line)
+       0        0     442d     1 .debug_line
+       0        0     38e7     1         /home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/target/riscv32imc-unknown-none-elf/release/deps/bootrom_rs-e5eb5b1023555d08.bootrom_rs.30b7ddda3c400c0b-cgu.0.rcgu.o:(.debug_line)
        0        0        0     1                 .Lline_table_start0
        0        0        0     1                 $d
      d0e      d0e        0     1                 .Lline_table_start1
      d3e      d3e        0     1                 .Lline_table_start2
     14a7     14a7        0     1                 .Lline_table_start3
-    26f6     26f6        0     1                 .Lline_table_start4
-    2714     2714        0     1                 .Lline_table_start5
-    2732     2732        0     1                 .Lline_table_start6
-    377d     377d        0     1                 .Lline_table_start7
-    38fd     38fd       6e     1         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.186.rcgu.o):(.debug_line)
-    38fd     38fd        0     1                 .Lline_table_start0
-    38fd     38fd        0     1                 $d
-    396b     396b      844     1         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.014.rcgu.o):(.debug_line)
-    396b     396b        0     1                 .Lline_table_start0
-    396b     396b        0     1                 $d
-    41af     41af      294     1         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.233.rcgu.o):(.debug_line)
-    41af     41af        0     1                 .Lline_table_start0
-    41af     41af        0     1                 $d
-    435e     435e        0     1                 .Lline_table_start1
-       0        0     6960     4 .symtab
-       0        0     6960     4         <internal>:(.symtab)
+    26e0     26e0        0     1                 .Lline_table_start4
+    26fe     26fe        0     1                 .Lline_table_start5
+    271c     271c        0     1                 .Lline_table_start6
+    3767     3767        0     1                 .Lline_table_start7
+    38e7     38e7       6e     1         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.186.rcgu.o):(.debug_line)
+    38e7     38e7        0     1                 .Lline_table_start0
+    38e7     38e7        0     1                 $d
+    3955     3955      844     1         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.014.rcgu.o):(.debug_line)
+    3955     3955        0     1                 .Lline_table_start0
+    3955     3955        0     1                 $d
+    4199     4199      294     1         /home/kenta/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/riscv32imc-unknown-none-elf/lib/libcompiler_builtins-06f5cc7eb10af0bc.rlib(compiler_builtins-06f5cc7eb10af0bc.compiler_builtins.67690aa3454e5eb8-cgu.233.rcgu.o):(.debug_line)
+    4199     4199        0     1                 .Lline_table_start0
+    4199     4199        0     1                 $d
+    4348     4348        0     1                 .Lline_table_start1
+       0        0     6980     4 .symtab
+       0        0     6980     4         <internal>:(.symtab)
        0        0       b4     1 .shstrtab
        0        0       b4     1         <internal>:(.shstrtab)
-       0        0     3190     1 .strtab
-       0        0     3190     1         <internal>:(.strtab)
+       0        0     319a     1 .strtab
+       0        0     319a     1         <internal>:(.strtab)

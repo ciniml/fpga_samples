@@ -12,6 +12,7 @@ reset_type = "sync_low"
 include_files = [
     "test/sw-rs/bootrom-rs.hex",
     "test/sw-rs/bootrom-rs-4lane.hex",
+    "test/sw-rs/bootrom-rs-2lane.hex",
     "../../external/learn-fpga/FemtoRV/RTL/PROCESSOR/femtorv32_gracilis.v",
 ]
 
