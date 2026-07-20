@@ -2,7 +2,7 @@
 
 TARGET := bootrom-rs
 
-all: $(TARGET).bin $(TARGET).dump $(TARGET).hex $(TARGET)-board.hex $(TARGET)-4lane.hex $(TARGET)-2lane.hex
+all: $(TARGET).bin $(TARGET).dump $(TARGET).hex $(TARGET)-board.hex $(TARGET)-4lane.hex $(TARGET)-2lane.hex $(TARGET)-typec.hex
 
 $(TARGET).bin: $(wildcard src/*.rs) link.ld Cargo.toml .cargo/config.toml
 	cargo objcopy --bin $(TARGET) --release  -- -O binary $@
@@ -23,6 +23,10 @@ $(TARGET)-4lane.bin: $(wildcard src/*.rs) link.ld Cargo.toml .cargo/config.toml
 # 2-lane sim firmware.
 $(TARGET)-2lane.bin: $(wildcard src/*.rs) link.ld Cargo.toml .cargo/config.toml
 	cargo objcopy --bin $(TARGET) --release --features lanes2 -- -O binary $@
+
+# Type-C alt-mode board firmware (FUSB302B + HD3SS460, 4-lane 1080p60).
+$(TARGET)-typec.bin: $(wildcard src/*.rs) link.ld Cargo.toml .cargo/config.toml
+	cargo objcopy --bin $(TARGET) --release --features board,lanes4,typec -- -O binary $@
 
 %.hex: %.bin
 	od -An -tx4 -w4 -v $< > $@

@@ -13,6 +13,14 @@ use bootrom_pac;
 mod aux;
 mod dpcd;
 mod edid;
+#[cfg(feature = "typec")]
+mod fusb302;
+#[cfg(feature = "typec")]
+mod i2c;
+#[cfg(feature = "typec")]
+mod pd;
+#[cfg(feature = "typec")]
+mod typec;
 mod link_training;
 mod main_link;
 mod mock_sink;
@@ -124,6 +132,38 @@ fn read_hpd_event_plug() -> bool {
     }
 }
 
+/// Virtual HPD (SYSTEM HPD bit 4): Type-C alt mode delivers HPD via PD
+/// Attention VDMs; the policy engine mirrors it here. Writing the
+/// register also acts as W1C on the event bits, so pass zeros there.
+#[cfg(feature = "typec")]
+fn set_virtual_hpd(level: bool) {
+    unsafe {
+        if let Some(system) = SYSTEM.as_mut() {
+            system.hpd.write(|w| w.bits((level as u32) << 4));
+        }
+    }
+}
+
+/// Type-C board GPIOs on cpu_io_out: bit24 = HD3SS460 EN, bit25 = POL
+/// (1 = flipped), bit26 = VBUS_EN. Read-modify-write so the status
+/// code in the low bits is preserved.
+#[cfg(feature = "typec")]
+pub fn typec_gpio(en: bool, pol_flipped: bool, vbus: bool) {
+    unsafe {
+        if let Some(system) = SYSTEM.as_mut() {
+            let cur = system.out.read().bits() & !(0x7 << 24);
+            let v = cur
+                | ((en as u32) << 24)
+                | ((pol_flipped as u32) << 25)
+                | ((vbus as u32) << 26);
+            system.out.write(|w| w.bits(v));
+        }
+    }
+}
+#[cfg(not(feature = "typec"))]
+#[allow(dead_code)]
+pub fn typec_gpio(_en: bool, _pol: bool, _vbus: bool) {}
+
 fn clear_hpd_events() {
     unsafe {
         if let Some(system) = SYSTEM.as_mut() {
@@ -170,9 +210,32 @@ const LANE_COUNT: u8 = 4;
 #[cfg(all(feature = "lanes2", not(feature = "lanes4")))]
 const LANE_COUNT: u8 = 2;
 
-fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video) {
+fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pac::I2C) {
+    // Type-C alt mode: bring up USB PD and the alt-mode entry first;
+    // the physical-HPD wait below is then satisfied via the virtual
+    // HPD register once the sink reports HPD over PD.
+    #[cfg(feature = "typec")]
+    let i2c = i2c::I2c::new(i2c_p);
+    #[cfg(feature = "typec")]
+    let mut tc = typec::TypeC::new(fusb302::Fusb302::new(&i2c));
+    #[cfg(feature = "typec")]
+    {
+        match tc.init() {
+            true => println!("[SRC] FUSB302B initialized"),
+            false => println!("[SRC] FUSB302B init FAILED"),
+        }
+    }
+    #[cfg(not(feature = "typec"))]
+    let _ = i2c_p;
+
     println!("[SRC] waiting for HPD");
-    while !read_hpd_level() {}
+    while !read_hpd_level() {
+        #[cfg(feature = "typec")]
+        if let Some((hpd, _irq)) = tc.poll() {
+            println!("[SRC] PD alt mode configured, sink HPD={}", hpd as u32);
+            set_virtual_hpd(hpd);
+        }
+    }
     if read_hpd_event_plug() {
         println!("[SRC] HPD plug observed");
         clear_hpd_events();
@@ -419,6 +482,11 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video) {
         for _ in 0..9_000_000u32 {
             unsafe { core::arch::asm!("nop") };
         }
+        #[cfg(feature = "typec")]
+        if let Some((hpd, irq)) = tc.poll() {
+            println!("[SRC] PD Attention: HPD={} IRQ={}", hpd as u32, irq as u32);
+            set_virtual_hpd(hpd);
+        }
         let mut st = [0u8; 6];
         match dpcd::read_block(aux, dpcd::SINK_COUNT, &mut st) {
             Ok(_) => {
@@ -488,7 +556,7 @@ pub extern "C" fn main() -> ! {
     println!("[CPU{}] phase D boot", cpu_id);
 
     match cpu_id {
-        0 => source_process(&aux, &ml, &mut vid),
+        0 => source_process(&aux, &ml, &mut vid, peripherals.I2C),
         1 => sink_process(&aux),
         other => {
             println!("[CPU?] unknown id {:08X}", other);

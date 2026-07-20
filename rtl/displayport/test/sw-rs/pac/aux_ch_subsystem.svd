@@ -513,5 +513,27 @@
                 </register>
             </registers>
         </peripheral>
+        <peripheral>
+            <name>I2C</name>
+            <description>Minimal I2C master (PD PHY / EEPROM). Primitive-per-command model.</description>
+            <baseAddress>0x40040000</baseAddress>
+            <registers>
+                <register>
+                    <name>CMD</name>
+                    <description>Write: [0]=START [1]=STOP [2]=WRITE [3]=READ [4]=NACK-on-read (one command bit per write). Read: [0]=BUSY [1]=ACK_ERROR (last WRITE not ACKed).</description>
+                    <addressOffset>0x00</addressOffset>
+                    <fields>
+                        <field><name>BUSY</name><bitOffset>0</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
+                        <field><name>ACK_ERROR</name><bitOffset>1</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
+                    </fields>
+                </register>
+                <register>
+                    <name>DATA</name>
+                    <description>Write: TX byte for the next WRITE command. Read: byte captured by the last READ command.</description>
+                    <addressOffset>0x04</addressOffset>
+                    <fields><field><name>VALUE</name><bitOffset>0</bitOffset><bitWidth>8</bitWidth><access>read-write</access></field></fields>
+                </register>
+            </registers>
+        </peripheral>
     </peripherals>
 </device>

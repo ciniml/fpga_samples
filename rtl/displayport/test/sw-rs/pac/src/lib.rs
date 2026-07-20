@@ -3973,6 +3973,212 @@ pub mod video {
         }
     }
 }
+#[doc = "Minimal I2C master (PD PHY / EEPROM). Primitive-per-command model."]
+pub struct I2C {
+    _marker: PhantomData<*const ()>,
+}
+unsafe impl Send for I2C {}
+impl I2C {
+    #[doc = r"Pointer to the register block"]
+    pub const PTR: *const i2c::RegisterBlock = 0x4004_0000 as *const _;
+    #[doc = r"Return the pointer to the register block"]
+    #[inline(always)]
+    pub const fn ptr() -> *const i2c::RegisterBlock {
+        Self::PTR
+    }
+}
+impl Deref for I2C {
+    type Target = i2c::RegisterBlock;
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*Self::PTR }
+    }
+}
+impl core::fmt::Debug for I2C {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        f.debug_struct("I2C").finish()
+    }
+}
+#[doc = "Minimal I2C master (PD PHY / EEPROM). Primitive-per-command model."]
+pub mod i2c {
+    #[doc = r"Register block"]
+    #[repr(C)]
+    pub struct RegisterBlock {
+        #[doc = "0x00 - Write: \\[0\\]=START \\[1\\]=STOP \\[2\\]=WRITE \\[3\\]=READ \\[4\\]=NACK-on-read (one command bit per write). Read: \\[0\\]=BUSY \\[1\\]=ACK_ERROR (last WRITE not ACKed)."]
+        pub cmd: CMD,
+        #[doc = "0x04 - Write: TX byte for the next WRITE command. Read: byte captured by the last READ command."]
+        pub data: DATA,
+    }
+    #[doc = "CMD (rw) register accessor: an alias for `Reg<CMD_SPEC>`"]
+    pub type CMD = crate::Reg<cmd::CMD_SPEC>;
+    #[doc = "Write: \\[0\\]=START \\[1\\]=STOP \\[2\\]=WRITE \\[3\\]=READ \\[4\\]=NACK-on-read (one command bit per write). Read: \\[0\\]=BUSY \\[1\\]=ACK_ERROR (last WRITE not ACKed)."]
+    pub mod cmd {
+        #[doc = "Register `CMD` reader"]
+        pub struct R(crate::R<CMD_SPEC>);
+        impl core::ops::Deref for R {
+            type Target = crate::R<CMD_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl From<crate::R<CMD_SPEC>> for R {
+            #[inline(always)]
+            fn from(reader: crate::R<CMD_SPEC>) -> Self {
+                R(reader)
+            }
+        }
+        #[doc = "Register `CMD` writer"]
+        pub struct W(crate::W<CMD_SPEC>);
+        impl core::ops::Deref for W {
+            type Target = crate::W<CMD_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl core::ops::DerefMut for W {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+        impl From<crate::W<CMD_SPEC>> for W {
+            #[inline(always)]
+            fn from(writer: crate::W<CMD_SPEC>) -> Self {
+                W(writer)
+            }
+        }
+        #[doc = "Field `BUSY` reader - "]
+        pub type BUSY_R = crate::BitReader;
+        #[doc = "Field `ACK_ERROR` reader - "]
+        pub type ACK_ERROR_R = crate::BitReader;
+        impl R {
+            #[doc = "Bit 0"]
+            #[inline(always)]
+            pub fn busy(&self) -> BUSY_R {
+                BUSY_R::new((self.bits & 1) != 0)
+            }
+            #[doc = "Bit 1"]
+            #[inline(always)]
+            pub fn ack_error(&self) -> ACK_ERROR_R {
+                ACK_ERROR_R::new(((self.bits >> 1) & 1) != 0)
+            }
+        }
+        impl W {
+            #[doc = "Writes raw bits to the register."]
+            #[inline(always)]
+            pub unsafe fn bits(&mut self, bits: u32) -> &mut Self {
+                self.0.bits(bits);
+                self
+            }
+        }
+        #[doc = "Write: \\[0\\]=START \\[1\\]=STOP \\[2\\]=WRITE \\[3\\]=READ \\[4\\]=NACK-on-read (one command bit per write). Read: \\[0\\]=BUSY \\[1\\]=ACK_ERROR (last WRITE not ACKed).\n\nThis register you can [`read`](crate::generic::Reg::read), [`write_with_zero`](crate::generic::Reg::write_with_zero), [`reset`](crate::generic::Reg::reset), [`write`](crate::generic::Reg::write), [`modify`](crate::generic::Reg::modify). See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [cmd](index.html) module"]
+        pub struct CMD_SPEC;
+        impl crate::RegisterSpec for CMD_SPEC {
+            type Ux = u32;
+        }
+        #[doc = "`read()` method returns [cmd::R](R) reader structure"]
+        impl crate::Readable for CMD_SPEC {
+            type Reader = R;
+        }
+        #[doc = "`write(|w| ..)` method takes [cmd::W](W) writer structure"]
+        impl crate::Writable for CMD_SPEC {
+            type Writer = W;
+            const ZERO_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+            const ONE_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+        }
+        #[doc = "`reset()` method sets CMD to value 0"]
+        impl crate::Resettable for CMD_SPEC {
+            const RESET_VALUE: Self::Ux = 0;
+        }
+    }
+    #[doc = "DATA (rw) register accessor: an alias for `Reg<DATA_SPEC>`"]
+    pub type DATA = crate::Reg<data::DATA_SPEC>;
+    #[doc = "Write: TX byte for the next WRITE command. Read: byte captured by the last READ command."]
+    pub mod data {
+        #[doc = "Register `DATA` reader"]
+        pub struct R(crate::R<DATA_SPEC>);
+        impl core::ops::Deref for R {
+            type Target = crate::R<DATA_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl From<crate::R<DATA_SPEC>> for R {
+            #[inline(always)]
+            fn from(reader: crate::R<DATA_SPEC>) -> Self {
+                R(reader)
+            }
+        }
+        #[doc = "Register `DATA` writer"]
+        pub struct W(crate::W<DATA_SPEC>);
+        impl core::ops::Deref for W {
+            type Target = crate::W<DATA_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl core::ops::DerefMut for W {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+        impl From<crate::W<DATA_SPEC>> for W {
+            #[inline(always)]
+            fn from(writer: crate::W<DATA_SPEC>) -> Self {
+                W(writer)
+            }
+        }
+        #[doc = "Field `VALUE` reader - "]
+        pub type VALUE_R = crate::FieldReader;
+        #[doc = "Field `VALUE` writer - "]
+        pub type VALUE_W<'a, const O: u8> = crate::FieldWriter<'a, DATA_SPEC, 8, O>;
+        impl R {
+            #[doc = "Bits 0:7"]
+            #[inline(always)]
+            pub fn value(&self) -> VALUE_R {
+                VALUE_R::new((self.bits & 0xff) as u8)
+            }
+        }
+        impl W {
+            #[doc = "Bits 0:7"]
+            #[inline(always)]
+            #[must_use]
+            pub fn value(&mut self) -> VALUE_W<0> {
+                VALUE_W::new(self)
+            }
+            #[doc = "Writes raw bits to the register."]
+            #[inline(always)]
+            pub unsafe fn bits(&mut self, bits: u32) -> &mut Self {
+                self.0.bits(bits);
+                self
+            }
+        }
+        #[doc = "Write: TX byte for the next WRITE command. Read: byte captured by the last READ command.\n\nThis register you can [`read`](crate::generic::Reg::read), [`write_with_zero`](crate::generic::Reg::write_with_zero), [`reset`](crate::generic::Reg::reset), [`write`](crate::generic::Reg::write), [`modify`](crate::generic::Reg::modify). See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [data](index.html) module"]
+        pub struct DATA_SPEC;
+        impl crate::RegisterSpec for DATA_SPEC {
+            type Ux = u32;
+        }
+        #[doc = "`read()` method returns [data::R](R) reader structure"]
+        impl crate::Readable for DATA_SPEC {
+            type Reader = R;
+        }
+        #[doc = "`write(|w| ..)` method takes [data::W](W) writer structure"]
+        impl crate::Writable for DATA_SPEC {
+            type Writer = W;
+            const ZERO_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+            const ONE_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+        }
+        #[doc = "`reset()` method sets DATA to value 0"]
+        impl crate::Resettable for DATA_SPEC {
+            const RESET_VALUE: Self::Ux = 0;
+        }
+    }
+}
 #[no_mangle]
 static mut DEVICE_PERIPHERALS: bool = false;
 #[doc = r" All the peripherals."]
@@ -3988,6 +4194,8 @@ pub struct Peripherals {
     pub MAIN_LINK: MAIN_LINK,
     #[doc = "VIDEO"]
     pub VIDEO: VIDEO,
+    #[doc = "I2C"]
+    pub I2C: I2C,
 }
 impl Peripherals {
     #[doc = r" Returns all the peripherals *once*."]
@@ -4023,6 +4231,9 @@ impl Peripherals {
                 _marker: PhantomData,
             },
             VIDEO: VIDEO {
+                _marker: PhantomData,
+            },
+            I2C: I2C {
                 _marker: PhantomData,
             },
         }
