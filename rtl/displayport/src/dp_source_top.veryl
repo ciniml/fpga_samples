@@ -50,6 +50,8 @@ pub module dp_source_top #(
     // 1 = FPGA / OSER10 mode: emit one byte per link clock, drive an
     //     external SerDes from o_lane0_symbol. See main_link_tx_lane.
     param CONTINUOUS_BYTE_TICK: u32 = 0,
+    // 0 removes the 2-lane pixel FIFO (see main_link_tx_lane).
+    param ENABLE_LANES2: u32 = 1,
 ) (
     // Main-link byte clock domain (default domain).
     i_clk:  input clock_posedge,
@@ -329,6 +331,7 @@ pub module dp_source_top #(
     }
 
     inst main_link: main_link_tx #(
+        ENABLE_LANES2: ENABLE_LANES2,
         SR_PERIOD:            SR_PERIOD,
         CONTINUOUS_BYTE_TICK: CONTINUOUS_BYTE_TICK,
     ) (

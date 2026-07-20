@@ -61,5 +61,7 @@ set_false_path -from [get_pins {dp_source/sync_lane_count/sync*/Q}]
 set_false_path -from [get_pins {dp_source/main_link/u_lane0/enable_r_s0/Q}]
 set_false_path -from [get_pins {dp_source/main_link/u_lane0/four_lane_r_s0/Q}]
 set_false_path -from [get_pins {dp_source/four_lane_r_s0/Q}]
+// (two_lane_r is constant-folded away on this board: ENABLE_LANES2=0.
+// Re-add its false paths when a 2-lane board configuration appears.)
 set_false_path -from [get_pins {dp_source/v_enable_lr_s0/Q}]
 set_false_path -from [get_pins {dp_source/main_link/u_lane0/u_sc/o_valid_s0/Q}]

@@ -290,6 +290,8 @@ pub module video_framer #(
     // Third copy dedicated to the TU-path gates (tu window / start /
     // pixel pops), whose cone ends in the pixel-FIFO counters.
     var f_line_vblank_tu: logic;
+    // Fourth copy for the MSA tick gates.
+    var f_line_vblank_ms: logic;
     var f_line_msa:    logic;   // this line carries the once-per-frame MSA
     var f_v_bs_first:  logic;
     var f_v_bs_last:   logic;
@@ -314,6 +316,7 @@ pub module video_framer #(
             f_line_vblank    = 1;
             f_line_vblank_q  = 1;
             f_line_vblank_tu = 1;
+            f_line_vblank_ms = 1;
             f_line_msa    = 0;
             f_v_bs_first  = 1;
             f_v_bs_last   = 0;
@@ -400,11 +403,13 @@ pub module video_framer #(
                 f_line_vblank    = line0_is_vblank;
                 f_line_vblank_q  = line0_is_vblank;
                 f_line_vblank_tu = line0_is_vblank;
+                f_line_vblank_ms = line0_is_vblank;
                 f_line_msa    = 0;
             } else if line_wrap_now {
                 f_line_vblank    = if frame_wrap_r ? line0_is_vblank : next_line_is_vblank;
                 f_line_vblank_q  = if frame_wrap_r ? line0_is_vblank : next_line_is_vblank;
                 f_line_vblank_tu = if frame_wrap_r ? line0_is_vblank : next_line_is_vblank;
+                f_line_vblank_ms = if frame_wrap_r ? line0_is_vblank : next_line_is_vblank;
                 // Line 0 is never the MSA line (it is 1), so the frame
                 // wrap always clears the flag.
                 f_line_msa    = if frame_wrap_r ? 1'b0 : next_line_is_msa;
@@ -444,8 +449,8 @@ pub module video_framer #(
     // delay), so their windows run one byte EARLIER (msa_pre / tu_pre)
     // than the slot the mux reads them at, exactly as before — the
     // pre-window flags encode the same ranges.
-    let msa_trigger:   logic = i_byte_tick && f_line_vblank && f_line_msa && f_v_msa_trig;
-    let msa_byte_tick: logic = i_byte_tick && f_line_vblank && f_line_msa && f_v_msa_pre;
+    let msa_trigger:   logic = i_byte_tick && f_line_vblank_ms && f_line_msa && f_v_msa_trig;
+    let msa_byte_tick: logic = i_byte_tick && f_line_vblank_ms && f_line_msa && f_v_msa_pre;
     let tu_pre_window: logic = i_video_enable && !f_line_vblank_tu && f_v_tu_pre;
     let tu_start_pulse: logic = i_byte_tick && !f_line_vblank_tu && f_v_tu_start && i_video_enable;
     let tu_byte_tick:  logic = i_byte_tick && tu_pre_window;

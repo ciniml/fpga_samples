@@ -10,6 +10,7 @@
  */
 
 pub module main_link_tx #(
+    param ENABLE_LANES2: u32 = 1,
     param SR_PERIOD:            u32 = 512,
     param CONTINUOUS_BYTE_TICK: u32 = 0,
 ) (
@@ -60,6 +61,7 @@ pub module main_link_tx #(
     let _unused_lane_count: logic<3> = i_lane_count;
 
     inst u_lane0: main_link_tx_lane #(
+        ENABLE_LANES2: ENABLE_LANES2,
         SR_PERIOD:            SR_PERIOD,
         CONTINUOUS_BYTE_TICK: CONTINUOUS_BYTE_TICK,
     ) (

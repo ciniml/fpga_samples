@@ -36,6 +36,10 @@ pub module main_link_tx_lane #(
     //                   loses bits — drive `o_lane0_symbol` to the
     //                   external SerDes instead of `o_lane0_bit`.
     param CONTINUOUS_BYTE_TICK: u32 = 0,
+    // 0 removes the 2-lane pixel FIFO at synthesis time (boards that
+    // never run 2-lane mode save its area/congestion). Simulation
+    // keeps it enabled.
+    param ENABLE_LANES2: u32 = 1,
 ) (
     i_clk:  input clock_posedge,
     i_rstn: input reset_sync_low,
@@ -86,7 +90,9 @@ pub module main_link_tx_lane #(
     o_symbol2:      output logic<10>,
     o_symbol3:      output logic<10>,
 ) {
-    // Local re-registers (quasi-static, like enable_r below).
+    // Local re-registers (quasi-static, like enable_r below). With
+    // ENABLE_LANES2 = 0 the two-lane flag is a constant zero, letting
+    // synthesis prune every 2-lane cone (MSA layout, FIFO muxing).
     var four_lane_r: logic;
     var two_lane_r:  logic;
     always_ff (i_clk, i_rstn) {
@@ -95,7 +101,7 @@ pub module main_link_tx_lane #(
             two_lane_r  = 0;
         } else {
             four_lane_r = i_four_lane;
-            two_lane_r  = i_two_lane;
+            two_lane_r  = if ENABLE_LANES2 != 0 ? i_two_lane : 1'b0;
         }
     }
     // serializer ready → byte tick (gated by enable so the chain is silent
@@ -181,17 +187,25 @@ pub module main_link_tx_lane #(
         o_pop_empty  : fifo_empty1,
         i_pop        : fifo_pop && !four_lane_r && !two_lane_r,
     );
-    inst u_pixel2: pixel_fifo_quad #(LANES: 2) (
-        i_clk        : i_clk,
-        i_rstn       : i_rstn,
-        i_clear      : fifo_clear,
-        s_axis_tvalid: s_axis_tvalid && two_lane_r,
-        s_axis_tready: fifo_ready2,
-        s_axis_tdata : s_axis_tdata,
-        o_bytes      : fifo_bytes2,
-        o_empty      : fifo_empty2,
-        i_pop        : fifo_pop && two_lane_r,
-    );
+    if ENABLE_LANES2 != 0 :g_fifo2 {
+        inst u_pixel2: pixel_fifo_quad #(LANES: 2) (
+            i_clk        : i_clk,
+            i_rstn       : i_rstn,
+            i_clear      : fifo_clear,
+            s_axis_tvalid: s_axis_tvalid && two_lane_r,
+            s_axis_tready: fifo_ready2,
+            s_axis_tdata : s_axis_tdata,
+            o_bytes      : fifo_bytes2,
+            o_empty      : fifo_empty2,
+            i_pop        : fifo_pop && two_lane_r,
+        );
+    } else {
+        always_comb {
+            fifo_ready2 = 0;
+            fifo_bytes2 = 0;
+            fifo_empty2 = 1;
+        }
+    }
     inst u_pixel4: pixel_fifo_quad (
         i_clk        : i_clk,
         i_rstn       : i_rstn,
@@ -385,6 +399,66 @@ pub module main_link_tx_lane #(
     let lane3_byte: logic<8> = skew3[52:45];
     let lane3_is_k: logic    = skew3[53];
 
+    // ----- Encoder input pipeline stage (FPGA / continuous mode) -----
+    // One register on every lane's (byte, K) plus valid/rd_reset,
+    // placed next to each encoder by P&R: cuts the long routes from
+    // the scrambler / skew registers into the 8B/10B encode cones.
+    // All lanes shift together so the inter-lane skew is preserved.
+    // Only instantiated for CONTINUOUS_BYTE_TICK = 1: in the paced
+    // (sim) mode the extra stage would shift the symbol arrival
+    // relative to the behavioural serializer's restart cadence, which
+    // the bit-level test monitors are sensitive to.
+    var ei_valid:    logic;
+    var ei_rd_reset: logic;
+    var ei_byte0: logic<8>;
+    var ei_k0:    logic;
+    var ei_byte1: logic<8>;
+    var ei_k1:    logic;
+    var ei_byte2: logic<8>;
+    var ei_k2:    logic;
+    var ei_byte3: logic<8>;
+    var ei_k3:    logic;
+    if CONTINUOUS_BYTE_TICK != 0 :g_ei {
+        always_ff (i_clk, i_rstn) {
+            if_reset {
+                ei_valid    = 0;
+                ei_rd_reset = 0;
+                ei_byte0 = 0;
+                ei_k0    = 0;
+                ei_byte1 = 0;
+                ei_k1    = 0;
+                ei_byte2 = 0;
+                ei_k2    = 0;
+                ei_byte3 = 0;
+                ei_k3    = 0;
+            } else {
+                ei_valid    = sc_valid;
+                ei_rd_reset = enc_rd_reset;
+                ei_byte0    = sc_data[7:0];
+                ei_k0       = sc_is_k;
+                ei_byte1    = lane1_byte;
+                ei_k1       = lane1_is_k;
+                ei_byte2    = lane2_byte;
+                ei_k2       = lane2_is_k;
+                ei_byte3    = lane3_byte;
+                ei_k3       = lane3_is_k;
+            }
+        }
+    } else {
+        always_comb {
+            ei_valid    = sc_valid;
+            ei_rd_reset = enc_rd_reset;
+            ei_byte0    = sc_data[7:0];
+            ei_k0       = sc_is_k;
+            ei_byte1    = lane1_byte;
+            ei_k1       = lane1_is_k;
+            ei_byte2    = lane2_byte;
+            ei_k2       = lane2_is_k;
+            ei_byte3    = lane3_byte;
+            ei_k3       = lane3_is_k;
+        }
+    }
+
     // ----- 8B/10B encoders (independent running disparity per lane) -----
     var enc_valid:  logic;
     var enc_symbol: logic<10>;
@@ -399,40 +473,40 @@ pub module main_link_tx_lane #(
     inst u_enc: encoder_8b10b (
         i_clk     : i_clk,
         i_rstn    : i_rstn,
-        i_valid   : sc_valid,
-        i_data    : sc_data[7:0],
-        i_is_k    : sc_is_k,
-        i_rd_reset: enc_rd_reset,
+        i_valid   : ei_valid,
+        i_data    : ei_byte0,
+        i_is_k    : ei_k0,
+        i_rd_reset: ei_rd_reset,
         o_valid   : enc_valid,
         o_symbol  : enc_symbol,
     );
     inst u_enc1: encoder_8b10b (
         i_clk     : i_clk,
         i_rstn    : i_rstn,
-        i_valid   : sc_valid,
-        i_data    : lane1_byte,
-        i_is_k    : lane1_is_k,
-        i_rd_reset: enc_rd_reset,
+        i_valid   : ei_valid,
+        i_data    : ei_byte1,
+        i_is_k    : ei_k1,
+        i_rd_reset: ei_rd_reset,
         o_valid   : enc_valid1,
         o_symbol  : enc_symbol1,
     );
     inst u_enc2: encoder_8b10b (
         i_clk     : i_clk,
         i_rstn    : i_rstn,
-        i_valid   : sc_valid,
-        i_data    : lane2_byte,
-        i_is_k    : lane2_is_k,
-        i_rd_reset: enc_rd_reset,
+        i_valid   : ei_valid,
+        i_data    : ei_byte2,
+        i_is_k    : ei_k2,
+        i_rd_reset: ei_rd_reset,
         o_valid   : enc_valid2,
         o_symbol  : enc_symbol2,
     );
     inst u_enc3: encoder_8b10b (
         i_clk     : i_clk,
         i_rstn    : i_rstn,
-        i_valid   : sc_valid,
-        i_data    : lane3_byte,
-        i_is_k    : lane3_is_k,
-        i_rd_reset: enc_rd_reset,
+        i_valid   : ei_valid,
+        i_data    : ei_byte3,
+        i_is_k    : ei_k3,
+        i_rd_reset: ei_rd_reset,
         o_valid   : enc_valid3,
         o_symbol  : enc_symbol3,
     );

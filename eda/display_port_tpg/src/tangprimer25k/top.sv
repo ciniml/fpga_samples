@@ -224,7 +224,10 @@ module top(
         .PROCESSOR_RAM_SIZE (32'd8192),
         .PROCESSOR_ROM_FILE ("/home/kenta/repos/fpga_samples/rtl/displayport/test/sw-rs/bootrom-rs-board.hex"),
         .SR_PERIOD          (32'd512),
-        .CONTINUOUS_BYTE_TICK(32'd1)
+        .CONTINUOUS_BYTE_TICK(32'd1),
+        // This board runs 1-lane (480p fallback) or 4-lane (1080p60);
+        // drop the 2-lane FIFO to relieve 162 MHz congestion.
+        .ENABLE_LANES2      (32'd0)
     ) dp_source (
         .i_clk (clock_byte),
         .i_rstn(!reset_byte),

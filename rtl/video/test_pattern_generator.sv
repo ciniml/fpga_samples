@@ -56,6 +56,11 @@ localparam int LOGO_BITS   = LOGO_STRIDE*LOGO_HEIGHT;
 localparam int LOGO_BYTES  = LOGO_BITS >> 3;
 typedef logic [$clog2(LOGO_BITS)-1:0] logo_address_t;
 logic [7:0] logo_memory[LOGO_BYTES-1:0];
+// Registered lookahead flags: h_last = (hcounter == HTOTAL-1) for the
+// CURRENT cycle, maintained incrementally so the wide counter compares
+// stay out of the per-pixel enable paths.
+logic h_last = (HTOTAL == 1);
+logic v_last = (VTOTAL == 1);
 
 hcounter_t logo_x = 0;
 vcounter_t logo_y = 0;
@@ -121,15 +126,17 @@ always_ff @(posedge clock) begin
         end
         //logo_pixel <= logo_pixels[(logo_address+7)&7];
 
-        if( hcounter == HTOTAL - 1) begin
+        if( h_last ) begin
             hcounter <= '0;
+            h_last   <= (HTOTAL == 1);
             within_logo_h <= HSYNC + HBACK == 0;
 
-            if( vcounter == VTOTAL - 1) begin
+            if( v_last ) begin
                 hcounter_t logo_x_next;
                 vcounter_t logo_y_next;
 
                 vcounter <= '0;
+                v_last   <= (VTOTAL == 1);
                 logo_address <= '0;
                 // Update logo position
                 if( logo_dx && logo_x == 0 || !logo_dx && logo_x == (HACTIVE - LOGO_WIDTH - 1)) begin
@@ -168,6 +175,7 @@ always_ff @(posedge clock) begin
             hcounter_next = hcounter + hcounter_t'(1);
 
             hcounter <= hcounter_next;
+            h_last   <= (hcounter_next == HTOTAL - 1);
             // Equality-based set/clear on the CURRENT counter against
             // precomputed (bound - 1) constants: no adder and no
             // magnitude compare in the per-pixel path. The counter

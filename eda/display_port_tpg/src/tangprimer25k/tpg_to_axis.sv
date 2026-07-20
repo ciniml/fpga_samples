@@ -45,27 +45,63 @@ module tpg_to_axis (
     output logic [23:0] m_axis_tdata
 );
 
-    // Accept a new pixel when the output register is free (or being
-    // freed this cycle).
-    logic can_accept;
-    assign can_accept = !m_axis_tvalid || m_axis_tready;
+    // Registered pacing with a 2-deep skid queue. The enable seen by
+    // the TPG is a REGISTER (the combinational tvalid/tready ->
+    // can_accept -> enable cone fanning into every TPG clock-enable
+    // was a 162 MHz critical path). Because the stall now lands one
+    // cycle late, the raster can advance one extra pixel after the
+    // queue fills to one entry; the second queue slot absorbs it, and
+    // enable_r only allows advancing while occupancy < 2, so nothing
+    // is ever dropped.
+    logic        v0, v1;      // head (AXIS output) and skid slot
+    logic [23:0] d0, d1;
+    logic        enable_r;
 
-    // Free-run through blanking; stall the raster on an unaccepted
-    // active pixel.
-    assign tpg_enable = !video_de || can_accept;
+    assign m_axis_tvalid = v0;
+    assign m_axis_tdata  = d0;
+    assign tpg_enable    = !video_de || enable_r;
+
+    // A pixel is consumed from the TPG on every cycle where DE is high
+    // and the raster is advancing (enable_r high): its data would be
+    // gone next cycle, so it must enter the queue now.
+    wire push = video_de && enable_r;
+    wire pop  = v0 && m_axis_tready;
 
     always_ff @(posedge clock) begin
         if (reset) begin
-            m_axis_tvalid <= 1'b0;
-            m_axis_tdata  <= 24'h000000;
+            v0 <= 1'b0;
+            v1 <= 1'b0;
+            d0 <= 24'h000000;
+            d1 <= 24'h000000;
+            enable_r <= 1'b0;
         end else begin
-            if (m_axis_tvalid && m_axis_tready) begin
-                m_axis_tvalid <= 1'b0;
+            // Queue update.
+            if (push) begin
+                if (!v0 || (pop && !v1)) begin
+                    d0 <= video_data;
+                    v0 <= 1'b1;
+                end else if (!v1) begin
+                    d1 <= video_data;
+                    v1 <= 1'b1;
+                    if (pop) begin
+                        // pop with skid occupied: shift skid to head
+                        d0 <= d1;
+                    end
+                end
+                // push with v0&&v1 cannot happen: enable_r blocks it.
+            end else if (pop) begin
+                if (v1) begin
+                    d0 <= d1;
+                    v1 <= 1'b0;
+                end else begin
+                    v0 <= 1'b0;
+                end
             end
-            if (video_de && can_accept) begin
-                m_axis_tvalid <= 1'b1;
-                m_axis_tdata  <= video_data;
-            end
+
+            // Allow the raster to advance while the queue (after this
+            // cycle's push/pop) holds at most one entry.
+            enable_r <= ((v0 ? 1 : 0) + (v1 ? 1 : 0)
+                         + (push ? 1 : 0) - (pop ? 1 : 0)) < 2;
         end
     end
 
