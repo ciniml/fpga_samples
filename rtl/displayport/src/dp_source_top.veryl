@@ -100,7 +100,8 @@ pub module dp_source_top #(
     let _unused_lane0_drive: 'sys logic<8> = ml_lane0_drive; // informational only
 
     var v_enable:    'sys logic;
-    var v_half_rate: 'sys logic;
+    var v_line_symbols:  'sys logic<16>;
+    var v_active_window: 'sys logic<16>;
     var v_htotal:    'sys logic<16>;
     var v_vtotal:    'sys logic<16>;
     var v_hstart:    'sys logic<16>;
@@ -152,7 +153,8 @@ pub module dp_source_top #(
         main_link_enhanced_framing: ml_enhanced_framing,
 
         video_enable            : v_enable,
-        video_half_rate         : v_half_rate,
+        video_line_symbols      : v_line_symbols,
+        video_active_window     : v_active_window,
         video_htotal            : v_htotal,
         video_vtotal            : v_vtotal,
         video_hstart            : v_hstart,
@@ -176,7 +178,8 @@ pub module dp_source_top #(
     var ml_lane_count_l:       logic<3>;
     var ml_enhanced_framing_l: logic;
     var v_enable_l:            logic;
-    var v_half_rate_l:         logic;
+    var v_line_symbols_l:      logic<16>;
+    var v_active_window_l:     logic<16>;
 
     unsafe(cdc) {
         inst sync_pattern: cdc_bit_sync #(WIDTH: 2) (
@@ -196,8 +199,11 @@ pub module dp_source_top #(
         );
         // Quasi-static like the video timing registers below: written
         // strictly before video_enable.
-        inst sync_halfrate: cdc_bit_sync #(WIDTH: 1) (
-            i_clk, i_rstn, i_d: v_half_rate, o_q: v_half_rate_l,
+        inst sync_line_symbols: cdc_bit_sync #(WIDTH: 16) (
+            i_clk, i_rstn, i_d: v_line_symbols, o_q: v_line_symbols_l,
+        );
+        inst sync_active_window: cdc_bit_sync #(WIDTH: 16) (
+            i_clk, i_rstn, i_d: v_active_window, o_q: v_active_window_l,
         );
         inst sync_rd_reset: cdc_pulse_sync (
             i_clk_src : i_clk_sys,
@@ -292,7 +298,8 @@ pub module dp_source_top #(
         i_lane_count       : ml_lane_count_l,
         i_enhanced_framing : ml_enhanced_framing_l,
         i_video_enable     : v_enable_lr,
-        i_half_rate        : v_half_rate_l,
+        i_line_symbols     : v_line_symbols_l,
+        i_active_window    : v_active_window_l,
         i_htotal         : v_htotal_l,
         i_vtotal         : v_vtotal_l,
         i_hstart         : v_hstart_l,

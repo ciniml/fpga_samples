@@ -287,7 +287,6 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &Video) {
         misc0:     0x21, // sync clock, 8 bpc RGB (Table 2-45)
         misc1:     0x00,
         tu_active: 32,
-        half_rate: true,
     };
     // Board profile: CEA-861 720x480p @ 59.94 (VIC 2/3), the exact
     // 27 MHz mode advertised in the monitor's EDID extension block
@@ -313,7 +312,6 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &Video) {
         misc0:     0x21, // sync clock, 8 bpc RGB (Table 2-45)
         misc1:     0x00,
         tu_active: 32,
-        half_rate: true,
     };
     vid.setup_and_enable(&cfg);
     println!("[SRC] video pipeline enabled");

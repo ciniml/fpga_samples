@@ -19,17 +19,46 @@ pub struct VideoConfig {
     pub misc0:     u8,
     pub misc1:     u8,
     pub tu_active: u8,  // 1..64
-    /// 1 pixel = 6 link symbols (27 Mpix/s on RBR; tu_active must be 32).
-    pub half_rate: bool,
+}
+
+impl VideoConfig {
+    /// Active pixel bytes per lane per line.
+    fn active_bytes_per_lane(&self, lanes: u16) -> u32 {
+        (self.hwidth as u32) * 3 / (lanes as u32)
+    }
+    /// Link symbols per line per lane. `num`/`den` is LS_clk / pixel_clk
+    /// (e.g. 6/1 for 27 Mpix on RBR, 12/11 for 148.5 Mpix on RBR x4);
+    /// htotal * num must be divisible by den.
+    pub fn line_symbols(&self, num: u32, den: u32) -> u16 {
+        ((self.htotal as u32) * num / den) as u16
+    }
+    /// TU-region symbols per line per lane:
+    /// floor(B / tu_active) * 64 + (B % tu_active).
+    pub fn active_window(&self, lanes: u16) -> u16 {
+        let b = self.active_bytes_per_lane(lanes);
+        let ac = self.tu_active as u32;
+        (b / ac * 64 + b % ac) as u16
+    }
 }
 
 pub struct Video {
     p: bootrom_pac::VIDEO,
+    /// LS_clk / pixel_clk ratio numerator/denominator and lane count,
+    /// used to derive the line accounting registers.
+    ls_num: u32,
+    ls_den: u32,
+    lanes: u16,
 }
 
 impl Video {
     pub fn new(p: bootrom_pac::VIDEO) -> Self {
-        Self { p }
+        Self { p, ls_num: 6, ls_den: 1, lanes: 1 }
+    }
+    #[allow(dead_code)]
+    pub fn set_rate(&mut self, ls_num: u32, ls_den: u32, lanes: u16) {
+        self.ls_num = ls_num;
+        self.ls_den = ls_den;
+        self.lanes = lanes;
     }
 
     pub fn setup_and_enable(&self, c: &VideoConfig) {
@@ -52,8 +81,12 @@ impl Video {
                 .tu_active
                 .write(|w| w.value().bits(c.tu_active & 0x7F));
             self.p
-                .ctrl
-                .write(|w| w.bits(0x1 | ((c.half_rate as u32) << 1)));
+                .line_symbols
+                .write(|w| w.value().bits(c.line_symbols(self.ls_num, self.ls_den)));
+            self.p
+                .active_window
+                .write(|w| w.value().bits(c.active_window(self.lanes)));
+            self.p.ctrl.write(|w| w.enable().set_bit());
         }
     }
 }

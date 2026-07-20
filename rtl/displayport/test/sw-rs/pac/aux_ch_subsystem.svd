@@ -497,6 +497,18 @@
                     <addressOffset>0x30</addressOffset>
                     <fields><field><name>VALUE</name><bitOffset>0</bitOffset><bitWidth>7</bitWidth><access>read-write</access></field></fields>
                 </register>
+                <register>
+                    <name>LINE_SYMBOLS</name>
+                    <description>Link symbols per line per lane (= htotal * LS_clk / pixel_clk; must be an integer). CPU computes.</description>
+                    <addressOffset>0x34</addressOffset>
+                    <fields><field><name>VALUE</name><bitOffset>0</bitOffset><bitWidth>16</bitWidth><access>read-write</access></field></fields>
+                </register>
+                <register>
+                    <name>ACTIVE_WINDOW</name>
+                    <description>Symbols per line per lane occupied by the TU region: floor(B/tu_active)*64 + (B mod tu_active), B = active bytes per lane per line. CPU computes.</description>
+                    <addressOffset>0x38</addressOffset>
+                    <fields><field><name>VALUE</name><bitOffset>0</bitOffset><bitWidth>16</bitWidth><access>read-write</access></field></fields>
+                </register>
             </registers>
         </peripheral>
     </peripherals>
