@@ -40,6 +40,7 @@ pub module main_link_tx #(
     i_tu_active:    input logic<7>,
     i_line_symbols: input logic<16>,
     i_active_window: input logic<16>,
+    i_four_lane:    input logic,
 
     // AXI-Stream pixel input (24bpp RGB)
     s_axis_tvalid: input  logic,
@@ -50,6 +51,9 @@ pub module main_link_tx #(
     o_lane0_bit_valid:    output logic,
     o_lane0_symbol_valid: output logic,
     o_lane0_symbol:       output logic<10>,
+    o_lane1_symbol:       output logic<10>,
+    o_lane2_symbol:       output logic<10>,
+    o_lane3_symbol:       output logic<10>,
 ) {
     let _unused_lane_count: logic<3> = i_lane_count;
 
@@ -78,6 +82,7 @@ pub module main_link_tx #(
         i_tu_active     : i_tu_active,
         i_line_symbols  : i_line_symbols,
         i_active_window : i_active_window,
+        i_four_lane     : i_four_lane,
         s_axis_tvalid   : s_axis_tvalid,
         s_axis_tready   : s_axis_tready,
         s_axis_tdata    : s_axis_tdata,
@@ -85,5 +90,8 @@ pub module main_link_tx #(
         o_bit_valid     : o_lane0_bit_valid,
         o_symbol_valid  : o_lane0_symbol_valid,
         o_symbol        : o_lane0_symbol,
+        o_symbol1       : o_lane1_symbol,
+        o_symbol2       : o_lane2_symbol,
+        o_symbol3       : o_lane3_symbol,
     );
 }

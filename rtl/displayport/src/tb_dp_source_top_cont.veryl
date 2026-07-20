@@ -159,7 +159,8 @@ module dp_source_top_cont;
     wire dec_sr = dec_valid && dec_is_k && (dec_byte == 8'h1C);
 
     logic       rx_valid;
-    logic [7:0] rx_byte;
+    logic [31:0] rx_byte_w;
+    wire  [7:0]  rx_byte = rx_byte_w[7:0];
     logic       rx_is_k;
 
     displayport_scrambler u_desc (
@@ -168,10 +169,10 @@ module dp_source_top_cont;
         .i_seed_reset      (dec_sr),
         .i_scramble_disable(1'b0),
         .i_valid           (dec_valid),
-        .i_data            (dec_byte),
+        .i_data            ({24'h0, dec_byte}),
         .i_is_k            (dec_is_k),
         .o_valid           (rx_valid),
-        .o_data            (rx_byte),
+        .o_data            (rx_byte_w),
         .o_is_k            (rx_is_k)
     );
 

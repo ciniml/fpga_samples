@@ -161,6 +161,13 @@ fn panic(info: &PanicInfo) -> ! {
 // Source-side scenario.
 // ---------------------------------------------------------------------------
 
+// Active lane count for this build. 480p (27 Mpix) fits 1 lane;
+// the 1080p60 profile uses all 4.
+#[cfg(not(feature = "lanes4"))]
+const LANE_COUNT: u8 = 1;
+#[cfg(feature = "lanes4")]
+const LANE_COUNT: u8 = 4;
+
 fn source_process(aux: &AuxCh, ml: &MainLink, vid: &Video) {
     println!("[SRC] waiting for HPD");
     while !read_hpd_level() {}
@@ -238,7 +245,7 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &Video) {
     // a breather in between.
     let mut stats = None;
     for attempt in 0..5u32 {
-        match link_training::run(aux, ml) {
+        match link_training::run(aux, ml, LANE_COUNT) {
             Ok(s) => {
                 println!(
                     "[SRC] link training done (attempt={}, cr_iters={}, eq_iters={})",

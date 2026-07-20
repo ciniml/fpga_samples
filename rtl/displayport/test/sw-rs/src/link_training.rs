@@ -33,7 +33,21 @@ fn wait_aux_rd_interval(_value: u8) {
     }
 }
 
-pub fn run(aux: &AuxCh, ml: &MainLink) -> Result<Stats, Error> {
+/// Per-lane status mask helpers: 0x202 carries lanes 0/1 in its low and
+/// high nibbles, 0x203 carries lanes 2/3.
+fn lanes_done(status01: u8, status23: u8, lanes: u8, mask: u8) -> bool {
+    let mut ok = (status01 & mask) == mask;
+    if lanes >= 2 {
+        ok &= ((status01 >> 4) & mask) == mask;
+    }
+    if lanes >= 4 {
+        ok &= (status23 & mask) == mask;
+        ok &= ((status23 >> 4) & mask) == mask;
+    }
+    ok
+}
+
+pub fn run(aux: &AuxCh, ml: &MainLink, lanes: u8) -> Result<Stats, Error> {
     // Sink capability
     let _max_link_rate = dpcd::read(aux, dpcd::MAX_LINK_RATE).map_err(Error::DpcdRead)?;
     let max_lane_count_raw = dpcd::read(aux, dpcd::MAX_LANE_COUNT).map_err(Error::DpcdRead)?;
@@ -54,12 +68,12 @@ pub fn run(aux: &AuxCh, ml: &MainLink) -> Result<Stats, Error> {
     dpcd::write(
         aux,
         dpcd::LANE_COUNT_SET,
-        0x01 | if enhanced_framing { 0x80 } else { 0x00 },
+        lanes | if enhanced_framing { 0x80 } else { 0x00 },
     )
     .map_err(Error::DpcdWrite)?;
     dpcd::write(aux, dpcd::MAIN_LINK_CHANNEL_CODING_SET, dpcd::ANSI_8B10B)
         .map_err(Error::DpcdWrite)?;
-    ml.set_lane_count(1);
+    ml.set_lane_count(lanes);
 
     let mut stats = Stats {
         cr_iters: 0,
@@ -76,13 +90,22 @@ pub fn run(aux: &AuxCh, ml: &MainLink) -> Result<Stats, Error> {
         ml.set_lane0_drive(drive.voltage_swing, drive.pre_emphasis);
         dpcd::write(aux, dpcd::TRAINING_PATTERN_SET, dpcd::SCRAMBLING_DISABLE | dpcd::TPS1)
             .map_err(Error::DpcdWrite)?;
-        dpcd::write(aux, dpcd::TRAINING_LANE0_SET, drive.encode())
-            .map_err(Error::DpcdWrite)?;
+        // Same drive on every active lane (we adjust from lane 0's
+        // request only — a deliberate simplification).
+        for l in 0..lanes as u32 {
+            dpcd::write(aux, dpcd::TRAINING_LANE0_SET + l, drive.encode())
+                .map_err(Error::DpcdWrite)?;
+        }
         wait_aux_rd_interval(aux_rd_interval);
         stats.cr_iters += 1;
 
-        let lane_status = dpcd::read(aux, dpcd::LANE0_1_STATUS).map_err(Error::DpcdRead)?;
-        if lane_status & dpcd::LANE0_CR_DONE != 0 {
+        let st01 = dpcd::read(aux, dpcd::LANE0_1_STATUS).map_err(Error::DpcdRead)?;
+        let st23 = if lanes >= 4 {
+            dpcd::read(aux, dpcd::LANE2_3_STATUS).map_err(Error::DpcdRead)?
+        } else {
+            0
+        };
+        if lanes_done(st01, st23, lanes, dpcd::LANE0_CR_DONE) {
             break;
         }
         let adjust =
@@ -107,16 +130,23 @@ pub fn run(aux: &AuxCh, ml: &MainLink) -> Result<Stats, Error> {
         ml.set_lane0_drive(drive.voltage_swing, drive.pre_emphasis);
         dpcd::write(aux, dpcd::TRAINING_PATTERN_SET, dpcd::SCRAMBLING_DISABLE | dpcd::TPS2)
             .map_err(Error::DpcdWrite)?;
-        dpcd::write(aux, dpcd::TRAINING_LANE0_SET, drive.encode())
-            .map_err(Error::DpcdWrite)?;
+        for l in 0..lanes as u32 {
+            dpcd::write(aux, dpcd::TRAINING_LANE0_SET + l, drive.encode())
+                .map_err(Error::DpcdWrite)?;
+        }
         wait_aux_rd_interval(aux_rd_interval);
         stats.eq_iters += 1;
 
-        let lane_status = dpcd::read(aux, dpcd::LANE0_1_STATUS).map_err(Error::DpcdRead)?;
+        let st01 = dpcd::read(aux, dpcd::LANE0_1_STATUS).map_err(Error::DpcdRead)?;
+        let st23 = if lanes >= 4 {
+            dpcd::read(aux, dpcd::LANE2_3_STATUS).map_err(Error::DpcdRead)?
+        } else {
+            0
+        };
         let lane_align =
             dpcd::read(aux, dpcd::LANE_ALIGN_STATUS_UPDATED).map_err(Error::DpcdRead)?;
         let eq_mask = dpcd::LANE0_CR_DONE | dpcd::LANE0_CHANNEL_EQ_DONE | dpcd::LANE0_SYMBOL_LOCKED;
-        if (lane_status & eq_mask) == eq_mask
+        if lanes_done(st01, st23, lanes, eq_mask)
             && (lane_align & dpcd::INTERLANE_ALIGN_DONE) != 0
         {
             // Done. Stop training, return to IDLE.
@@ -124,7 +154,7 @@ pub fn run(aux: &AuxCh, ml: &MainLink) -> Result<Stats, Error> {
             dpcd::write(aux, dpcd::TRAINING_PATTERN_SET, 0x00).map_err(Error::DpcdWrite)?;
             return Ok(stats);
         }
-        if (lane_status & dpcd::LANE0_CR_DONE) == 0 {
+        if !lanes_done(st01, st23, lanes, dpcd::LANE0_CR_DONE) {
             return Err(Error::CrLost);
         }
         let adjust =

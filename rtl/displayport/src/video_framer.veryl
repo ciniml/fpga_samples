@@ -84,14 +84,25 @@ pub module video_framer #(
     // reconstructs timing from the MSA).
     i_active_window: input logic<16>,
 
-    // Pixel input from pixel_fifo
-    i_pixel_byte:  input  logic<8>,
+    // 0: 1-lane (o_byte only). 1: 4-lane — o_byte/o_byte1..3 carry
+    // lanes 0..3; the BS header triple is sent once per lane
+    // (Fig 2-12), the MSA uses the 12-symbol-per-lane layout
+    // (Fig 2-18), and the pixel input is one color component of four
+    // consecutive pixels per pop (pixel_fifo_quad).
+    i_four_lane: input logic,
+
+    // Pixel input from pixel_fifo (1-lane: [7:0]) / pixel_fifo_quad.
+    i_pixel_bytes: input  logic<32>,
     i_pixel_empty: input  logic,
     o_pixel_pop:   output logic,
 
-    // Downstream byte interface (to scrambler)
+    // Downstream byte interface (to scrambler). K flags and windows are
+    // common to all lanes (control symbols are lane-aligned pre-skew).
     o_valid:            output logic,
     o_byte:             output logic<8>,
+    o_byte1:            output logic<8>,
+    o_byte2:            output logic<8>,
+    o_byte3:            output logic<8>,
     o_is_k:             output logic,
     o_scramble_disable: output logic,
 ) {
@@ -158,16 +169,33 @@ pub module video_framer #(
             hblank_m3      = hblank_bytes - 18'd3;
             bs_len_m1      = if i_enhanced_framing ? 18'd3 : 18'd0;
             bs_len_m2      = if i_enhanced_framing ? 18'd2 : 18'd0;
-            hdr_leave_at   = if i_enhanced_framing ? 18'd15 : 18'd12;
-            msa_leave_at   = if i_enhanced_framing ? 18'd54 : 18'd51;
-            msa_trig_prev  = if i_enhanced_framing ? 18'd13 : 18'd10;
-            msa_pre_enter  = if i_enhanced_framing ? 18'd14 : 18'd11;
-            msa_pre_leave  = if i_enhanced_framing ? 18'd53 : 18'd50;
+            // Header: the (VB-ID, Mvid, Maud) triple is transported four
+            // times total regardless of lane count (Fig 2-12): 12 slots
+            // per lane at 1 lane, 3 slots per lane at 4 lanes. The MSA
+            // occupies 39 slots (1 lane) / 12 slots (4 lanes, Fig 2-18)
+            // right after the header.
+            hdr_leave_at   = if i_enhanced_framing ?
+                (if i_four_lane ? 18'd6 : 18'd15) :
+                (if i_four_lane ? 18'd3 : 18'd12);
+            msa_leave_at   = if i_enhanced_framing ?
+                (if i_four_lane ? 18'd18 : 18'd54) :
+                (if i_four_lane ? 18'd15 : 18'd51);
+            msa_trig_prev  = if i_enhanced_framing ?
+                (if i_four_lane ? 18'd4 : 18'd13) :
+                (if i_four_lane ? 18'd1 : 18'd10);
+            msa_pre_enter  = if i_enhanced_framing ?
+                (if i_four_lane ? 18'd5 : 18'd14) :
+                (if i_four_lane ? 18'd2 : 18'd11);
+            msa_pre_leave  = if i_enhanced_framing ?
+                (if i_four_lane ? 18'd17 : 18'd53) :
+                (if i_four_lane ? 18'd14 : 18'd50);
             vend           = i_vstart + i_vheight;
             vtotal_m1      = i_vtotal - 16'd1;
             idle_bs_m1     = if i_enhanced_framing ? 13'd3 : 13'd0;
             idle_bs_m2     = if i_enhanced_framing ? 13'd2 : 13'd0;
-            idle_hdr_leave = if i_enhanced_framing ? 13'd15 : 13'd12;
+            idle_hdr_leave = if i_enhanced_framing ?
+                (if i_four_lane ? 13'd6 : 13'd15) :
+                (if i_four_lane ? 13'd3 : 13'd12);
         }
     }
 
@@ -405,6 +433,9 @@ pub module video_framer #(
 
     // ------ MSA generator ------
     var msa_byte:  logic<8>;
+    var msa_byte1: logic<8>;
+    var msa_byte2: logic<8>;
+    var msa_byte3: logic<8>;
     var msa_is_k:  logic;
     var msa_valid: logic;
     var msa_busy:  logic;
@@ -425,14 +456,18 @@ pub module video_framer #(
         i_mvid     : i_mvid,
         i_nvid     : i_nvid,
         i_misc     : i_misc,
+        i_four_lane: i_four_lane,
         o_busy     : msa_busy,
         o_valid    : msa_valid,
         o_byte     : msa_byte,
+        o_byte1    : msa_byte1,
+        o_byte2    : msa_byte2,
+        o_byte3    : msa_byte3,
         o_is_k     : msa_is_k,
     );
 
     // ------ TU packer ------
-    var tu_byte:  logic<8>;
+    var tu_bytes: logic<32>;
     var tu_is_k:  logic;
     var tu_valid: logic;
     var tu_pop:   logic;
@@ -445,11 +480,11 @@ pub module video_framer #(
         i_emit_enable : tu_pre_window,
         i_tu_start    : tu_start_pulse,
         i_active_count: i_tu_active,
-        i_pixel_byte  : i_pixel_byte,
+        i_pixel_bytes : i_pixel_bytes,
         i_pixel_empty : i_pixel_empty,
         o_pixel_pop   : tu_pop,
         o_valid       : tu_valid,
-        o_byte        : tu_byte,
+        o_bytes       : tu_bytes,
         o_is_k        : tu_is_k,
     );
 
@@ -504,7 +539,7 @@ pub module video_framer #(
                 }
             } else if !f_line_vblank && f_v_tu_in {
                 if tu_valid {
-                    o_byte = tu_byte;
+                    o_byte = tu_bytes[7:0];
                     o_is_k = tu_is_k;
                 }
             }
@@ -537,6 +572,29 @@ pub module video_framer #(
                 } else {
                     o_byte = 8'h00; // Mvid7:0 / Maud7:0
                 }
+            }
+        }
+    }
+
+    // ------ Lanes 1..3 (4-lane mode) ------
+    // Identical to lane 0 except in the two per-lane-data arms: the MSA
+    // attribute columns and the TU pixel bytes. The guards replicate the
+    // priority of the lane-0 chain (BS group and header outrank both;
+    // the BE arm is mutually exclusive with the MSA arm via
+    // f_line_vblank and with the TU arm via f_v_at_be ordering).
+    always_comb {
+        o_byte1 = o_byte;
+        o_byte2 = o_byte;
+        o_byte3 = o_byte;
+        if i_video_enable && !f_v_bs_in && !f_v_hdr_in {
+            if f_line_vblank && f_v_msa_in && msa_valid {
+                o_byte1 = msa_byte1;
+                o_byte2 = msa_byte2;
+                o_byte3 = msa_byte3;
+            } else if !f_line_vblank && !f_v_at_be && f_v_tu_in && tu_valid {
+                o_byte1 = tu_bytes[15:8];
+                o_byte2 = tu_bytes[23:16];
+                o_byte3 = tu_bytes[31:24];
             }
         }
     }

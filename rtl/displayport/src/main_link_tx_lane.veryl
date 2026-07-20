@@ -61,6 +61,9 @@ pub module main_link_tx_lane #(
     i_tu_active:    input logic<7>,
     i_line_symbols: input logic<16>,
     i_active_window: input logic<16>,
+    // 1 = 4-lane mode (quasi-static, from LANE_COUNT). Selects the quad
+    // pixel FIFO and the framer's 4-lane header/MSA layouts.
+    i_four_lane:    input logic,
 
     // AXI-Stream pixel input (24bpp RGB)
     s_axis_tvalid: input  logic,
@@ -69,11 +72,26 @@ pub module main_link_tx_lane #(
 
     o_bit:          output logic,
     o_bit_valid:    output logic,
-    // 10-bit encoder symbol output for off-chip / OSER10-style serializers.
-    // Valid every clock when CONTINUOUS_BYTE_TICK = 1.
+    // 10-bit encoder symbol outputs for off-chip / OSER10-style
+    // serializers, one per lane (lanes 1..3 meaningful in 4-lane mode).
+    // Valid every clock when CONTINUOUS_BYTE_TICK = 1. The mandatory
+    // 2-symbol-per-lane inter-lane skew (section 2.2.1.6) is already
+    // applied: lane N is delayed by 2N symbols.
     o_symbol_valid: output logic,
     o_symbol:       output logic<10>,
+    o_symbol1:      output logic<10>,
+    o_symbol2:      output logic<10>,
+    o_symbol3:      output logic<10>,
 ) {
+    // Local re-register (quasi-static, like enable_r below).
+    var four_lane_r: logic;
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            four_lane_r = 0;
+        } else {
+            four_lane_r = i_four_lane;
+        }
+    }
     // serializer ready → byte tick (gated by enable so the chain is silent
     // when the main link is disabled, and rate-limited so only one byte
     // is in flight through the source path → scrambler → encoder).
@@ -122,25 +140,58 @@ pub module main_link_tx_lane #(
         o_scramble_disable: tpg_scramble_disable,
     );
 
-    // ----- Pixel FIFO -----
-    var fifo_byte:  logic<8>;
-    var fifo_empty: logic;
-    var fifo_pop:   logic;
+    // ----- Pixel FIFOs (mode-selected) -----
+    // The byte-serial FIFO serves 1-lane mode; the quad FIFO serves
+    // 4-lane mode (one color component of four pixels per pop). Both are
+    // instantiated; the inactive one sees no pushes and no pops.
+    var fifo_byte:   logic<8>;
+    var fifo_empty1: logic;
+    var fifo_ready1: logic;
+    var fifo_bytes4: logic<32>;
+    var fifo_empty4: logic;
+    var fifo_ready4: logic;
+    var fifo_bytes:  logic<32>;
+    var fifo_empty:  logic;
+    var fifo_pop:    logic;
 
     inst u_pixel: pixel_fifo (
         i_clk        : i_clk,
         i_rstn       : i_rstn,
-        s_axis_tvalid: s_axis_tvalid,
-        s_axis_tready: s_axis_tready,
+        s_axis_tvalid: s_axis_tvalid && !four_lane_r,
+        s_axis_tready: fifo_ready1,
         s_axis_tdata : s_axis_tdata,
         o_pop_byte   : fifo_byte,
-        o_pop_empty  : fifo_empty,
-        i_pop        : fifo_pop,
+        o_pop_empty  : fifo_empty1,
+        i_pop        : fifo_pop && !four_lane_r,
     );
+    inst u_pixel4: pixel_fifo_quad (
+        i_clk        : i_clk,
+        i_rstn       : i_rstn,
+        s_axis_tvalid: s_axis_tvalid && four_lane_r,
+        s_axis_tready: fifo_ready4,
+        s_axis_tdata : s_axis_tdata,
+        o_bytes      : fifo_bytes4,
+        o_empty      : fifo_empty4,
+        i_pop        : fifo_pop && four_lane_r,
+    );
+    always_comb {
+        if four_lane_r {
+            s_axis_tready = fifo_ready4;
+            fifo_bytes    = fifo_bytes4;
+            fifo_empty    = fifo_empty4;
+        } else {
+            s_axis_tready = fifo_ready1;
+            fifo_bytes    = {24'h0, fifo_byte};
+            fifo_empty    = fifo_empty1;
+        }
+    }
 
     // ----- Video framer (with embedded MSA + TU) -----
     var vid_valid:            logic;
     var vid_byte:             logic<8>;
+    var vid_byte1:            logic<8>;
+    var vid_byte2:            logic<8>;
+    var vid_byte3:            logic<8>;
     var vid_is_k:             logic;
     var vid_scramble_disable: logic;
 
@@ -166,18 +217,22 @@ pub module main_link_tx_lane #(
         i_tu_active       : i_tu_active,
         i_line_symbols    : i_line_symbols,
         i_active_window   : i_active_window,
-        i_pixel_byte      : fifo_byte,
+        i_four_lane       : four_lane_r,
+        i_pixel_bytes     : fifo_bytes,
         i_pixel_empty     : fifo_empty,
         o_pixel_pop       : fifo_pop,
         o_valid           : vid_valid,
         o_byte            : vid_byte,
+        o_byte1           : vid_byte1,
+        o_byte2           : vid_byte2,
+        o_byte3           : vid_byte3,
         o_is_k            : vid_is_k,
         o_scramble_disable: vid_scramble_disable,
     );
 
     // ----- Source mux (training vs video) -----
     var mux_valid:            logic;
-    var mux_byte:             logic<8>;
+    var mux_bytes:            logic<32>;
     var mux_is_k:             logic;
     var mux_scramble_disable: logic;
 
@@ -188,11 +243,11 @@ pub module main_link_tx_lane #(
         i_train_is_k            : tpg_is_k,
         i_train_scramble_disable: tpg_scramble_disable,
         i_video_valid           : vid_valid,
-        i_video_byte            : vid_byte,
+        i_video_bytes           : {vid_byte3, vid_byte2, vid_byte1, vid_byte},
         i_video_is_k            : vid_is_k,
         i_video_scramble_disable: vid_scramble_disable,
         o_valid                 : mux_valid,
-        o_byte                  : mux_byte,
+        o_bytes                 : mux_bytes,
         o_is_k                  : mux_is_k,
         o_scramble_disable      : mux_scramble_disable,
     );
@@ -204,18 +259,18 @@ pub module main_link_tx_lane #(
     // stream shifts by one clock uniformly, which the protocol does not
     // observe. -----
     var mux_valid_r:            logic;
-    var mux_byte_r:             logic<8>;
+    var mux_bytes_r:            logic<32>;
     var mux_is_k_r:             logic;
     var mux_scramble_disable_r: logic;
     always_ff (i_clk, i_rstn) {
         if_reset {
             mux_valid_r            = 0;
-            mux_byte_r             = 0;
+            mux_bytes_r            = 0;
             mux_is_k_r             = 0;
             mux_scramble_disable_r = 0;
         } else {
             mux_valid_r            = mux_valid;
-            mux_byte_r             = mux_byte;
+            mux_bytes_r            = mux_bytes;
             mux_is_k_r             = mux_is_k;
             mux_scramble_disable_r = mux_scramble_disable;
         }
@@ -223,7 +278,7 @@ pub module main_link_tx_lane #(
 
     // ----- Scrambler -----
     var sc_valid: logic;
-    var sc_data:  logic<8>;
+    var sc_data:  logic<32>;
     var sc_is_k:  logic;
 
     // Reset the LFSR only on SR (K28.0 = 0x1C), per DP 1.2 §3.1.6: BS
@@ -233,7 +288,7 @@ pub module main_link_tx_lane #(
     // would put the wire content out of step with such a sink for all
     // lines between two SRs.
     let sc_seed_reset: logic =
-        mux_valid_r && mux_is_k_r && (mux_byte_r == 8'h1C);
+        mux_valid_r && mux_is_k_r && (mux_bytes_r[7:0] == 8'h1C);
 
     inst u_sc: scrambler (
         i_clk             : i_clk,
@@ -241,7 +296,7 @@ pub module main_link_tx_lane #(
         i_seed_reset      : sc_seed_reset,
         i_scramble_disable: mux_scramble_disable_r,
         i_valid           : mux_valid_r,
-        i_data            : mux_byte_r,
+        i_data            : mux_bytes_r,
         i_is_k            : mux_is_k_r,
         o_valid           : sc_valid,
         o_data            : sc_data,
@@ -264,19 +319,87 @@ pub module main_link_tx_lane #(
     }
     let enc_rd_reset: logic = rd_reset_pending && sc_valid;
 
-    // ----- 8B/10B encoder -----
+    // ----- Mandatory inter-lane skew (DP 1.2 section 2.2.1.6) -----
+    // Lane N is delayed by 2N symbols AFTER scrambling (the scrambler
+    // operates in the lane-aligned domain, where the shared-LFSR
+    // equivalence holds) and BEFORE per-lane 8B/10B encoding. The skew
+    // is applied always — training patterns included — so the sink's
+    // deskew trained on TPS2 matches the video stream. Each lane's is_k
+    // travels with its byte. Shift only on valid so the paced (sim)
+    // mode keeps the same symbol-count offsets.
+    var skew1: logic<18>; // 2 stages x {is_k, byte}
+    var skew2: logic<36>; // 4 stages
+    var skew3: logic<54>; // 6 stages
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            skew1 = 0;
+            skew2 = 0;
+            skew3 = 0;
+        } else {
+            if sc_valid {
+                skew1 = {skew1[8:0], sc_is_k, sc_data[15:8]};
+                skew2 = {skew2[26:0], sc_is_k, sc_data[23:16]};
+                skew3 = {skew3[44:0], sc_is_k, sc_data[31:24]};
+            }
+        }
+    }
+    let lane1_byte: logic<8> = skew1[16:9];
+    let lane1_is_k: logic    = skew1[17];
+    let lane2_byte: logic<8> = skew2[34:27];
+    let lane2_is_k: logic    = skew2[35];
+    let lane3_byte: logic<8> = skew3[52:45];
+    let lane3_is_k: logic    = skew3[53];
+
+    // ----- 8B/10B encoders (independent running disparity per lane) -----
     var enc_valid:  logic;
     var enc_symbol: logic<10>;
+    var enc_valid1: logic;
+    var enc_symbol1: logic<10>;
+    var enc_valid2: logic;
+    var enc_symbol2: logic<10>;
+    var enc_valid3: logic;
+    var enc_symbol3: logic<10>;
+    let _unused_enc_valids: logic<3> = {enc_valid3, enc_valid2, enc_valid1};
 
     inst u_enc: encoder_8b10b (
         i_clk     : i_clk,
         i_rstn    : i_rstn,
         i_valid   : sc_valid,
-        i_data    : sc_data,
+        i_data    : sc_data[7:0],
         i_is_k    : sc_is_k,
         i_rd_reset: enc_rd_reset,
         o_valid   : enc_valid,
         o_symbol  : enc_symbol,
+    );
+    inst u_enc1: encoder_8b10b (
+        i_clk     : i_clk,
+        i_rstn    : i_rstn,
+        i_valid   : sc_valid,
+        i_data    : lane1_byte,
+        i_is_k    : lane1_is_k,
+        i_rd_reset: enc_rd_reset,
+        o_valid   : enc_valid1,
+        o_symbol  : enc_symbol1,
+    );
+    inst u_enc2: encoder_8b10b (
+        i_clk     : i_clk,
+        i_rstn    : i_rstn,
+        i_valid   : sc_valid,
+        i_data    : lane2_byte,
+        i_is_k    : lane2_is_k,
+        i_rd_reset: enc_rd_reset,
+        o_valid   : enc_valid2,
+        o_symbol  : enc_symbol2,
+    );
+    inst u_enc3: encoder_8b10b (
+        i_clk     : i_clk,
+        i_rstn    : i_rstn,
+        i_valid   : sc_valid,
+        i_data    : lane3_byte,
+        i_is_k    : lane3_is_k,
+        i_rd_reset: enc_rd_reset,
+        o_valid   : enc_valid3,
+        o_symbol  : enc_symbol3,
     );
 
     // ----- 10:1 serializer (sim / debug). FPGA builds typically use
@@ -291,7 +414,10 @@ pub module main_link_tx_lane #(
         o_bit_valid: o_bit_valid,
     );
 
-    // 10-bit encoder symbol exposed for off-chip serializers.
+    // 10-bit encoder symbols exposed for off-chip serializers.
     assign o_symbol_valid = enc_valid;
     assign o_symbol       = enc_symbol;
+    assign o_symbol1      = enc_symbol1;
+    assign o_symbol2      = enc_symbol2;
+    assign o_symbol3      = enc_symbol3;
 }

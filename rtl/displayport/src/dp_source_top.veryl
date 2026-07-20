@@ -81,9 +81,14 @@ pub module dp_source_top #(
     // Main-link lane 0 serial output (Phase C: 1 lane only)
     o_lane0_bit:       output logic,
     o_lane0_bit_valid: output logic,
-    // 10-bit encoder symbol for off-chip serializers (Gowin OSER10 etc.)
+    // 10-bit encoder symbols for off-chip serializers (Gowin OSER10
+    // etc.), one per lane. Lanes 1..3 are meaningful in 4-lane mode;
+    // the mandatory 2N-symbol inter-lane skew is already applied.
     o_lane0_symbol_valid: output logic,
     o_lane0_symbol:       output logic<10>,
+    o_lane1_symbol:       output logic<10>,
+    o_lane2_symbol:       output logic<10>,
+    o_lane3_symbol:       output logic<10>,
 
     // AXI-Stream pixel input (Phase D, 24bpp RGB), link clock domain.
     s_axis_video_tvalid: input  logic,
@@ -215,6 +220,18 @@ pub module dp_source_top #(
         );
     }
 
+    // 4-lane mode flag, derived from the synchronized LANE_COUNT and
+    // re-registered (quasi-static: FW sets LANE_COUNT before enabling
+    // the main link).
+    var four_lane_r: logic;
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            four_lane_r = 0;
+        } else {
+            four_lane_r = (ml_lane_count_l == 3'd4);
+        }
+    }
+
     // Re-register the synchronized video enable in the link domain.
     // The synchronizer output fans out deep into the framer and the
     // pixel-FIFO read address logic; this pipeline stage decouples that
@@ -300,6 +317,7 @@ pub module dp_source_top #(
         i_video_enable     : v_enable_lr,
         i_line_symbols     : v_line_symbols_l,
         i_active_window    : v_active_window_l,
+        i_four_lane        : four_lane_r,
         i_htotal         : v_htotal_l,
         i_vtotal         : v_vtotal_l,
         i_hstart         : v_hstart_l,
@@ -319,5 +337,8 @@ pub module dp_source_top #(
         o_lane0_bit_valid   : o_lane0_bit_valid,
         o_lane0_symbol_valid: o_lane0_symbol_valid,
         o_lane0_symbol      : o_lane0_symbol,
+        o_lane1_symbol      : o_lane1_symbol,
+        o_lane2_symbol      : o_lane2_symbol,
+        o_lane3_symbol      : o_lane3_symbol,
     );
 }

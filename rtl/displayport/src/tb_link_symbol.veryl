@@ -58,7 +58,7 @@ module link_symbol_round_trip;
 
     // scrambler outputs (1 cycle)
     logic       sc_valid;
-    logic [7:0] sc_data;
+    logic [31:0] sc_data;
     logic       sc_is_k;
 
     // encoder outputs (1 cycle)
@@ -73,7 +73,7 @@ module link_symbol_round_trip;
 
     // descrambler outputs (1 cycle)
     logic       ds_valid;
-    logic [7:0] ds_data;
+    logic [31:0] ds_data;
     logic       ds_is_k;
 
     // demux outputs (combinational)
@@ -99,7 +99,7 @@ module link_symbol_round_trip;
         .i_seed_reset       (mux_seed_reset),
         .i_scramble_disable (1'b0),
         .i_valid            (mux_valid),
-        .i_data             (mux_data),
+        .i_data             ({24'h0, mux_data}),
         .i_is_k             (mux_is_k),
         .o_valid      (sc_valid),
         .o_data       (sc_data),
@@ -110,7 +110,7 @@ module link_symbol_round_trip;
         .i_clk      (clk),
         .i_rstn     (rstn),
         .i_valid    (sc_valid),
-        .i_data     (sc_data),
+        .i_data     (sc_data[7:0]),
         .i_is_k     (sc_is_k),
         .i_rd_reset (1'b0),
         .o_valid    (enc_valid),
@@ -141,7 +141,7 @@ module link_symbol_round_trip;
         .i_seed_reset       (rx_sr_pulse),
         .i_scramble_disable (1'b0),
         .i_valid            (dec_valid),
-        .i_data             (dec_data),
+        .i_data             ({24'h0, dec_data}),
         .i_is_k             (dec_is_k),
         .o_valid      (ds_valid),
         .o_data       (ds_data),
@@ -150,7 +150,7 @@ module link_symbol_round_trip;
 
     displayport_link_symbol_demux u_demux (
         .i_valid      (ds_valid),
-        .i_data       (ds_data),
+        .i_data       (ds_data[7:0]),
         .i_is_k       (ds_is_k),
         .o_valid      (rx_valid),
         .o_kind       (rx_kind),

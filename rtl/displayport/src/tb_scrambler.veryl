@@ -39,14 +39,14 @@ module scrambler_loopback;
     logic [7:0] a_data;
     logic       a_is_k;
 
-    logic       b_seed_reset;
-    logic       b_valid;
-    logic [7:0] b_data;
-    logic       b_is_k;
+    logic        b_seed_reset;
+    logic        b_valid;
+    logic [31:0] b_data;
+    logic        b_is_k;
 
-    logic       c_valid;
-    logic [7:0] c_data;
-    logic       c_is_k;
+    logic        c_valid;
+    logic [31:0] c_data;
+    logic        c_is_k;
 
     // Forward (TX) scrambler
     displayport_scrambler tx_scram (
@@ -55,7 +55,7 @@ module scrambler_loopback;
         .i_seed_reset       (a_seed_reset),
         .i_scramble_disable (1'b0),
         .i_valid            (a_valid),
-        .i_data             (a_data),
+        .i_data             ({24'h0, a_data}),
         .i_is_k             (a_is_k),
         .o_valid      (b_valid),
         .o_data       (b_data),
@@ -65,7 +65,7 @@ module scrambler_loopback;
     // Reverse (RX) descrambler — same module, same INIT seed.
     // SR detection on RX: assert seed_reset whenever the K-code 0x1C
     // (scrambler reset symbol) flows through.
-    wire   rx_seed_reset = b_valid && b_is_k && (b_data == 8'h1C);
+    wire   rx_seed_reset = b_valid && b_is_k && (b_data[7:0] == 8'h1C);
     displayport_scrambler rx_descram (
         .i_clk              (clk),
         .i_rstn             (rstn),
@@ -161,10 +161,10 @@ module scrambler_loopback;
     always_ff @(posedge clk) begin
         if (rstn && c_valid) begin
             checked <= checked + 1;
-            if (c_data !== tx_pipe[1].data || c_is_k !== tx_pipe[1].is_k) begin
+            if (c_data[7:0] !== tx_pipe[1].data || c_is_k !== tx_pipe[1].is_k) begin
                 mismatches <= mismatches + 1;
                 $display("[tb_scrambler] MISMATCH @%0t: expected data=%02h k=%b got data=%02h k=%b",
-                         $time, tx_pipe[1].data, tx_pipe[1].is_k, c_data, c_is_k);
+                         $time, tx_pipe[1].data, tx_pipe[1].is_k, c_data[7:0], c_is_k);
             end
         end
     end
@@ -190,9 +190,9 @@ module scrambler_golden;
     logic [7:0] a_data;
     logic       a_is_k;
 
-    logic       b_valid;
-    logic [7:0] b_data;
-    logic       b_is_k;
+    logic        b_valid;
+    logic [31:0] b_data;
+    logic        b_is_k;
 
     displayport_scrambler u_scram (
         .i_clk              (clk),
@@ -200,7 +200,7 @@ module scrambler_golden;
         .i_seed_reset       (seed_reset),
         .i_scramble_disable (1'b0),
         .i_valid            (a_valid),
-        .i_data             (a_data),
+        .i_data             ({24'h0, a_data}),
         .i_is_k             (a_is_k),
         .o_valid            (b_valid),
         .o_data             (b_data),
@@ -233,10 +233,10 @@ module scrambler_golden;
     endtask
 
     task automatic expect_out(input logic [7:0] d, input logic k, input string what);
-        if (!b_valid || b_data !== d || b_is_k !== k) begin
+        if (!b_valid || b_data[7:0] !== d || b_is_k !== k) begin
             errors = errors + 1;
             $display("[tb_scrambler_golden] MISMATCH (%s): expected (%02h, k=%b) got (valid=%b, %02h, k=%b)",
-                     what, d, k, b_valid, b_data, b_is_k);
+                     what, d, k, b_valid, b_data[7:0], b_is_k);
         end
     endtask
 

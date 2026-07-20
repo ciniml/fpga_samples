@@ -112,7 +112,7 @@ module video_pipeline_full;
     // ----- TB-side frame parser: taps the pre-scrambler byte stream from
     //       CPU0's main_link mux. Verifies BS / VBID / pixel layout.
     wire        tx_valid = g[0].dut.main_link.u_lane0.u_mux.o_valid;
-    wire [7:0]  tx_byte  = g[0].dut.main_link.u_lane0.u_mux.o_byte;
+    wire [7:0]  tx_byte  = g[0].dut.main_link.u_lane0.u_mux.o_bytes[7:0];
     wire        tx_is_k  = g[0].dut.main_link.u_lane0.u_mux.o_is_k;
     // Gate the parser until the firmware enables the video pipeline, so
     // that training-pattern bytes (TPS2 contains K28.5) are not misparsed

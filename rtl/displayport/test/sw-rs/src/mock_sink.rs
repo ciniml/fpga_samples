@@ -38,7 +38,7 @@ impl MockSink {
         s.dpcd[dpcd::MAX_LINK_RATE as usize] = dpcd::LINK_BW_RBR;
         // 1 lane + ENHANCED_FRAME_CAP (bit 7): a DPCD 1.2 sink must
         // support Enhanced Framing (DP 1.2 §2.2.1.2).
-        s.dpcd[dpcd::MAX_LANE_COUNT as usize] = 0x81;
+        s.dpcd[dpcd::MAX_LANE_COUNT as usize] = 0x84; // 4 lanes + ENHANCED_FRAME_CAP
         s.dpcd[dpcd::MAX_DOWNSPREAD as usize] = 0x01; // 0.5% downspread
         s.dpcd[dpcd::TRAINING_AUX_RD_INTERVAL as usize] = 0x00;
         s
@@ -101,9 +101,15 @@ impl MockSink {
             }
         }
 
-        self.write_byte(dpcd::LANE0_1_STATUS, lane_status);
+        // Mirror the lane-0 nibble onto lanes 1..3 so multi-lane
+        // training sees identical per-lane progress.
+        let both = (lane_status & 0x0F) | ((lane_status & 0x0F) << 4);
+        self.write_byte(dpcd::LANE0_1_STATUS, both);
+        self.write_byte(dpcd::LANE2_3_STATUS, both);
         self.write_byte(dpcd::LANE_ALIGN_STATUS_UPDATED, lane_align);
-        self.write_byte(dpcd::ADJUST_REQUEST_LANE0_1, adjust);
+        let adj_both = (adjust & 0x0F) | ((adjust & 0x0F) << 4);
+        self.write_byte(dpcd::ADJUST_REQUEST_LANE0_1, adj_both);
+        self.write_byte(dpcd::ADJUST_REQUEST_LANE2_3, adj_both);
     }
 
     fn handle_request(&mut self, aux: &AuxCh) -> Result<bool, ()> {

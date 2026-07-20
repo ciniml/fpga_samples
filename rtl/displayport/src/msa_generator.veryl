@@ -53,12 +53,21 @@ pub module msa_generator (
     i_nvid:    input logic<24>,
     i_misc:    input logic<16>, // [7:0]=MISC0, [15:8]=MISC1
 
+    // 0: 1-lane 39-symbol sequence on o_byte.
+    // 1: 4-lane 12-symbol-per-lane layout (Fig 2-18): o_byte = lane 0,
+    //    o_byte1..3 = lanes 1..3. SS/SE and the Mvid triple are common
+    //    to all lanes.
+    i_four_lane: input logic,
+
     // 1 while emission is in progress (or scheduled). Upstream may use it
     // to gate other byte sources.
     o_busy:  output logic,
     // Single-cycle pulse with each emitted byte.
     o_valid: output logic,
     o_byte:  output logic<8>,
+    o_byte1: output logic<8>,
+    o_byte2: output logic<8>,
+    o_byte3: output logic<8>,
     o_is_k:  output logic,
 ) {
     // One-hot slot ring (39 slots). A shift register instead of a
@@ -125,20 +134,77 @@ pub module msa_generator (
         (if sel_misc1  ? i_misc[15:8]                   : 8'h00) |
         (if sel_se     ? 8'hFD                          : 8'h00);
 
+    // ---- 4-lane layout (Fig 2-18): 12 slots per lane ----
+    //   slot  0, 1: SS SS                 (all lanes)
+    //   slot  2..4: Mvid23:16/15:8/7:0    (all lanes)
+    //   slot  5..10: per-lane attribute column:
+    //     lane0: Htotal15:8, Htotal7:0, Vtotal15:8, Vtotal7:0,
+    //            HSP|HSW14:8, HSW7:0
+    //     lane1: Hstart15:8, Hstart7:0, Vstart15:8, Vstart7:0,
+    //            VSP|VSW14:8, VSW7:0
+    //     lane2: Hwidth15:8, Hwidth7:0, Vheight15:8, Vheight7:0, 0, 0
+    //     lane3: Nvid23:16, Nvid15:8, Nvid7:0, MISC0, MISC1, 0
+    //   slot 11: SE                       (all lanes)
+    var oh4:     logic<12>;
+    var active4: logic;
+
+    let s4_ss: logic = oh4[0] | oh4[1];
+    let s4_common: logic<8> =
+        (if s4_ss   ? 8'h5C          : 8'h00) |
+        (if oh4[2]  ? i_mvid[23:16]  : 8'h00) |
+        (if oh4[3]  ? i_mvid[15:8]   : 8'h00) |
+        (if oh4[4]  ? i_mvid[7:0]    : 8'h00) |
+        (if oh4[11] ? 8'hFD          : 8'h00);
+    let mux4_l0: logic<8> = s4_common |
+        (if oh4[5]  ? i_htotal[15:8] : 8'h00) |
+        (if oh4[6]  ? i_htotal[7:0]  : 8'h00) |
+        (if oh4[7]  ? i_vtotal[15:8] : 8'h00) |
+        (if oh4[8]  ? i_vtotal[7:0]  : 8'h00) |
+        (if oh4[9]  ? {i_hsw_hsp[15], i_hsw_hsp[14:8]} : 8'h00) |
+        (if oh4[10] ? i_hsw_hsp[7:0] : 8'h00);
+    let mux4_l1: logic<8> = s4_common |
+        (if oh4[5]  ? i_hstart[15:8] : 8'h00) |
+        (if oh4[6]  ? i_hstart[7:0]  : 8'h00) |
+        (if oh4[7]  ? i_vstart[15:8] : 8'h00) |
+        (if oh4[8]  ? i_vstart[7:0]  : 8'h00) |
+        (if oh4[9]  ? {i_vsw_vsp[15], i_vsw_vsp[14:8]} : 8'h00) |
+        (if oh4[10] ? i_vsw_vsp[7:0] : 8'h00);
+    let mux4_l2: logic<8> = s4_common |
+        (if oh4[5]  ? i_hwidth[15:8]  : 8'h00) |
+        (if oh4[6]  ? i_hwidth[7:0]   : 8'h00) |
+        (if oh4[7]  ? i_vheight[15:8] : 8'h00) |
+        (if oh4[8]  ? i_vheight[7:0]  : 8'h00);
+    let mux4_l3: logic<8> = s4_common |
+        (if oh4[5]  ? i_nvid[23:16] : 8'h00) |
+        (if oh4[6]  ? i_nvid[15:8]  : 8'h00) |
+        (if oh4[7]  ? i_nvid[7:0]   : 8'h00) |
+        (if oh4[8]  ? i_misc[7:0]   : 8'h00) |
+        (if oh4[9]  ? i_misc[15:8]  : 8'h00);
+
     always_ff (i_clk, i_rstn) {
         if_reset {
             oh      = 39'd1;
             active  = 0;
+            oh4     = 12'd1;
+            active4 = 0;
             o_valid = 0;
             o_byte  = 0;
+            o_byte1 = 0;
+            o_byte2 = 0;
+            o_byte3 = 0;
             o_is_k  = 0;
         } else {
             // Sticky outputs: only the emit branch updates o_byte/o_is_k.
             // Mux upstream samples them on the NEXT byte_tick, so the
             // registered value must persist between ticks.
-            if !active && i_trigger {
-                active = 1;
-                oh     = 39'd1;
+            if !active && !active4 && i_trigger {
+                if i_four_lane {
+                    active4 = 1;
+                    oh4     = 12'd1;
+                } else {
+                    active = 1;
+                    oh     = 39'd1;
+                }
             } else if active && i_byte_tick {
                 o_valid = 1;
                 o_byte  = mux_byte;
@@ -148,9 +214,21 @@ pub module msa_generator (
                 } else {
                     oh = {oh[37:0], 1'b0};
                 }
+            } else if active4 && i_byte_tick {
+                o_valid = 1;
+                o_byte  = mux4_l0;
+                o_byte1 = mux4_l1;
+                o_byte2 = mux4_l2;
+                o_byte3 = mux4_l3;
+                o_is_k  = s4_ss | oh4[11];
+                if oh4[11] {
+                    active4 = 0;
+                } else {
+                    oh4 = {oh4[10:0], 1'b0};
+                }
             }
         }
     }
 
-    assign o_busy = active || i_trigger;
+    assign o_busy = active || active4 || i_trigger;
 }

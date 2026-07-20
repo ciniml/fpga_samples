@@ -30,7 +30,8 @@ module tu_packer_layout;
     logic        pixel_pop;
 
     logic        valid;
-    logic [7:0]  out_byte;
+    logic [31:0] out_bytes;
+    wire  [7:0]  out_byte = out_bytes[7:0];
     logic        out_is_k;
 
     // Simple pixel source modelled as a combinational FIFO: data = mem[rd_ptr],
@@ -51,11 +52,11 @@ module tu_packer_layout;
         .i_emit_enable  (emit_enable),
         .i_tu_start     (tu_start),
         .i_active_count (active_count),
-        .i_pixel_byte   (pixel_byte),
+        .i_pixel_bytes  ({24'h0, pixel_byte}),
         .i_pixel_empty  (pixel_empty),
         .o_pixel_pop    (pixel_pop),
         .o_valid        (valid),
-        .o_byte         (out_byte),
+        .o_bytes        (out_bytes),
         .o_is_k         (out_is_k)
     );
 

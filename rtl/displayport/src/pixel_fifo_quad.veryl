@@ -1,0 +1,149 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file pixel_fifo_quad.veryl
+ * @brief Pixel FIFO for the 4-lane main link. Stores 4-pixel words and
+ *        presents one COLOR COMPONENT of four consecutive pixels per pop,
+ *        matching DP 1.2 pixel steering (Table 2-2: pixel 4N+L rides
+ *        lane L) and 24bpp packing (Table 2-5: R, G, B down each lane):
+ *
+ *          phase 0: o_bytes = {B? no — R of px3..px0}
+ *          phase 0: lane L byte = R of pixel (4N+L)
+ *          phase 1: lane L byte = G of pixel (4N+L)
+ *          phase 2: lane L byte = B of pixel (4N+L), word consumed
+ *
+ *        o_bytes[8*L +: 8] carries lane L. AXI input is one pixel per
+ *        transfer, tdata[23:16]=R, [15:8]=G, [7:0]=B (same convention as
+ *        pixel_fifo). hwidth must be a multiple of 4 (whole words only).
+ */
+
+pub module pixel_fifo_quad #(
+    param DEPTH_WORDS: u32 = 32, // 32 words = 128 pixels
+) (
+    i_clk:  input clock_posedge,
+    i_rstn: input reset_sync_low,
+
+    s_axis_tvalid: input  logic,
+    s_axis_tready: output logic,
+    s_axis_tdata:  input  logic<24>,
+
+    // 4 bytes (one component x 4 lanes) per pop.
+    o_bytes: output logic<32>,
+    o_empty: output logic,
+    i_pop:   input  logic,
+) {
+    const ADDR_BITS: u32 = $clog2(DEPTH_WORDS);
+    type ptr_t = logic<ADDR_BITS>;
+    type cnt_t = logic<ADDR_BITS + 1>;
+
+    // 4 pixels x 24 bit per word.
+    var mem: logic<96>[DEPTH_WORDS];
+
+    var wr_ptr: ptr_t;
+    var rd_ptr: ptr_t;
+    var count:  cnt_t; // words
+
+    // Write-side packer: accumulate 4 pixels, then commit one word.
+    var pack:     logic<72>; // pixels 0..2 of the word in flight
+    var pack_cnt: logic<2>;
+
+    let full: logic = count == (DEPTH_WORDS as cnt_t);
+    assign s_axis_tready = !full;
+    let push_word: logic = s_axis_tvalid && !full && (pack_cnt == 2'd3);
+
+    // Read side: registered word + component phase.
+    var rd_word:  logic<96>;
+    var rd_phase: logic<2>;
+    var empty_r:  logic;
+    let word_consumed: logic = i_pop && !empty_r && (rd_phase == 2'd2);
+
+    // Component extraction: phase 0 = R ([23:16] of each pixel),
+    // 1 = G, 2 = B. Lane L = pixel L of the word.
+    function comp (
+        word:  input logic<96>,
+        lane:  input logic<2>,
+        phase: input logic<2>,
+    ) -> logic<8> {
+        var px: logic<24>;
+        px = case lane {
+            2'd0:    word[23:0],
+            2'd1:    word[47:24],
+            2'd2:    word[71:48],
+            default: word[95:72],
+        };
+        return case phase {
+            2'd0:    px[23:16],
+            2'd1:    px[15:8],
+            default: px[7:0],
+        };
+    }
+
+    always_comb {
+        o_bytes[7:0]   = comp(rd_word, 2'd0, rd_phase);
+        o_bytes[15:8]  = comp(rd_word, 2'd1, rd_phase);
+        o_bytes[23:16] = comp(rd_word, 2'd2, rd_phase);
+        o_bytes[31:24] = comp(rd_word, 2'd3, rd_phase);
+    }
+    assign o_empty = empty_r;
+
+    // Refill the read-word buffer whenever it is (or is becoming) free
+    // and a committed word exists. `count` tracks words in `mem` only;
+    // the buffered word is not included, so total capacity is
+    // DEPTH_WORDS + 1 words. A same-cycle push can never target the
+    // address being loaded: they coincide only when count == 0, and
+    // loading requires count != 0.
+    let loading: logic = (empty_r || word_consumed) && (count != 0);
+
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            wr_ptr   = 0;
+            rd_ptr   = 0;
+            count    = 0;
+            pack     = 0;
+            pack_cnt = 0;
+            rd_word  = 0;
+            rd_phase = 0;
+            empty_r  = 1;
+        } else {
+            if s_axis_tvalid && !full {
+                if pack_cnt == 2'd3 {
+                    mem[wr_ptr] = {s_axis_tdata, pack};
+                    wr_ptr      = wr_ptr + (1 as ptr_t);
+                    pack_cnt    = 0;
+                } else {
+                    pack = case pack_cnt {
+                        2'd0:    {pack[71:24], s_axis_tdata},
+                        2'd1:    {pack[71:48], s_axis_tdata, pack[23:0]},
+                        default: {s_axis_tdata, pack[47:0]},
+                    };
+                    pack_cnt = pack_cnt + 2'd1;
+                }
+            }
+
+            if i_pop && !empty_r {
+                if rd_phase == 2'd2 {
+                    rd_phase = 0;
+                } else {
+                    rd_phase = rd_phase + 2'd1;
+                }
+            }
+
+            if loading {
+                rd_word = mem[rd_ptr];
+                rd_ptr  = rd_ptr + (1 as ptr_t);
+                empty_r = 0;
+            } else if word_consumed {
+                empty_r = 1;
+            }
+
+            if push_word && !loading {
+                count = count + (1 as cnt_t);
+            } else if !push_word && loading {
+                count = count - (1 as cnt_t);
+            }
+        }
+    }
+}

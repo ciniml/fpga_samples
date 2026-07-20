@@ -44,12 +44,15 @@ pub module scrambler #(
 
     // Upstream sample (one byte per accepted cycle).
     i_valid: input logic,
-    i_data:  input logic<8>,
+    // Lane L on [8*L +: 8]. All lanes share one LFSR: per DP 1.2 every
+    // lane's scrambler is reset by the (lane-aligned) SR and advances
+    // every symbol, so the per-lane states are always identical.
+    i_data:  input logic<32>,
     i_is_k:  input logic,
 
     // Downstream sample (one cycle latency).
     o_valid: output logic,
-    o_data:  output logic<8>,
+    o_data:  output logic<32>,
     o_is_k:  output logic,
 ) {
     var lfsr: logic<16>;
@@ -76,22 +79,18 @@ pub module scrambler #(
                 // state after i serial steps, which equals bit (15 - i)
                 // of the per-byte state used by App E's scrambleByte().
                 let s0: logic<16> = lfsr;
-                let b0: logic     = i_data[0] ^ s0[15];
                 let s1: logic<16> = {s0[14:5], s0[4] ^ s0[15], s0[3] ^ s0[15], s0[2] ^ s0[15], s0[1:0], s0[15]};
-                let b1: logic     = i_data[1] ^ s1[15];
                 let s2: logic<16> = {s1[14:5], s1[4] ^ s1[15], s1[3] ^ s1[15], s1[2] ^ s1[15], s1[1:0], s1[15]};
-                let b2: logic     = i_data[2] ^ s2[15];
                 let s3: logic<16> = {s2[14:5], s2[4] ^ s2[15], s2[3] ^ s2[15], s2[2] ^ s2[15], s2[1:0], s2[15]};
-                let b3: logic     = i_data[3] ^ s3[15];
                 let s4: logic<16> = {s3[14:5], s3[4] ^ s3[15], s3[3] ^ s3[15], s3[2] ^ s3[15], s3[1:0], s3[15]};
-                let b4: logic     = i_data[4] ^ s4[15];
                 let s5: logic<16> = {s4[14:5], s4[4] ^ s4[15], s4[3] ^ s4[15], s4[2] ^ s4[15], s4[1:0], s4[15]};
-                let b5: logic     = i_data[5] ^ s5[15];
                 let s6: logic<16> = {s5[14:5], s5[4] ^ s5[15], s5[3] ^ s5[15], s5[2] ^ s5[15], s5[1:0], s5[15]};
-                let b6: logic     = i_data[6] ^ s6[15];
                 let s7: logic<16> = {s6[14:5], s6[4] ^ s6[15], s6[3] ^ s6[15], s6[2] ^ s6[15], s6[1:0], s6[15]};
-                let b7: logic     = i_data[7] ^ s7[15];
                 let s8: logic<16> = {s7[14:5], s7[4] ^ s7[15], s7[3] ^ s7[15], s7[2] ^ s7[15], s7[1:0], s7[15]};
+                // Data bit i XORs with bit 15 of the state after i
+                // serial steps (the advance is data-independent, so the
+                // same PRBS byte applies to every lane).
+                let prbs: logic<8> = {s7[15], s6[15], s5[15], s4[15], s3[15], s2[15], s1[15], s0[15]};
 
                 lfsr = s8;
 
@@ -101,7 +100,7 @@ pub module scrambler #(
                     // advanceLfsr() unconditionally).
                     o_data = i_data;
                 } else {
-                    o_data = {b7, b6, b5, b4, b3, b2, b1, b0};
+                    o_data = i_data ^ {prbs repeat 4};
                 }
             }
         }
