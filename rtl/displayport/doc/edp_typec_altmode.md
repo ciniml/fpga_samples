@@ -217,3 +217,69 @@ vtotal 2058×?…refresh = 141.75M/(htotal×vtotal) を60Hz近傍に調整。
    PD Source FWスタック
 4. eDPパネル選定 (40ピン4レーン品 or 2レーン品+2レーンモード) と
    変換基板・電源シーケンス回路
+
+
+---
+
+## 5. Type-C基板 具体構成案: FUSB302B + FUSB340×2 (2026-07-21)
+
+### 5.1 FUSB340の役割と個数
+
+FUSB340はUSB3.1向けの表裏反転スイッチで、コモン側2差動ペア↔コネクタ側
+4差動ペア(TX1/RX1/TX2/RX2)の2:1muxを1個で構成する。**DP Alt Mode
+Assignment C (4レーン) にはSSペア4組すべてにDPレーンを載せる**ため、
+2個使いにする:
+
+- FUSB340 #A: コモン側 = ML0, ML1 → 正転時 TX1/RX1、反転時 TX2/RX2
+- FUSB340 #B: コモン側 = ML2, ML3 → 正転時 TX2/RX2、反転時 TX1/RX1
+- 両者のSELをFW GPIOで相補制御 (CC判定結果に従う)
+
+パッシブ双方向muxなので「RX位置にソースのTXを流す」DPの使い方でも
+問題ない。帯域10Gbps級でRBR 1.62Gbpsは余裕。
+
+### 5.2 ブロック図
+
+```
+FPGA ML0..3 --100nF AC結合×4ペア--> FUSB340 x2 --> USB-C SS1/SS2ペア
+FPGA AUX± (TLVDS_IOBUF+バイアス) --> SBUクロスバSW --> SBU1/SBU2
+FPGA I2C (実装済みマスタ) <--------> FUSB302B <---> CC1/CC2 (+VCONN)
+FPGA GPIO(cpu_io_out) ------------> FUSB340 SEL x2 / SBU SW SEL / VBUS EN
+5V --> 電流制限ロードスイッチ --> VBUS
+```
+
+### 5.3 追加で必要な部品
+
+| 部品 | 役割 | 候補 |
+|---|---|---|
+| SBUクロスバスイッチ | AUX±をSBU1/2へ、反転時は入替え | TS3USB221 / FSUSB42 / NX3L2267 等 (1MHz Manchesterなので低速品で可) |
+| VBUSロードスイッチ | ソースとして5V供給 (電流制限付き) | AP22653, TPS25200 等 |
+| ESD保護 | SS/SBU/CC | TPD4E05U06 等 |
+| AC結合コンデンサ | MLレーン4ペア (DP規格必須) | 100nF 0201/0402 ×8 |
+| AUXバイアス | AUX+ 100kΩプルダウン / AUX- 100kΩプルアップ (ソース側規定) | — |
+
+### 5.4 FUSB302B側の留意点
+
+- Rp提示・アタッチ検出・BMC PD送受・VCONN供給まで1チップで担える
+- INT_Nは配線しておくが、FWは当面**I2Cポーリング**で十分 (現RTLに
+  入力GPIOが無いため。必要になればSYSTEMレジスタに入力ビットを追加)
+- HPDは物理線なし: PDのAttention/Status VDMをFWが受けて**実装済みの
+  仮想HPDレジスタ (SYSTEM HPD bit4)** に反映する
+
+### 5.5 FWドライバの作業分解 (FUSB302B)
+
+1. 初期化: SW_RES → 電源/測定ブロック設定 → Rp提示 (Source)
+2. アタッチ検出: CC測定 → 向き判定 → FUSB340 SEL/SBU SEL設定
+3. PD契約: Source_Capabilities (5V固定で可) → Request受理 → Accept →
+   PS_RDY
+4. VDM: Discover Identity → Discover SVIDs (0xFF01確認) →
+   Discover Modes (**UFP_DピンアサインマスクでC対応を確認**) →
+   Enter Mode → DP Status Update → DP Configure (Assignment C, 4レーン)
+5. Attention受信 → 仮想HPD更新 → 以降は既存のDPブリングアップへ合流
+6. (省略可) SOP'ケーブルe-marker確認、PD3.0対応、Sink役割
+
+### 5.6 未決事項
+
+- 基板はPmod 2口分の高速ピンを使うか、専用ドーターか (MLペア4+AUX+
+  I2C+GPIO×4+5Vで、現Pmod DPのピン割当を流用しつつ拡張が必要)
+- USB2.0 D+/D-は未接続で可 (映像専用。Billboardデバイス非搭載だと
+  Alt Mode失敗時にホスト側へ通知されないが、ソース用途では不問)
