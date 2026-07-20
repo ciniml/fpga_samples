@@ -41,7 +41,16 @@ pub fn run(aux: &AuxCh, ml: &MainLink) -> Result<Stats, Error> {
     // ENHANCED_FRAME_CAP (bit 7 of MAX_LANE_COUNT). DP 1.2 §2.2.1.1
     // requires Enhanced Framing when interoperating with a DPCD 1.2+
     // sink, and such sinks must advertise this capability.
-    let enhanced_framing = (max_lane_count_raw & 0x80) != 0;
+    //
+    // DIAGNOSTIC (hardware bring-up): force EF off. The link runs with
+    // zero symbol errors but the monitor reports "no video input" —
+    // one candidate is a scrambler-reset convention mismatch on the EF
+    // SR sequence (SR BF BF SR contains two SR symbols; resetting on
+    // the first vs the last leaves the LFSR 3 K-advances apart, which
+    // garbles every scrambled byte while keeping 8b10b legal). Plain
+    // framing uses a single SR, removing the ambiguity.
+    const FORCE_DISABLE_EF: bool = true;
+    let enhanced_framing = (max_lane_count_raw & 0x80) != 0 && !FORCE_DISABLE_EF;
     let aux_rd_interval =
         dpcd::read(aux, dpcd::TRAINING_AUX_RD_INTERVAL).map_err(Error::DpcdRead)?;
 

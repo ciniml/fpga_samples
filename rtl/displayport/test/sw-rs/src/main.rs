@@ -12,6 +12,7 @@ use bootrom_pac;
 
 mod aux;
 mod dpcd;
+mod edid;
 mod link_training;
 mod main_link;
 mod mock_sink;
@@ -203,17 +204,62 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &Video) {
         return;
     }
 
-    // Phase C link training.
-    let stats = match link_training::run(aux, ml) {
-        Ok(stats) => {
-            println!(
-                "[SRC] link training done (cr_iters={}, eq_iters={})",
-                stats.cr_iters, stats.eq_iters
-            );
-            stats
+    // Dump the monitor's EDID so we can check which modes it actually
+    // accepts (the link runs error-free but the monitor reports "no
+    // video input" — a rejected timing is one of the few remaining
+    // explanations).
+    let mut edid_buf = [0u8; 128];
+    for block in 0..2u8 {
+        match edid::read_edid(aux, block * 128, &mut edid_buf) {
+            Ok(()) => {
+                for row in 0..8 {
+                    println!(
+                        "[SRC] EDID {:02X}: {:02X?}",
+                        block as usize * 128 + row * 16,
+                        &edid_buf[row * 16..row * 16 + 16]
+                    );
+                }
+            }
+            Err(e) => {
+                println!(
+                    "[SRC] EDID block {} read failed: {:?} (rx_count={})",
+                    block,
+                    e,
+                    aux.rx_count()
+                );
+            }
         }
-        Err(e) => {
-            println!("[SRC] link training failed: {:?}", e);
+    }
+
+    // Phase C link training. Training on the real monitor is
+    // intermittent (EQ typically needs all 5 iterations; occasionally
+    // it misses, and right after the EDID I2C burst the sink's AUX can
+    // be slow to answer), so retry the whole sequence a few times with
+    // a breather in between.
+    let mut stats = None;
+    for attempt in 0..5u32 {
+        match link_training::run(aux, ml) {
+            Ok(s) => {
+                println!(
+                    "[SRC] link training done (attempt={}, cr_iters={}, eq_iters={})",
+                    attempt, s.cr_iters, s.eq_iters
+                );
+                stats = Some(s);
+                break;
+            }
+            Err(e) => {
+                println!("[SRC] link training attempt {} failed: {:?}", attempt, e);
+                // ~50 ms at 27 MHz before retraining from scratch.
+                for _ in 0..450_000 {
+                    unsafe { core::arch::asm!("nop") };
+                }
+            }
+        }
+    }
+    let stats = match stats {
+        Some(s) => s,
+        None => {
+            println!("[SRC] link training failed permanently");
             write_system_out(0x0000_0003);
             return;
         }
