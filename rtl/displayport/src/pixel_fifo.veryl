@@ -59,8 +59,13 @@ pub module pixel_fifo #(
     var count:    count_t;    // occupied pixel words (front word is
                               // complete because pushes are whole pixels)
 
-    let push_accept: logic = s_axis_tvalid && !i_clear && (count <: DEPTH_PIXELS as count_t);
-    assign s_axis_tready = !i_clear && (count <: DEPTH_PIXELS as count_t);
+    // Registered, conservative ready (2-pixel margin): cuts the comb
+    // path from the occupancy counter to the producer's pacing logic.
+    // Occupancy grows at most 1/cycle and tready_r reacts 1 cycle
+    // late, so it never exceeds DEPTH_PIXELS - 1.
+    var tready_r: logic;
+    let push_accept: logic = s_axis_tvalid && tready_r;
+    assign s_axis_tready = tready_r;
 
     always_comb {
         case rd_phase {
@@ -81,13 +86,16 @@ pub module pixel_fifo #(
             rd_phase = 0;
             count    = 0;
             empty_r  = 1;
+            tready_r = 0;
         } else if i_clear {
             wr_ptr   = 0;
             rd_ptr   = 0;
             rd_phase = 0;
             count    = 0;
             empty_r  = 1;
+            tready_r = 0;
         } else {
+            tready_r = (count <: ((DEPTH_PIXELS - 2) as count_t));
             let pop_now:       logic = i_pop && !empty_r;
             let word_consumed: logic = pop_now && (rd_phase == 2'd2);
 

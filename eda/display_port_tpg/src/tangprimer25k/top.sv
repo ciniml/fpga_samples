@@ -140,10 +140,11 @@ module top(
         .VBACK  (VBACK),
         .VACTIVE(VACTIVE),
         .VFRONT (VFRONT),
-        .BOUNCE_LOGO(0),
-        .LOGO_PATH  (""),
-        .LOGO_WIDTH (24),
-        .LOGO_HEIGHT(24)
+        .BOUNCE_LOGO(1),
+        .LOGO_PATH  ("/home/kenta/repos/fpga_samples/eda/display_port_tpg/src/cq_logo.hex"),
+        .LOGO_WIDTH (250),
+        .LOGO_HEIGHT(50),
+        .LOGO_COLOR (24'h000000)
     ) tpg_inst (
         .clock     (clock_byte),
         .reset     (tpg_reset),

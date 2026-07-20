@@ -63,8 +63,10 @@ logic logo_dx = 0;
 logic logo_dy = 0;
 hcounter_t logo_left = 0;
 hcounter_t logo_right = 0;
+hcounter_t logo_left_m1 = 0;
 vcounter_t logo_top = 0;
 vcounter_t logo_bottom = 0;
+vcounter_t logo_top_m1 = 0;
 
 logo_address_t logo_address = 0;
 logic [7:0] logo_pixels = 0;
@@ -108,8 +110,10 @@ always_ff @(posedge clock) begin
         within_logo_v <= 0;
         logo_left <= HSYNC + HBACK;
         logo_right <= HSYNC + HBACK + LOGO_WIDTH - 1;
+        logo_left_m1 <= HSYNC + HBACK - 1;
         logo_top <= VSYNC + VBACK;
         logo_bottom <= VSYNC + VBACK + LOGO_HEIGHT - 1;
+        logo_top_m1 <= VSYNC + VBACK - 1;
     end
     else if( enable ) begin
         if( within_logo ) begin
@@ -142,8 +146,10 @@ always_ff @(posedge clock) begin
 
                 logo_left   <= HSYNC + HBACK + logo_x_next;
                 logo_right  <= HSYNC + HBACK + logo_x_next + LOGO_WIDTH - 1;
+                logo_left_m1 <= HSYNC + HBACK + logo_x_next - 1;
                 logo_top    <= VSYNC + VBACK + logo_y_next;
                 logo_bottom <= VSYNC + VBACK + logo_y_next + LOGO_HEIGHT - 1;
+                logo_top_m1 <= VSYNC + VBACK + logo_y_next - 1;
 
                 within_logo_v <= VSYNC + VBACK == 0;    // If the VSYNC + VBACK is 0 then the V counter is within the logo from the start of the frame.
             end
@@ -153,7 +159,8 @@ always_ff @(posedge clock) begin
                 vcounter_next = vcounter + vcounter_t'(1);
                 logo_address <= (logo_address + logo_address_t'(7)) & ~logo_address_t'(7);
                 vcounter <= vcounter_next;
-                within_logo_v <= logo_top <= vcounter_next && vcounter_next <= logo_bottom;
+                if( vcounter == logo_top_m1 ) within_logo_v <= 1'b1;
+                else if( vcounter == logo_bottom ) within_logo_v <= 1'b0;
             end
         end
         else begin
@@ -161,7 +168,13 @@ always_ff @(posedge clock) begin
             hcounter_next = hcounter + hcounter_t'(1);
 
             hcounter <= hcounter_next;
-            within_logo_h <= logo_left <= hcounter_next && hcounter_next <= logo_right;
+            // Equality-based set/clear on the CURRENT counter against
+            // precomputed (bound - 1) constants: no adder and no
+            // magnitude compare in the per-pixel path. The counter
+            // walks through every value and the bounds only change at
+            // frame wrap.
+            if( hcounter == logo_left_m1 ) within_logo_h <= 1'b1;
+            else if( hcounter == logo_right ) within_logo_h <= 1'b0;
         end
 
         video_de <= HSYNC + HBACK <= hcounter && hcounter < HSYNC + HBACK + HACTIVE

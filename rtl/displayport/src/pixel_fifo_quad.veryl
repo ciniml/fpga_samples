@@ -53,9 +53,14 @@ pub module pixel_fifo_quad #(
     var pack:     logic<72>; // pixels 0..2 of the word in flight
     var pack_cnt: logic<2>;
 
-    let full: logic = count == (DEPTH_WORDS as cnt_t);
-    assign s_axis_tready = !full && !i_clear;
-    let accept: logic = s_axis_tvalid && !full && !i_clear;
+    // Registered, conservative ready: computed from last cycle's count
+    // with a 3-word margin, so the comb path from the word counter to
+    // the producer (TPG pacing) is cut. Words grow at most 1/cycle and
+    // tready_r reacts 1 cycle late, so occupancy never exceeds
+    // DEPTH_WORDS - 1.
+    var tready_r: logic;
+    assign s_axis_tready = tready_r;
+    let accept: logic = s_axis_tvalid && tready_r;
     let push_word: logic = accept && (pack_cnt == 2'd3);
 
     // Read side: registered word + component phase.
@@ -111,6 +116,7 @@ pub module pixel_fifo_quad #(
             rd_word  = 0;
             rd_phase = 0;
             empty_r  = 1;
+            tready_r = 0;
         } else if i_clear {
             wr_ptr   = 0;
             rd_ptr   = 0;
@@ -118,7 +124,9 @@ pub module pixel_fifo_quad #(
             pack_cnt = 0;
             rd_phase = 0;
             empty_r  = 1;
+            tready_r = 0;
         } else {
+            tready_r = (count <: ((DEPTH_WORDS - 2) as cnt_t));
             if accept {
                 if pack_cnt == 2'd3 {
                     mem[wr_ptr] = {s_axis_tdata, pack};
