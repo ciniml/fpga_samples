@@ -28,6 +28,9 @@
 
 pub module scrambler #(
     param INIT: logic<16> = 16'hFFFF,
+    // eDP ASSR (Alternate Scrambler Seed Reset) seed, selected at run
+    // time by i_alt_seed.
+    param INIT_ALT: logic<16> = 16'hFFFE,
 ) (
     i_clk:        input clock_posedge,
     i_rstn:       input reset_sync_low,
@@ -43,6 +46,10 @@ pub module scrambler #(
     i_scramble_disable: input logic,
 
     // Upstream sample (one byte per accepted cycle).
+    // 1 = reload with INIT_ALT (eDP ASSR) on seed reset instead of
+    // INIT. Quasi-static: set by FW before training.
+    i_alt_seed: input logic,
+
     i_valid: input logic,
     // Lane L on [8*L +: 8]. All lanes share one LFSR: per DP 1.2 every
     // lane's scrambler is reset by the (lane-aligned) SR and advances
@@ -70,7 +77,7 @@ pub module scrambler #(
                 // Seed reload: pass current byte through unchanged. App E
                 // resets after advancing, which is equivalent to skipping
                 // the advance and loading INIT.
-                lfsr   = INIT;
+                lfsr   = if i_alt_seed ? INIT_ALT : INIT;
                 o_data = i_data;
             } else if i_valid {
                 // Advance the LFSR 8 steps (Galois left shift per App E:

@@ -67,6 +67,11 @@ pub module dp_source_top #(
     // Hot Plug Detect (DP 1.2 §3.3)
     hpd_in: input 'sys logic,
 
+    // I2C master pads (PD PHY / EEPROM, sys domain, open-drain).
+    i2c_scl_oen: output 'sys logic,
+    i2c_sda_oen: output 'sys logic,
+    i2c_sda_in:  input  'sys logic,
+
     // CPU GPIO output (used for DONE signaling in TB)
     cpu_io_out: output 'sys logic<32>,
 
@@ -107,6 +112,7 @@ pub module dp_source_top #(
     var ml_lane_count:       'sys logic<3>;
     var ml_lane0_drive:      'sys logic<8>;
     var ml_enhanced_framing: 'sys logic;
+    var ml_alt_seed:         'sys logic;
     let _unused_lane0_drive: 'sys logic<8> = ml_lane0_drive; // informational only
 
     var v_enable:    'sys logic;
@@ -145,6 +151,10 @@ pub module dp_source_top #(
 
         hpd_in                  : hpd_in,
 
+        i2c_scl_oen             : i2c_scl_oen,
+        i2c_sda_oen             : i2c_sda_oen,
+        i2c_sda_in              : i2c_sda_in,
+
         cpu_io_out              : cpu_io_out,
 
         saxis_serial_in_tvalid  : saxis_serial_in_tvalid,
@@ -161,6 +171,7 @@ pub module dp_source_top #(
         main_link_lane_count      : ml_lane_count,
         main_link_lane0_drive     : ml_lane0_drive,
         main_link_enhanced_framing: ml_enhanced_framing,
+        main_link_alt_seed        : ml_alt_seed,
 
         video_enable            : v_enable,
         video_line_symbols      : v_line_symbols,
@@ -187,6 +198,7 @@ pub module dp_source_top #(
     var ml_rd_reset_l:         logic;
     var ml_lane_count_l:       logic<3>;
     var ml_enhanced_framing_l: logic;
+    var ml_alt_seed_l:         logic;
     var v_enable_l:            logic;
     var v_line_symbols_l:      logic<16>;
     var v_active_window_l:     logic<16>;
@@ -203,6 +215,10 @@ pub module dp_source_top #(
         );
         inst sync_ef: cdc_bit_sync #(WIDTH: 1) (
             i_clk, i_rstn, i_d: ml_enhanced_framing, o_q: ml_enhanced_framing_l,
+        );
+        // Quasi-static: FW sets ASSR before training starts.
+        inst sync_altseed: cdc_bit_sync #(WIDTH: 1) (
+            i_clk, i_rstn, i_d: ml_alt_seed, o_q: ml_alt_seed_l,
         );
         inst sync_venable: cdc_bit_sync #(WIDTH: 1) (
             i_clk, i_rstn, i_d: v_enable, o_q: v_enable_l,
@@ -229,11 +245,14 @@ pub module dp_source_top #(
     // re-registered (quasi-static: FW sets LANE_COUNT before enabling
     // the main link).
     var four_lane_r: logic;
+    var two_lane_r:  logic;
     always_ff (i_clk, i_rstn) {
         if_reset {
             four_lane_r = 0;
+            two_lane_r  = 0;
         } else {
             four_lane_r = (ml_lane_count_l == 3'd4);
+            two_lane_r  = (ml_lane_count_l == 3'd2);
         }
     }
 
@@ -324,6 +343,8 @@ pub module dp_source_top #(
         i_line_symbols     : v_line_symbols_l,
         i_active_window    : v_active_window_l,
         i_four_lane        : four_lane_r,
+        i_two_lane         : two_lane_r,
+        i_alt_seed         : ml_alt_seed_l,
         i_htotal         : v_htotal_l,
         i_vtotal         : v_vtotal_l,
         i_hstart         : v_hstart_l,

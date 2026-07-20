@@ -237,6 +237,11 @@ module top(
 
         .hpd_in           (hotplug),
 
+        // I2C master (PD PHY) — unused on the Pmod DP board.
+        .i2c_scl_oen      (),
+        .i2c_sda_oen      (),
+        .i2c_sda_in       (1'b1),
+
         .cpu_io_out       (cpu_io_out),
 
         .saxis_serial_in_tvalid(loader_rx_tvalid),

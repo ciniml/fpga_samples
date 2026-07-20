@@ -41,6 +41,8 @@ pub module main_link_tx #(
     i_line_symbols: input logic<16>,
     i_active_window: input logic<16>,
     i_four_lane:    input logic,
+    i_two_lane:     input logic,
+    i_alt_seed:     input logic,
 
     // AXI-Stream pixel input (24bpp RGB)
     s_axis_tvalid: input  logic,
@@ -83,6 +85,8 @@ pub module main_link_tx #(
         i_line_symbols  : i_line_symbols,
         i_active_window : i_active_window,
         i_four_lane     : i_four_lane,
+        i_two_lane      : i_two_lane,
+        i_alt_seed      : i_alt_seed,
         s_axis_tvalid   : s_axis_tvalid,
         s_axis_tready   : s_axis_tready,
         s_axis_tdata    : s_axis_tdata,

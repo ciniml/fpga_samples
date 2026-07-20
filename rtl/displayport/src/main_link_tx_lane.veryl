@@ -44,6 +44,8 @@ pub module main_link_tx_lane #(
     i_enable:           input logic,
     i_rd_reset:         input logic,
     i_enhanced_framing: input logic,
+    // eDP ASSR: use the 0xFFFE scrambler seed (quasi-static).
+    i_alt_seed:         input logic,
 
     // Video pipeline inputs (forwarded to video_framer)
     i_video_enable: input logic,
@@ -61,9 +63,10 @@ pub module main_link_tx_lane #(
     i_tu_active:    input logic<7>,
     i_line_symbols: input logic<16>,
     i_active_window: input logic<16>,
-    // 1 = 4-lane mode (quasi-static, from LANE_COUNT). Selects the quad
-    // pixel FIFO and the framer's 4-lane header/MSA layouts.
+    // Lane-count mode (quasi-static, from LANE_COUNT). Selects the
+    // pixel FIFO and the framer's header/MSA layouts.
     i_four_lane:    input logic,
+    i_two_lane:     input logic,
 
     // AXI-Stream pixel input (24bpp RGB)
     s_axis_tvalid: input  logic,
@@ -83,13 +86,16 @@ pub module main_link_tx_lane #(
     o_symbol2:      output logic<10>,
     o_symbol3:      output logic<10>,
 ) {
-    // Local re-register (quasi-static, like enable_r below).
+    // Local re-registers (quasi-static, like enable_r below).
     var four_lane_r: logic;
+    var two_lane_r:  logic;
     always_ff (i_clk, i_rstn) {
         if_reset {
             four_lane_r = 0;
+            two_lane_r  = 0;
         } else {
             four_lane_r = i_four_lane;
+            two_lane_r  = i_two_lane;
         }
     }
     // serializer ready → byte tick (gated by enable so the chain is silent
@@ -150,6 +156,9 @@ pub module main_link_tx_lane #(
     var fifo_bytes4: logic<32>;
     var fifo_empty4: logic;
     var fifo_ready4: logic;
+    var fifo_bytes2: logic<32>;
+    var fifo_empty2: logic;
+    var fifo_ready2: logic;
     var fifo_bytes:  logic<32>;
     var fifo_empty:  logic;
     var fifo_pop:    logic;
@@ -165,12 +174,23 @@ pub module main_link_tx_lane #(
         i_clk        : i_clk,
         i_rstn       : i_rstn,
         i_clear      : fifo_clear,
-        s_axis_tvalid: s_axis_tvalid && !four_lane_r,
+        s_axis_tvalid: s_axis_tvalid && !four_lane_r && !two_lane_r,
         s_axis_tready: fifo_ready1,
         s_axis_tdata : s_axis_tdata,
         o_pop_byte   : fifo_byte,
         o_pop_empty  : fifo_empty1,
-        i_pop        : fifo_pop && !four_lane_r,
+        i_pop        : fifo_pop && !four_lane_r && !two_lane_r,
+    );
+    inst u_pixel2: pixel_fifo_quad #(LANES: 2) (
+        i_clk        : i_clk,
+        i_rstn       : i_rstn,
+        i_clear      : fifo_clear,
+        s_axis_tvalid: s_axis_tvalid && two_lane_r,
+        s_axis_tready: fifo_ready2,
+        s_axis_tdata : s_axis_tdata,
+        o_bytes      : fifo_bytes2,
+        o_empty      : fifo_empty2,
+        i_pop        : fifo_pop && two_lane_r,
     );
     inst u_pixel4: pixel_fifo_quad (
         i_clk        : i_clk,
@@ -188,6 +208,10 @@ pub module main_link_tx_lane #(
             s_axis_tready = fifo_ready4;
             fifo_bytes    = fifo_bytes4;
             fifo_empty    = fifo_empty4;
+        } else if two_lane_r {
+            s_axis_tready = fifo_ready2;
+            fifo_bytes    = fifo_bytes2;
+            fifo_empty    = fifo_empty2;
         } else {
             s_axis_tready = fifo_ready1;
             fifo_bytes    = {24'h0, fifo_byte};
@@ -227,6 +251,7 @@ pub module main_link_tx_lane #(
         i_line_symbols    : i_line_symbols,
         i_active_window   : i_active_window,
         i_four_lane       : four_lane_r,
+        i_two_lane        : two_lane_r,
         i_pixel_bytes     : fifo_bytes,
         i_pixel_empty     : fifo_empty,
         o_pixel_pop       : fifo_pop,
@@ -302,6 +327,7 @@ pub module main_link_tx_lane #(
     inst u_sc: scrambler (
         i_clk             : i_clk,
         i_rstn            : i_rstn,
+        i_alt_seed        : i_alt_seed,
         i_seed_reset      : sc_seed_reset,
         i_scramble_disable: mux_scramble_disable_r,
         i_valid           : mux_valid_r,

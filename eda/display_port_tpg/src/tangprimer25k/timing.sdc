@@ -43,6 +43,7 @@ set_false_path -from [get_pins {dp_source/sync_tu_active/sync*/Q}]
 // (sync_lane_count is optimized away — lane_count is unused until
 // multi-lane support — so it must not appear here.)
 set_false_path -from [get_pins {dp_source/sync_ef/sync*/Q}]
+set_false_path -from [get_pins {dp_source/sync_altseed/sync*/Q}]
 // Quasi-static line-accounting registers (written before video_enable);
 // consumers are the registered-constant pipeline in video_framer.
 set_false_path -from [get_pins {dp_source/sync_line_symbols/sync*/Q}]

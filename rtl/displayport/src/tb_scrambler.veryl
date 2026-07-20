@@ -287,3 +287,93 @@ module scrambler_golden;
     end
 endmodule
 }}}
+
+#[test(scrambler_assr_golden)]
+embed (inline) sv{{{
+module scrambler_assr_golden;
+    logic clk;
+    logic rstn;
+    initial clk = 0;
+    always #5 clk = ~clk;
+
+    logic        seed_reset;
+    logic        a_valid;
+    logic [7:0]  a_data;
+    logic        a_is_k;
+    logic        b_valid;
+    logic [31:0] b_data;
+    logic        b_is_k;
+
+    displayport_scrambler u_scram (
+        .i_clk              (clk),
+        .i_rstn             (rstn),
+        .i_alt_seed         (1'b1),   // eDP ASSR seed 0xFFFE
+        .i_seed_reset       (seed_reset),
+        .i_scramble_disable (1'b0),
+        .i_valid            (a_valid),
+        .i_data             ({24'h0, a_data}),
+        .i_is_k             (a_is_k),
+        .o_valid            (b_valid),
+        .o_data             (b_data),
+        .o_is_k             (b_is_k)
+    );
+
+    // 0x00 bytes scrambled right after an SR reset with the ASSR seed
+    // 0xFFFE, computed with the Appendix E reference topology (state
+    // after the first byte is 0xE917 per section 3.1.6).
+    localparam logic [7:0] GOLDEN_ASSR [0:15] = '{
+        8'hFF, 8'h97, 8'hC0, 8'h88, 8'h12, 8'h65, 8'hC9, 8'h94,
+        8'hBA, 8'hBB, 8'hAB, 8'h2A, 8'h01, 8'h14, 8'h61, 8'h2F
+    };
+
+    integer errors;
+
+    task automatic push(input logic [7:0] d, input logic k, input logic sr);
+        a_valid    = 1'b1;
+        a_data     = d;
+        a_is_k     = k;
+        seed_reset = sr;
+        @(posedge clk);
+        #1;
+    endtask
+
+    task automatic expect_out(input logic [7:0] d, input logic k, input string what);
+        if (!b_valid || b_data[7:0] !== d || b_is_k !== k) begin
+            errors = errors + 1;
+            $display("[tb_assr] MISMATCH (%s): expected (%02h, k=%b) got (valid=%b, %02h, k=%b)",
+                     what, d, k, b_valid, b_data[7:0], b_is_k);
+        end
+    endtask
+
+    initial begin
+        rstn       = 1'b0;
+        seed_reset = 1'b0;
+        a_valid    = 1'b0;
+        a_data     = 8'h00;
+        a_is_k     = 1'b0;
+        errors     = 0;
+        repeat (4) @(posedge clk);
+        rstn = 1'b1;
+        @(posedge clk);
+
+        push(8'h1C, 1'b1, 1'b1);
+        expect_out(8'h1C, 1'b1, "SR passthrough");
+        for (int i = 0; i < 16; i++) begin
+            push(8'h00, 1'b0, 1'b0);
+            expect_out(GOLDEN_ASSR[i], 1'b0, $sformatf("ASSR byte %0d", i));
+        end
+        a_valid = 1'b0;
+        repeat (4) @(posedge clk);
+        if (errors != 0) begin
+            $fatal(1, "[tb_assr] %0d mismatches", errors);
+        end
+        $display("[tb_assr] PASS");
+        $finish;
+    end
+
+    initial begin
+        #1_000_000;
+        $fatal(1, "[tb_assr] timeout");
+    end
+endmodule
+}}}

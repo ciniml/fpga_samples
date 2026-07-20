@@ -1,0 +1,254 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_i2c_master.veryl
+ * @brief Unit test for i2c_master against a behavioural I2C slave
+ *        (register file at address 0x22): write-then-read with a
+ *        repeated START, ACK checking, and a NACK to a wrong address.
+ */
+
+module TbI2cMaster {}
+
+#[test(i2c_master_rw)]
+embed (inline) sv{{{
+module i2c_master_rw;
+    logic clk;
+    logic rstn;
+    initial clk = 0;
+    always #5 clk = ~clk;
+
+    logic       reg_addr;
+    logic       reg_wen;
+    logic [7:0] reg_wdata;
+    logic [7:0] reg_rdata;
+    logic       scl_oen;
+    logic       sda_oen;
+
+    // Open-drain bus with pull-ups.
+    /* verilator lint_off MULTIDRIVEN */
+    logic slave_sda_oen = 1'b1;
+    /* verilator lint_on MULTIDRIVEN */
+    wire  scl = scl_oen;
+    wire  sda = sda_oen && slave_sda_oen;
+
+    displayport_i2c_master #(
+        .CLOCK_HZ(32'd1_000_000),
+        .SCL_HZ  (32'd100_000)
+    ) dut (
+        .i_clk      (clk),
+        .i_rstn     (rstn),
+        .i_reg_addr (reg_addr),
+        .i_reg_wen  (reg_wen),
+        .i_reg_wdata(reg_wdata),
+        .i_reg_ren  (1'b0),
+        .o_reg_rdata(reg_rdata),
+        .o_scl_oen  (scl_oen),
+        .o_sda_oen  (sda_oen),
+        .i_sda      (sda)
+    );
+
+    // ---- Behavioural slave: 7-bit address 0x22, 8-bit reg pointer,
+    //      register file. Not a timing model — edge-triggered on SCL.
+    localparam logic [6:0] SLAVE_ADDR = 7'h22;
+    logic [7:0] slave_mem [0:255];
+    logic [7:0] slave_ptr;
+
+    /* verilator lint_off MULTIDRIVEN */
+    logic [3:0] s_bit;
+    logic [7:0] s_sh;
+    logic       s_in_xfer = 1'b0;
+    logic       s_addr_phase;
+    logic       s_read_op;
+    logic       s_selected;
+    logic       s_first_data;
+
+    // START/STOP detection.
+    always @(negedge sda) if (scl) begin
+        s_in_xfer    <= 1'b1;
+        s_addr_phase <= 1'b1;
+        // Sentinel: the SCL falling edge that ends the START condition
+        // is not a bit boundary; the first negedge handler run just
+        // consumes it (15 -> 0).
+        s_bit        <= 4'd15;
+        s_sh         <= 0;
+        s_selected   <= 0;
+        slave_sda_oen <= 1'b1;
+    end
+    always @(posedge sda) if (scl) begin
+        s_in_xfer <= 1'b0;
+        s_selected <= 0;
+        slave_sda_oen <= 1'b1;
+    end
+
+    // Bit engine.
+    always @(posedge scl) if (s_in_xfer) begin
+        // Shift in only while receiving (address phase or write data);
+        // during read-out s_sh is the TX shifter and must not move here.
+        if (s_bit < 8 && !(s_selected && s_read_op && !s_addr_phase)) begin
+            s_sh <= {s_sh[6:0], sda};
+        end
+    end
+    always @(negedge scl) if (s_in_xfer) begin
+        if (s_bit == 4'd15) begin
+            s_bit <= 0;
+        end else if (s_bit == 7) begin
+            // Prepare ACK/NACK for the 9th clock.
+            if (s_addr_phase) begin
+                s_selected <= (s_sh[7:1] == SLAVE_ADDR);
+                s_read_op  <= s_sh[0];
+                slave_sda_oen <= !(s_sh[7:1] == SLAVE_ADDR); // ACK if match
+            end else if (s_selected && !s_read_op) begin
+                slave_sda_oen <= 1'b0; // ACK data byte
+            end else if (s_selected && s_read_op) begin
+                slave_sda_oen <= 1'b1; // release for the master's ACK/NACK
+            end
+            s_bit <= s_bit + 1;
+        end else if (s_bit == 8) begin
+            // After ACK slot.
+            if (s_addr_phase) begin
+                s_addr_phase <= 1'b0;
+                s_first_data <= 1'b1;
+                if (s_selected && s_read_op) begin
+                    // Preload first read byte.
+                    s_sh <= slave_mem[slave_ptr];
+                    slave_sda_oen <= slave_mem[slave_ptr][7];
+                end else begin
+                    slave_sda_oen <= 1'b1;
+                end
+            end else if (s_selected && !s_read_op) begin
+                if (s_first_data) begin
+                    slave_ptr    <= s_sh;
+                    s_first_data <= 1'b0;
+                end else begin
+                    slave_mem[slave_ptr] <= s_sh;
+                    slave_ptr <= slave_ptr + 8'd1;
+                end
+                slave_sda_oen <= 1'b1;
+            end else if (s_selected && s_read_op) begin
+                // Master ACK/NACK was sampled on the 9th posedge (sda:
+                // 0 = ACK, continue; 1 = NACK, stop driving).
+                slave_ptr <= slave_ptr + 8'd1;
+                if (!sda) begin
+                    s_sh <= slave_mem[slave_ptr + 8'd1];
+                    slave_sda_oen <= slave_mem[slave_ptr + 8'd1][7];
+                end else begin
+                    s_selected <= 1'b0;
+                    slave_sda_oen <= 1'b1;
+                end
+            end
+            s_bit <= 0;
+        end else begin
+            if (s_selected && s_read_op && !s_addr_phase) begin
+                // Shift out read data MSB first.
+                slave_sda_oen <= s_sh[6];
+                s_sh <= {s_sh[6:0], 1'b0};
+            end
+            s_bit <= s_bit + 1;
+        end
+    end
+
+    /* verilator lint_on MULTIDRIVEN */
+
+    // ---- Master-side driver tasks ----
+    integer errors = 0;
+
+    task automatic cmd(input logic [7:0] c);
+        @(negedge clk);
+        reg_addr  = 1'b0;
+        reg_wdata = c;
+        reg_wen   = 1'b1;
+        @(negedge clk);
+        reg_wen = 1'b0;
+        // Wait for BUSY to clear.
+        reg_addr = 1'b0;
+        forever begin
+            @(posedge clk);
+            if (!reg_rdata[0]) break;
+        end
+    endtask
+
+    task automatic set_tx(input logic [7:0] d);
+        @(negedge clk);
+        reg_addr  = 1'b1;
+        reg_wdata = d;
+        reg_wen   = 1'b1;
+        @(negedge clk);
+        reg_wen  = 1'b0;
+        reg_addr = 1'b0;
+    endtask
+
+    function automatic logic ack_error();
+        return reg_rdata[1];
+    endfunction
+
+    task automatic wr_byte(input logic [7:0] d, input string what);
+        set_tx(d);
+        cmd(8'h04); // WRITE
+        if (ack_error()) begin
+            $display("ERROR: no ACK for %s (%02h)", what, d);
+            errors = errors + 1;
+        end
+    endtask
+
+    initial begin
+        reg_addr  = 0;
+        reg_wen   = 0;
+        reg_wdata = 0;
+        slave_ptr = 0;
+        rstn = 0;
+        repeat (5) @(posedge clk);
+        rstn = 1;
+        repeat (5) @(posedge clk);
+
+        // Write 0xA5 to slave reg 0x10: S, addr+W, 0x10, 0xA5, P
+        cmd(8'h01);                    // START
+        wr_byte({7'h22, 1'b0}, "addr+W");
+        wr_byte(8'h10, "reg pointer");
+        wr_byte(8'hA5, "data");
+        cmd(8'h02);                    // STOP
+
+        // Read it back: S, addr+W, 0x10, Sr, addr+R, read(NACK), P
+        cmd(8'h01);
+        wr_byte({7'h22, 1'b0}, "addr+W (rd setup)");
+        wr_byte(8'h10, "reg pointer (rd setup)");
+        cmd(8'h01);                    // repeated START
+        wr_byte({7'h22, 1'b1}, "addr+R");
+        cmd(8'h18);                    // READ with NACK
+        cmd(8'h02);                    // STOP
+
+        @(negedge clk);
+        reg_addr = 1'b1;
+        @(posedge clk);
+        if (reg_rdata !== 8'hA5) begin
+            $display("ERROR: readback = %02h, expected A5", reg_rdata);
+            errors = errors + 1;
+        end
+        reg_addr = 1'b0;
+
+        // NACK check: wrong address must set ACK_ERROR.
+        cmd(8'h01);
+        set_tx({7'h55, 1'b0});
+        cmd(8'h04);
+        if (!ack_error()) begin
+            $display("ERROR: expected NACK for wrong address");
+            errors = errors + 1;
+        end
+        cmd(8'h02);
+
+        if (errors == 0) begin
+            $display("PASS: i2c_master_rw");
+        end else begin
+            $fatal(1, "FAIL: %0d errors", errors);
+        end
+        $finish;
+    end
+
+    initial begin
+        #10_000_000;
+        $fatal(1, "[tb_i2c] timeout");
+    end
+endmodule
+}}}

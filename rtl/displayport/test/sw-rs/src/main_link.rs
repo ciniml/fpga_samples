@@ -11,11 +11,20 @@ pub enum Pattern {
 
 pub struct MainLink {
     p: bootrom_pac::MAIN_LINK,
+    assr: bool,
 }
 
 impl MainLink {
     pub fn new(p: bootrom_pac::MAIN_LINK) -> Self {
-        Self { p }
+        Self { p, assr: false }
+    }
+
+    /// eDP ASSR: scramble with the alternate 0xFFFE seed. Must be set
+    /// before training, together with eDP_CONFIGURATION_SET (DPCD 10Ah
+    /// bit 0) on the panel.
+    #[allow(dead_code)]
+    pub fn set_assr(&mut self, on: bool) {
+        self.assr = on;
     }
 
     pub fn set_lane_count(&self, n: u8) {
@@ -30,11 +39,12 @@ impl MainLink {
     /// BS/SR sequences (DP 1.2 §2.2.1.2); it must match the
     /// ENHANCED_FRAME_EN bit written to the sink's DPCD 101h.
     pub fn set_pattern(&self, pat: Pattern, rd_reset: bool, enhanced_framing: bool) {
-        // CTRL: PATTERN_SELECT[1:0] | ENABLE[4] | RD_RESET[5] | EF[6]
+        // CTRL: PATTERN_SELECT[1:0] | ENABLE[4] | RD_RESET[5] | EF[6] | ASSR[7]
         let bits: u32 = (pat as u32)
             | (1 << 4)
             | (if rd_reset { 1 << 5 } else { 0 })
-            | (if enhanced_framing { 1 << 6 } else { 0 });
+            | (if enhanced_framing { 1 << 6 } else { 0 })
+            | (if self.assr { 1 << 7 } else { 0 });
         unsafe {
             self.p.ctrl.write(|w| w.bits(bits));
         }

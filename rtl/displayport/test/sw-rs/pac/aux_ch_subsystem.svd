@@ -86,7 +86,8 @@
                             <bitWidth>1</bitWidth>
                             <access>read-write</access>
                         </field>
-                    </fields>
+                        <field><name>VHPD</name><description>Virtual HPD level (Type-C alt mode: FW mirrors the PD Attention HPD state here; ORed with the physical pin). Note: any write to this register updates VHPD from bit 4.</description><bitOffset>4</bitOffset><bitWidth>1</bitWidth><access>read-write</access></field>
+                        </fields>
                 </register>
             </registers>
         </peripheral>
@@ -363,7 +364,8 @@
                             <bitWidth>1</bitWidth>
                             <access>read-write</access>
                         </field>
-                    </fields>
+                        <field><name>ASSR</name><description>eDP Alternate Scrambler Seed Reset: scramble with seed 0xFFFE.</description><bitOffset>7</bitOffset><bitWidth>1</bitWidth><access>read-write</access></field>
+                        </fields>
                 </register>
                 <register>
                     <name>LANE_COUNT</name>

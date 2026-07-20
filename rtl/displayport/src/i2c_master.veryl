@@ -1,0 +1,241 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file i2c_master.veryl
+ * @brief Minimal single-master I2C controller for the FemtoRV32
+ *        register bus. Intended for the USB PD PHY (FUSB302B) in the
+ *        Type-C alt-mode design; also usable for EEPROMs/sensors.
+ *
+ * Primitive-per-command model (FW sequences the protocol):
+ *   CMD_START (bit0): (repeated) START condition
+ *   CMD_STOP  (bit1): STOP condition
+ *   CMD_WRITE (bit2): shift out TXDATA, sample the slave's ACK
+ *   CMD_READ  (bit3): shift in one byte into RXDATA, then send
+ *                     ACK (CMD_ACK_NACK=0) or NACK (=1)
+ * Exactly one command bit may be set per CMD write. BUSY (status bit0)
+ * stays high while the primitive runs; ACK_ERROR (bit1) reflects the
+ * ACK phase of the most recent CMD_WRITE (1 = slave did not ACK).
+ *
+ * Bus pins are open-drain: o_*_oen = 1 releases the line (external
+ * pull-up), 0 drives it low. SCL clock stretching by slaves is NOT
+ * supported (FUSB302B does not stretch).
+ *
+ * Timing: each SCL period is 4 quarter phases of QDIV system clocks,
+ * SCL_HZ = CLOCK_HZ / (4 * QDIV).
+ */
+
+pub module i2c_master #(
+    param CLOCK_HZ: u32 = 27_000_000,
+    param SCL_HZ:   u32 = 400_000,
+) (
+    i_clk:  input clock_posedge,
+    i_rstn: input reset_sync_low,
+
+    // Register interface (one peripheral address space).
+    //   addr 0: CMD    (W: [0]=start [1]=stop [2]=write [3]=read [4]=nack-on-read)
+    //           STATUS (R: [0]=busy [1]=ack_error)
+    //   addr 1: TXDATA (W) / RXDATA (R)
+    i_reg_addr:  input  logic,
+    i_reg_wen:   input  logic,
+    i_reg_wdata: input  logic<8>,
+    i_reg_ren:   input  logic,
+    o_reg_rdata: output logic<8>,
+
+    // I2C pads (open-drain).
+    o_scl_oen: output logic,
+    o_sda_oen: output logic,
+    i_sda:     input  logic,
+) {
+    const QDIV: u32 = CLOCK_HZ / (4 * SCL_HZ);
+    const QBITS: u32 = $clog2(QDIV);
+    type qcnt_t = logic<QBITS>;
+
+    enum State: logic<3> {
+        IDLE,
+        START,
+        WRITE,
+        READ,
+        STOP,
+    }
+
+    var state:    State;
+    var quarter:  logic<2>;  // 0..3 within one SCL bit
+    var qcnt:     qcnt_t;
+    var bit_cnt:  logic<4>;  // 0..8 (8 = ACK slot)
+    var sh:       logic<8>;
+    var rx:       logic<8>;
+    var ack_err:  logic;
+    var nack_rd:  logic;
+    var scl_oen:  logic;
+    var sda_oen:  logic;
+    var sda_smp:  logic;     // SDA sampled at SCL-high center
+
+    assign o_scl_oen = scl_oen;
+    assign o_sda_oen = sda_oen;
+
+    let busy: logic = state != State::IDLE;
+
+    always_comb {
+        if i_reg_addr == 1'b0 {
+            o_reg_rdata = {6'b0, ack_err, busy};
+        } else {
+            o_reg_rdata = rx;
+        }
+    }
+    let _unused_ren: logic = i_reg_ren;
+
+    let qtick: logic = qcnt == ((QDIV - 1) as qcnt_t);
+
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            state   = State::IDLE;
+            quarter = 0;
+            qcnt    = 0;
+            bit_cnt = 0;
+            sh      = 0;
+            rx      = 0;
+            ack_err = 0;
+            nack_rd = 0;
+            scl_oen = 1;
+            sda_oen = 1;
+            sda_smp = 1;
+        } else {
+            if state == State::IDLE {
+                qcnt    = 0;
+                quarter = 0;
+                bit_cnt = 0;
+                if i_reg_wen && i_reg_addr == 1'b0 {
+                    if i_reg_wdata[0] {
+                        state = State::START;
+                    } else if i_reg_wdata[1] {
+                        state = State::STOP;
+                    } else if i_reg_wdata[2] {
+                        state = State::WRITE;
+                    } else if i_reg_wdata[3] {
+                        state   = State::READ;
+                        nack_rd = i_reg_wdata[4];
+                    }
+                } else if i_reg_wen && i_reg_addr == 1'b1 {
+                    sh = i_reg_wdata;
+                }
+            } else {
+                if qtick {
+                    qcnt = 0;
+                    // Quarter phases: q0 = SCL low, first half; q1/q2 =
+                    // SCL high; q3 = SCL low, second half. Data changes
+                    // in q0/q3, sampling at q1->q2 boundary.
+                    case state {
+                        State::START: {
+                            // (Repeated) START: SDA high, SCL high, then
+                            // SDA falls while SCL high, then SCL low.
+                            case quarter {
+                                2'd0: {
+                                    sda_oen = 1;
+                                    scl_oen = 0;
+                                }
+                                2'd1: {
+                                    scl_oen = 1;
+                                }
+                                2'd2: {
+                                    sda_oen = 0; // SDA falls, SCL high
+                                }
+                                default: {
+                                    scl_oen = 0;
+                                    state   = State::IDLE;
+                                }
+                            }
+                            quarter = quarter + 2'd1;
+                        }
+                        State::STOP: {
+                            case quarter {
+                                2'd0: {
+                                    sda_oen = 0;
+                                    scl_oen = 0;
+                                }
+                                2'd1: {
+                                    scl_oen = 1;
+                                }
+                                2'd2: {
+                                    sda_oen = 1; // SDA rises, SCL high
+                                }
+                                default: {
+                                    state = State::IDLE;
+                                }
+                            }
+                            quarter = quarter + 2'd1;
+                        }
+                        State::WRITE: {
+                            case quarter {
+                                2'd0: {
+                                    scl_oen = 0;
+                                    if bit_cnt <: 4'd8 {
+                                        sda_oen = sh[7];
+                                    } else {
+                                        sda_oen = 1; // release for ACK
+                                    }
+                                }
+                                2'd1: {
+                                    scl_oen = 1;
+                                }
+                                2'd2: {
+                                    if bit_cnt == 4'd8 {
+                                        ack_err = i_sda; // 1 = no ACK
+                                    }
+                                }
+                                default: {
+                                    scl_oen = 0;
+                                    if bit_cnt == 4'd8 {
+                                        state = State::IDLE;
+                                    } else {
+                                        sh      = {sh[6:0], 1'b0};
+                                        bit_cnt = bit_cnt + 4'd1;
+                                    }
+                                }
+                            }
+                            quarter = quarter + 2'd1;
+                        }
+                        State::READ: {
+                            case quarter {
+                                2'd0: {
+                                    scl_oen = 0;
+                                    if bit_cnt <: 4'd8 {
+                                        sda_oen = 1; // slave drives
+                                    } else {
+                                        sda_oen = nack_rd; // our ACK/NACK
+                                    }
+                                }
+                                2'd1: {
+                                    scl_oen = 1;
+                                }
+                                2'd2: {
+                                    if bit_cnt <: 4'd8 {
+                                        sda_smp = i_sda;
+                                    }
+                                }
+                                default: {
+                                    scl_oen = 0;
+                                    if bit_cnt == 4'd8 {
+                                        sda_oen = 1;
+                                        state   = State::IDLE;
+                                    } else {
+                                        rx      = {rx[6:0], sda_smp};
+                                        bit_cnt = bit_cnt + 4'd1;
+                                    }
+                                }
+                            }
+                            quarter = quarter + 2'd1;
+                        }
+                        default: {
+                            state = State::IDLE;
+                        }
+                    }
+                } else {
+                    qcnt = qcnt + (1 as qcnt_t);
+                }
+            }
+        }
+    }
+}
