@@ -64,6 +64,7 @@ add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/dp_source_top.
 
 # --- Common helpers ---
 add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_tx.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_rx.sv]
 add_file -type verilog [file normalize ${FEMTORV_DIR}/femtorv32_gracilis.v]
 
 # --- Test pattern generator + AXI-Stream adapter (board-local) ---

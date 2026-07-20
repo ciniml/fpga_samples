@@ -51,11 +51,20 @@ pub module stream_memory_access #(
     var length: logic<8>;
     var address_byte_counter: address_byte_counter_t;
     var is_read: logic;
+    // One-cycle wait after each mem_rreq: the memory read data is
+    // registered upstream, so it is valid two cycles after the request
+    // is issued. Skip one READ_MEM emission opportunity per request.
+    var mem_rvalid_wait: logic;
     
     always_comb {
+        // Ready in every byte-consuming state. IDLE must be ready too:
+        // upstream (uart_rx) holds tvalid until tready, so a
+        // not-ready IDLE would consume the byte for the state
+        // transition while upstream re-offers the same byte to the
+        // next state (double consumption). Only READ_MEM, which
+        // produces instead of consumes, blocks the input.
         saxis_serial_in_tready = case state {
-            State::IDLE:  1'b0,
-            State::READ_MEM: 1'b0, 
+            State::READ_MEM: 1'b0,
             default: 1'b1,
         };
     }
@@ -65,6 +74,7 @@ pub module stream_memory_access #(
             maxis_serial_out_tvalid = 0;
             mem_rreq = 0;
             mem_wreq = 0;
+            mem_rvalid_wait = 0;
             state = State::IDLE;
         } else {
             mem_rreq = 0;
@@ -115,7 +125,10 @@ pub module stream_memory_access #(
                 }
                 State::ADDRESS: {
                     if saxis_serial_in_tvalid {
-                        address = {address[$bits(address)-1:8], saxis_serial_in_tdata};
+                        // LSB-first: shift each byte in from the top so the
+                        // first byte ends up at address[7:0].
+                        address              = {saxis_serial_in_tdata, address[$bits(address) - 1:8]};
+                        address_byte_counter = address_byte_counter + 1;
                         if address_byte_counter == (ADDRESS_BYTES - 1) as address_byte_counter_t {
                             state = State::LENGTH;
                         }
@@ -127,6 +140,7 @@ pub module stream_memory_access #(
                         mem_address = address;
                         if is_read {
                             mem_rreq = 1;
+                            mem_rvalid_wait = 1;
                             state = State::READ_MEM;
                         } else {
                             state = State::WRITE_MEM;
@@ -134,7 +148,9 @@ pub module stream_memory_access #(
                     }
                 }
                 State::READ_MEM: {
-                    if !maxis_serial_out_tvalid || maxis_serial_out_tready {
+                    if mem_rvalid_wait {
+                        mem_rvalid_wait = 0;
+                    } else if !maxis_serial_out_tvalid || maxis_serial_out_tready {
                         maxis_serial_out_tdata = mem_rdata;
                         maxis_serial_out_tvalid = 1;
                         length = length - 1;
@@ -143,6 +159,7 @@ pub module stream_memory_access #(
                         } else {
                             mem_address = mem_address + 1;
                             mem_rreq = 1;
+                            mem_rvalid_wait = 1;
                         }
                     }
                 }

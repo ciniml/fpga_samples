@@ -1,0 +1,204 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_stream_memory_access.veryl
+ * @brief Self-checking test for the serial bootloader command parser
+ *        (stream_memory_access). Exercises the 5A A5 5B magic header,
+ *        LSB-first address assembly, write bursts, read bursts with the
+ *        registered-read latency, and rejection of non-magic garbage.
+ */
+
+module TbStreamMemoryAccess {}
+
+#[test(stream_memory_access_protocol)]
+embed (inline) sv{{{
+module stream_memory_access_protocol;
+    logic clk;
+    logic rstn;
+    initial clk = 0;
+    always #5 clk = ~clk;
+
+    logic [31:0] mem_address;
+    logic        mem_rreq;
+    logic [7:0]  mem_rdata;
+    logic        mem_wreq;
+    logic [7:0]  mem_wdata;
+
+    logic       tx_tvalid;
+    logic       tx_tready;
+    logic [7:0] tx_tdata;
+
+    logic       rx_tvalid;
+    logic       rx_tready;
+    logic [7:0] rx_tdata;
+
+    displayport_stream_memory_access #(
+        .ADDRESS_BITS(32)
+    ) dut (
+        .i_clk (clk),
+        .i_rstn(rstn),
+
+        .mem_address(mem_address),
+        .mem_rreq   (mem_rreq),
+        .mem_rdata  (mem_rdata),
+        .mem_wreq   (mem_wreq),
+        .mem_wdata  (mem_wdata),
+
+        .maxis_serial_out_tvalid(tx_tvalid),
+        .maxis_serial_out_tready(tx_tready),
+        .maxis_serial_out_tdata (tx_tdata),
+
+        .saxis_serial_in_tvalid(rx_tvalid),
+        .saxis_serial_in_tready(rx_tready),
+        .saxis_serial_in_tdata (rx_tdata)
+    );
+
+    // Byte memory model with a registered read port (same latency as
+    // the ROM/RAM access logic in aux_ch_subsystem).
+    logic [7:0] mem [0:255];
+    logic       reset_reg;
+    always_ff @(posedge clk) begin
+        if (!rstn) begin
+            reset_reg <= 0;
+        end else if (mem_rreq) begin
+            mem_rdata <= mem[mem_address[7:0]];
+        end
+        if (mem_wreq) begin
+            if (mem_address == 32'hffff_ffff) begin
+                reset_reg <= mem_wdata[0];
+            end else begin
+                mem[mem_address[7:0]] <= mem_wdata;
+            end
+        end
+    end
+
+    int errors = 0;
+
+    task automatic send_byte(input logic [7:0] b);
+        begin
+            // Drive on negedges so the DUT's posedge sampling never
+            // races the TB (Verilator runs task NBAs as blocking).
+            @(negedge clk);
+            rx_tdata  = b;
+            rx_tvalid = 1;
+            // Handshake completes at the first posedge where tready is
+            // high at sampling time (a trailing tready check would race
+            // with state transitions such as LENGTH -> READ_MEM).
+            @(posedge clk iff rx_tready);
+            @(negedge clk);
+            rx_tvalid = 0;
+            // Idle gap like a real UART byte boundary.
+            repeat (2) @(posedge clk);
+        end
+    endtask
+
+    task automatic send_header(input logic [7:0] cmd, input logic [31:0] addr, input logic [7:0] len);
+        begin
+            send_byte(8'h5a);
+            send_byte(8'ha5);
+            send_byte(8'h5b);
+            send_byte(cmd);
+            send_byte(addr[7:0]);
+            send_byte(addr[15:8]);
+            send_byte(addr[23:16]);
+            send_byte(addr[31:24]);
+            send_byte(len);
+        end
+    endtask
+
+    task automatic expect_reply(input logic [7:0] expected, input int idx);
+        int guard;
+        begin
+            guard = 0;
+            while (!(tx_tvalid && tx_tready)) begin
+                @(posedge clk);
+                guard++;
+                if (guard > 1000) begin
+                    $display("ERROR: reply byte %0d timed out", idx);
+                    errors++;
+                    return;
+                end
+            end
+            if (tx_tdata !== expected) begin
+                $display("ERROR: reply byte %0d = %02x, expected %02x", idx, tx_tdata, expected);
+                errors++;
+            end
+            @(posedge clk);
+        end
+    endtask
+
+    initial begin
+        rx_tvalid = 0;
+        rx_tdata  = 0;
+        tx_tready = 1;
+        for (int i = 0; i < 256; i++) mem[i] = 8'hEE;
+
+        rstn = 0;
+        repeat (5) @(posedge clk);
+        rstn = 1;
+        repeat (2) @(posedge clk);
+
+        // Garbage before the magic header must be ignored.
+        send_byte(8'h12);
+        send_byte(8'h5a);   // partial magic...
+        send_byte(8'hff);   // ...broken
+        @(negedge clk);
+        if (mem_wreq !== 1'b0) begin
+            $display("ERROR: unexpected write from garbage input");
+            errors++;
+        end
+
+        // Write burst: 4 bytes (len byte = N means N+1 bytes) at 0x30.
+        send_header(8'ha8, 32'h0000_0030, 8'd3);
+        send_byte(8'h11);
+        send_byte(8'h22);
+        send_byte(8'h33);
+        send_byte(8'h44);
+        repeat (4) @(posedge clk);
+        @(negedge clk);
+        if (mem[8'h30] !== 8'h11 || mem[8'h31] !== 8'h22 ||
+            mem[8'h32] !== 8'h33 || mem[8'h33] !== 8'h44) begin
+            $display("ERROR: write burst mismatch: %02x %02x %02x %02x",
+                     mem[8'h30], mem[8'h31], mem[8'h32], mem[8'h33]);
+            errors++;
+        end
+
+        // Read burst of the same 4 bytes with an always-ready sink
+        // (stresses the registered-read latency).
+        send_header(8'ha9, 32'h0000_0030, 8'd3);
+        expect_reply(8'h11, 0);
+        expect_reply(8'h22, 1);
+        expect_reply(8'h33, 2);
+        expect_reply(8'h44, 3);
+
+        // Single-byte write to the CPU reset register address.
+        send_header(8'ha8, 32'hffff_ffff, 8'd0);
+        send_byte(8'h01);
+        repeat (4) @(posedge clk);
+        @(negedge clk);
+        if (reset_reg !== 1'b1) begin
+            $display("ERROR: reset register not set");
+            errors++;
+        end
+        send_header(8'ha8, 32'hffff_ffff, 8'd0);
+        send_byte(8'h00);
+        repeat (4) @(posedge clk);
+        @(negedge clk);
+        if (reset_reg !== 1'b0) begin
+            $display("ERROR: reset register not cleared");
+            errors++;
+        end
+
+        if (errors == 0) begin
+            $display("PASS: stream_memory_access_protocol");
+        end else begin
+            $display("FAIL: stream_memory_access_protocol (%0d errors)", errors);
+            $fatal;
+        end
+        $finish;
+    end
+endmodule
+}}}

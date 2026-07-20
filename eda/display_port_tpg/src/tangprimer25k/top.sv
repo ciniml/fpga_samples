@@ -59,6 +59,7 @@ module top(
     input wire hotplug,
 
     output logic uart_tx,
+    input  wire  uart_rx,
     output logic aux_ch_received
 );
 
@@ -185,6 +186,10 @@ module top(
 
     logic [31:0] cpu_io_out;
 
+    logic       loader_rx_tvalid;
+    logic       loader_rx_tready;
+    logic [7:0] loader_rx_tdata;
+
     logic        debug_serial_tvalid;
     logic        debug_serial_tready;
     logic [7:0]  debug_serial_tdata;
@@ -220,9 +225,9 @@ module top(
 
         .cpu_io_out       (cpu_io_out),
 
-        .saxis_serial_in_tvalid(1'b0),
-        .saxis_serial_in_tready(),
-        .saxis_serial_in_tdata (8'h00),
+        .saxis_serial_in_tvalid(loader_rx_tvalid),
+        .saxis_serial_in_tready(loader_rx_tready),
+        .saxis_serial_in_tdata (loader_rx_tdata),
 
         .maxis_serial_out_tvalid(debug_serial_tvalid),
         .maxis_serial_out_tready(debug_serial_tready),
@@ -268,6 +273,25 @@ module top(
     assign ml_lane_2_n = 1'b0;
     assign ml_lane_3_p = 1'b0;
     assign ml_lane_3_n = 1'b0;
+
+    // -----------------------------------------------------------------
+    // UART bootloader input. Bytes from the host feed the serial FW
+    // loader inside the AUX subsystem (magic header 5A A5 5B).
+    // -----------------------------------------------------------------
+    uart_rx #(
+        .NUMBER_OF_BITS(8),
+        .BAUD_DIVIDER(CLOCK_HZ_SYS / 32'd115_200)
+    ) loader_uart_rx_inst (
+        .clock(clock_27),
+        .reset(reset_27),
+
+        .data_valid(loader_rx_tvalid),
+        .data_ready(loader_rx_tready),
+        .data_bits (loader_rx_tdata),
+
+        .rx        (uart_rx),
+        .overrun   ()
+    );
 
     // -----------------------------------------------------------------
     // UART debug bridge. Firmware $write goes out the byte-serial

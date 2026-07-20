@@ -201,6 +201,21 @@ pub module dp_source_top #(
         );
     }
 
+    // Re-register the synchronized video enable in the link domain.
+    // The synchronizer output fans out deep into the framer and the
+    // pixel-FIFO read address logic; this pipeline stage decouples that
+    // fanout from the 2-FF synchronizer placement (the +0.004 ns paths
+    // that broke on P&R reseeding). One extra cycle of enable latency
+    // is harmless.
+    var v_enable_lr: logic;
+    always_ff (i_clk, i_rstn) {
+        if_reset {
+            v_enable_lr = 0;
+        } else {
+            v_enable_lr = v_enable_l;
+        }
+    }
+
     // Video timing registers are quasi-static: the firmware programs
     // them strictly before asserting video_enable and never changes
     // them while enabled, so per-bit 2-FF synchronizers are sufficient
@@ -268,7 +283,7 @@ pub module dp_source_top #(
         i_rd_reset         : ml_rd_reset_l,
         i_lane_count       : ml_lane_count_l,
         i_enhanced_framing : ml_enhanced_framing_l,
-        i_video_enable     : v_enable_l,
+        i_video_enable     : v_enable_lr,
         i_htotal         : v_htotal_l,
         i_vtotal         : v_vtotal_l,
         i_hstart         : v_hstart_l,
