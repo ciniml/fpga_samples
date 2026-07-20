@@ -221,7 +221,31 @@ vtotal 2058×?…refresh = 141.75M/(htotal×vtotal) を60Hz近傍に調整。
 
 ---
 
-## 5. Type-C基板 具体構成案: FUSB302B + FUSB340×2 (2026-07-21)
+## 5. Type-C基板 具体構成案 (2026-07-21)
+
+**採用方針: FUSB302B (PD PHY) + TI HD3SS460 (Alt Mode mux) の2チップ構成。**
+HD3SS460は4レーンSSクロスポイントとSBU低速クロスポイントを1チップに
+内蔵し、制御もピン(AMSEL/POL/EN)のみでFW負荷が最小。価格も安く、
+FUSB340×2+SBUスイッチの分担構成(下記5.1〜、比較のため残す)より
+部品点数・配線とも簡単になる。
+
+### 5.0 HD3SS460構成
+
+```
+FPGA ML0..3 --100nF AC結合--> HD3SS460 (4レーンSS + SBUクロス) --> USB-C
+FPGA AUX± (TLVDS_IOBUF+バイアス) --> HD3SS460 SBU側低速ポート
+FPGA I2C <---> FUSB302B <---> CC1/CC2 (+VCONN)
+FPGA GPIO: HD3SS460 {AMSEL(4レーンDPモード固定可), POL(向き), EN} + VBUS EN
+5V --> 電流制限ロードスイッチ --> VBUS
+```
+
+- AMSELは4レーンDP固定でよい (Assignment C専用機として設計)。将来
+  Assignment D対応時にFW制御へ昇格
+- POLはFUSB302Bの向き判定結果をFWがGPIOで反映
+- 追加部品はVBUSロードスイッチ・ESD・AC結合・AUXバイアスのみ
+  (SBUスイッチ不要)
+
+### 5.1 (比較対象) FUSB340×2の役割と個数
 
 ### 5.1 FUSB340の役割と個数
 
