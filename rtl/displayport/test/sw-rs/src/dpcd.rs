@@ -74,6 +74,8 @@ pub const LANE_ALIGN_STATUS_UPDATED: u32 = 0x00204;
 pub const SINK_STATUS: u32 = 0x00205;
 pub const ADJUST_REQUEST_LANE0_1: u32 = 0x00206;
 pub const ADJUST_REQUEST_LANE2_3: u32 = 0x00207;
+/// 0x210 = low byte, 0x211 = [6:0] high bits + bit7 = count valid.
+pub const SYMBOL_ERROR_COUNT_LANE0: u32 = 0x00210;
 
 // Bit fields
 pub const LANE0_CR_DONE: u8 = 1 << 0;

@@ -290,10 +290,20 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &Video) {
         let mut st = [0u8; 6];
         match dpcd::read_block(aux, dpcd::SINK_COUNT, &mut st) {
             Ok(_) => {
-                if !have_prev || st != prev || beat % 10 == 0 {
+                // Symbol error counter (DPCD 210h-211h): the definitive
+                // signal-integrity probe. A trained link that still
+                // accumulates symbol errors has an electrical problem; a
+                // clean zero here shifts suspicion to stream formatting.
+                let mut ec = [0u8; 2];
+                let (err_valid, err_count) =
+                    match dpcd::read_block(aux, dpcd::SYMBOL_ERROR_COUNT_LANE0, &mut ec) {
+                        Ok(_) => (ec[1] & 0x80 != 0, (((ec[1] & 0x7F) as u16) << 8) | ec[0] as u16),
+                        Err(_) => (false, 0xFFFF),
+                    };
+                if !have_prev || st != prev || err_count != 0 || beat % 10 == 0 {
                     let lane = st[2];
                     println!(
-                        "[SRC] status {:02X?} CR={} EQ={} SYM={} ALIGN={} SYNC={} IRQ={:02X}",
+                        "[SRC] status {:02X?} CR={} EQ={} SYM={} ALIGN={} SYNC={} IRQ={:02X} ERR={}{}",
                         st,
                         lane & 1,
                         (lane >> 1) & 1,
@@ -301,6 +311,8 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &Video) {
                         st[4] & 1,
                         st[5] & 1,
                         st[1],
+                        err_count,
+                        if err_valid { "" } else { "(inval)" },
                     );
                 }
                 prev = st;
