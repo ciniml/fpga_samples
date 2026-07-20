@@ -241,9 +241,10 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &Video) {
     // Board profile: 800x600 active in a 1200x750 raster. The byte-rate
     // framer emits htotal*3 symbols per line, so the effective pixel
     // clock is LS_Clk/3 = 54 MHz and 1200*750 pixels/frame gives exactly
-    // 60 Hz. Synchronous clock mode with the small static ratio
-    // Mvid/Nvid = 54/162 = 1/3 (DP 1.2 section 2.2.3 explicitly allows
-    // small static M/N values in synchronous mode).
+    // 60 Hz. Synchronous clock mode. Nvid uses the conventional fixed
+    // value 0x8000 (32768) that sink TCONs commonly assume; Mvid =
+    // round(0x8000 / 3) = 0x2AAB (~+30 ppm, absorbed by the sink's
+    // elastic buffer).
     #[cfg(feature = "board")]
     let cfg = VideoConfig {
         htotal:    1200,
@@ -256,8 +257,8 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &Video) {
         hsp:       false,
         vsw:       5,
         vsp:       false,
-        mvid:      1,
-        nvid:      3,
+        mvid:      0x2AAB,
+        nvid:      0x8000,
         misc0:     0x21, // sync clock, 8 bpc RGB (Table 2-45)
         misc1:     0x00,
         tu_active: 64, // byte-rate architecture: TU window carries only valid bytes
