@@ -324,7 +324,30 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video) {
     // tu_active = 32. 858x525 raster, hsync 62 + hback 60, vsync 6 +
     // vback 30, both sync polarities negative. Mvid/Nvid = 27/162 =
     // 1/6 with the conventional Nvid = 0x8000.
-    #[cfg(feature = "board")]
+    // Board 4-lane profile: CEA 1920x1080p60 (VIC 16), 148.5 MHz pixel
+    // clock on RBR x4 (162/148.5 = 12/11, line = 2200 * 12/11 = 2400
+    // symbols/lane, tu_active = 44 -> window = 32 * 64 + 32 = 2080).
+    // hsync 44 + hback 148, vsync 5 + vback 36, both sync positive.
+    #[cfg(all(feature = "board", feature = "lanes4"))]
+    let cfg = VideoConfig {
+        htotal:    2200,
+        vtotal:    1125,
+        hstart:    192, // HSW 44 + HBACK 148
+        vstart:    41,  // VSW 5 + VBACK 36
+        hwidth:    1920,
+        vheight:   1080,
+        hsw:       44,
+        hsp:       false,
+        vsw:       5,
+        vsp:       false,
+        mvid:      0x7555, // round(0x8000 * 11 / 12)
+        nvid:      0x8000,
+        misc0:     0x21,
+        misc1:     0x00,
+        tu_active: 44,
+    };
+    // Board 1-lane fallback: CEA 720x480p59.94.
+    #[cfg(all(feature = "board", not(feature = "lanes4")))]
     let cfg = VideoConfig {
         htotal:    858,
         vtotal:    525,

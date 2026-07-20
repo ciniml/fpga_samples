@@ -31,7 +31,7 @@ if {${TARGET} == "tangprimer25k"} {
     set_option -use_cpu_as_gpio 1
     # Higher place/route effort: the 162 MHz link domain closes only
     # with these enabled.
-    set_option -place_option 1
+    set_option -place_option 2
     set_option -route_option 2
 }
 
@@ -53,6 +53,7 @@ add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/serializer_10t
 add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/training_pattern_gen.sv]
 # Video framer (Phase D)
 add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/pixel_fifo.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/pixel_fifo_quad.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/msa_generator.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/tu_packer.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/video_framer.sv]

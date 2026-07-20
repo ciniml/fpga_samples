@@ -14,7 +14,7 @@ $(TARGET).dump: $(wildcard src/*.rs) link.ld Cargo.toml .cargo/config.toml
 # Board bring-up firmware (Tang Primer 25K): same binary built with the
 # `board` cargo feature, which selects the 800x600@60 video profile.
 $(TARGET)-board.bin: $(wildcard src/*.rs) link.ld Cargo.toml .cargo/config.toml
-	cargo objcopy --bin $(TARGET) --release --features board -- -O binary $@
+	cargo objcopy --bin $(TARGET) --release --features board,lanes4 -- -O binary $@
 
 # 4-lane sim firmware (small raster, 12/11 rate ratio, tu_active=44).
 $(TARGET)-4lane.bin: $(wildcard src/*.rs) link.ld Cargo.toml .cargo/config.toml

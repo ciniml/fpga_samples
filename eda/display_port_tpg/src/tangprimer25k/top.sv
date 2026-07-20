@@ -102,18 +102,19 @@ module top(
 
     // -----------------------------------------------------------------
     // Test pattern generator, demand-paced on the byte clock: the active
-    // area matches the firmware board profile (720x480, CEA 480p); the TPG's own
+    // area matches the firmware board profile (1920x1080, CEA 1080p60,
+    // RBR x4); the TPG's own
     // blanking is kept minimal since tpg_to_axis stalls the raster
     // whenever the DP IP is not accepting pixels (the DP raster timing
     // lives in the firmware MSA profile, not here).
     // -----------------------------------------------------------------
     localparam int HSYNC   = 8;
     localparam int HBACK   = 8;
-    localparam int HACTIVE = 720;
+    localparam int HACTIVE = 1920;
     localparam int HFRONT  = 8;
     localparam int VSYNC   = 2;
     localparam int VBACK   = 2;
-    localparam int VACTIVE = 480;
+    localparam int VACTIVE = 1080;
     localparam int VFRONT  = 2;
 
     logic [23:0] tpg_video_data;
@@ -121,6 +122,14 @@ module top(
     logic        tpg_video_hsync;
     logic        tpg_video_vsync;
     logic        tpg_enable;
+
+    // Hold the TPG at its frame origin until the DP pixel FIFOs start
+    // accepting (they stay cleared while video is off), so the first
+    // pixel the framer consumes is pixel (0,0).
+    logic tpg_reset;
+    always_ff @(posedge clock_byte) begin
+        tpg_reset <= reset_byte || !video_active;
+    end
 
     test_pattern_generator #(
         .HSYNC  (HSYNC),
@@ -137,7 +146,7 @@ module top(
         .LOGO_HEIGHT(24)
     ) tpg_inst (
         .clock     (clock_byte),
-        .reset     (reset_byte),
+        .reset     (tpg_reset),
         .enable    (tpg_enable),
         .video_data(tpg_video_data),
         .video_de  (tpg_video_de),
@@ -151,7 +160,7 @@ module top(
 
     tpg_to_axis tpg_axis (
         .clock        (clock_byte),
-        .reset        (reset_byte),
+        .reset        (tpg_reset),
         .video_data   (tpg_video_data),
         .video_de     (tpg_video_de),
         .tpg_enable   (tpg_enable),
@@ -198,6 +207,10 @@ module top(
     logic        lane0_bit_valid;
     logic        lane0_symbol_valid;
     logic [9:0]  lane0_symbol;
+    logic [9:0]  lane1_symbol;
+    logic [9:0]  lane2_symbol;
+    logic [9:0]  lane3_symbol;
+    logic        video_active;
 
     displayport_dp_source_top #(
         .CLOCK_HZ           (CLOCK_HZ_SYS),
@@ -240,6 +253,10 @@ module top(
         // Drive OSER10 from the encoder's 10-bit symbol.
         .o_lane0_symbol_valid(lane0_symbol_valid),
         .o_lane0_symbol      (lane0_symbol),
+        .o_lane1_symbol      (lane1_symbol),
+        .o_lane2_symbol      (lane2_symbol),
+        .o_lane3_symbol      (lane3_symbol),
+        .o_video_enable      (video_active),
 
         .s_axis_video_tvalid(pix_tvalid),
         .s_axis_video_tready(pix_tready),
@@ -247,9 +264,14 @@ module top(
     );
 
     // -----------------------------------------------------------------
-    // Lane 0 OSER10 + LVDS output. Bit rate = 10 × clock_byte = 1.62 Gbps.
+    // OSER10 + LVDS output per lane. Bit rate = 10 x clock_byte =
+    // 1.62 Gbps. The 2N-symbol inter-lane skew is applied inside
+    // dp_source_top; the four serializers share PCLK/FCLK.
     // -----------------------------------------------------------------
     wire lane0_serial;
+    wire lane1_serial;
+    wire lane2_serial;
+    wire lane3_serial;
 
     oser10_lane lane0_serdes (
         .i_pclk        (clock_byte),
@@ -259,20 +281,51 @@ module top(
         .i_symbol      (lane0_symbol),
         .o_serial      (lane0_serial)
     );
+    oser10_lane lane1_serdes (
+        .i_pclk        (clock_byte),
+        .i_fclk        (clock_serial),
+        .i_reset       (reset_byte),
+        .i_symbol_valid(lane0_symbol_valid),
+        .i_symbol      (lane1_symbol),
+        .o_serial      (lane1_serial)
+    );
+    oser10_lane lane2_serdes (
+        .i_pclk        (clock_byte),
+        .i_fclk        (clock_serial),
+        .i_reset       (reset_byte),
+        .i_symbol_valid(lane0_symbol_valid),
+        .i_symbol      (lane2_symbol),
+        .o_serial      (lane2_serial)
+    );
+    oser10_lane lane3_serdes (
+        .i_pclk        (clock_byte),
+        .i_fclk        (clock_serial),
+        .i_reset       (reset_byte),
+        .i_symbol_valid(lane0_symbol_valid),
+        .i_symbol      (lane3_symbol),
+        .o_serial      (lane3_serial)
+    );
 
     TLVDS_OBUF lane0_obuf (
         .I (lane0_serial),
         .O (ml_lane_0_p),
         .OB(ml_lane_0_n)
     );
-
-    // Park unused lanes.
-    assign ml_lane_1_p = 1'b0;
-    assign ml_lane_1_n = 1'b0;
-    assign ml_lane_2_p = 1'b0;
-    assign ml_lane_2_n = 1'b0;
-    assign ml_lane_3_p = 1'b0;
-    assign ml_lane_3_n = 1'b0;
+    TLVDS_OBUF lane1_obuf (
+        .I (lane1_serial),
+        .O (ml_lane_1_p),
+        .OB(ml_lane_1_n)
+    );
+    TLVDS_OBUF lane2_obuf (
+        .I (lane2_serial),
+        .O (ml_lane_2_p),
+        .OB(ml_lane_2_n)
+    );
+    TLVDS_OBUF lane3_obuf (
+        .I (lane3_serial),
+        .O (ml_lane_3_p),
+        .OB(ml_lane_3_n)
+    );
 
     // -----------------------------------------------------------------
     // UART bootloader input. Bytes from the host feed the serial FW

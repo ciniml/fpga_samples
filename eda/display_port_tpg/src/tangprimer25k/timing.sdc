@@ -43,7 +43,22 @@ set_false_path -from [get_pins {dp_source/sync_tu_active/sync*/Q}]
 // (sync_lane_count is optimized away — lane_count is unused until
 // multi-lane support — so it must not appear here.)
 set_false_path -from [get_pins {dp_source/sync_ef/sync*/Q}]
-// half_rate is quasi-static like the timing registers (written before
-// video_enable). Its consumer is the registered-constant pipeline in
-// video_framer, never a per-byte path.
-set_false_path -from [get_pins {dp_source/sync_halfrate/sync*/Q}]
+// Quasi-static line-accounting registers (written before video_enable);
+// consumers are the registered-constant pipeline in video_framer.
+set_false_path -from [get_pins {dp_source/sync_line_symbols/sync*/Q}]
+set_false_path -from [get_pins {dp_source/sync_active_window/sync*/Q}]
+// lane_count feeds the quasi-static four_lane_r re-register only (set
+// during training, before video).
+set_false_path -from [get_pins {dp_source/sync_lane_count/sync*/Q}]
+// The following are LEVEL signals that transition exactly once at
+// bring-up in CONTINUOUS_BYTE_TICK mode (byte_tick == enable, the
+// scrambler valid == enable delayed) and every consumer tolerates a
+// ragged +-1-cycle transition: the framer parks at slot 0 while
+// disabled, the pixel FIFOs are held cleared until video_enable, and
+// pre-training encoder output is meaningless. Cutting them removes
+// their huge fanout cones from the 162 MHz closure.
+set_false_path -from [get_pins {dp_source/main_link/u_lane0/enable_r_s0/Q}]
+set_false_path -from [get_pins {dp_source/main_link/u_lane0/four_lane_r_s0/Q}]
+set_false_path -from [get_pins {dp_source/four_lane_r_s0/Q}]
+set_false_path -from [get_pins {dp_source/v_enable_lr_s0/Q}]
+set_false_path -from [get_pins {dp_source/main_link/u_lane0/u_sc/o_valid_s0/Q}]
