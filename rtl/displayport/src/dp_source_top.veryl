@@ -90,6 +90,11 @@ pub module dp_source_top #(
     o_lane2_symbol:       output logic<10>,
     o_lane3_symbol:       output logic<10>,
 
+    // Video-enable state in the link domain. The board top uses this to
+    // hold the pattern generator at its frame origin until the pixel
+    // FIFOs start accepting (they stay cleared while video is off).
+    o_video_enable: output logic,
+
     // AXI-Stream pixel input (Phase D, 24bpp RGB), link clock domain.
     s_axis_video_tvalid: input  logic,
     s_axis_video_tready: output logic,
@@ -246,6 +251,7 @@ pub module dp_source_top #(
             v_enable_lr = v_enable_l;
         }
     }
+    assign o_video_enable = v_enable_lr;
 
     // Video timing registers are quasi-static: the firmware programs
     // them strictly before asserting video_enable and never changes

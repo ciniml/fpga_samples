@@ -29,6 +29,11 @@ pub module pixel_fifo #(
     i_clk:  input clock_posedge,
     i_rstn: input reset_sync_low,
 
+    // Synchronous clear: while high the FIFO is held empty and refuses
+    // pushes (tready = 0). Driven by !video_enable so the stream seen
+    // by the framer always starts at the producer's frame origin.
+    i_clear: input logic,
+
     // AXI-Stream input. tdata[7:0]=B, tdata[15:8]=G, tdata[23:16]=R
     s_axis_tvalid: input  logic,
     s_axis_tready: output logic,
@@ -54,8 +59,8 @@ pub module pixel_fifo #(
     var count:    count_t;    // occupied pixel words (front word is
                               // complete because pushes are whole pixels)
 
-    let push_accept: logic = s_axis_tvalid && (count <: DEPTH_PIXELS as count_t);
-    assign s_axis_tready = (count <: DEPTH_PIXELS as count_t);
+    let push_accept: logic = s_axis_tvalid && !i_clear && (count <: DEPTH_PIXELS as count_t);
+    assign s_axis_tready = !i_clear && (count <: DEPTH_PIXELS as count_t);
 
     always_comb {
         case rd_phase {
@@ -71,6 +76,12 @@ pub module pixel_fifo #(
 
     always_ff (i_clk, i_rstn) {
         if_reset {
+            wr_ptr   = 0;
+            rd_ptr   = 0;
+            rd_phase = 0;
+            count    = 0;
+            empty_r  = 1;
+        } else if i_clear {
             wr_ptr   = 0;
             rd_ptr   = 0;
             rd_phase = 0;

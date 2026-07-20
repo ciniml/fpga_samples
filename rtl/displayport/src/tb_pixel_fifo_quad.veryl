@@ -1,0 +1,136 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_pixel_fifo_quad.veryl
+ * @brief Unit test for pixel_fifo_quad: push 32 pixels, pop component
+ *        columns, verify the steering (lane L = pixel 4N+L, phases
+ *        R, G, B) and empty/refill behaviour with bursty pops.
+ */
+
+module TbPixelFifoQuad {}
+
+#[test(pixel_fifo_quad_steering)]
+embed (inline) sv{{{
+module pixel_fifo_quad_steering;
+    logic clk;
+    logic rstn;
+    initial clk = 0;
+    always #5 clk = ~clk;
+
+    logic        tvalid;
+    logic        tready;
+    logic [23:0] tdata;
+    logic [31:0] bytes;
+    logic        empty;
+    logic        pop;
+
+    displayport_pixel_fifo_quad #(.DEPTH_WORDS(8)) dut (
+        .i_clk        (clk),
+        .i_rstn       (rstn),
+        .s_axis_tvalid(tvalid),
+        .s_axis_tready(tready),
+        .s_axis_tdata (tdata),
+        .o_bytes      (bytes),
+        .o_empty      (empty),
+        .i_pop        (pop)
+    );
+
+    integer errors = 0;
+    integer push_i = 0;
+    integer pop_group = 0; // 4-pixel group index
+    integer pop_comp  = 0;
+
+    function automatic logic [23:0] px(input int i);
+        // R = i, G = i+0x40, B = i+0x80
+        return {8'(i), 8'(i + 8'h40), 8'(i + 8'h80)};
+    endfunction
+
+    logic soak;
+    initial soak = 0;
+    logic [15:0] lfsr = 16'hACE1;
+    always_ff @(posedge clk) begin
+        lfsr <= {lfsr[14:0], lfsr[15] ^ lfsr[13] ^ lfsr[12] ^ lfsr[10]};
+    end
+
+    // Pusher: 32 pixels continuous, then (soak) 2000 more with random
+    // gaps.
+    always_ff @(posedge clk) begin
+        if (!rstn) begin
+            push_i <= 0;
+        end else if (tvalid && tready) begin
+            push_i <= push_i + 1;
+        end
+    end
+    assign tvalid = rstn && (soak ? (push_i < 32 + 2000) && lfsr[0] : (push_i < 32));
+    assign tdata  = px(push_i);
+
+    // Popper: pop with gaps (2 on, 1 off) once not empty; random in soak.
+    logic [1:0] pace;
+    always_ff @(posedge clk) begin
+        if (!rstn) pace <= 0;
+        else pace <= pace + 2'd1;
+    end
+    assign pop = rstn && !empty && (soak ? lfsr[5] : (pace != 2'd2));
+
+    always_ff @(posedge clk) begin
+        if (rstn && pop && !empty) begin
+            for (int lb = 0; lb < 4; lb++) begin
+                automatic logic [23:0] exppx = px(pop_group * 4 + lb);
+                automatic logic [7:0] expb =
+                    (pop_comp == 0) ? exppx[23:16] :
+                    (pop_comp == 1) ? exppx[15:8]  : exppx[7:0];
+                if (bytes[8*lb +: 8] !== expb) begin
+                    $display("ERROR: group %0d comp %0d lane %0d: expected %02h got %02h",
+                             pop_group, pop_comp, lb, expb, bytes[8*lb +: 8]);
+                    errors <= errors + 1;
+                end
+            end
+            if (pop_comp == 2) begin
+                pop_comp  <= 0;
+                pop_group <= pop_group + 1;
+            end else begin
+                pop_comp <= pop_comp + 1;
+            end
+        end
+    end
+
+    initial begin
+        rstn = 0;
+        repeat (5) @(posedge clk);
+        rstn = 1;
+
+        // 32 pixels = 8 groups x 3 components = 24 pops.
+        for (int t = 0; t < 2000; t++) begin
+            @(posedge clk);
+            if (pop_group == 8) break;
+        end
+        if (pop_group != 8) begin
+            $display("ERROR: only %0d groups popped (comp=%0d, empty=%b)",
+                     pop_group, pop_comp, empty);
+            errors = errors + 1;
+        end
+        // ---- Randomized soak: 2000 pixels, random push gaps and pop
+        // bursts crossing the full/empty boundaries. The scoreboard is
+        // the same steering check (pop_group/pop_comp continue).
+        soak = 1;
+        for (int t = 0; t < 200000; t++) begin
+            @(posedge clk);
+            if (pop_group == 8 + 500) break;
+        end
+        if (pop_group != 8 + 500) begin
+            $display("ERROR: soak stalled at group %0d comp %0d (empty=%b, push_i=%0d)",
+                     pop_group, pop_comp, empty, push_i);
+            errors = errors + 1;
+        end
+        if (errors == 0) begin
+            $display("PASS: pixel_fifo_quad_steering");
+        end else begin
+            $fatal(1, "FAIL: %0d errors", errors);
+        end
+        $finish;
+    end
+endmodule
+}}}

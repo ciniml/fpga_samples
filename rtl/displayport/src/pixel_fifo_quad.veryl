@@ -26,6 +26,9 @@ pub module pixel_fifo_quad #(
     i_clk:  input clock_posedge,
     i_rstn: input reset_sync_low,
 
+    // Synchronous clear: hold empty, refuse pushes (see pixel_fifo).
+    i_clear: input logic,
+
     s_axis_tvalid: input  logic,
     s_axis_tready: output logic,
     s_axis_tdata:  input  logic<24>,
@@ -51,8 +54,9 @@ pub module pixel_fifo_quad #(
     var pack_cnt: logic<2>;
 
     let full: logic = count == (DEPTH_WORDS as cnt_t);
-    assign s_axis_tready = !full;
-    let push_word: logic = s_axis_tvalid && !full && (pack_cnt == 2'd3);
+    assign s_axis_tready = !full && !i_clear;
+    let accept: logic = s_axis_tvalid && !full && !i_clear;
+    let push_word: logic = accept && (pack_cnt == 2'd3);
 
     // Read side: registered word + component phase.
     var rd_word:  logic<96>;
@@ -107,8 +111,15 @@ pub module pixel_fifo_quad #(
             rd_word  = 0;
             rd_phase = 0;
             empty_r  = 1;
+        } else if i_clear {
+            wr_ptr   = 0;
+            rd_ptr   = 0;
+            count    = 0;
+            pack_cnt = 0;
+            rd_phase = 0;
+            empty_r  = 1;
         } else {
-            if s_axis_tvalid && !full {
+            if accept {
                 if pack_cnt == 2'd3 {
                     mem[wr_ptr] = {s_axis_tdata, pack};
                     wr_ptr      = wr_ptr + (1 as ptr_t);

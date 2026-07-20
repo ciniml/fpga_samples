@@ -168,7 +168,7 @@ const LANE_COUNT: u8 = 1;
 #[cfg(feature = "lanes4")]
 const LANE_COUNT: u8 = 4;
 
-fn source_process(aux: &AuxCh, ml: &MainLink, vid: &Video) {
+fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video) {
     println!("[SRC] waiting for HPD");
     while !read_hpd_level() {}
     if read_hpd_event_plug() {
@@ -273,11 +273,33 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &Video) {
     };
 
     // Phase D: configure MSA and enable the video pipeline.
+    // 4-lane sim profile: miniature version of the 1080p60 structure.
+    // 64x16 active in an 88x24 raster at the 12/11 rate ratio:
+    // B = 48 bytes/lane/line, tu_active = 44 -> W = 64 + 4 = 68
+    // symbols, line = 88 * 12/11 = 96 symbols/lane.
+    #[cfg(all(not(feature = "board"), feature = "lanes4"))]
+    let cfg = VideoConfig {
+        htotal:    88,
+        vtotal:    24,
+        hstart:    16,
+        vstart:    8,
+        hwidth:    64,
+        vheight:   16,
+        hsw:       4,
+        hsp:       false,
+        vsw:       2,
+        vsp:       false,
+        mvid:      0x7555, // round(0x8000 * 11 / 12)
+        nvid:      0x8000,
+        misc0:     0x21,
+        misc1:     0x00,
+        tu_active: 44,
+    };
     // Sim profile: exercises the half-rate path (1 pixel = 6 link
     // symbols, tu_active = 32) that the board now uses. 64x16 active in
     // an 80x24 raster: B = 192 bytes/line -> 6 full TUs (384 symbols),
     // line = 480 symbols, hblank window = 96.
-    #[cfg(not(feature = "board"))]
+    #[cfg(all(not(feature = "board"), not(feature = "lanes4")))]
     let cfg = VideoConfig {
         htotal:    80,
         vtotal:    24,
@@ -320,6 +342,11 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &Video) {
         misc1:     0x00,
         tu_active: 32,
     };
+    // Line-accounting rate: LS_clk/pixel_clk as a fraction, plus lanes.
+    #[cfg(feature = "lanes4")]
+    vid.set_rate(12, 11, 4);
+    #[cfg(not(feature = "lanes4"))]
+    vid.set_rate(6, 1, 1);
     vid.setup_and_enable(&cfg);
     println!("[SRC] video pipeline enabled");
 
@@ -409,11 +436,11 @@ pub extern "C" fn main() -> ! {
     let cpu_id = get_cpu_id();
     let aux = AuxCh::new(peripherals.AUX_CH);
     let ml = MainLink::new(peripherals.MAIN_LINK);
-    let vid = Video::new(peripherals.VIDEO);
+    let mut vid = Video::new(peripherals.VIDEO);
     println!("[CPU{}] phase D boot", cpu_id);
 
     match cpu_id {
-        0 => source_process(&aux, &ml, &vid),
+        0 => source_process(&aux, &ml, &mut vid),
         1 => sink_process(&aux),
         other => {
             println!("[CPU?] unknown id {:08X}", other);

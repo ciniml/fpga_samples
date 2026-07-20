@@ -11,6 +11,7 @@ reset_type = "sync_low"
 # Verilator. Firmware ROM image and the FemtoRV32 source must end up here.
 include_files = [
     "test/sw-rs/bootrom-rs.hex",
+    "test/sw-rs/bootrom-rs-4lane.hex",
     "../../external/learn-fpga/FemtoRV/RTL/PROCESSOR/femtorv32_gracilis.v",
 ]
 

@@ -2617,6 +2617,10 @@ pub mod video {
         pub misc: MISC,
         #[doc = "0x30 - Number of active (valid pixel) bytes per 64-symbol TU. CPU computes from Mvid/Nvid."]
         pub tu_active: TU_ACTIVE,
+        #[doc = "0x34 - Link symbols per line per lane (= htotal * LS_clk / pixel_clk; must be an integer). CPU computes."]
+        pub line_symbols: LINE_SYMBOLS,
+        #[doc = "0x38 - Symbols per line per lane occupied by the TU region: floor(B/tu_active)*64 + (B mod tu_active), B = active bytes per lane per line. CPU computes."]
+        pub active_window: ACTIVE_WINDOW,
     }
     #[doc = "CTRL (rw) register accessor: an alias for `Reg<CTRL_SPEC>`"]
     pub type CTRL = crate::Reg<ctrl::CTRL_SPEC>;
@@ -3765,6 +3769,176 @@ pub mod video {
         }
         #[doc = "`reset()` method sets TU_ACTIVE to value 0"]
         impl crate::Resettable for TU_ACTIVE_SPEC {
+            const RESET_VALUE: Self::Ux = 0;
+        }
+    }
+    #[doc = "LINE_SYMBOLS (rw) register accessor: an alias for `Reg<LINE_SYMBOLS_SPEC>`"]
+    pub type LINE_SYMBOLS = crate::Reg<line_symbols::LINE_SYMBOLS_SPEC>;
+    #[doc = "Link symbols per line per lane (= htotal * LS_clk / pixel_clk; must be an integer). CPU computes."]
+    pub mod line_symbols {
+        #[doc = "Register `LINE_SYMBOLS` reader"]
+        pub struct R(crate::R<LINE_SYMBOLS_SPEC>);
+        impl core::ops::Deref for R {
+            type Target = crate::R<LINE_SYMBOLS_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl From<crate::R<LINE_SYMBOLS_SPEC>> for R {
+            #[inline(always)]
+            fn from(reader: crate::R<LINE_SYMBOLS_SPEC>) -> Self {
+                R(reader)
+            }
+        }
+        #[doc = "Register `LINE_SYMBOLS` writer"]
+        pub struct W(crate::W<LINE_SYMBOLS_SPEC>);
+        impl core::ops::Deref for W {
+            type Target = crate::W<LINE_SYMBOLS_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl core::ops::DerefMut for W {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+        impl From<crate::W<LINE_SYMBOLS_SPEC>> for W {
+            #[inline(always)]
+            fn from(writer: crate::W<LINE_SYMBOLS_SPEC>) -> Self {
+                W(writer)
+            }
+        }
+        #[doc = "Field `VALUE` reader - "]
+        pub type VALUE_R = crate::FieldReader<u16>;
+        #[doc = "Field `VALUE` writer - "]
+        pub type VALUE_W<'a, const O: u8> = crate::FieldWriter<'a, LINE_SYMBOLS_SPEC, 16, O, u16>;
+        impl R {
+            #[doc = "Bits 0:15"]
+            #[inline(always)]
+            pub fn value(&self) -> VALUE_R {
+                VALUE_R::new((self.bits & 0xffff) as u16)
+            }
+        }
+        impl W {
+            #[doc = "Bits 0:15"]
+            #[inline(always)]
+            #[must_use]
+            pub fn value(&mut self) -> VALUE_W<0> {
+                VALUE_W::new(self)
+            }
+            #[doc = "Writes raw bits to the register."]
+            #[inline(always)]
+            pub unsafe fn bits(&mut self, bits: u32) -> &mut Self {
+                self.0.bits(bits);
+                self
+            }
+        }
+        #[doc = "Link symbols per line per lane (= htotal * LS_clk / pixel_clk; must be an integer). CPU computes.\n\nThis register you can [`read`](crate::generic::Reg::read), [`write_with_zero`](crate::generic::Reg::write_with_zero), [`reset`](crate::generic::Reg::reset), [`write`](crate::generic::Reg::write), [`modify`](crate::generic::Reg::modify). See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [line_symbols](index.html) module"]
+        pub struct LINE_SYMBOLS_SPEC;
+        impl crate::RegisterSpec for LINE_SYMBOLS_SPEC {
+            type Ux = u32;
+        }
+        #[doc = "`read()` method returns [line_symbols::R](R) reader structure"]
+        impl crate::Readable for LINE_SYMBOLS_SPEC {
+            type Reader = R;
+        }
+        #[doc = "`write(|w| ..)` method takes [line_symbols::W](W) writer structure"]
+        impl crate::Writable for LINE_SYMBOLS_SPEC {
+            type Writer = W;
+            const ZERO_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+            const ONE_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+        }
+        #[doc = "`reset()` method sets LINE_SYMBOLS to value 0"]
+        impl crate::Resettable for LINE_SYMBOLS_SPEC {
+            const RESET_VALUE: Self::Ux = 0;
+        }
+    }
+    #[doc = "ACTIVE_WINDOW (rw) register accessor: an alias for `Reg<ACTIVE_WINDOW_SPEC>`"]
+    pub type ACTIVE_WINDOW = crate::Reg<active_window::ACTIVE_WINDOW_SPEC>;
+    #[doc = "Symbols per line per lane occupied by the TU region: floor(B/tu_active)*64 + (B mod tu_active), B = active bytes per lane per line. CPU computes."]
+    pub mod active_window {
+        #[doc = "Register `ACTIVE_WINDOW` reader"]
+        pub struct R(crate::R<ACTIVE_WINDOW_SPEC>);
+        impl core::ops::Deref for R {
+            type Target = crate::R<ACTIVE_WINDOW_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl From<crate::R<ACTIVE_WINDOW_SPEC>> for R {
+            #[inline(always)]
+            fn from(reader: crate::R<ACTIVE_WINDOW_SPEC>) -> Self {
+                R(reader)
+            }
+        }
+        #[doc = "Register `ACTIVE_WINDOW` writer"]
+        pub struct W(crate::W<ACTIVE_WINDOW_SPEC>);
+        impl core::ops::Deref for W {
+            type Target = crate::W<ACTIVE_WINDOW_SPEC>;
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+        impl core::ops::DerefMut for W {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+        impl From<crate::W<ACTIVE_WINDOW_SPEC>> for W {
+            #[inline(always)]
+            fn from(writer: crate::W<ACTIVE_WINDOW_SPEC>) -> Self {
+                W(writer)
+            }
+        }
+        #[doc = "Field `VALUE` reader - "]
+        pub type VALUE_R = crate::FieldReader<u16>;
+        #[doc = "Field `VALUE` writer - "]
+        pub type VALUE_W<'a, const O: u8> = crate::FieldWriter<'a, ACTIVE_WINDOW_SPEC, 16, O, u16>;
+        impl R {
+            #[doc = "Bits 0:15"]
+            #[inline(always)]
+            pub fn value(&self) -> VALUE_R {
+                VALUE_R::new((self.bits & 0xffff) as u16)
+            }
+        }
+        impl W {
+            #[doc = "Bits 0:15"]
+            #[inline(always)]
+            #[must_use]
+            pub fn value(&mut self) -> VALUE_W<0> {
+                VALUE_W::new(self)
+            }
+            #[doc = "Writes raw bits to the register."]
+            #[inline(always)]
+            pub unsafe fn bits(&mut self, bits: u32) -> &mut Self {
+                self.0.bits(bits);
+                self
+            }
+        }
+        #[doc = "Symbols per line per lane occupied by the TU region: floor(B/tu_active)*64 + (B mod tu_active), B = active bytes per lane per line. CPU computes.\n\nThis register you can [`read`](crate::generic::Reg::read), [`write_with_zero`](crate::generic::Reg::write_with_zero), [`reset`](crate::generic::Reg::reset), [`write`](crate::generic::Reg::write), [`modify`](crate::generic::Reg::modify). See [API](https://docs.rs/svd2rust/#read--modify--write-api).\n\nFor information about available fields see [active_window](index.html) module"]
+        pub struct ACTIVE_WINDOW_SPEC;
+        impl crate::RegisterSpec for ACTIVE_WINDOW_SPEC {
+            type Ux = u32;
+        }
+        #[doc = "`read()` method returns [active_window::R](R) reader structure"]
+        impl crate::Readable for ACTIVE_WINDOW_SPEC {
+            type Reader = R;
+        }
+        #[doc = "`write(|w| ..)` method takes [active_window::W](W) writer structure"]
+        impl crate::Writable for ACTIVE_WINDOW_SPEC {
+            type Writer = W;
+            const ZERO_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+            const ONE_TO_MODIFY_FIELDS_BITMAP: Self::Ux = 0;
+        }
+        #[doc = "`reset()` method sets ACTIVE_WINDOW to value 0"]
+        impl crate::Resettable for ACTIVE_WINDOW_SPEC {
             const RESET_VALUE: Self::Ux = 0;
         }
     }

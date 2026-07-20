@@ -154,9 +154,17 @@ pub module main_link_tx_lane #(
     var fifo_empty:  logic;
     var fifo_pop:    logic;
 
+    // While video is disabled both FIFOs stay cleared and refuse
+    // pushes, so the first pixel the framer ever consumes is the
+    // producer's frame origin — regardless of when the lane-count
+    // routing settles (a pre-switch push would otherwise be stranded
+    // in the inactive FIFO and shift the image permanently).
+    let fifo_clear: logic = !i_video_enable;
+
     inst u_pixel: pixel_fifo (
         i_clk        : i_clk,
         i_rstn       : i_rstn,
+        i_clear      : fifo_clear,
         s_axis_tvalid: s_axis_tvalid && !four_lane_r,
         s_axis_tready: fifo_ready1,
         s_axis_tdata : s_axis_tdata,
@@ -167,6 +175,7 @@ pub module main_link_tx_lane #(
     inst u_pixel4: pixel_fifo_quad (
         i_clk        : i_clk,
         i_rstn       : i_rstn,
+        i_clear      : fifo_clear,
         s_axis_tvalid: s_axis_tvalid && four_lane_r,
         s_axis_tready: fifo_ready4,
         s_axis_tdata : s_axis_tdata,

@@ -333,8 +333,6 @@ module dp_source_top_cont;
         rstn       = 1'b0;
         hpd[0]     = 1'b0;
         hpd[1]     = 1'b0;
-        pix_tvalid = 1'b0;
-        pix_tdata  = 24'h000000;
         repeat (16) @(posedge clk);
         rstn = 1'b1;
 
@@ -400,25 +398,21 @@ module dp_source_top_cont;
         $fatal(1, "[TB] timeout");
     end
 
-    // ----- Pixel pump: same frame-indexed pattern as tb_dp_source_top.
-    initial begin
-        @(posedge rstn);
-        wait (hpd[0] == 1'b1);
-        for (int f = 0; f < NUM_FRAMES; f++) begin
-            for (int y = 0; y < FRAME_H; y++) begin
-                for (int x = 0; x < FRAME_W; x++) begin
-                    logic [7:0] xb, yb, bb;
-                    xb = x[7:0];
-                    yb = y[7:0];
-                    bb = (x + y + 16 * f) & 32'hFF;
-                    pix_tdata  = {xb, yb, bb};
-                    pix_tvalid = 1'b1;
-                    @(posedge clk);
-                    while (!pix_tready) @(posedge clk);
-                end
-            end
-        end
-        pix_tvalid = 1'b0;
+    // ----- Pixel pump: fully synchronous pusher (no event-scheduling
+    // races: the index advances on the same sampled tvalid&&tready the
+    // DUT sees; data is a combinational function of the index).
+    localparam int unsigned TOTAL_PX = NUM_FRAMES * FRAME_W * FRAME_H;
+    integer pump_idx;
+    wire [31:0] pump_f  = pump_idx / (FRAME_W * FRAME_H);
+    wire [31:0] pump_r  = pump_idx % (FRAME_W * FRAME_H);
+    wire [31:0] pump_y  = pump_r / FRAME_W;
+    wire [31:0] pump_x  = pump_r % FRAME_W;
+    assign pix_tvalid = rstn && hpd[0] && (pump_idx < TOTAL_PX);
+    assign pix_tdata  = {pump_x[7:0], pump_y[7:0],
+                         8'((pump_x + pump_y + 16 * pump_f) & 32'hFF)};
+    always_ff @(posedge clk) begin
+        if (!rstn) pump_idx <= 0;
+        else if (pix_tvalid && pix_tready) pump_idx <= pump_idx + 1;
     end
 endmodule
 }}}
