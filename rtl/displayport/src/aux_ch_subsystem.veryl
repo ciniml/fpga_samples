@@ -177,6 +177,15 @@ pub module aux_ch_subsystem #(
     var aux_ch_write_data: logic<8>;
     var aux_ch_interrupt: logic;
 
+    // Half-duplex turnaround guard: while this side drives the AUX pair,
+    // a bidirectional pad (e.g. TLVDS_IOBUF) feeds our own transmission
+    // back into aux_ch_in. The armed RX would then decode our own
+    // request as the "reply" (observed on hardware as a Protocol error
+    // with rx_count equal to the request header length). Force the RX
+    // input to the idle level while transmitting. Simulation testbenches
+    // wire only the peer's output, so this is a no-op there.
+    let aux_ch_in_rx: logic = if aux_ch_out_enable ? 1'b0 : aux_ch_in;
+
     inst aux_ch_inst: aux_ch_peripheral #(
         CLOCK_HZ,
         MANCHESTER_CLOCK_HZ,
@@ -194,7 +203,7 @@ pub module aux_ch_subsystem #(
         mcu_write_data: aux_ch_write_data,
         mcu_interrupt : aux_ch_interrupt,
 
-        aux_ch_in,
+        aux_ch_in     : aux_ch_in_rx,
         aux_ch_out,
         aux_ch_out_enable,
     );
