@@ -17,7 +17,12 @@
  *          next 12 bytes         : (VB-ID, Mvid7:0, Maud7:0) x 4 — the
  *                                  header must be transported four times
  *                                  regardless of lane count (Fig 2-11/12)
- *          next 39 bytes (vblank): MSA (39 symbols from msa_generator)
+ *          next 39 bytes (vblank): MSA (39 symbols from msa_generator),
+ *                                  sent once per frame on line 1 only
+ *                                  (right after the VSync leading edge;
+ *                                  §2.2.4 requires one MSA per frame).
+ *                                  Other vblank lines carry 0x00 stuffing
+ *                                  in these slots.
  *          byte hblank_bytes-1   : BE (K27.7)        -- active lines only
  *          bytes hblank_bytes..  : TU pixel bytes    -- active lines only
  *          all other bytes       : 0x00 stuffing
@@ -200,6 +205,7 @@ pub module video_framer #(
     var np1_lt_vend:         logic;     // stage 2
     var next_line_is_vblank: logic;     // stage 3: vblank-ness of line+1
     var line0_is_vblank:     logic;     // vblank-ness of line 0
+    var next_line_is_msa:    logic;     // (line+1) is the once-per-frame MSA line
     always_ff (i_clk, i_rstn) {
         if_reset {
             frame_wrap_r        = 0;
@@ -208,6 +214,7 @@ pub module video_framer #(
             np1_lt_vend         = 0;
             next_line_is_vblank = 1;
             line0_is_vblank     = 1;
+            next_line_is_msa    = 0;
         } else {
             frame_wrap_r        = (line == vtotal_m1);
             line_p1             = line + 16'd1;
@@ -215,12 +222,17 @@ pub module video_framer #(
             np1_lt_vend         = (line_p1 <: vend);
             next_line_is_vblank = !(np1_ge_vstart && np1_lt_vend);
             line0_is_vblank     = (i_vstart != 16'd0);
+            // MSA is sent once per frame, on line 1 (right after the
+            // VSync leading edge at line 0; §2.2.4 requires exactly one
+            // MSA per frame during the vertical blanking period).
+            next_line_is_msa    = (line_p1 == 16'd1);
         }
     }
 
     // Per-slot flags (describe the slot the mux emits on the NEXT cycle,
     // which by construction is byte_in_line / idle_counter then).
     var f_line_vblank: logic;
+    var f_line_msa:    logic;   // this line carries the once-per-frame MSA
     var f_v_bs_first:  logic;
     var f_v_bs_last:   logic;
     var f_v_bs_in:     logic;
@@ -242,6 +254,7 @@ pub module video_framer #(
     always_ff (i_clk, i_rstn) {
         if_reset {
             f_line_vblank = 1;
+            f_line_msa    = 0;
             f_v_bs_first  = 1;
             f_v_bs_last   = 0;
             f_v_bs_in     = 1;
@@ -325,8 +338,12 @@ pub module video_framer #(
 
             if !i_video_enable {
                 f_line_vblank = line0_is_vblank;
+                f_line_msa    = 0;
             } else if line_wrap_now {
                 f_line_vblank = if frame_wrap_r ? line0_is_vblank : next_line_is_vblank;
+                // Line 0 is never the MSA line (it is 1), so the frame
+                // wrap always clears the flag.
+                f_line_msa    = if frame_wrap_r ? 1'b0 : next_line_is_msa;
             }
 
             // ---- idle-path flags ----
@@ -363,8 +380,8 @@ pub module video_framer #(
     // delay), so their windows run one byte EARLIER (msa_pre / tu_pre)
     // than the slot the mux reads them at, exactly as before — the
     // pre-window flags encode the same ranges.
-    let msa_trigger:   logic = i_byte_tick && f_line_vblank && f_v_msa_trig;
-    let msa_byte_tick: logic = i_byte_tick && f_line_vblank && f_v_msa_pre;
+    let msa_trigger:   logic = i_byte_tick && f_line_vblank && f_line_msa && f_v_msa_trig;
+    let msa_byte_tick: logic = i_byte_tick && f_line_vblank && f_line_msa && f_v_msa_pre;
     let tu_pre_window: logic = i_video_enable && !f_line_vblank && f_v_tu_pre;
     let tu_start_pulse: logic = i_byte_tick && !f_line_vblank && f_v_tu_start && i_video_enable;
     let tu_byte_tick:  logic = i_byte_tick && tu_pre_window;
