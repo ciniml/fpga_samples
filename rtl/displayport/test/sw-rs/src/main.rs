@@ -270,6 +270,51 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &Video) {
         | ((stats.cr_iters & 0xFF) << 8)
         | ((stats.eq_iters & 0xFF) << 16);
     write_system_out(v);
+
+    // Phase E: keep polling the link/sink status field (DPCD 0x200-0x205)
+    // so a post-training failure is visible on the UART. SYNC is
+    // SINK_STATUS bit0 (RECEIVE_PORT_0_STATUS): 1 means the sink is in
+    // sync with our main-link stream, so "training done but no picture"
+    // splits into signal-level problems (CR/EQ/SYM drop) vs stream
+    // formatting problems (all 1 but SYNC=0 or the monitor still blank).
+    println!("[SRC] monitoring link status (DPCD 200h-205h)");
+    let mut prev = [0u8; 6];
+    let mut have_prev = false;
+    let mut beat: u32 = 0;
+    loop {
+        // ~1 s between polls (same nop scale as the retry delay above).
+        for _ in 0..9_000_000u32 {
+            unsafe { core::arch::asm!("nop") };
+        }
+        let mut st = [0u8; 6];
+        match dpcd::read_block(aux, dpcd::SINK_COUNT, &mut st) {
+            Ok(_) => {
+                if !have_prev || st != prev || beat % 10 == 0 {
+                    let lane = st[2];
+                    println!(
+                        "[SRC] status {:02X?} CR={} EQ={} SYM={} ALIGN={} SYNC={} IRQ={:02X}",
+                        st,
+                        lane & 1,
+                        (lane >> 1) & 1,
+                        (lane >> 2) & 1,
+                        st[4] & 1,
+                        st[5] & 1,
+                        st[1],
+                    );
+                }
+                prev = st;
+                have_prev = true;
+            }
+            Err(e) => {
+                println!(
+                    "[SRC] status read failed: {:?} (rx_count={})",
+                    e,
+                    aux.rx_count()
+                );
+            }
+        }
+        beat = beat.wrapping_add(1);
+    }
 }
 
 fn sink_process(aux: &AuxCh) {

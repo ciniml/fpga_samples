@@ -66,6 +66,8 @@ pub const DOWNSPREAD_CTRL: u32 = 0x00107;
 pub const MAIN_LINK_CHANNEL_CODING_SET: u32 = 0x00108;
 
 // Link/Sink Status field
+pub const SINK_COUNT: u32 = 0x00200;
+pub const DEVICE_SERVICE_IRQ_VECTOR: u32 = 0x00201;
 pub const LANE0_1_STATUS: u32 = 0x00202;
 pub const LANE2_3_STATUS: u32 = 0x00203;
 pub const LANE_ALIGN_STATUS_UPDATED: u32 = 0x00204;
