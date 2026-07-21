@@ -68,3 +68,96 @@ Tang Primer 25K + 既存DPソースIP (I2Cマスタ/仮想HPD実装済み) 前�
 3. アタッチ: CC測定で向き判定 → POL設定 → EN=1 → VBUS_EN=1
 4. PD契約 (Source Cap 5V) → VDM (Discover→Enter Mode→Configure C)
 5. Attention→仮想HPD (SYSTEM HPD bit4) → 既存DPブリングアップ合流
+
+
+## 4. 回路接続構成(回路図作成用の結線ガイド)
+
+### 4.0 全体トポロジ
+
+```
+                                 +---------------------+
+  FPGA ML0± ──100nF×2──> LnA± ──|                     |── CTX1± ──> [C] A2/A3   (TX1)
+  FPGA ML1± ──100nF×2──> LnB± ──|                     |── CRX1± ──> [C] B10/B11 (RX1)
+  FPGA ML2± ──100nF×2──> LnC± ──|      HD3SS460       |── CTX2± ──> [C] B2/B3   (TX2)
+  FPGA ML3± ──100nF×2──> LnD± ──|  (4L DP + SBU mux)  |── CRX2± ──> [C] A10/A11 (RX2)
+  FPGA AUX± ──バイアス網──> AUX側低速ポート ──|       |── SBU1/2 ──> [C] A8/B8
+  FPGA GPIO(POL) ──────────> POL |                     |
+  FPGA GPIO(EN)  ──────────> EN  |   AMSEL=4レーンDP固定(ストラップ)
+                                 +---------------------+
+
+  [C] A5 (CC1) ─────直結───── FUSB302B CC1
+  [C] B5 (CC2) ─────直結───── FUSB302B CC2
+  FPGA SDA/SCL ──4.7kプルアップ── FUSB302B SDA/SCL
+  FPGA GPIO入力(任意) <──10kPU── FUSB302B INT_N
+  [C] VBUS(A4,B9,A9,B4) <── ロードスイッチ <──EN=FPGA GPIO(VBUS_EN)── 5V
+  FUSB302B VBUS ピン ──── VBUSネットへ (検出用)
+  [C] D+/D-(A6/A7,B6/B7): 未接続 / [C] GND(A1,B1,A12,B12)+シェル: GND
+```
+
+### 4.1 Type-Cレセプタクル
+
+| ピン | ネット | 備考 |
+|---|---|---|
+| A1,B1,A12,B12 | GND | シェルもGNDへ(ビア縫い) |
+| A4,B9,A9,B4 | VBUS | 4ピン全て結線。ロードスイッチ出力 |
+| A5 | CC1 | FUSB302B CC1へ直結(抵抗なし。Rp/VCONNはチップ内蔵) |
+| B5 | CC2 | FUSB302B CC2へ直結 |
+| A6/A7, B6/B7 | (D±) 未接続 | 映像専用の割り切り。フロートで可 |
+| A2/A3 | TX1± → HD3SS460 CTX1± | SS高速ペア。90Ω差動 |
+| B10/B11 | RX1± → HD3SS460 CRX1± | 〃 |
+| B2/B3 | TX2± → HD3SS460 CTX2± | 〃 |
+| A10/A11 | RX2± → HD3SS460 CRX2± | 〃 |
+| A8/B8 | SBU1/SBU2 → HD3SS460 SBUポート | 低速。インピーダンス管理不要 |
+
+### 4.2 HD3SS460
+
+- **コネクタ側**: CTX1/CRX1/CTX2/CRX2 を上表どおりレセプタクルSSピンへ
+- **システム側(DPレーン)**: LnA..LnD ← FPGA ML0..ML3(各線100nF AC結合、
+  コンデンサはFPGA側に配置)
+  - **LnA..D と ML0..3 の対応順はデータシートの4-Lane DPアプリケーション
+    図(および Ln↔コネクタポートのマッピング表)から転記すること**。
+    レーン順を誤ると映像が出ない(RTL側にレーンスワップ機能はない)
+- **システム側(USB3)**: SSTX/SSRX ペアは未使用。データシート指定の
+  未使用ポート処理に従う(通常フロート可)
+- **SBU/AUX**: FPGA AUX±+バイアス網(§4.4)→AUX側低速ポート、
+  SBU1/2→レセプタクル。表裏の入替えはPOLに連動してチップが行う
+- **制御**:
+  - AMSEL: 「4レーンDPモード」になる論理レベルへ**抵抗ストラップで固定**
+    (レベルはデータシートのモード表から。将来D対応時はFPGA GPIOへ変更)
+  - POL: FPGA GPIO(cpu_io_out bit25)。**10kプルダウン**を付け未確定時の
+    レベルを定義
+  - EN: FPGA GPIO(bit24)。**10kプルダウン**(FPGAコンフィグ前はmux無効 =
+    Hi-Zで安全)
+- 電源: 3.3V、パスコン 100nF×2 + 1µF
+
+### 4.3 FUSB302B
+
+| ピン | ネット | 備考 |
+|---|---|---|
+| CC1 / CC2 | レセプタクル A5 / B5 | 直結。VCONN供給もこのピン経由(チップ内スイッチ、電源はVDD=3.3V) |
+| SDA / SCL | FPGA I2C | 3.3Vへ4.7kΩプルアップ各1 |
+| INT_N | FPGA GPIO入力(確保できる場合) | 10kプルアップ。未接続でもポーリング運用可 |
+| VBUS | VBUSネット | 検出用。直結で可 |
+| VDD | 3.3V | 100nF + 1µF |
+| GND | GND | |
+
+### 4.4 AUXバイアス網(§1と同じ、再掲)
+
+- FPGA側(AC結合の内側): 各線 100kΩ↑3.3V + 100kΩ↓GND(中点バイアス)
+- AC結合: AUX_P/AUX_N 各 100nF
+- コネクタ側(=HD3SS460のAUXポート側): AUX_P 100kΩ↓GND、
+  AUX_N 100kΩ↑3.3V(ソース側規定極性)
+- オプション: 各線に直列0Ω(デバッグ用切り離し)
+
+### 4.5 VBUS系
+
+- 5V入力 → 電流制限ロードスイッチ(AP22653等) → VBUSネット
+- スイッチEN = FPGA GPIO(bit26)、**10kプルダウン**(コールドソケット時OFF)
+- オプション: VBUSに10kΩブリード抵抗(取り外し時の放電)
+
+### 4.6 デフォルト状態の設計(重要)
+
+FPGAコンフィグ完了までの間、基板が安全な状態であること:
+- EN(mux)=L、VBUS_EN=L となるよう全制御GPIOにプルダウン
+- FUSB302BはPOR後アイドル(Rp提示はFWが設定するまで無し)→
+  相手ホストから見て「何も繋がっていない」状態が保たれる
