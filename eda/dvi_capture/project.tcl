@@ -15,6 +15,11 @@ set_option -top_module top
 
 if {${TARGET} == "tangprimer25k"} {
     set_option -use_cpu_as_gpio 1
+    # B2 / C2 (status LEDs) are dual-purpose configuration pins.
+    set_option -use_i2c_as_gpio 1
+    set_option -use_done_as_gpio 1
+    set_option -use_ready_as_gpio 1
+    set_option -use_sspi_as_gpio 1
 }
 
 # --- Veryl-generated dvi_in core ---
@@ -28,12 +33,10 @@ add_file -type verilog [file normalize ${SRC_DIR}/dvi_in_phy.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/reset_seq.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/top.sv]
 
-# --- Clock recovery PLL (Gowin IP, 27 MHz → 162/810 MHz placeholder).
-# Reuses the IP files from display_port_tpg unchanged — for a real DVI
-# receiver these must be regenerated for the actual incoming F_pixel.
+# --- Clock recovery PLL (PLLA, CLKIN = recovered 74.25 MHz cable clock,
+# CLKOUT0 = 74.25 MHz pclk, CLKOUT1 = 371.25 MHz fclk).
 if {${TARGET} == "tangprimer25k"} {
-    add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_pll_27/gowin_pll_27.v]
-    add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_pll/gowin_pll.v]
+    add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_pll_dvi/gowin_pll_dvi.v]
 }
 
 add_file -type cst [file normalize ${SRC_DIR}/pins.cst]

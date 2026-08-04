@@ -11,22 +11,24 @@
  *   exposes the recovered video stream out of `dvi_in`.
  *
  *           ┌─────────── i_pclk  (= cable clock @ F_pixel) ─────────────┐
- *           │ ┌───────── i_fclk  (= 5 × F_pixel, from rPLL)   ──────────┤
+ *           │ ┌───────── i_fclk  (= 5 × F_pixel, same PLL)   ───────────┤
  *           │ │ ┌─ i_reset                                              │
  *           ▼ ▼ ▼                                                       │
- *  CLK pad ─►(observed only — fed to PLL outside this module)           │
- *  D0  pad ─► iser10_lane ─► word_d0 [10] ──┐                           │
- *  D1  pad ─► iser10_lane ─► word_d1 [10] ──┼─► dvi_in ─► RGB / DE / HV │
- *  D2  pad ─► iser10_lane ─► word_d2 [10] ──┘                           │
- *                                                                       │
- *  CLK pad is also captured by an iser10_lane so dvi_in can lock to     │
- *  the well-known 10'b00000_11111 pattern and emit o_align_shift_req    │
- *  fan-out to all four CALIB inputs.                                    │
+ *  i_serial_d0  ─► iser10_lane ─► word_d0 [10] ─┬─► dvi_in ─► RGB/DE/HV │
+ *  i_serial_d1  ─► iser10_lane ─► word_d1 [10] ─┤                       │
+ *  i_serial_d2  ─► iser10_lane ─► word_d2 [10] ─┘                       │
  *
- *   The recovered pixel-clock and 5×PCLK feed clocks must be generated
- *   externally (typically a TLVDS_IBUF on CLK + a Gowin rPLL with
- *   IDIV=1, FBDIV=4 to derive 5×F_pixel). This module assumes those
- *   are already valid.
+ *  Inputs are single-ended, post-TLVDS_IBUF (IBUFs live in the board
+ *  top). The clock pair is NOT deserialized — its IBUF output feeds the
+ *  recovery PLL, and a pad whose buffer fans out to the PLL cannot also
+ *  drive the IODELAY/IDES10 chain (observed on GW5A: such a lane's
+ *  deserializer stays silent). dvi_in aligns on data-lane-0 control
+ *  symbols instead; its o_align_shift_req fans out to all three CALIB
+ *  inputs.
+ *
+ *   i_pclk / i_fclk must be generated externally from the cable clock
+ *   (single PLLA, CLKOUT0 = F_pixel, CLKOUT1 = 5 × F_pixel from the
+ *   same VCO). This module assumes they are already valid.
  *
  *   o_delay_inc/dec/load/tap from `dvi_in` fan out to all four lanes
  *   simultaneously: the cable's source-synchronous timing means all
@@ -49,15 +51,18 @@ module dvi_in_phy #(
     input  wire        i_fclk,
     input  wire        i_reset,
 
-    // Differential pads
-    input  wire        i_clk_p,
-    input  wire        i_clk_n,
-    input  wire        i_d0_p,
-    input  wire        i_d0_n,
-    input  wire        i_d1_p,
-    input  wire        i_d1_n,
-    input  wire        i_d2_p,
-    input  wire        i_d2_n,
+    // Single-ended serial inputs, post-TLVDS_IBUF (the IBUFs live in the
+    // board top). The clock pair is NOT deserialized: its buffer output
+    // must feed the recovery PLL, and a pad whose IBUF fans out to the
+    // PLL cannot also drive the IODELAY/IDES10 chain. Word alignment
+    // uses data-lane-0 control symbols inside dvi_in instead.
+    input  wire        i_serial_d0,
+    input  wire        i_serial_d1,
+    input  wire        i_serial_d2,
+
+    // Bring-up: static sampling-phase offset added to every lane's
+    // IODELAY tap (full 8-bit DLYSTEP range).
+    input  wire [7:0]  i_delay_offset,
 
     // Recovered video
     output wire [23:0] o_video_data,
@@ -67,7 +72,11 @@ module dvi_in_phy #(
     output wire [3:0]  o_video_ctl,
     output wire        o_video_valid,
     output wire [2:0]  o_decode_err,
-    output wire        o_locked
+    output wire        o_locked,
+
+    // Bring-up debug taps (scope outputs; safe to leave unconnected).
+    output wire [9:0]  o_dbg_word_d0,
+    output wire        o_dbg_align_shift
 );
 
     // ------------------------------------------------------------------
@@ -75,43 +84,30 @@ module dvi_in_phy #(
     // so a single align_shift_req from dvi_in slips every lane in
     // lockstep.
     // ------------------------------------------------------------------
-    wire [9:0] word_clk;
     wire [9:0] word_d0;
     wire [9:0] word_d1;
     wire [9:0] word_d2;
 
     wire        align_shift_req;
+    assign o_dbg_word_d0     = word_d0;
+    assign o_dbg_align_shift = align_shift_req;
     wire        delay_load;
     wire [4:0]  delay_tap;
     wire        delay_inc;
     wire        delay_dec;
     wire [3:0]  delay_saturate;     // per-lane DF (unused for now)
 
-    iser10_lane #(.DELAY_TAP_INIT(DELAY_TAP_INIT)) u_clk_lane (
-        .i_pclk          (i_pclk),
-        .i_fclk          (i_fclk),
-        .i_reset         (i_reset),
-        .i_pad_p         (i_clk_p),
-        .i_pad_n         (i_clk_n),
-        .i_calib         (align_shift_req),
-        .i_delay_load    (delay_load),
-        .i_delay_tap     (delay_tap),
-        .i_delay_inc     (delay_inc),
-        .i_delay_dec     (delay_dec),
-        .o_delay_saturate(delay_saturate[3]),
-        .o_word          (word_clk)
-    );
     iser10_lane #(.DELAY_TAP_INIT(DELAY_TAP_INIT)) u_d0_lane (
         .i_pclk          (i_pclk),
         .i_fclk          (i_fclk),
         .i_reset         (i_reset),
-        .i_pad_p         (i_d0_p),
-        .i_pad_n         (i_d0_n),
+        .i_serial        (i_serial_d0),
         .i_calib         (align_shift_req),
         .i_delay_load    (delay_load),
         .i_delay_tap     (delay_tap),
         .i_delay_inc     (delay_inc),
         .i_delay_dec     (delay_dec),
+        .i_delay_offset  (i_delay_offset),
         .o_delay_saturate(delay_saturate[0]),
         .o_word          (word_d0)
     );
@@ -119,13 +115,13 @@ module dvi_in_phy #(
         .i_pclk          (i_pclk),
         .i_fclk          (i_fclk),
         .i_reset         (i_reset),
-        .i_pad_p         (i_d1_p),
-        .i_pad_n         (i_d1_n),
+        .i_serial        (i_serial_d1),
         .i_calib         (align_shift_req),
         .i_delay_load    (delay_load),
         .i_delay_tap     (delay_tap),
         .i_delay_inc     (delay_inc),
         .i_delay_dec     (delay_dec),
+        .i_delay_offset  (i_delay_offset),
         .o_delay_saturate(delay_saturate[1]),
         .o_word          (word_d1)
     );
@@ -133,13 +129,13 @@ module dvi_in_phy #(
         .i_pclk          (i_pclk),
         .i_fclk          (i_fclk),
         .i_reset         (i_reset),
-        .i_pad_p         (i_d2_p),
-        .i_pad_n         (i_d2_n),
+        .i_serial        (i_serial_d2),
         .i_calib         (align_shift_req),
         .i_delay_load    (delay_load),
         .i_delay_tap     (delay_tap),
         .i_delay_inc     (delay_inc),
         .i_delay_dec     (delay_dec),
+        .i_delay_offset  (i_delay_offset),
         .o_delay_saturate(delay_saturate[2]),
         .o_word          (word_d2)
     );
@@ -160,11 +156,11 @@ module dvi_in_phy #(
         .SHIFT_SETTLE_CYCLES (SHIFT_SETTLE_CYCLES),
         .TAP_MAX             (TAP_MAX),
         .TAP_DWELL           (TAP_DWELL),
+        .DELAY_TAP_FIXED     (DELAY_TAP_INIT),
         .SIMULATION_FAST_LOCK(SIMULATION_FAST_LOCK)
     ) u_core (
         .clock            (i_pclk),
         .reset            (i_reset),
-        .i_word_clock_lane(word_clk),
         .i_word_data      (word_data_array),
         .i_word_valid     (1'b1),
         .o_video_data     (o_video_data),

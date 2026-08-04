@@ -1,26 +1,63 @@
-// Tang Primer 25K — DVI receiver smoke-test pinout.
-// Pads are placeholders chosen to match available LVDS bank locations
-// on the board; verify against the actual schematic before driving real
-// hardware.
+// Tang Primer 25K — DVI receiver via Sipeed Pmod DVI.
+//
+// Slot: PMOD1 (the slot dvi_out_tpg's tangprimer25k target uses — pins
+// A11/E11/K11/L5 per eda/targets/tangprimer25k/pmod_ports.csv).
+// Sipeed Pmod DVI signal order (mod/sipeed/pmod_dvi/pmod_pins.csv):
+//   pin1 = TMDS D2, pin2 = TMDS D1, pin3 = TMDS D0, pin4 = TMDS CLK.
+// Differential pairing is pinN (P) / pinN+6 (N); the Gowin tool places
+// the N side automatically on the pair complement:
+//   dvi_clk = pmod1_4/10 = L5 /K5   (bank 1)
+//   dvi_d0  = pmod1_3/9  = K11/L11  (bank 7)
+//   dvi_d1  = pmod1_2/8  = E11/E10  (bank 6)
+//   dvi_d2  = pmod1_1/7  = A11/A10  (bank 6)
 
-IO_LOC "clock" E2;
-IO_PORT "clock" IO_TYPE=LVCMOS33;
+// NOTE: the module was moved from PMOD1 to PMOD2. PMOD1's CLK-lane pin
+// (L5) sits in bank 1, whose IDES10 cannot receive fclk over an HCLK
+// net (the tool only builds BANK6_BANK7 HCLK); the bank-1 deserializer
+// was silently dead. All PMOD2 pins are served by the BANK6/BANK7 HCLK
+// group.
+// NOTE: on-chip differential termination (DIFF_RESISTOR) is NOT
+// available in bank 6 on GW5A (tool error CT1166; only banks
+// 0/1/3/4/5/7). Hence CLK/D0/D1 below run unterminated and exhibit a
+// deterministic ISI bit error on isolated double-bits after long
+// alternating runs (hsync symbols inside vsync lines); dvi_in carries
+// a majority-vote DE filter to tolerate it. D2 (bank 7) is terminated.
+//   dvi_clk = pmod2_4/10 = C11/C10  (feeds the recovery PLL only)
+//   dvi_d0  = pmod2_3/9  = B11/B10
+//   dvi_d1  = pmod2_2/8  = D11/D10
+//   dvi_d2  = pmod2_1/7  = G11/G10
+// PMOD0 (bank 1): all four pairs support on-chip 100-ohm differential
+// termination (DIFF_RESISTOR), unlike bank 6 which serves PMOD2.
+// Sipeed Pmod DVI roles: pin1=D2, pin2=D1, pin3=D0, pin4=CLK.
+//   dvi_clk = pmod0_4/10 = H5/J5
+//   dvi_d0  = pmod0_3/9  = H8/H7
+//   dvi_d1  = pmod0_2/8  = G7/G8
+//   dvi_d2  = pmod0_1/7  = F5/G5
+IO_LOC "dvi_clk_p" H5;
+IO_PORT "dvi_clk_p" PULL_MODE=NONE IO_TYPE=LVDS25 DIFF_RESISTOR=ON;
+IO_LOC "dvi_d0_p"  H8;
+IO_PORT "dvi_d0_p" PULL_MODE=NONE IO_TYPE=LVDS25 DIFF_RESISTOR=ON;
+IO_LOC "dvi_d1_p"  G7;
+IO_PORT "dvi_d1_p" PULL_MODE=NONE IO_TYPE=LVDS25 DIFF_RESISTOR=ON;
+IO_LOC "dvi_d2_p"  F5;
+IO_PORT "dvi_d2_p" PULL_MODE=NONE IO_TYPE=LVDS25 DIFF_RESISTOR=ON;
 
 IO_LOC "reset_button" H11;
 IO_PORT "reset_button" PULL_MODE=DOWN IO_TYPE=LVCMOS33;
 
-// DVI inputs — LVDS25 differential.
-IO_LOC "dvi_clk_p" A11;
-IO_PORT "dvi_clk_p" PULL_MODE=NONE IO_TYPE=LVDS25;
-IO_LOC "dvi_d0_p"  E11;
-IO_PORT "dvi_d0_p" PULL_MODE=NONE IO_TYPE=LVDS25;
-IO_LOC "dvi_d1_p"  K11;
-IO_PORT "dvi_d1_p" PULL_MODE=NONE IO_TYPE=LVDS25;
-IO_LOC "dvi_d2_p"  L5;
-IO_PORT "dvi_d2_p" PULL_MODE=NONE IO_TYPE=LVDS25;
+// Bring-up debug taps on PMOD1 top row (pmod1_1..4). Scope points.
+IO_LOC "dbg[0]" A11;
+IO_PORT "dbg[0]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "dbg[1]" E11;
+IO_PORT "dbg[1]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "dbg[2]" K11;
+IO_PORT "dbg[2]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "dbg[3]" L5;
+IO_PORT "dbg[3]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
 
-// Status LEDs.
-IO_LOC "led_locked"     C3;
-IO_PORT "led_locked"    IO_TYPE=LVCMOS33;
-IO_LOC "led_decode_err" H8;
-IO_PORT "led_decode_err" IO_TYPE=LVCMOS33;
+// Status outputs. Same pads gowin_easycdr_sample uses for its lock /
+// error indicators (B2 / C2, LVCMOS33).
+IO_LOC "led_locked"     B2;
+IO_PORT "led_locked"    IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "led_decode_err" C2;
+IO_PORT "led_decode_err" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;

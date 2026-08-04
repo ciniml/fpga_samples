@@ -7,9 +7,14 @@
  * @file iser10_lane.sv
  * @brief Gowin GW5A DVI / TMDS receiver lane wrapper.
  *
- *   differential pad ── TLVDS_IBUF ── IODELAY ── IDES10 ── 10-bit Q[9:0]
- *                                       ↑          ↑
- *                                  delay_tap   i_calib (CALIB)
+ *   i_serial (post-IBUF) ── IODELAY ── IDES10 ── 10-bit Q[9:0]
+ *                              ↑          ↑
+ *                         delay_tap   i_calib (CALIB)
+ *
+ *   The differential input buffer lives OUTSIDE this module (in the
+ *   board top) because the clock lane's TLVDS_IBUF output must fan out
+ *   to both this deserializer and the clock-recovery PLL — a pad can
+ *   host only one IBUF.
  *
  *   Mirrors `oser10_lane.sv` (the OSER10 transmit wrapper). For DVI:
  *     PCLK = pixel clock                     (= recovered cable clock)
@@ -45,8 +50,7 @@ module iser10_lane #(
     input  wire        i_fclk,
     input  wire        i_reset,        // active-high synchronous reset
 
-    input  wire        i_pad_p,
-    input  wire        i_pad_n,
+    input  wire        i_serial,       // single-ended serial data, post-IBUF
 
     // From dvi_in. All single-cycle pulses except i_delay_tap which is
     // sampled when i_delay_load is high.
@@ -56,6 +60,10 @@ module iser10_lane #(
     input  wire        i_delay_inc,    // o_delay_inc
     input  wire        i_delay_dec,    // o_delay_dec
 
+    // Static offset added on top of the dvi_in-controlled tap register.
+    // Full 8-bit DLYSTEP range; used for bring-up phase experiments.
+    input  wire [7:0]  i_delay_offset,
+
     // Optional saturation flag from IODELAY (high when tap pinned).
     output wire        o_delay_saturate,
 
@@ -63,17 +71,7 @@ module iser10_lane #(
     output wire [9:0]  o_word
 );
 
-    // ------------------------------------------------------------------
-    // Differential receive
-    // ------------------------------------------------------------------
-    wire serial_se;     // single-ended after TLVDS_IBUF
     wire serial_delayed;
-
-    TLVDS_IBUF u_ibuf (
-        .O (serial_se),
-        .I (i_pad_p),
-        .IB(i_pad_n)
-    );
 
     // ------------------------------------------------------------------
     // Programmable input delay. Tap register is driven by dvi_in's load
@@ -95,13 +93,19 @@ module iser10_lane #(
         end
     end
 
+    // Effective DLYSTEP = dvi_in-controlled register + bring-up offset.
+    logic [7:0] dlystep;
+    always_ff @(posedge i_pclk) begin
+        dlystep <= delay_tap_reg + i_delay_offset;   // mod-256 wrap intended
+    end
+
     IODELAY #(
         .C_STATIC_DLY(DELAY_TAP_INIT),
         .DYN_DLY_EN  ("TRUE"),
         .ADAPT_EN    ("FALSE")
     ) u_iodelay (
-        .DI     (serial_se),
-        .DLYSTEP(delay_tap_reg),
+        .DI     (i_serial),
+        .DLYSTEP(dlystep),
         .SDTAP  (1'b0),
         .VALUE  (1'b0),
         .DO     (serial_delayed),

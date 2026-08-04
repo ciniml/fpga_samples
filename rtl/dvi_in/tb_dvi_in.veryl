@@ -71,7 +71,6 @@ module dvi_in_loopback;
     ) dut_rx (
         .clock            (clock),
         .reset            (reset),
-        .i_word_clock_lane(dvi_clock_word),
         .i_word_data      (rx_word_data),
         .i_word_valid     (1'b1),
         .o_video_data     (rx_video_data),
@@ -325,7 +324,6 @@ module dvi_in_word_align;
     ) dut_rx (
         .clock            (clock),
         .reset            (reset),
-        .i_word_clock_lane(rx_clk_word),
         .i_word_data      (rx_word_data),
         .i_word_valid     (1'b1),
         .o_video_data     (),

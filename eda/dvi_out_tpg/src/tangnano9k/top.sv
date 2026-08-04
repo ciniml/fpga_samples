@@ -71,7 +71,7 @@ logic video_vsync;
 logic [23:0] video_data;
 
 test_pattern_generator #(
-  .BOUNCE_LOGO(1),
+  .BOUNCE_LOGO(1),  // set to 0 for the dvi_capture frame-CRC check (needs a static frame)
   .LOGO_PATH("../cq_logo.hex"),
   .LOGO_WIDTH(250),
   .LOGO_HEIGHT(50),

@@ -11,11 +11,16 @@
  * Per DVI 1.0 §3.3 the receiver must:
  *  - recover the pixel clock (assumed external — this module runs in the
  *    word-rate domain),
- *  - establish data-stream synchronization (§3.3.2) — implemented here as
- *    clock-lane pattern lock rather than the spec's data-lane control-symbol
- *    detection, since the clock lane carries a deterministic 5/5 pattern that
- *    matches dvi_out's dvi_clock = 10'b00000_11111 and is always valid
- *    regardless of blanking duration,
+ *  - establish data-stream synchronization (§3.3.2) — implemented as the
+ *    spec's data-lane control-symbol detection: for each candidate word
+ *    boundary, observe ALIGN_WINDOW words (sized to cover at least one
+ *    horizontal blanking); if LOCK_THRESHOLD consecutive control symbols
+ *    are seen on data lane 0, the boundary is correct, otherwise request
+ *    a one-bit slip and try the next boundary. (An earlier revision
+ *    aligned on a deserialized clock lane; that was dropped because the
+ *    clock pad's input buffer must feed the recovery PLL, and a pad
+ *    whose buffer output fans out to the PLL cannot also drive the
+ *    vendor IODELAY/IDES10 chain.)
  *  - decode each 10-bit symbol per Figure 3-6,
  *  - hold recovered outputs constant while sync is lost (§3.3.2).
  *
@@ -26,20 +31,22 @@
  */
 
 pub module dvi_in #(
-    param LOCK_THRESHOLD       : u32 = 32'd16 , // consecutive clock-lane matches required to lock
-    param LOSE_THRESHOLD       : u32 = 32'd16 , // consecutive mismatches before lock loss
-    param SHIFT_SETTLE_CYCLES  : u32 = 32'd4  , // wait after a shift pulse before re-observing
-    param TAP_MAX              : u32 = 32'd31 ,
-    param TAP_DWELL            : u32 = 32'd256,
-    param SIMULATION_FAST_LOCK : bit = 1'b0   , // skip DELAY_CAL when set (testbench use)
+    param LOCK_THRESHOLD       : u32 = 32'd16     , // consecutive lane-0 control symbols required to lock
+    param LOSE_THRESHOLD       : u32 = 32'd16     , // unused (kept for interface compatibility)
+    param SHIFT_SETTLE_CYCLES  : u32 = 32'd4      , // wait after a shift pulse before re-observing
+    param TAP_MAX              : u32 = 32'd31     , // unused (kept for interface compatibility)
+    param TAP_DWELL            : u32 = 32'd256    , // unused (kept for interface compatibility)
+    param ALIGN_WINDOW         : u32 = 32'd4096   , // words observed per boundary; must span >= 1 hblank
+    param LOSE_TIMEOUT         : u32 = 32'd2200000, // lock lost if no control symbol for this many words (~30ms at 74.25MHz > 1 frame)
+    param DELAY_TAP_FIXED      : u32 = 32'd16     , // static IDELAY tap loaded at start-up
+    param SIMULATION_FAST_LOCK : bit = 1'b0       , // unused (kept for interface compatibility)
 ) (
     r#clock: input clock_posedge,
     r#reset: input reset         ,
 
     // Deserialized 10-bit words, LSB-first (bit[0] = first transmitted bit).
-    i_word_clock_lane: input logic<10>     ,
-    i_word_data      : input logic<10> [3] ,
-    i_word_valid     : input logic         ,
+    i_word_data : input logic<10> [3] ,
+    i_word_valid: input logic         ,
 
     // Recovered video. Held at reset values while !o_locked.
     o_video_data : output logic<24>,
@@ -66,9 +73,6 @@ pub module dvi_in #(
     // -------------------------------------------------------------------
     // Constants and helper functions
     // -------------------------------------------------------------------
-
-    // Expected clock-lane pattern: dvi_out.dvi_clock = 10'b00000_11111.
-    const EXPECTED_CLK: logic<10> = 10'b00000_11111;
 
     type tap_t = logic<5>;
 
@@ -151,7 +155,6 @@ pub module dvi_in #(
 
     enum State: logic<2> {
         INIT      ,
-        DELAY_CAL ,
         WORD_ALIGN,
         LOCKED    ,
     }
@@ -159,31 +162,27 @@ pub module dvi_in #(
     var state: State;
 
     // Counters shared across states.
-    var match_count    : logic<32>; // consecutive matches in WORD_ALIGN
-    var mismatch_count : logic<32>; // consecutive mismatches in LOCKED
-    var settle_count   : logic<32>; // post-shift quarantine cycles
+    var match_count : logic<32>; // consecutive lane-0 control symbols in WORD_ALIGN
+    var window_count: logic<32>; // words observed at the current boundary
+    var timeout_count: logic<32>; // words since the last control symbol in LOCKED
+    var settle_count : logic<32>; // post-shift quarantine cycles
 
-    // Delay-cal sweep state.
-    var tap            : logic<5>;
-    var tap_dwell_count: logic<32>;
-    var tap_err_count  : logic<32>; // mismatches observed at current tap
-    var best_tap       : logic<5>;
-    var best_tap_err   : logic<32>;
-
-    var clk_match: logic;
-    assign clk_match = i_word_valid && (i_word_clock_lane == EXPECTED_CLK);
+    // Data lane 0 carries HSYNC/VSYNC control symbols during every
+    // blanking interval — the alignment reference per DVI §3.3.2.
+    var ctl_align_decode: ctrl_decode_t;
+    var ctl_match       : logic;
+    always_comb {
+        ctl_align_decode = isControlSymbol(i_word_data[0]);
+    }
+    assign ctl_match = i_word_valid && ctl_align_decode.is_ctrl;
 
     always_ff (r#clock) {
         if r#reset {
-            state           = State::INIT;
-            match_count     = 0;
-            mismatch_count  = 0;
-            settle_count    = 0;
-            tap             = 0;
-            tap_dwell_count = 0;
-            tap_err_count   = 0;
-            best_tap        = 0;
-            best_tap_err    = '1;
+            state         = State::INIT;
+            match_count   = 0;
+            window_count  = 0;
+            timeout_count = 0;
+            settle_count  = 0;
             o_locked          = 0;
             o_align_shift_req = 0;
             o_delay_inc       = 0;
@@ -199,77 +198,52 @@ pub module dvi_in #(
 
             case state {
                 State::INIT: {
-                    if SIMULATION_FAST_LOCK {
-                        state = State::WORD_ALIGN;
-                    } else {
-                        state           = State::DELAY_CAL;
-                        tap             = 0;
-                        tap_dwell_count = 0;
-                        tap_err_count   = 0;
-                        best_tap        = 0;
-                        best_tap_err    = '1;
-                        o_delay_load    = 1;
-                        o_delay_tap     = 0;
-                    }
-                }
-                State::DELAY_CAL: {
-                    if i_word_valid {
-                        if !clk_match {
-                            tap_err_count = tap_err_count + 1;
-                        }
-                        tap_dwell_count = tap_dwell_count + 1;
-                        if tap_dwell_count >= TAP_DWELL - 1 {
-                            // End of dwell at this tap. Update best.
-                            if tap_err_count <: best_tap_err {
-                                best_tap     = tap;
-                                best_tap_err = tap_err_count;
-                            }
-                            tap_dwell_count = 0;
-                            tap_err_count   = 0;
-                            if tap >= (TAP_MAX as tap_t) {
-                                // Sweep done — load best tap and proceed.
-                                o_delay_load = 1;
-                                o_delay_tap  = best_tap;
-                                state        = State::WORD_ALIGN;
-                                match_count  = 0;
-                            } else {
-                                tap          = tap + 1;
-                                o_delay_load = 1;
-                                o_delay_tap  = tap + 1;
-                            }
-                        }
-                    }
+                    // Load the fixed IDELAY tap and start the boundary
+                    // search. (At 720p rates one static tap suffices; the
+                    // old per-tap sweep needed the clock-lane reference.)
+                    o_delay_load = 1;
+                    o_delay_tap  = DELAY_TAP_FIXED as tap_t;
+                    state        = State::WORD_ALIGN;
+                    match_count  = 0;
+                    window_count = 0;
                 }
                 State::WORD_ALIGN: {
                     if settle_count != 0 {
                         settle_count = settle_count - 1;
                     } else if i_word_valid {
-                        if clk_match {
+                        if ctl_match {
                             match_count = match_count + 1;
                             if match_count >= LOCK_THRESHOLD - 1 {
-                                state    = State::LOCKED;
-                                o_locked = 1;
+                                state         = State::LOCKED;
+                                o_locked      = 1;
+                                timeout_count = 0;
                             }
                         } else {
-                            // Pulse the deserializer to advance bit boundary,
-                            // then quarantine for SHIFT_SETTLE_CYCLES.
+                            match_count = 0;
+                        }
+                        window_count = window_count + 1;
+                        if window_count >= ALIGN_WINDOW - 1 {
+                            // No control-symbol run at this boundary within
+                            // a window that spans at least one hblank —
+                            // slip one bit and observe the next boundary.
                             o_align_shift_req = 1;
                             settle_count      = SHIFT_SETTLE_CYCLES;
                             match_count       = 0;
+                            window_count      = 0;
                         }
                     }
                 }
                 State::LOCKED: {
                     if i_word_valid {
-                        if clk_match {
-                            mismatch_count = 0;
+                        if ctl_match {
+                            timeout_count = 0;
                         } else {
-                            mismatch_count = mismatch_count + 1;
-                            if mismatch_count >= LOSE_THRESHOLD - 1 {
-                                state          = State::WORD_ALIGN;
-                                match_count    = 0;
-                                mismatch_count = 0;
-                                o_locked       = 0;
+                            timeout_count = timeout_count + 1;
+                            if timeout_count >= LOSE_TIMEOUT - 1 {
+                                state        = State::WORD_ALIGN;
+                                match_count  = 0;
+                                window_count = 0;
+                                o_locked     = 0;
                             }
                         }
                     }
@@ -290,6 +264,7 @@ pub module dvi_in #(
     var d0_q      : logic<10>;
     var d1_q      : logic<10>;
     var d2_q      : logic<10>;
+    var d0_q2     : logic<10>;
     var valid_q   : logic    ;
     var locked_q  : logic    ;
 
@@ -302,12 +277,24 @@ pub module dvi_in #(
     var ctrl0_decode : ctrl_decode_t;
     var ctrl1_decode : ctrl_decode_t;
     var ctrl2_decode : ctrl_decode_t;
+    var ctrl0_new    : ctrl_decode_t; // lane 0 look-ahead (word t)
+    var ctrl0_old    : ctrl_decode_t; // lane 0 look-back  (word t-2)
 
     always_comb {
         ctrl0_decode = isControlSymbol(d0_q);
         ctrl1_decode = isControlSymbol(d1_q);
         ctrl2_decode = isControlSymbol(d2_q);
-        de_next      = !ctrl0_decode.is_ctrl;
+        ctrl0_new    = isControlSymbol(i_word_data[0]);
+        ctrl0_old    = isControlSymbol(d0_q2);
+        // DE for word t-1 is the 3-word majority over lane 0's
+        // "not a control symbol" at t-2 / t-1 / t. An isolated corrupted
+        // symbol inside a blanking run (unterminated-lane ISI, see the
+        // PMOD wrapper notes) can neither fake DE nor punch a hole in
+        // real active video; genuine DE edges are preserved because two
+        // neighbours always agree on either side of the transition.
+        de_next = (!ctrl0_new.is_ctrl && !ctrl0_decode.is_ctrl)
+               || (!ctrl0_new.is_ctrl && !ctrl0_old.is_ctrl)
+               || (!ctrl0_decode.is_ctrl && !ctrl0_old.is_ctrl);
         hsync_next   = ctrl0_decode.ctrl[0];
         vsync_next   = ctrl0_decode.ctrl[1];
         // Channel 1 carries {CTL1, CTL0}; channel 2 carries {CTL3, CTL2}.
@@ -316,9 +303,9 @@ pub module dvi_in #(
         ctl_next[2] = ctrl2_decode.ctrl[0];
         ctl_next[3] = ctrl2_decode.ctrl[1];
         data_next   = {decodeTmdsData(d2_q), decodeTmdsData(d1_q), decodeTmdsData(d0_q)};
-        err_next[0] = decodeTmdsErr(d0_q, !ctrl0_decode.is_ctrl);
-        err_next[1] = decodeTmdsErr(d1_q, !ctrl0_decode.is_ctrl);
-        err_next[2] = decodeTmdsErr(d2_q, !ctrl0_decode.is_ctrl);
+        err_next[0] = decodeTmdsErr(d0_q, de_next);
+        err_next[1] = decodeTmdsErr(d1_q, de_next);
+        err_next[2] = decodeTmdsErr(d2_q, de_next);
     }
 
     always_ff (r#clock) {
@@ -326,6 +313,7 @@ pub module dvi_in #(
             d0_q     = 0;
             d1_q     = 0;
             d2_q     = 0;
+            d0_q2    = 0;
             valid_q  = 0;
             locked_q = 0;
 
@@ -341,6 +329,7 @@ pub module dvi_in #(
             d0_q     = i_word_data[0];
             d1_q     = i_word_data[1];
             d2_q     = i_word_data[2];
+            d0_q2    = d0_q;
             valid_q  = i_word_valid;
             locked_q = o_locked;
 
@@ -350,9 +339,12 @@ pub module dvi_in #(
                 o_video_de    = de_next;
                 o_video_valid = 1;
                 o_decode_err  = err_next;
-                // hsync/vsync/ctl only update during blanking (de == 0);
-                // hold during active video per DVI Fig 3-7.
-                if !de_next {
+                // hsync/vsync/ctl only update during blanking (de == 0),
+                // and only from a word that decodes as a genuine control
+                // symbol — a corrupted blanking word must not be allowed
+                // to yank the sync outputs. Hold during active video per
+                // DVI Fig 3-7.
+                if !de_next && ctrl0_decode.is_ctrl {
                     o_video_hsync = hsync_next;
                     o_video_vsync = vsync_next;
                     o_video_ctl   = ctl_next;
