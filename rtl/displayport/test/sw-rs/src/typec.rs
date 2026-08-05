@@ -121,7 +121,7 @@ impl<'a> TypeC<'a> {
     fn resend_current(&mut self) {
         match (self.state, self.substep) {
             (TcState::Contracting, _) => {
-                let pdo = pd::pdo_fixed_5v(900);
+                let pdo = pd::pdo_fixed_5v(3000);
                 self.send_data(pd::DATA_SOURCE_CAPABILITIES, &[pdo]);
             }
             (TcState::Discovering, 0) => {
@@ -188,7 +188,7 @@ impl<'a> TypeC<'a> {
                 self.pol_flipped = self.cc == Cc::Cc2;
                 crate::typec_gpio(true, self.pol_flipped, true, AMSEL_4LANE_DP);
                 // Announce our capabilities.
-                let pdo = pd::pdo_fixed_5v(900);
+                let pdo = pd::pdo_fixed_5v(3000);
                 self.send_data(pd::DATA_SOURCE_CAPABILITIES, &[pdo]);
                 self.substep = 0;
                 self.state = TcState::Contracting;
@@ -208,7 +208,7 @@ impl<'a> TypeC<'a> {
                             self.send_vdm(pd::SVID_PD_SID, pd::VDM_CMD_DISCOVER_IDENTITY, &[]);
                         }
                         pd::CTRL_GET_SOURCE_CAP => {
-                            let pdo = pd::pdo_fixed_5v(900);
+                            let pdo = pd::pdo_fixed_5v(3000);
                             self.send_data(pd::DATA_SOURCE_CAPABILITIES, &[pdo]);
                         }
                         _ => {}

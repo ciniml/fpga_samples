@@ -161,3 +161,29 @@ FPGAコンフィグ完了までの間、基板が安全な状態であること:
 - EN(mux)=L、VBUS_EN=L となるよう全制御GPIOにプルダウン
 - FUSB302BはPOR後アイドル(Rp提示はFWが設定するまで無し)→
   相手ホストから見て「何も繋がっていない」状態が保たれる
+
+## 5. 実基板回路図レビュー結果 (2026-08-06, ネットリスト復元による)
+
+対象: `eda/display_port_typec/Pmod_DisplayPort.kicad_sch`
+構成: J1=レーンPmod, J2=AUX側Pmod, J3=USB-C, J4=USB-C給電専用(Rd 5.1k),
+J5=USB2ブレークアウト, CN1=DPコネクタ, JP1=HPD/INT_N結合ジャンパ
+
+確認OK:
+- AUXバイアス網は§4.4どおり (FPGA側100k/100k中点、線路側P:100k↓/N:100k↑)
+- レーン: FPGA→100nF→[DPコネクタ ∥ HD3SS460 LnA-D] のティー分岐。
+  ML0-3→LnA-D、CTX/CRX→レセプタクルSSピンは正順
+- CC: FUSB302B直結+470pF (PD実通信で動作確認済み)、I2C 4.7k↑3V3
+- DP_PWR=3V3直結、CONFIG1/2=GND
+
+設計ノートとの相違・注意点:
+- **EN/POL/AMSEL は10kプルアップ(3V3)** — §4.6の「プルダウンで安全側」と
+  逆。FPGAコンフィグ前はmuxが有効(EN=1,POL=1,AMSEL=1)になる
+- **VBUSはJ4から常時直結**(ロードスイッチなし)。VBUS_EN GPIO(bit26)は
+  未接続で無効。コールドソケットでVBUS印加あり(ベンチ用途は割り切り)
+- FUSB302BのVCONNはVBUS(5V)直結 — 定格内(2.7-5.5V)だが給電はVBUS依存
+- JP1: DPコネクタのHPD(R14 10k経由)とFUSB302B INT_N(R25 4.7k↑)を同一
+  Pmodピンに結合。DPコネクタでHPDを使う場合はJP1開放、Type-C運用
+  (INT_Nポーリング/未使用)ではどちらでも可
+- レーンFPGA側の10k VCM(1.65V)バイアス(R31-38)は不要だが実害なし
+- DPコネクタ経路は muxへの分岐トレースが常設スタブとなり1.62Gbps CRが
+  通らない実測結果。次版では分岐に0Ω/結合C挿入で切り離し可能にする
