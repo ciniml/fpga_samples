@@ -17,6 +17,10 @@ use crate::pd;
 /// the bench (runtime-flippable via the UART FW loader if wrong).
 const AMSEL_4LANE_DP: bool = true;
 
+/// Polls with no reply before the current request is re-sent
+/// (~0.5 s at the main loop's ~1 ms poll cadence).
+const RESEND_POLLS: u32 = 500;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TcState {
     Detached,
@@ -41,6 +45,8 @@ pub struct TypeC<'a> {
     pub pol_flipped: bool,
     substep: u8,
     settle: u32,
+    /// Polls since the last RX (or resend) in a waiting state.
+    age: u32,
 }
 
 impl<'a> TypeC<'a> {
@@ -55,6 +61,7 @@ impl<'a> TypeC<'a> {
             pol_flipped: false,
             substep: 0,
             settle: 0,
+            age: 0,
         }
     }
 
@@ -71,12 +78,14 @@ impl<'a> TypeC<'a> {
     fn send_ctrl(&mut self, t: u8) {
         let id = self.next_msg_id();
         let h = pd::header(t, 0, id, true, true);
+        crate::pd_trace('>', h, &[]);
         let _ = self.phy.send_sop(h, &[]);
     }
 
     fn send_data(&mut self, t: u8, objs: &[u32]) {
         let id = self.next_msg_id();
         let h = pd::header(t, objs.len() as u8, id, true, true);
+        crate::pd_trace('>', h, objs);
         let _ = self.phy.send_sop(h, objs);
     }
 
@@ -88,7 +97,61 @@ impl<'a> TypeC<'a> {
         objs[1..n].copy_from_slice(tail);
         let id = self.next_msg_id();
         let h = pd::header(pd::DATA_VENDOR_DEFINED, n as u8, id, true, true);
+        crate::pd_trace('>', h, &objs[..n]);
         let _ = self.phy.send_sop(h, &objs[..n]);
+    }
+
+    /// Traced wrapper around the PHY receive: every SOP frame that
+    /// reaches the policy engine shows up in the bring-up log.
+    fn recv(&mut self, objs: &mut [u32; 7]) -> Option<(u16, usize)> {
+        match self.phy.recv_sop(objs) {
+            Ok(Some((h, n))) => {
+                crate::pd_trace('<', h, &objs[..n]);
+                self.age = 0;
+                Some((h, n))
+            }
+            _ => None,
+        }
+    }
+
+    /// Re-issue the last request for the current (state, substep) when
+    /// the peer has been silent too long. PD peers legitimately miss
+    /// messages (our first SourceCap can race their attach), and a
+    /// polling engine has no timer-driven retry otherwise.
+    fn resend_current(&mut self) {
+        match (self.state, self.substep) {
+            (TcState::Contracting, _) => {
+                let pdo = pd::pdo_fixed_5v(900);
+                self.send_data(pd::DATA_SOURCE_CAPABILITIES, &[pdo]);
+            }
+            (TcState::Discovering, 0) => {
+                self.send_vdm(pd::SVID_PD_SID, pd::VDM_CMD_DISCOVER_IDENTITY, &[])
+            }
+            (TcState::Discovering, 1) => {
+                self.send_vdm(pd::SVID_PD_SID, pd::VDM_CMD_DISCOVER_SVIDS, &[])
+            }
+            (TcState::Discovering, 2) => {
+                self.send_vdm(pd::SVID_DISPLAYPORT, pd::VDM_CMD_DISCOVER_MODES, &[])
+            }
+            (TcState::Discovering, _) => {
+                self.send_vdm(pd::SVID_DISPLAYPORT, pd::VDM_CMD_ENTER_MODE, &[])
+            }
+            (TcState::ModeEntered, 0) => self.send_vdm(
+                pd::SVID_DISPLAYPORT,
+                pd::VDM_CMD_DP_STATUS_UPDATE,
+                &[pd::dp_status_dfp_d()],
+            ),
+            (TcState::ModeEntered, _) => {
+                let pin = if self.ufp_d_assignments & pd::DP_PIN_ASSIGN_C != 0 {
+                    pd::DP_PIN_ASSIGN_C
+                } else {
+                    pd::DP_PIN_ASSIGN_D
+                };
+                self.send_vdm(pd::SVID_DISPLAYPORT, pd::VDM_CMD_DP_CONFIGURE, &[pd::dp_configure(pin)]);
+            }
+            _ => {}
+        }
+        self.age = 0;
     }
 
     /// One polling step. Returns Some((hpd, irq)) whenever the sink's
@@ -133,51 +196,58 @@ impl<'a> TypeC<'a> {
             }
             TcState::Contracting => {
                 let mut objs = [0u32; 7];
-                match self.phy.recv_sop(&mut objs) {
-                    Ok(Some((h, _n))) => {
-                        match pd::hdr_msg_type(h) {
-                            pd::DATA_REQUEST => {
-                                self.send_ctrl(pd::CTRL_ACCEPT);
-                                self.send_ctrl(pd::CTRL_PS_RDY);
-                                self.substep = 0;
-                                self.state = TcState::Discovering;
-                                // Kick off the alt-mode discovery.
-                                self.send_vdm(pd::SVID_PD_SID, pd::VDM_CMD_DISCOVER_IDENTITY, &[]);
-                            }
-                            pd::CTRL_GET_SOURCE_CAP => {
-                                let pdo = pd::pdo_fixed_5v(900);
-                                self.send_data(pd::DATA_SOURCE_CAPABILITIES, &[pdo]);
-                            }
-                            _ => {}
+                if let Some((h, _n)) = self.recv(&mut objs) {
+                    match pd::hdr_msg_type(h) {
+                        pd::DATA_REQUEST => {
+                            self.send_ctrl(pd::CTRL_ACCEPT);
+                            self.send_ctrl(pd::CTRL_PS_RDY);
+                            self.substep = 0;
+                            self.age = 0;
+                            self.state = TcState::Discovering;
+                            // Kick off the alt-mode discovery.
+                            self.send_vdm(pd::SVID_PD_SID, pd::VDM_CMD_DISCOVER_IDENTITY, &[]);
                         }
+                        pd::CTRL_GET_SOURCE_CAP => {
+                            let pdo = pd::pdo_fixed_5v(900);
+                            self.send_data(pd::DATA_SOURCE_CAPABILITIES, &[pdo]);
+                        }
+                        _ => {}
                     }
-                    _ => {}
+                } else {
+                    self.age += 1;
+                    if self.age > RESEND_POLLS {
+                        self.resend_current();
+                    }
                 }
                 None
             }
             TcState::Discovering => {
                 let mut objs = [0u32; 7];
-                if let Ok(Some((h, n))) = self.phy.recv_sop(&mut objs) {
+                if let Some((h, n)) = self.recv(&mut objs) {
                     if pd::hdr_msg_type(h) == pd::DATA_VENDOR_DEFINED && n >= 1 {
                         let vh = objs[0];
                         if pd::vdm_cmd_type(vh) == pd::VDM_ACK {
                             match pd::vdm_command(vh) {
                                 pd::VDM_CMD_DISCOVER_IDENTITY => {
+                                    self.substep = 1;
                                     self.send_vdm(pd::SVID_PD_SID, pd::VDM_CMD_DISCOVER_SVIDS, &[]);
                                 }
                                 pd::VDM_CMD_DISCOVER_SVIDS => {
                                     // Assume DP SVID present (checked in
                                     // the modes step anyway).
+                                    self.substep = 2;
                                     self.send_vdm(pd::SVID_DISPLAYPORT, pd::VDM_CMD_DISCOVER_MODES, &[]);
                                 }
                                 pd::VDM_CMD_DISCOVER_MODES => {
                                     if n >= 2 {
                                         self.ufp_d_assignments = pd::dp_mode_ufp_d_assignments(objs[1]);
                                     }
+                                    self.substep = 3;
                                     self.send_vdm(pd::SVID_DISPLAYPORT, pd::VDM_CMD_ENTER_MODE, &[]);
                                 }
                                 pd::VDM_CMD_ENTER_MODE => {
                                     self.state = TcState::ModeEntered;
+                                    self.substep = 0;
                                     self.send_vdm(
                                         pd::SVID_DISPLAYPORT,
                                         pd::VDM_CMD_DP_STATUS_UPDATE,
@@ -188,12 +258,25 @@ impl<'a> TypeC<'a> {
                             }
                         }
                     }
+                } else {
+                    self.age += 1;
+                    if self.age > RESEND_POLLS {
+                        self.resend_current();
+                    }
                 }
                 None
             }
             TcState::ModeEntered => {
                 let mut objs = [0u32; 7];
-                if let Ok(Some((h, n))) = self.phy.recv_sop(&mut objs) {
+                let rx = self.recv(&mut objs);
+                if rx.is_none() {
+                    self.age += 1;
+                    if self.age > RESEND_POLLS {
+                        self.resend_current();
+                    }
+                    return None;
+                }
+                if let Some((h, n)) = rx {
                     if pd::hdr_msg_type(h) == pd::DATA_VENDOR_DEFINED && n >= 1 {
                         let vh = objs[0];
                         if pd::vdm_cmd_type(vh) == pd::VDM_ACK
@@ -210,6 +293,7 @@ impl<'a> TypeC<'a> {
                             } else {
                                 pd::DP_PIN_ASSIGN_D
                             };
+                            self.substep = 1;
                             self.send_vdm(
                                 pd::SVID_DISPLAYPORT,
                                 pd::VDM_CMD_DP_CONFIGURE,
@@ -231,7 +315,7 @@ impl<'a> TypeC<'a> {
             TcState::Configured => {
                 // Steady state: watch for Attention (HPD changes).
                 let mut objs = [0u32; 7];
-                if let Ok(Some((h, n))) = self.phy.recv_sop(&mut objs) {
+                if let Some((h, n)) = self.recv(&mut objs) {
                     if pd::hdr_msg_type(h) == pd::DATA_VENDOR_DEFINED
                         && n >= 2
                         && pd::vdm_command(objs[0]) == pd::VDM_CMD_ATTENTION

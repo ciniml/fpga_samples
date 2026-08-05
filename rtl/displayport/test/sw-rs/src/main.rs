@@ -192,6 +192,18 @@ macro_rules! println {
     ($($arg:tt)*) => (print_fmt(format_args!($($arg)*), true));
 }
 
+/// Raw PD message trace ('>' = sent, '<' = received) so bring-up logs
+/// show exactly what went over CC. Lives here because the print macros
+/// are textually scoped to this file.
+#[cfg(feature = "typec")]
+pub fn pd_trace(dir: char, header: u16, objs: &[u32]) {
+    print!("[PD] {} {:04X}", dir, header);
+    for o in objs {
+        print!(" {:08X}", o);
+    }
+    println!("");
+}
+
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     println!("Panic: {}", info);
@@ -359,8 +371,11 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
     // Dump the monitor's EDID so we can check which modes it actually
     // accepts (the link runs error-free but the monitor reports "no
     // video input" — a rejected timing is one of the few remaining
-    // explanations).
+    // explanations). Skipped in the typec build: the PD trace strings
+    // need the ROM space and the EDID is already known.
+    #[cfg(not(feature = "typec"))]
     let mut edid_buf = [0u8; 128];
+    #[cfg(not(feature = "typec"))]
     for block in 0..2u8 {
         match edid::read_edid(aux, block * 128, &mut edid_buf) {
             Ok(()) => {
