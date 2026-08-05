@@ -361,11 +361,15 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
                 // kills AUX exactly like this). EN and VBUS stay on.
                 #[cfg(feature = "typec")]
                 if attempt % 25 == 24 {
-                    let idx = ((attempt / 25) % 4) as usize;
+                    let idx = ((attempt / 25) % 8) as usize;
+                    let en = idx < 4;
                     let pol = [tc.pol_flipped, !tc.pol_flipped][idx & 1];
-                    let amsel = idx < 2;
-                    println!("[SRC] mux try POL={} AMSEL={}", pol as u32, amsel as u32);
-                    typec_gpio(true, pol, true, amsel);
+                    let amsel = (idx & 2) == 0;
+                    println!(
+                        "[SRC] mux try EN={} POL={} AMSEL={}",
+                        en as u32, pol as u32, amsel as u32
+                    );
+                    typec_gpio(en, pol, true, amsel);
                 }
                 // ~10 ms at 27 MHz between attempts.
                 for _ in 0..90_000 {

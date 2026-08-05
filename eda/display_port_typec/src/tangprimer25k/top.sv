@@ -60,10 +60,14 @@ module top(
     // the pin stays high-Z.
     input wire int_n,
 
-    // HD3SS460 controls (FW-driven via cpu_io_out).
-    output logic usb_sw_amsel,
-    output logic usb_sw_pol,
-    output logic usb_sw_en,
+    // HD3SS460 controls (FW-driven via cpu_io_out). Open-drain: the
+    // mux control pins are 3-level (H >= VCC-0.4 = 2.9V, M around
+    // VCC/2, L <= 0.4V) so a 2.5V-bank push-pull high lands in an
+    // undefined region; releasing the pin lets the board's 10k
+    // pull-ups to 3.3V make a legal H.
+    inout wire logic usb_sw_amsel,
+    inout wire logic usb_sw_pol,
+    inout wire logic usb_sw_en,
 
     // FUSB302B I2C (open-drain; board pull-ups to the 2.5V bank rail).
     inout wire logic i2c_sda,
@@ -207,9 +211,9 @@ module top(
 
     // HD3SS460 control GPIOs (see typec.rs): bit24 = EN, bit25 = POL,
     // bit27 = AMSEL. Default low via the FW reset value of cpu_io_out.
-    assign usb_sw_en    = cpu_io_out[24];
-    assign usb_sw_pol   = cpu_io_out[25];
-    assign usb_sw_amsel = cpu_io_out[27];
+    assign usb_sw_en    = cpu_io_out[24] ? 1'bz : 1'b0;
+    assign usb_sw_pol   = cpu_io_out[25] ? 1'bz : 1'b0;
+    assign usb_sw_amsel = cpu_io_out[27] ? 1'bz : 1'b0;
 
     // I2C open-drain pads.
     logic i2c_scl_oen;
