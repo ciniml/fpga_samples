@@ -307,3 +307,20 @@ FPGA GPIO(cpu_io_out) ------------> FUSB340 SEL x2 / SBU SW SEL / VBUS EN
   I2C+GPIO×4+5Vで、現Pmod DPのピン割当を流用しつつ拡張が必要)
 - USB2.0 D+/D-は未接続で可 (映像専用。Billboardデバイス非搭載だと
   Alt Mode失敗時にホスト側へ通知されないが、ソース用途では不問)
+
+## 実機開通記録 (2026-08-06)
+
+Tang Primer 25K + 自作Type-C基板(FUSB302B+HD3SS460) → XREAL Air 2 で
+1080p60表示に成功。ブリングアップで確定した要点:
+
+1. HD3SS460のEN/AMSEL/POLは3値ピン(H≥VCC-0.4V)。2.5Vバンクからは
+   オープンドレイン駆動+基板10kプルアップ(3.3V)でHを作る(top.svは
+   明示IOBUF)。4レーンDP = AMSEL=H, EN=H, POLは向き
+2. シンクがプラグ(AMA/キャプティブケーブル)の場合、Mode VDOのピン
+   アサインはbits15:8を読む(bit6=receptacle判定)
+3. SourceCapは5V/3A広告(0.9AではCapability Mismatchでパネル起動保留)
+4. Enter Mode NAK時はExit Mode→再Enter(前セッションのモード残留対策)
+5. HPDはConfigure後のAttention/Status VDOで受ける。Air 2は約20秒かかる
+   ので必ず待つ(HPD前にリンクを張るとレシーバが巻き込まれ停止)
+6. **Air 2は映像アクティブ中にAUXが約1秒無通信だとHPDを落として切断**
+   (キープアライブ)。モニタループは100ms間隔でstatusポーリング
