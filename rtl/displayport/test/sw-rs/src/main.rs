@@ -637,9 +637,11 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
     let mut aux_fails: u32 = 0;
     let mut probed = false;
     loop {
-        // ~100 ms between polls: the glasses drop the link when AUX
-        // goes quiet for ~1 s while video is active (keep-alive).
-        for _ in 0..900_000u32 {
+        // ~50 ms between polls: all four deaths so far line up with
+        // the end of the 50 ms hammer window, and 100 ms polling did
+        // not keep the glasses alive — testing 50 ms as the keep-alive
+        // threshold.
+        for _ in 0..450_000u32 {
             unsafe { core::arch::asm!("nop") };
         }
         #[cfg(feature = "typec")]
