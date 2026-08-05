@@ -154,6 +154,11 @@ impl<'a> TypeC<'a> {
         self.age = 0;
     }
 
+    /// Bring-up aid: read VBUS through the PHY's MDAC comparator.
+    pub fn vbus_mv(&mut self) -> u32 {
+        self.phy.measure_vbus_mv().unwrap_or(0)
+    }
+
     /// Bring-up aid: fire a DP Status Update query regardless of state
     /// so CC-side liveness can be checked while AUX is dead. The ACK
     /// (or its absence) shows up in the PD trace.

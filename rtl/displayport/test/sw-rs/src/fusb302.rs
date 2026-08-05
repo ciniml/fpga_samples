@@ -164,6 +164,27 @@ impl<'a> Fusb302<'a> {
         Ok(())
     }
 
+    /// Measure VBUS via the MDAC comparator (420 mV steps, binary
+    /// search). Restores the MEASURE register afterwards.
+    pub fn measure_vbus_mv(&self) -> Result<u32, I2cError> {
+        let mut lo = 0u8;
+        let mut hi = 63u8;
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2;
+            self.wr(REG_MEASURE, 0x40 | mid)?; // MEAS_VBUS | MDAC
+            for _ in 0..3_000 {
+                unsafe { core::arch::asm!("nop") };
+            }
+            if (self.rd(REG_STATUS0)? & ST0_COMP) != 0 {
+                lo = mid; // VBUS above threshold
+            } else {
+                hi = mid - 1;
+            }
+        }
+        self.wr(REG_MEASURE, 0x31)?; // default CC threshold
+        Ok((lo as u32 + 1) * 420)
+    }
+
     pub fn flush_rx(&self) -> Result<(), I2cError> {
         self.wr(REG_CONTROL1, CTL1_RX_FLUSH)
     }

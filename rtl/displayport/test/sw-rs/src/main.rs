@@ -617,20 +617,22 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
     vid.set_rate(6, 1, 1);
     vid.setup_and_enable(&cfg);
     println!("[SRC] video on");
-    // Catch the sink's dying words: right after the stream starts,
-    // hammer the status block before HPD drops (first frames arrive
-    // within ~17 ms). V0..3 back-to-back, V4..11 spaced ~10 ms.
+    // Catch the sink's dying words AND trace VBUS through the fatal
+    // first second: the sink syncs (SINK_STATUS=1), then drops HPD
+    // within ~1 s with zero IRQ — panel-inrush brown-out suspected.
+    // ~40 samples over ~2 s, each with a VBUS reading from the PHY.
     #[cfg(feature = "typec")]
-    for i in 0..12u32 {
+    for i in 0..40u32 {
         if i >= 4 {
-            for _ in 0..90_000 {
+            for _ in 0..450_000 {
                 unsafe { core::arch::asm!("nop") };
             }
         }
+        let mv = tc.vbus_mv();
         let mut st = [0u8; 6];
         match dpcd::read_block(aux, dpcd::SINK_COUNT, &mut st) {
-            Ok(_) => println!("[SRC] V{} {:02X?}", i, st),
-            Err(e) => println!("[SRC] V{} {:?}", i, e),
+            Ok(_) => println!("[SRC] V{} {:02X?} {}mV", i, st, mv),
+            Err(e) => println!("[SRC] V{} {:?} {}mV", i, e, mv),
         }
     }
 
