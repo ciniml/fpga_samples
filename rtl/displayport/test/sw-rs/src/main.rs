@@ -220,6 +220,12 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
     let mut tc = typec::TypeC::new(fusb302::Fusb302::new(&i2c));
     #[cfg(feature = "typec")]
     {
+        // First board smoke test: the DEVICE_ID read exercises the I2C
+        // master and the board wiring before anything else happens.
+        match fusb302::Fusb302::new(&i2c).device_id() {
+            Ok(id) => println!("[SRC] FUSB302B DEVICE_ID = {:02X}", id),
+            Err(e) => println!("[SRC] FUSB302B DEVICE_ID read failed: {:?}", e),
+        }
         match tc.init() {
             true => println!("[SRC] FUSB302B initialized"),
             false => println!("[SRC] FUSB302B init FAILED"),
