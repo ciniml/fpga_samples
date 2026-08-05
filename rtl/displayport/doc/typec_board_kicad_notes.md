@@ -177,7 +177,14 @@ J5=USB2ブレークアウト, CN1=DPコネクタ, JP1=HPD/INT_N結合ジャン�
 
 設計ノートとの相違・注意点:
 - **EN/POL/AMSEL は10kプルアップ(3V3)** — §4.6の「プルダウンで安全側」と
-  逆。FPGAコンフィグ前はmuxが有効(EN=1,POL=1,AMSEL=1)になる
+  逆。FPGAコンフィグ前はmuxが有効(EN=H,POL=H,AMSEL=H=4レーンDP flipped)
+- **重要: EN/AMSEL/POLは3値ピン** (H≥VCC-0.4=2.9V / M=VCC/2±0.3 /
+  L≤0.4V)。2.5VバンクのFPGAプッシュプルHはMとHの間の未定義領域に
+  落ちる(AMSEL≒Mだと「USB3のみ」モードでSBUがHi-Z=AUX死)。
+  **FPGA側はオープンドレイン駆動**(L=0V駆動 / H=開放で10k↑3.3Vに任せる)
+  が正解。top.svで対応済み。プルアップがあるのは結果的に正しい設計
+- 4レーンDPモード = AMSEL=H, EN=H (POL=L:正/H:反転)。レーン対応は
+  LnA-D=ML0-3ストレート、SBU1=AUXP(TI Table 2のリファレンスと一致)
 - **VBUSはJ4から常時直結**(ロードスイッチなし)。VBUS_EN GPIO(bit26)は
   未接続で無効。コールドソケットでVBUS印加あり(ベンチ用途は割り切り)
 - FUSB302BのVCONNはVBUS(5V)直結 — 定格内(2.7-5.5V)だが給電はVBUS依存
