@@ -81,10 +81,15 @@ pub fn vdm_cmd_type(vdo: u32) -> u8 {
 // DP alt mode VDOs (VESA DP Alt Mode on USB Type-C standard)
 // ---------------------------------------------------------------------
 
-/// DP Capabilities mode VDO: UFP_D pin assignments supported (bits
-/// 23:16) — the mask the SOURCE inspects to pick an assignment.
-pub fn dp_mode_ufp_d_assignments(mode_vdo: u32) -> u8 {
-    ((mode_vdo >> 16) & 0xFF) as u8
+/// DP Capabilities mode VDO: pin assignments the SOURCE may configure.
+/// Bit 6 distinguishes receptacle (UFP_D field, bits 23:16) from plug —
+/// a C-to-DP cable adapter reports its assignments in bits 15:8.
+pub fn dp_mode_pin_assignments(mode_vdo: u32) -> u8 {
+    if (mode_vdo >> 6) & 1 != 0 {
+        ((mode_vdo >> 16) & 0xFF) as u8
+    } else {
+        ((mode_vdo >> 8) & 0xFF) as u8
+    }
 }
 pub const DP_PIN_ASSIGN_C: u8 = 1 << 2;
 pub const DP_PIN_ASSIGN_D: u8 = 1 << 3;

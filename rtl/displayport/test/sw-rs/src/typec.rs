@@ -240,7 +240,7 @@ impl<'a> TypeC<'a> {
                                 }
                                 pd::VDM_CMD_DISCOVER_MODES => {
                                     if n >= 2 {
-                                        self.ufp_d_assignments = pd::dp_mode_ufp_d_assignments(objs[1]);
+                                        self.ufp_d_assignments = pd::dp_mode_pin_assignments(objs[1]);
                                     }
                                     self.substep = 3;
                                     self.send_vdm(pd::SVID_DISPLAYPORT, pd::VDM_CMD_ENTER_MODE, &[]);
