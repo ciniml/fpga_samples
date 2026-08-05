@@ -251,8 +251,13 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
     // Bring-up bypass: skip the HPD gate and go straight to the DPCD
     // retry loop (which keeps polling the PD engine). Useful while the
     // PD/alt-mode path itself is being debugged on a new board.
+    // Bypass OFF: the glasses only raise HPD (via Attention) when their
+    // DP receiver is actually ready; training and starting video before
+    // that wedges them (AUX and even CC PD go silent). The wait loop
+    // below keeps polling the PD engine, which mirrors HPD into the
+    // virtual-HPD register.
     #[cfg(feature = "typec")]
-    const HPD_BYPASS: bool = true;
+    const HPD_BYPASS: bool = false;
 
     #[cfg(feature = "typec")]
     let mut tc_last_state = tc.state;
