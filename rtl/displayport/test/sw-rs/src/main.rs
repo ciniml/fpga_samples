@@ -265,6 +265,10 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
 
     if skip_hpd_wait {
         println!("[SRC] HPD wait BYPASSED (bring-up mode)");
+        // Manually enable the mux for direct-cable bring-up (no CC
+        // attach): EN=1, POL=0, VBUS on, AMSEL = assumed 4-lane level.
+        #[cfg(feature = "typec")]
+        typec_gpio(true, false, true, true);
     } else {
         println!("[SRC] waiting for HPD");
         while !read_hpd_level() {
@@ -356,6 +360,47 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
     // be slow to answer), so retry the whole sequence a few times with
     // a breather in between.
     let mut stats = None;
+    // Type-C board bring-up sweep: the HD3SS460 AMSEL level for 4-lane
+    // DP is unverified, and a wrong level leaves only 2 lanes routed
+    // (CR then fails with a healthy AUX). Sweep AMSEL x lane-count and
+    // report which combination trains.
+    #[cfg(feature = "typec")]
+    {
+        let combos: [(bool, u8); 4] = [(true, 4), (false, 4), (true, 2), (false, 2)];
+        'sweep: for (amsel, lanes) in combos {
+            typec_gpio(true, false, true, amsel);
+            // Let the mux settle.
+            for _ in 0..90_000 {
+                unsafe { core::arch::asm!("nop") };
+            }
+            for attempt in 0..2u32 {
+                match link_training::run(aux, ml, lanes) {
+                    Ok(s) => {
+                        println!(
+                            "[SRC] TRAINED: AMSEL={} lanes={} (attempt={}, cr={}, eq={})",
+                            amsel as u32, lanes, attempt, s.cr_iters, s.eq_iters
+                        );
+                        if lanes == LANE_COUNT {
+                            stats = Some(s);
+                        } else {
+                            println!("[SRC] NOTE: only {}-lane trains — AMSEL={} is the 2-lane mode; fix AMSEL_4LANE_DP or wiring", lanes, amsel as u32);
+                        }
+                        break 'sweep;
+                    }
+                    Err(e) => {
+                        println!(
+                            "[SRC] sweep AMSEL={} lanes={} attempt {}: {:?}",
+                            amsel as u32, lanes, attempt, e
+                        );
+                        for _ in 0..450_000 {
+                            unsafe { core::arch::asm!("nop") };
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(not(feature = "typec"))]
     for attempt in 0..5u32 {
         match link_training::run(aux, ml, LANE_COUNT) {
             Ok(s) => {
