@@ -27,6 +27,8 @@ $(TARGET)-2lane.bin: $(wildcard src/*.rs) link.ld Cargo.toml .cargo/config.toml
 # Type-C alt-mode board firmware (FUSB302B + HD3SS460, 4-lane 1080p60).
 $(TARGET)-typec.bin: $(wildcard src/*.rs) link.ld Cargo.toml .cargo/config.toml
 	cargo objcopy --bin $(TARGET) --release --features board,lanes4,typec -- -O binary $@
+$(TARGET)-typec-park.bin: $(wildcard src/*.rs) link.ld Cargo.toml .cargo/config.toml
+	cargo objcopy --bin $(TARGET) --release --features board,lanes4,typec,muxpark -- -O binary $@
 
 %.hex: %.bin
 	od -An -tx4 -w4 -v $< > $@

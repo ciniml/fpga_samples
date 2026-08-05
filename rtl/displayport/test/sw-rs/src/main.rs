@@ -275,6 +275,17 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
     #[cfg(not(feature = "typec"))]
     let skip_hpd_wait = false;
 
+    // Measurement build: release all three mux control pins and halt so
+    // their DC levels can be probed without the engine toggling them.
+    #[cfg(all(feature = "typec", feature = "muxpark"))]
+    {
+        typec_gpio(true, true, true, true);
+        println!("[SRC] MUX PARKED: EN/POL/AMSEL released (expect 3.3V each)");
+        loop {
+            unsafe { core::arch::asm!("nop") };
+        }
+    }
+
     if skip_hpd_wait {
         println!("[SRC] HPD wait BYPASSED (bring-up mode)");
         // Type-C-side test: the sink hangs off the USB-C receptacle, so

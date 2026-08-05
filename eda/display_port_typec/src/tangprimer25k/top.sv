@@ -211,9 +211,12 @@ module top(
 
     // HD3SS460 control GPIOs (see typec.rs): bit24 = EN, bit25 = POL,
     // bit27 = AMSEL. Default low via the FW reset value of cpu_io_out.
-    assign usb_sw_en    = cpu_io_out[24] ? 1'bz : 1'b0;
-    assign usb_sw_pol   = cpu_io_out[25] ? 1'bz : 1'b0;
-    assign usb_sw_amsel = cpu_io_out[27] ? 1'bz : 1'b0;
+    // Explicit IOBUFs (OEN=1 releases the pad) — the tristate must not
+    // depend on inference; the synthesized netlist is encrypted so an
+    // inference failure would be invisible.
+    IOBUF u_iob_usb_sw_en    (.O(), .IO(usb_sw_en),    .I(1'b0), .OEN(cpu_io_out[24]));
+    IOBUF u_iob_usb_sw_pol   (.O(), .IO(usb_sw_pol),   .I(1'b0), .OEN(cpu_io_out[25]));
+    IOBUF u_iob_usb_sw_amsel (.O(), .IO(usb_sw_amsel), .I(1'b0), .OEN(cpu_io_out[27]));
 
     // I2C open-drain pads.
     logic i2c_scl_oen;
