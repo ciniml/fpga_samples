@@ -1,0 +1,24 @@
+IO_LOC "clock" E2;
+IO_PORT "clock" IO_TYPE=LVCMOS33;
+IO_LOC "reset_button" H11;
+IO_PORT "reset_button" PULL_MODE=DOWN IO_TYPE=LVCMOS33;
+IO_LOC "uart_tx" C3
+IO_PORT "uart_tx" IO_TYPE=LVCMOS33;
+IO_LOC "uart_rx" B3
+IO_PORT "uart_rx" IO_TYPE=LVCMOS33;
+
+IO_PORT "ml_lane_0_p" PULL_MODE=NONE IO_TYPE=LVDS25 DRIVE=6;
+IO_PORT "ml_lane_1_p" PULL_MODE=NONE IO_TYPE=LVDS25 DRIVE=6;
+IO_PORT "ml_lane_2_p" PULL_MODE=NONE IO_TYPE=LVDS25 DRIVE=6;
+IO_PORT "ml_lane_3_p" PULL_MODE=NONE IO_TYPE=LVDS25 DRIVE=6;
+IO_PORT "aux_ch_p" IO_TYPE=LVDS25 DRIVE=6;
+// FUSB302B INT_N (board 10k pull-up). Unused by RTL for now (I2C
+// polling); reserved as an input.
+IO_PORT "int_n" PULL_MODE=NONE IO_TYPE=LVCMOS25;
+// HD3SS460 controls + I2C (PMOD0 bank, VCCIO 2.5V — board I2C
+// pull-ups must go to 2.5V, not 3.3V).
+IO_PORT "usb_sw_amsel" PULL_MODE=NONE IO_TYPE=LVCMOS25;
+IO_PORT "usb_sw_pol" PULL_MODE=NONE IO_TYPE=LVCMOS25;
+IO_PORT "usb_sw_en" PULL_MODE=NONE IO_TYPE=LVCMOS25;
+IO_PORT "i2c_sda" PULL_MODE=NONE IO_TYPE=LVCMOS25;
+IO_PORT "i2c_scl" PULL_MODE=NONE IO_TYPE=LVCMOS25;

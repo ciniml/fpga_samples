@@ -145,24 +145,26 @@ fn set_virtual_hpd(level: bool) {
 }
 
 /// Type-C board GPIOs on cpu_io_out: bit24 = HD3SS460 EN, bit25 = POL
-/// (1 = flipped), bit26 = VBUS_EN. Read-modify-write so the status
-/// code in the low bits is preserved.
+/// (1 = flipped), bit26 = VBUS_EN (unused if VBUS is hardwired on the
+/// board), bit27 = AMSEL. Read-modify-write so the status code in the
+/// low bits is preserved.
 #[cfg(feature = "typec")]
-pub fn typec_gpio(en: bool, pol_flipped: bool, vbus: bool) {
+pub fn typec_gpio(en: bool, pol_flipped: bool, vbus: bool, amsel: bool) {
     unsafe {
         if let Some(system) = SYSTEM.as_mut() {
-            let cur = system.out.read().bits() & !(0x7 << 24);
+            let cur = system.out.read().bits() & !(0xF << 24);
             let v = cur
                 | ((en as u32) << 24)
                 | ((pol_flipped as u32) << 25)
-                | ((vbus as u32) << 26);
+                | ((vbus as u32) << 26)
+                | ((amsel as u32) << 27);
             system.out.write(|w| w.bits(v));
         }
     }
 }
 #[cfg(not(feature = "typec"))]
 #[allow(dead_code)]
-pub fn typec_gpio(_en: bool, _pol: bool, _vbus: bool) {}
+pub fn typec_gpio(_en: bool, _pol: bool, _vbus: bool, _amsel: bool) {}
 
 fn clear_hpd_events() {
     unsafe {

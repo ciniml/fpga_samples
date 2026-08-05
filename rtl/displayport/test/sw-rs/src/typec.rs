@@ -12,6 +12,11 @@
 use crate::fusb302::{Cc, Fusb302};
 use crate::pd;
 
+/// HD3SS460 AMSEL level selecting the 4-lane DP mode.
+/// TODO: verify the level against the HD3SS460 datasheet mode table on
+/// the bench (runtime-flippable via the UART FW loader if wrong).
+const AMSEL_4LANE_DP: bool = true;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TcState {
     Detached,
@@ -113,9 +118,9 @@ impl<'a> TypeC<'a> {
                     self.state = TcState::Failed;
                     return None;
                 }
-                // Board mux: EN + polarity, then VBUS on.
+                // Board mux: EN + polarity + AMSEL, then VBUS on.
                 let pol_flipped = self.cc == Cc::Cc2;
-                crate::typec_gpio(true, pol_flipped, true);
+                crate::typec_gpio(true, pol_flipped, true, AMSEL_4LANE_DP);
                 // Announce our capabilities.
                 let pdo = pd::pdo_fixed_5v(900);
                 self.send_data(pd::DATA_SOURCE_CAPABILITIES, &[pdo]);
