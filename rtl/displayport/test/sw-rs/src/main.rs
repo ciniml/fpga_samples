@@ -238,11 +238,11 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
         // master and the board wiring before anything else happens.
         match fusb302::Fusb302::new(&i2c).device_id() {
             Ok(id) => println!("[SRC] FUSB302B DEVICE_ID = {:02X}", id),
-            Err(e) => println!("[SRC] FUSB302B DEVICE_ID read failed: {:?}", e),
+            Err(e) => println!("[SRC] ID fail {:?}", e),
         }
         match tc.init() {
-            true => println!("[SRC] FUSB302B initialized"),
-            false => println!("[SRC] FUSB302B init FAILED"),
+            true => println!("[SRC] 302B init"),
+            false => println!("[SRC] 302B FAIL"),
         }
     }
     #[cfg(not(feature = "typec"))]
@@ -315,7 +315,7 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
             }
             if tc.state == typec::TcState::Configured {
                 println!(
-                    "[SRC] alt mode configured (POL={}, assignments={:02X})",
+                    "[SRC] configured POL={} asgn={:02X}",
                     tc.pol_flipped as u32, tc.ufp_d_assignments
                 );
             } else {
@@ -363,7 +363,7 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
             Err(e) => {
                 if attempt < 10 || attempt % 25 == 0 {
                     println!(
-                        "[SRC] DPCD read attempt {} failed: {:?} (rx_count={})",
+                        "[SRC] DPCD {} {:?} rx={}",
                         attempt,
                         e,
                         aux.rx_count()
@@ -395,7 +395,7 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
         }
     }
     if !dpcd_ok {
-        println!("[SRC] giving up: AUX/DPCD unreachable");
+        println!("[SRC] AUX unreachable");
         write_system_out(0x0000_0002);
         return;
     }
@@ -468,7 +468,7 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
                     if *lanes == LANE_COUNT {
                         stats = Some(s);
                     } else {
-                        println!("[SRC] NOTE: only {}-lane trains at AMSEL={} — check the mux mode/wiring", lanes, *amsel as u32);
+                        println!("[SRC] only {}-lane AMSEL={}", lanes, *amsel as u32);
                     }
                     break 'sweep;
                 }
@@ -507,11 +507,34 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
     let stats = match stats {
         Some(s) => s,
         None => {
-            println!("[SRC] link training failed permanently");
+            println!("[SRC] train failed");
             write_system_out(0x0000_0003);
             return;
         }
     };
+
+    // Experiment: hold the trained link at idle (no video) and watch
+    // whether the glasses keep HPD asserted and AUX alive. Splits
+    // "video start is the trigger" from "idle/no-video is the trigger".
+    #[cfg(feature = "typec")]
+    {
+        println!("[SRC] HOLD 20s no video");
+        for i in 0..20u32 {
+            for _ in 0..9_000_000u32 {
+                unsafe { core::arch::asm!("nop") };
+            }
+            tc_poll_and_log!();
+            let mut st = [0u8; 6];
+            match dpcd::read_block(aux, dpcd::SINK_COUNT, &mut st) {
+                Ok(_) => println!("[SRC] HOLD {} {:02X?}", i, st),
+                Err(e) => println!(
+                    "[SRC] HOLD {} {:?} rx={}",
+                    i, e, aux.rx_count()
+                ),
+            }
+        }
+        println!("[SRC] HOLD done");
+    }
 
     // Phase D: configure MSA and enable the video pipeline.
     // 2-lane sim profile: 64x16 active, 12/11 rate ratio, tu_active =
@@ -635,7 +658,7 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
     #[cfg(all(not(feature = "lanes4"), not(feature = "lanes2")))]
     vid.set_rate(6, 1, 1);
     vid.setup_and_enable(&cfg);
-    println!("[SRC] video pipeline enabled");
+    println!("[SRC] video on");
 
     // Encode iteration counts in upper bits of cpu_io_out and signal done.
     let v = 0x0000_0001
@@ -649,7 +672,7 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
     // sync with our main-link stream, so "training done but no picture"
     // splits into signal-level problems (CR/EQ/SYM drop) vs stream
     // formatting problems (all 1 but SYNC=0 or the monitor still blank).
-    println!("[SRC] monitoring link status (DPCD 200h-205h)");
+    println!("[SRC] monitor");
     let mut prev = [0u8; 6];
     let mut have_prev = false;
     let mut beat: u32 = 0;
@@ -666,7 +689,7 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
         }
         #[cfg(feature = "typec")]
         if let Some((hpd, irq)) = tc.poll() {
-            println!("[SRC] PD Attention: HPD={} IRQ={}", hpd as u32, irq as u32);
+            println!("[SRC] PD Attn HPD={} IRQ={}", hpd as u32, irq as u32);
             set_virtual_hpd(hpd);
         }
         let mut st = [0u8; 6];
@@ -702,7 +725,7 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
             }
             Err(e) => {
                 println!(
-                    "[SRC] status read failed: {:?} (rx_count={})",
+                    "[SRC] status {:?} rx={}",
                     e,
                     aux.rx_count()
                 );
@@ -710,14 +733,14 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
                 if aux_fails == 5 && !probed {
                     probed = true;
                     vid.disable();
-                    println!("[SRC] PROBE: video disabled — watching for AUX recovery");
+                    println!("[SRC] PROBE: video off");
                 }
                 // CC-side liveness: if the glasses' PD still ACKs while
                 // AUX is dead, the sink is alive and the AUX path is
                 // being jammed; if PD is dead too, the sink crashed.
                 #[cfg(feature = "typec")]
                 if aux_fails % 8 == 0 {
-                    println!("[SRC] PROBE: PD liveness query");
+                    println!("[SRC] PROBE: PD ping");
                     tc.query_status();
                 }
             }
