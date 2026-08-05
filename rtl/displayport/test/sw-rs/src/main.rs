@@ -265,10 +265,8 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
 
     if skip_hpd_wait {
         println!("[SRC] HPD wait BYPASSED (bring-up mode)");
-        // Manually enable the mux for direct-cable bring-up (no CC
-        // attach): EN=1, POL=0, VBUS on, AMSEL = assumed 4-lane level.
-        #[cfg(feature = "typec")]
-        typec_gpio(true, false, true, true);
+        // Leave the mux GPIOs at their defaults here; the training
+        // sweep below drives EN/AMSEL through their combinations.
     } else {
         println!("[SRC] waiting for HPD");
         while !read_hpd_level() {
@@ -364,11 +362,27 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
     // DP is unverified, and a wrong level leaves only 2 lanes routed
     // (CR then fails with a healthy AUX). Sweep AMSEL x lane-count and
     // report which combination trains.
+    // Board is being tested through its native DP connector (Type-C
+    // unplugged): lanes tee off to both the DP connector and the
+    // HD3SS460, so the correct state is "mux really off" — but the EN
+    // polarity is unverified (a mux that is actually ON loads the
+    // lanes with the unplugged Type-C stub: AUX at 1 Mbps survives,
+    // CR at 1.62 Gbps does not, matching the observed CrFailed).
+    // Sweep EN x AMSEL x lane count and report what trains.
     #[cfg(feature = "typec")]
     {
-        let combos: [(bool, u8); 4] = [(true, 4), (false, 4), (true, 2), (false, 2)];
-        'sweep: for (amsel, lanes) in combos {
-            typec_gpio(true, false, true, amsel);
+        let combos: [(bool, bool, u8); 8] = [
+            (false, true, 4),
+            (false, false, 4),
+            (true, true, 4),
+            (true, false, 4),
+            (false, true, 2),
+            (false, false, 2),
+            (true, true, 2),
+            (true, false, 2),
+        ];
+        'sweep: for (en, amsel, lanes) in combos {
+            typec_gpio(en, false, true, amsel);
             // Let the mux settle.
             for _ in 0..90_000 {
                 unsafe { core::arch::asm!("nop") };
@@ -377,20 +391,20 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
                 match link_training::run(aux, ml, lanes) {
                     Ok(s) => {
                         println!(
-                            "[SRC] TRAINED: AMSEL={} lanes={} (attempt={}, cr={}, eq={})",
-                            amsel as u32, lanes, attempt, s.cr_iters, s.eq_iters
+                            "[SRC] TRAINED: EN={} AMSEL={} lanes={} (attempt={}, cr={}, eq={})",
+                            en as u32, amsel as u32, lanes, attempt, s.cr_iters, s.eq_iters
                         );
                         if lanes == LANE_COUNT {
                             stats = Some(s);
                         } else {
-                            println!("[SRC] NOTE: only {}-lane trains — AMSEL={} is the 2-lane mode; fix AMSEL_4LANE_DP or wiring", lanes, amsel as u32);
+                            println!("[SRC] NOTE: only {}-lane trains at EN={} AMSEL={} — check the mux mode/wiring", lanes, en as u32, amsel as u32);
                         }
                         break 'sweep;
                     }
                     Err(e) => {
                         println!(
-                            "[SRC] sweep AMSEL={} lanes={} attempt {}: {:?}",
-                            amsel as u32, lanes, attempt, e
+                            "[SRC] sweep EN={} AMSEL={} lanes={} attempt {}: {:?}",
+                            en as u32, amsel as u32, lanes, attempt, e
                         );
                         for _ in 0..450_000 {
                             unsafe { core::arch::asm!("nop") };
