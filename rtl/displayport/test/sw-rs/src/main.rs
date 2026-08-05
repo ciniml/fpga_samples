@@ -355,6 +355,18 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
                 }
                 #[cfg(feature = "typec")]
                 tc_poll_and_log!();
+                // AUX still dead with the PD-chosen mux setting after
+                // ~1 s: rotate POL x AMSEL (the actual levels for this
+                // mux are unverified; a wrong POL swaps SBU1/2 and
+                // kills AUX exactly like this). EN and VBUS stay on.
+                #[cfg(feature = "typec")]
+                if attempt % 100 == 99 {
+                    let idx = ((attempt / 100) % 4) as usize;
+                    let pol = [tc.pol_flipped, !tc.pol_flipped][idx & 1];
+                    let amsel = idx < 2;
+                    println!("[SRC] mux try POL={} AMSEL={}", pol as u32, amsel as u32);
+                    typec_gpio(true, pol, true, amsel);
+                }
                 // ~10 ms at 27 MHz between attempts.
                 for _ in 0..90_000 {
                     unsafe { core::arch::asm!("nop") };
