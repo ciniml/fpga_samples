@@ -345,7 +345,7 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
                 break;
             }
             Err(e) => {
-                if attempt < 10 || attempt % 50 == 0 {
+                if attempt < 10 || attempt % 25 == 0 {
                     println!(
                         "[SRC] DPCD read attempt {} failed: {:?} (rx_count={})",
                         attempt,
@@ -360,8 +360,8 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
                 // mux are unverified; a wrong POL swaps SBU1/2 and
                 // kills AUX exactly like this). EN and VBUS stay on.
                 #[cfg(feature = "typec")]
-                if attempt % 100 == 99 {
-                    let idx = ((attempt / 100) % 4) as usize;
+                if attempt % 25 == 24 {
+                    let idx = ((attempt / 25) % 4) as usize;
                     let pol = [tc.pol_flipped, !tc.pol_flipped][idx & 1];
                     let amsel = idx < 2;
                     println!("[SRC] mux try POL={} AMSEL={}", pol as u32, amsel as u32);
