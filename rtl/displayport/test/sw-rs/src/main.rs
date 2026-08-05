@@ -384,14 +384,9 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
         return;
     }
 
-    // Dump the monitor's EDID so we can check which modes it actually
-    // accepts (the link runs error-free but the monitor reports "no
-    // video input" — a rejected timing is one of the few remaining
-    // explanations). Skipped in the typec build: the PD trace strings
-    // need the ROM space and the EDID is already known.
-    #[cfg(not(feature = "typec"))]
+    // Dump the sink's EDID: the mode it actually demands (exact pixel
+    // clock / blanking) lives in the detailed timing descriptors.
     let mut edid_buf = [0u8; 128];
-    #[cfg(not(feature = "typec"))]
     for block in 0..2u8 {
         match edid::read_edid(aux, block * 128, &mut edid_buf) {
             Ok(()) => {
@@ -404,12 +399,7 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
                 }
             }
             Err(e) => {
-                println!(
-                    "[SRC] EDID block {} read failed: {:?} (rx_count={})",
-                    block,
-                    e,
-                    aux.rx_count()
-                );
+                println!("[SRC] EDID {} fail {:?}", block, e);
             }
         }
     }
@@ -471,28 +461,6 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
         }
     };
 
-    // Experiment: hold the trained link at idle (no video) and watch
-    // whether the glasses keep HPD asserted and AUX alive. Splits
-    // "video start is the trigger" from "idle/no-video is the trigger".
-    #[cfg(feature = "typec")]
-    {
-        println!("[SRC] HOLD 20s no video");
-        for i in 0..20u32 {
-            for _ in 0..9_000_000u32 {
-                unsafe { core::arch::asm!("nop") };
-            }
-            tc_poll_and_log!();
-            let mut st = [0u8; 6];
-            match dpcd::read_block(aux, dpcd::SINK_COUNT, &mut st) {
-                Ok(_) => println!("[SRC] HOLD {} {:02X?}", i, st),
-                Err(e) => println!(
-                    "[SRC] HOLD {} {:?} rx={}",
-                    i, e, aux.rx_count()
-                ),
-            }
-        }
-        println!("[SRC] HOLD done");
-    }
 
     // Phase D: configure MSA and enable the video pipeline.
     // 2-lane sim profile: 64x16 active, 12/11 rate ratio, tu_active =
@@ -617,22 +585,27 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
     vid.set_rate(6, 1, 1);
     vid.setup_and_enable(&cfg);
     println!("[SRC] video on");
-    // Catch the sink's dying words AND trace VBUS through the fatal
-    // first second: the sink syncs (SINK_STATUS=1), then drops HPD
-    // within ~1 s with zero IRQ — panel-inrush brown-out suspected.
-    // ~40 samples over ~2 s, each with a VBUS reading from the PHY.
+    // Keep-alive experiment: both prior runs died within the first
+    // ~1 s AUX-quiet gap after video-on while surviving any span of
+    // 50 ms-spaced polling (VBUS solid throughout). Hammer for ~10 s
+    // at 50 ms; print every 20th sample, changes, and timeouts.
     #[cfg(feature = "typec")]
-    for i in 0..40u32 {
-        if i >= 4 {
+    {
+        let mut pv = [0u8; 6];
+        for i in 0..200u32 {
             for _ in 0..450_000 {
                 unsafe { core::arch::asm!("nop") };
             }
-        }
-        let mv = tc.vbus_mv();
-        let mut st = [0u8; 6];
-        match dpcd::read_block(aux, dpcd::SINK_COUNT, &mut st) {
-            Ok(_) => println!("[SRC] V{} {:02X?} {}mV", i, st, mv),
-            Err(e) => println!("[SRC] V{} {:?} {}mV", i, e, mv),
+            let mut st = [0u8; 6];
+            match dpcd::read_block(aux, dpcd::SINK_COUNT, &mut st) {
+                Ok(_) => {
+                    if st != pv || i % 20 == 0 {
+                        println!("[SRC] V{} {:02X?}", i, st);
+                    }
+                    pv = st;
+                }
+                Err(e) => println!("[SRC] V{} {:?}", i, e),
+            }
         }
     }
 
@@ -659,8 +632,9 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
     let mut aux_fails: u32 = 0;
     let mut probed = false;
     loop {
-        // ~1 s between polls (same nop scale as the retry delay above).
-        for _ in 0..9_000_000u32 {
+        // ~100 ms between polls: the glasses drop the link when AUX
+        // goes quiet for ~1 s while video is active (keep-alive).
+        for _ in 0..900_000u32 {
             unsafe { core::arch::asm!("nop") };
         }
         #[cfg(feature = "typec")]
