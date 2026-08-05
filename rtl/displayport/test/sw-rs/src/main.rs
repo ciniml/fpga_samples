@@ -653,6 +653,12 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
     let mut prev = [0u8; 6];
     let mut have_prev = false;
     let mut beat: u32 = 0;
+    // AUX-death probe: if the sink's AUX times out repeatedly right
+    // after video start, stop the stream once and watch whether AUX
+    // recovers — splits "sink wedged for good" from "sink cannot
+    // coexist with our video stream".
+    let mut aux_fails: u32 = 0;
+    let mut probed = false;
     loop {
         // ~1 s between polls (same nop scale as the retry delay above).
         for _ in 0..9_000_000u32 {
@@ -700,6 +706,12 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
                     e,
                     aux.rx_count()
                 );
+                aux_fails += 1;
+                if aux_fails == 5 && !probed {
+                    probed = true;
+                    vid.disable();
+                    println!("[SRC] PROBE: video disabled — watching for AUX recovery");
+                }
             }
         }
         beat = beat.wrapping_add(1);

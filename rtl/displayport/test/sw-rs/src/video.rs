@@ -89,4 +89,11 @@ impl Video {
             self.p.ctrl.write(|w| w.enable().set_bit());
         }
     }
+
+    /// Stop the video stream (back to idle pattern) — bring-up aid.
+    pub fn disable(&self) {
+        unsafe {
+            self.p.ctrl.write(|w| w.bits(0));
+        }
+    }
 }
