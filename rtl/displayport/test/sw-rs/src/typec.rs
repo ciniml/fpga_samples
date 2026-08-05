@@ -313,19 +313,36 @@ impl<'a> TypeC<'a> {
                 None
             }
             TcState::Configured => {
-                // Steady state: watch for Attention (HPD changes).
+                // Steady state: watch for Attention (HPD changes), and
+                // while HPD is still low actively re-query DP Status —
+                // some adapters never volunteer an Attention.
                 let mut objs = [0u32; 7];
                 if let Some((h, n)) = self.recv(&mut objs) {
                     if pd::hdr_msg_type(h) == pd::DATA_VENDOR_DEFINED
                         && n >= 2
-                        && pd::vdm_command(objs[0]) == pd::VDM_CMD_ATTENTION
                         && pd::vdm_svid(objs[0]) == pd::SVID_DISPLAYPORT
                     {
-                        self.sink_dp_status = objs[1];
-                        return Some((
-                            pd::dp_status_hpd(self.sink_dp_status),
-                            pd::dp_status_irq_hpd(self.sink_dp_status),
-                        ));
+                        let cmd = pd::vdm_command(objs[0]);
+                        if cmd == pd::VDM_CMD_ATTENTION
+                            || (cmd == pd::VDM_CMD_DP_STATUS_UPDATE
+                                && pd::vdm_cmd_type(objs[0]) == pd::VDM_ACK)
+                        {
+                            self.sink_dp_status = objs[1];
+                            return Some((
+                                pd::dp_status_hpd(self.sink_dp_status),
+                                pd::dp_status_irq_hpd(self.sink_dp_status),
+                            ));
+                        }
+                    }
+                } else {
+                    self.age += 1;
+                    if !pd::dp_status_hpd(self.sink_dp_status) && self.age > 4 {
+                        self.send_vdm(
+                            pd::SVID_DISPLAYPORT,
+                            pd::VDM_CMD_DP_STATUS_UPDATE,
+                            &[pd::dp_status_dfp_d()],
+                        );
+                        self.age = 0;
                     }
                 }
                 None
