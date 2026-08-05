@@ -551,8 +551,13 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
         hsp:       false,
         vsw:       5,
         vsp:       false,
-        mvid:      0x7555, // round(0x8000 * 11 / 12)
-        nvid:      0x8000,
+        // Exactly 11/12 (22528*12 == 24576*11): the rounded
+        // 0x7555/0x8000 pair is -11 ppm off, which slowly drifts the
+        // sink's regenerated pixel clock against the real stream rate
+        // and overflows fixed-pipeline sinks (glasses died 0.5-10 s
+        // after video-on with zero link errors; monitors resample).
+        mvid:      0x5800,
+        nvid:      0x6000,
         misc0:     0x21,
         misc1:     0x00,
         tu_active: 44,
