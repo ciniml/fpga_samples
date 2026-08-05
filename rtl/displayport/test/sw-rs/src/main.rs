@@ -712,6 +712,14 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
                     vid.disable();
                     println!("[SRC] PROBE: video disabled — watching for AUX recovery");
                 }
+                // CC-side liveness: if the glasses' PD still ACKs while
+                // AUX is dead, the sink is alive and the AUX path is
+                // being jammed; if PD is dead too, the sink crashed.
+                #[cfg(feature = "typec")]
+                if aux_fails % 8 == 0 {
+                    println!("[SRC] PROBE: PD liveness query");
+                    tc.query_status();
+                }
             }
         }
         beat = beat.wrapping_add(1);

@@ -154,6 +154,17 @@ impl<'a> TypeC<'a> {
         self.age = 0;
     }
 
+    /// Bring-up aid: fire a DP Status Update query regardless of state
+    /// so CC-side liveness can be checked while AUX is dead. The ACK
+    /// (or its absence) shows up in the PD trace.
+    pub fn query_status(&mut self) {
+        self.send_vdm(
+            pd::SVID_DISPLAYPORT,
+            pd::VDM_CMD_DP_STATUS_UPDATE,
+            &[pd::dp_status_dfp_d()],
+        );
+    }
+
     /// One polling step. Returns Some((hpd, irq)) whenever the sink's
     /// HPD state (from Status Update / Attention) changed.
     pub fn poll(&mut self) -> Option<(bool, bool)> {
