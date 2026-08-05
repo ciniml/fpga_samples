@@ -236,17 +236,45 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
     #[cfg(not(feature = "typec"))]
     let _ = i2c_p;
 
-    println!("[SRC] waiting for HPD");
-    while !read_hpd_level() {
-        #[cfg(feature = "typec")]
-        if let Some((hpd, _irq)) = tc.poll() {
-            println!("[SRC] PD alt mode configured, sink HPD={}", hpd as u32);
-            set_virtual_hpd(hpd);
-        }
+    // Bring-up bypass: skip the HPD gate and go straight to the DPCD
+    // retry loop (which keeps polling the PD engine). Useful while the
+    // PD/alt-mode path itself is being debugged on a new board.
+    #[cfg(feature = "typec")]
+    const HPD_BYPASS: bool = true;
+
+    #[cfg(feature = "typec")]
+    let mut tc_last_state = tc.state;
+    #[cfg(feature = "typec")]
+    macro_rules! tc_poll_and_log {
+        () => {
+            if let Some((hpd, irq)) = tc.poll() {
+                println!("[SRC] PD: sink HPD={} IRQ={}", hpd as u32, irq as u32);
+                set_virtual_hpd(hpd);
+            }
+            if tc.state != tc_last_state {
+                println!("[SRC] PD state: {:?}", tc.state);
+                tc_last_state = tc.state;
+            }
+        };
     }
-    if read_hpd_event_plug() {
-        println!("[SRC] HPD plug observed");
-        clear_hpd_events();
+
+    #[cfg(feature = "typec")]
+    let skip_hpd_wait = HPD_BYPASS;
+    #[cfg(not(feature = "typec"))]
+    let skip_hpd_wait = false;
+
+    if skip_hpd_wait {
+        println!("[SRC] HPD wait BYPASSED (bring-up mode)");
+    } else {
+        println!("[SRC] waiting for HPD");
+        while !read_hpd_level() {
+            #[cfg(feature = "typec")]
+            tc_poll_and_log!();
+        }
+        if read_hpd_event_plug() {
+            println!("[SRC] HPD plug observed");
+            clear_hpd_events();
+        }
     }
 
     // Phase A reads (still useful as integration smoke). A real monitor
@@ -257,7 +285,14 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
     // arrived but the reply could not be decoded).
     let mut buf = [0u8; 16];
     let mut dpcd_ok = false;
-    for attempt in 0..10u32 {
+    // With the Type-C engine, the AUX path only opens after PD alt-mode
+    // entry succeeds, so keep polling the engine between (many more)
+    // DPCD attempts instead of giving up after 10.
+    #[cfg(feature = "typec")]
+    const DPCD_ATTEMPTS: u32 = 600; // ~1 min at 10 ms + PD polling
+    #[cfg(not(feature = "typec"))]
+    const DPCD_ATTEMPTS: u32 = 10;
+    for attempt in 0..DPCD_ATTEMPTS {
         match dpcd::read_block(aux, dpcd::DPCD_REV, &mut buf) {
             Ok(_) => {
                 println!("[SRC] DPCD[0..]: {:02X?}", &buf[..16]);
@@ -265,12 +300,16 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
                 break;
             }
             Err(e) => {
-                println!(
-                    "[SRC] DPCD read attempt {} failed: {:?} (rx_count={})",
-                    attempt,
-                    e,
-                    aux.rx_count()
-                );
+                if attempt < 10 || attempt % 50 == 0 {
+                    println!(
+                        "[SRC] DPCD read attempt {} failed: {:?} (rx_count={})",
+                        attempt,
+                        e,
+                        aux.rx_count()
+                    );
+                }
+                #[cfg(feature = "typec")]
+                tc_poll_and_log!();
                 // ~10 ms at 27 MHz between attempts.
                 for _ in 0..90_000 {
                     unsafe { core::arch::asm!("nop") };
