@@ -57,6 +57,7 @@ pub const VDM_CMD_DP_CONFIGURE: u8 = 0x11;
 
 pub const VDM_INITIATOR: u8 = 0; // command type field
 pub const VDM_ACK: u8 = 1;
+pub const VDM_NAK: u8 = 2;
 
 /// Structured VDM header VDO.
 pub fn vdm_header(svid: u16, obj_pos: u8, cmd_type: u8, command: u8) -> u32 {

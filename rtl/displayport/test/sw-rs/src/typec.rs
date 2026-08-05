@@ -254,6 +254,23 @@ impl<'a> TypeC<'a> {
                                         &[pd::dp_status_dfp_d()],
                                     );
                                 }
+                                pd::VDM_CMD_EXIT_MODE => {
+                                    // Stale mode cleared: enter again.
+                                    self.send_vdm(pd::SVID_DISPLAYPORT, pd::VDM_CMD_ENTER_MODE, &[]);
+                                }
+                                _ => {}
+                            }
+                        } else if pd::vdm_cmd_type(vh) == pd::VDM_NAK {
+                            match pd::vdm_command(vh) {
+                                pd::VDM_CMD_ENTER_MODE => {
+                                    // Likely still in DP mode from a
+                                    // previous run that never exited:
+                                    // exit, then re-enter on its ACK.
+                                    self.send_vdm(pd::SVID_DISPLAYPORT, pd::VDM_CMD_EXIT_MODE, &[]);
+                                }
+                                pd::VDM_CMD_EXIT_MODE => {
+                                    self.send_vdm(pd::SVID_DISPLAYPORT, pd::VDM_CMD_ENTER_MODE, &[]);
+                                }
                                 _ => {}
                             }
                         }
