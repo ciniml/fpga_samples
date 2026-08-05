@@ -371,22 +371,6 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
                 }
                 #[cfg(feature = "typec")]
                 tc_poll_and_log!();
-                // AUX still dead with the PD-chosen mux setting after
-                // ~1 s: rotate POL x AMSEL (the actual levels for this
-                // mux are unverified; a wrong POL swaps SBU1/2 and
-                // kills AUX exactly like this). EN and VBUS stay on.
-                #[cfg(feature = "typec")]
-                if attempt % 25 == 24 {
-                    let idx = ((attempt / 25) % 8) as usize;
-                    let en = idx < 4;
-                    let pol = [tc.pol_flipped, !tc.pol_flipped][idx & 1];
-                    let amsel = (idx & 2) == 0;
-                    println!(
-                        "[SRC] mux try EN={} POL={} AMSEL={}",
-                        en as u32, pol as u32, amsel as u32
-                    );
-                    typec_gpio(en, pol, true, amsel);
-                }
                 // ~10 ms at 27 MHz between attempts.
                 for _ in 0..90_000 {
                     unsafe { core::arch::asm!("nop") };
@@ -436,50 +420,24 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
     // be slow to answer), so retry the whole sequence a few times with
     // a breather in between.
     let mut stats = None;
-    // Type-C-side training: keep EN=1 and the PD-decided polarity, but
-    // the HD3SS460 AMSEL level for 4-lane DP is still unverified, so
-    // try both levels (4-lane first, then 2-lane probes purely as a
-    // diagnostic — a wrong AMSEL level routes only two lanes).
+    // Mux config proven on the bench: EN=H, AMSEL=H = 4-lane DP,
+    // POL from the PD engine. Plain retry loop.
     #[cfg(feature = "typec")]
-    {
-        let pol = tc.pol_flipped;
-        let plan: [(bool, u8); 8] = [
-            (true, 4),
-            (true, 4),
-            (false, 4),
-            (false, 4),
-            (true, 2),
-            (true, 2),
-            (false, 2),
-            (false, 2),
-        ];
-        'sweep: for (i, (amsel, lanes)) in plan.iter().enumerate() {
-            typec_gpio(true, pol, true, *amsel);
-            // Let the mux settle.
-            for _ in 0..90_000 {
-                unsafe { core::arch::asm!("nop") };
+    for attempt in 0..4u32 {
+        typec_gpio(true, tc.pol_flipped, true, true);
+        match link_training::run(aux, ml, LANE_COUNT) {
+            Ok(s) => {
+                println!(
+                    "[SRC] TRAINED: POL={} lanes={} (cr={}, eq={})",
+                    tc.pol_flipped as u32, LANE_COUNT, s.cr_iters, s.eq_iters
+                );
+                stats = Some(s);
+                break;
             }
-            match link_training::run(aux, ml, *lanes) {
-                Ok(s) => {
-                    println!(
-                        "[SRC] TRAINED: POL={} AMSEL={} lanes={} (cr={}, eq={})",
-                        pol as u32, *amsel as u32, lanes, s.cr_iters, s.eq_iters
-                    );
-                    if *lanes == LANE_COUNT {
-                        stats = Some(s);
-                    } else {
-                        println!("[SRC] only {}-lane AMSEL={}", lanes, *amsel as u32);
-                    }
-                    break 'sweep;
-                }
-                Err(e) => {
-                    println!(
-                        "[SRC] train {} POL={} AMSEL={} lanes={}: {:?}",
-                        i, pol as u32, *amsel as u32, lanes, e
-                    );
-                    for _ in 0..450_000 {
-                        unsafe { core::arch::asm!("nop") };
-                    }
+            Err(e) => {
+                println!("[SRC] train {}: {:?}", attempt, e);
+                for _ in 0..450_000 {
+                    unsafe { core::arch::asm!("nop") };
                 }
             }
         }
@@ -659,6 +617,22 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
     vid.set_rate(6, 1, 1);
     vid.setup_and_enable(&cfg);
     println!("[SRC] video on");
+    // Catch the sink's dying words: right after the stream starts,
+    // hammer the status block before HPD drops (first frames arrive
+    // within ~17 ms). V0..3 back-to-back, V4..11 spaced ~10 ms.
+    #[cfg(feature = "typec")]
+    for i in 0..12u32 {
+        if i >= 4 {
+            for _ in 0..90_000 {
+                unsafe { core::arch::asm!("nop") };
+            }
+        }
+        let mut st = [0u8; 6];
+        match dpcd::read_block(aux, dpcd::SINK_COUNT, &mut st) {
+            Ok(_) => println!("[SRC] V{} {:02X?}", i, st),
+            Err(e) => println!("[SRC] V{} {:?}", i, e),
+        }
+    }
 
     // Encode iteration counts in upper bits of cpu_io_out and signal done.
     let v = 0x0000_0001
