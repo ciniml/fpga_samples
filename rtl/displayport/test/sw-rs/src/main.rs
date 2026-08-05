@@ -265,8 +265,39 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
 
     if skip_hpd_wait {
         println!("[SRC] HPD wait BYPASSED (bring-up mode)");
-        // Leave the mux GPIOs at their defaults here; the training
-        // sweep below drives EN/AMSEL through their combinations.
+        // Type-C-side test: the sink hangs off the USB-C receptacle, so
+        // the mux and orientation must come from the PD engine. Wait for
+        // alt-mode entry (Configure ACKed) before touching AUX; fall
+        // back to a manual mux enable if PD goes nowhere (e.g. a cable
+        // adapter that skips PD, or an engine bug to debug next).
+        #[cfg(feature = "typec")]
+        {
+            println!("[SRC] waiting for PD alt-mode entry (Type-C)");
+            let mut waited_ms = 0u32;
+            while tc.state != typec::TcState::Configured
+                && tc.state != typec::TcState::Failed
+                && waited_ms < 60_000
+            {
+                tc_poll_and_log!();
+                // ~1 ms at 27 MHz between polls.
+                for _ in 0..9_000 {
+                    unsafe { core::arch::asm!("nop") };
+                }
+                waited_ms += 1;
+            }
+            if tc.state == typec::TcState::Configured {
+                println!(
+                    "[SRC] alt mode configured (POL={}, assignments={:02X})",
+                    tc.pol_flipped as u32, tc.ufp_d_assignments
+                );
+            } else {
+                println!(
+                    "[SRC] PD stuck in {:?} after 60 s — manual mux enable (POL=0, AMSEL=1)",
+                    tc.state
+                );
+                typec_gpio(true, false, true, true);
+            }
+        }
     } else {
         println!("[SRC] waiting for HPD");
         while !read_hpd_level() {
@@ -358,57 +389,49 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
     // be slow to answer), so retry the whole sequence a few times with
     // a breather in between.
     let mut stats = None;
-    // Type-C board bring-up sweep: the HD3SS460 AMSEL level for 4-lane
-    // DP is unverified, and a wrong level leaves only 2 lanes routed
-    // (CR then fails with a healthy AUX). Sweep AMSEL x lane-count and
-    // report which combination trains.
-    // Board is being tested through its native DP connector (Type-C
-    // unplugged): lanes tee off to both the DP connector and the
-    // HD3SS460, so the correct state is "mux really off" — but the EN
-    // polarity is unverified (a mux that is actually ON loads the
-    // lanes with the unplugged Type-C stub: AUX at 1 Mbps survives,
-    // CR at 1.62 Gbps does not, matching the observed CrFailed).
-    // Sweep EN x AMSEL x lane count and report what trains.
+    // Type-C-side training: keep EN=1 and the PD-decided polarity, but
+    // the HD3SS460 AMSEL level for 4-lane DP is still unverified, so
+    // try both levels (4-lane first, then 2-lane probes purely as a
+    // diagnostic — a wrong AMSEL level routes only two lanes).
     #[cfg(feature = "typec")]
     {
-        let combos: [(bool, bool, u8); 8] = [
-            (false, true, 4),
-            (false, false, 4),
-            (true, true, 4),
-            (true, false, 4),
-            (false, true, 2),
-            (false, false, 2),
-            (true, true, 2),
-            (true, false, 2),
+        let pol = tc.pol_flipped;
+        let plan: [(bool, u8); 8] = [
+            (true, 4),
+            (true, 4),
+            (false, 4),
+            (false, 4),
+            (true, 2),
+            (true, 2),
+            (false, 2),
+            (false, 2),
         ];
-        'sweep: for (en, amsel, lanes) in combos {
-            typec_gpio(en, false, true, amsel);
+        'sweep: for (i, (amsel, lanes)) in plan.iter().enumerate() {
+            typec_gpio(true, pol, true, *amsel);
             // Let the mux settle.
             for _ in 0..90_000 {
                 unsafe { core::arch::asm!("nop") };
             }
-            for attempt in 0..2u32 {
-                match link_training::run(aux, ml, lanes) {
-                    Ok(s) => {
-                        println!(
-                            "[SRC] TRAINED: EN={} AMSEL={} lanes={} (attempt={}, cr={}, eq={})",
-                            en as u32, amsel as u32, lanes, attempt, s.cr_iters, s.eq_iters
-                        );
-                        if lanes == LANE_COUNT {
-                            stats = Some(s);
-                        } else {
-                            println!("[SRC] NOTE: only {}-lane trains at EN={} AMSEL={} — check the mux mode/wiring", lanes, en as u32, amsel as u32);
-                        }
-                        break 'sweep;
+            match link_training::run(aux, ml, *lanes) {
+                Ok(s) => {
+                    println!(
+                        "[SRC] TRAINED: POL={} AMSEL={} lanes={} (cr={}, eq={})",
+                        pol as u32, *amsel as u32, lanes, s.cr_iters, s.eq_iters
+                    );
+                    if *lanes == LANE_COUNT {
+                        stats = Some(s);
+                    } else {
+                        println!("[SRC] NOTE: only {}-lane trains at AMSEL={} — check the mux mode/wiring", lanes, *amsel as u32);
                     }
-                    Err(e) => {
-                        println!(
-                            "[SRC] sweep EN={} AMSEL={} lanes={} attempt {}: {:?}",
-                            en as u32, amsel as u32, lanes, attempt, e
-                        );
-                        for _ in 0..450_000 {
-                            unsafe { core::arch::asm!("nop") };
-                        }
+                    break 'sweep;
+                }
+                Err(e) => {
+                    println!(
+                        "[SRC] train {} POL={} AMSEL={} lanes={}: {:?}",
+                        i, pol as u32, *amsel as u32, lanes, e
+                    );
+                    for _ in 0..450_000 {
+                        unsafe { core::arch::asm!("nop") };
                     }
                 }
             }

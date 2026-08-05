@@ -37,6 +37,8 @@ pub struct TypeC<'a> {
     pub sink_dp_status: u32,
     /// Discovered UFP_D pin assignment capabilities.
     pub ufp_d_assignments: u8,
+    /// Orientation decided at attach (true = flipped, CC2 active).
+    pub pol_flipped: bool,
     substep: u8,
     settle: u32,
 }
@@ -50,6 +52,7 @@ impl<'a> TypeC<'a> {
             cc: Cc::Cc1,
             sink_dp_status: 0,
             ufp_d_assignments: 0,
+            pol_flipped: false,
             substep: 0,
             settle: 0,
         }
@@ -119,8 +122,8 @@ impl<'a> TypeC<'a> {
                     return None;
                 }
                 // Board mux: EN + polarity + AMSEL, then VBUS on.
-                let pol_flipped = self.cc == Cc::Cc2;
-                crate::typec_gpio(true, pol_flipped, true, AMSEL_4LANE_DP);
+                self.pol_flipped = self.cc == Cc::Cc2;
+                crate::typec_gpio(true, self.pol_flipped, true, AMSEL_4LANE_DP);
                 // Announce our capabilities.
                 let pdo = pd::pdo_fixed_5v(900);
                 self.send_data(pd::DATA_SOURCE_CAPABILITIES, &[pdo]);
