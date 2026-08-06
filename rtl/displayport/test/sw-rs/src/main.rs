@@ -234,25 +234,15 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
     let mut tc = typec::TypeC::new(fusb302::Fusb302::new(&i2c));
     #[cfg(feature = "typec")]
     {
-        // First board smoke test — and cold-boot robustness: from
-        // flash the CPU is running well before the FUSB302B finishes
-        // its POR, so retry until the chip answers and init succeeds
-        // (~100 ms per attempt).
-        loop {
-            match fusb302::Fusb302::new(&i2c).device_id() {
-                Ok(id) if id != 0x00 && id != 0xFF => {
-                    println!("[SRC] FUSB302B DEVICE_ID = {:02X}", id);
-                    if tc.init() {
-                        println!("[SRC] 302B init");
-                        break;
-                    }
-                    println!("[SRC] 302B FAIL");
-                }
-                _ => println!("[SRC] ID retry"),
-            }
-            for _ in 0..900_000 {
-                unsafe { core::arch::asm!("nop") };
-            }
+        // First board smoke test: the DEVICE_ID read exercises the I2C
+        // master and the board wiring before anything else happens.
+        match fusb302::Fusb302::new(&i2c).device_id() {
+            Ok(id) => println!("[SRC] FUSB302B DEVICE_ID = {:02X}", id),
+            Err(e) => println!("[SRC] ID fail {:?}", e),
+        }
+        match tc.init() {
+            true => println!("[SRC] 302B init"),
+            false => println!("[SRC] 302B FAIL"),
         }
     }
     #[cfg(not(feature = "typec"))]
@@ -600,6 +590,29 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
     vid.set_rate(6, 1, 1);
     vid.setup_and_enable(&cfg);
     println!("[SRC] video on");
+    // Keep-alive experiment: both prior runs died within the first
+    // ~1 s AUX-quiet gap after video-on while surviving any span of
+    // 50 ms-spaced polling (VBUS solid throughout). Hammer for ~10 s
+    // at 50 ms; print every 20th sample, changes, and timeouts.
+    #[cfg(feature = "typec")]
+    {
+        let mut pv = [0u8; 6];
+        for i in 0..200u32 {
+            for _ in 0..450_000 {
+                unsafe { core::arch::asm!("nop") };
+            }
+            let mut st = [0u8; 6];
+            match dpcd::read_block(aux, dpcd::SINK_COUNT, &mut st) {
+                Ok(_) => {
+                    if st != pv || i % 20 == 0 {
+                        println!("[SRC] V{} {:02X?}", i, st);
+                    }
+                    pv = st;
+                }
+                Err(e) => println!("[SRC] V{} {:?}", i, e),
+            }
+        }
+    }
 
     // Encode iteration counts in upper bits of cpu_io_out and signal done.
     let v = 0x0000_0001
@@ -624,11 +637,9 @@ fn source_process(aux: &AuxCh, ml: &MainLink, vid: &mut Video, i2c_p: bootrom_pa
     let mut aux_fails: u32 = 0;
     let mut probed = false;
     loop {
-        // ~50 ms between polls: all four deaths so far line up with
-        // the end of the 50 ms hammer window, and 100 ms polling did
-        // not keep the glasses alive — testing 50 ms as the keep-alive
-        // threshold.
-        for _ in 0..450_000u32 {
+        // ~100 ms between polls: the glasses drop the link when AUX
+        // goes quiet for ~1 s while video is active (keep-alive).
+        for _ in 0..900_000u32 {
             unsafe { core::arch::asm!("nop") };
         }
         #[cfg(feature = "typec")]
