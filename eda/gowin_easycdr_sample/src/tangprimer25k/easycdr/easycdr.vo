@@ -681,19 +681,25 @@ OSIDES32 \u_EasyCDR/osides32_inst  (
 	.D(\u_EasyCDR/rx ),
 	.PCLK(share_clk4_o),
 	.RESET(share_reset_o),
-	.SDTAP(GND),
-	.VALUE(GND),
+	.SDTAP0(GND),
+	.VALUE0(GND),
+	.SDTAP1(GND),
+	.VALUE1(GND),
 	.FCLKP(share_clk0_o),
 	.FCLKN(share_clk2_o),
 	.FCLKQP(share_clk1_o),
 	.FCLKQN(share_clk3_o),
-	.DLYSTEP({GND, GND, GND, GND, GND, GND, GND, GND}),
-	.DF(\u_EasyCDR/osides32_inst_32_DF ),
+	.DLYSTEP0({GND, GND, GND, GND, GND, GND, GND, GND}),
+	.DLYSTEP1({GND, GND, GND, GND, GND, GND, GND, GND}),
+	.DF0(\u_EasyCDR/osides32_inst_32_DF ),
 	.Q({\u_EasyCDR/rx_parallel_data [31:0]})
 );
-defparam \u_EasyCDR/osides32_inst .C_STATIC_DLY=16;
-defparam \u_EasyCDR/osides32_inst .DYN_DLY_EN="FALSE";
-defparam \u_EasyCDR/osides32_inst .ADAPT_EN="FALSE";
+defparam \u_EasyCDR/osides32_inst .C_STATIC_DLY_0=16;
+defparam \u_EasyCDR/osides32_inst .DYN_DLY_EN_0="FALSE";
+defparam \u_EasyCDR/osides32_inst .ADAPT_EN_0="FALSE";
+defparam \u_EasyCDR/osides32_inst .C_STATIC_DLY_1=16;
+defparam \u_EasyCDR/osides32_inst .DYN_DLY_EN_1="FALSE";
+defparam \u_EasyCDR/osides32_inst .ADAPT_EN_1="FALSE";
 INV \u_EasyCDR/n54_s2  (
 	.I(\u_EasyCDR/pcs_rstn ),
 	.O(\u_EasyCDR/n54_6 )

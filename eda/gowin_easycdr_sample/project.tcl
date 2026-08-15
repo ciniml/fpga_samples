@@ -18,6 +18,7 @@ set_option -print_all_synthesis_warning 1
 set_option -top_module top
 set_option -place_option 1
 set_option -route_option 2
+set_option -gen_verilog_sim_netlist 1
 
 if {${TARGET} == "tangnano9k_pmod"} {
     set_option -use_sspi_as_gpio 1
@@ -39,7 +40,16 @@ add_file -type vhdl [file normalize ${SRC_DIR}/prbs_top.vhd]
 if {${TARGET} == "tangprimer25k"} {
     add_file -type verilog [file normalize ${SRC_DIR}/pll_125i_125o/pll_125i_125o.v]
     add_file -type verilog [file normalize ${SRC_DIR}/pll_clk50_class625/pll_clk50_class625.v]
-    add_file -type verilog [file normalize ${SRC_DIR}/easycdr/easycdr.v]
+    # EasyCDR IP from the IDE 1.9.12 templates (easycdr_1912/), configured for
+    # this design's actual line rate of 1.0Gbps (PLL "625m" nets are really
+    # 500MHz: 50MHz x MDIV20 / ODIV2): 16-bit output, no BEYOND_1G, delay taps
+    # 0/21 as the IP GUI computes for 1Gbps. EasyCDR_Top.v must be added before
+    # EasyCDR.v: it includes easycdr_1912/define.v whose macros the encrypted
+    # core relies on.
+    # (The old V1.9.9 core netlist remains available at easycdr/easycdr.vo.)
+    set_option -include_path [file normalize ${SRC_DIR}/easycdr_1912]
+    add_file -type verilog [file normalize ${SRC_DIR}/easycdr_1912/EasyCDR_Top.v]
+    add_file -type verilog [file normalize ${SRC_DIR}/easycdr_1912/EasyCDR.v]
 }
 
 add_file -type cst [file normalize ${SRC_DIR}/pins.cst]

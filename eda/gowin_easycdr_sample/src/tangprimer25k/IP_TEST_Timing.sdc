@@ -10,7 +10,11 @@ create_clock -name CLK_500_270 -period 2 -waveform {0 1} [get_nets {pllclk_625m_
 create_clock -name CLK_500_180 -period 2 -waveform {0 1} [get_nets {pllclk_625m_180}]
 create_clock -name CLK_500_90 -period 2 -waveform {0 1} [get_nets {pllclk_625m_90}]
 create_generated_clock -name sample_clk -source [get_ports {clk_in}] -master_clock Clk_in -divide_by 8 -multiply_by 25 [get_pins {clkdiv_sample_clk/CLKOUT}]
-create_generated_clock -name clk1_156M -source [get_ports {clk_in}] -master_clock Clk_in -divide_by 8 -multiply_by 25 [get_pins {u_EasyCDR_Top/u_EasyCDR/u_share_logic_mod/clkdiv_inst/CLKOUT}]
+# The original constraint targeted the CLKDIV pin inside the encrypted EasyCDR IP
+# (u_EasyCDR_Top/u_EasyCDR/u_share_logic_mod/clkdiv_inst/CLKOUT). The IP is now built
+# from its post-PnR netlist (easycdr.vo) whose escaped hierarchy names are not
+# addressable from SDC, so constrain the same 156.25MHz clock on the top-level net.
+create_generated_clock -name clk1_156M -source [get_ports {clk_in}] -master_clock Clk_in -divide_by 8 -multiply_by 25 [get_nets {pllclk_156_25m}]
 #set_false_path -from [get_clocks {tck_pad_i}] -to [get_clocks {sample_clk}] 
 set_false_path -from [get_clocks {Clk_in}] -to [get_clocks {CLK_500_180 CLK_500_90 CLK_500_270 CLK_500_0}] 
 #set_false_path -from [get_clocks {sample_clk}] -to [get_clocks {tck_pad_i}] 
