@@ -24,7 +24,9 @@ module top(
     output           o_dat_lock,     // aligned + comma watchdog
     output wire[7:0] o_dat_err_num,  // error count
     output           O_ERROR,        // sticky 8b10b decode error
-    output           dout_flag_xor   // toggles every 256 commas (~82us square)
+    output           dout_flag_xor,  // toggles every 256 commas (~82us square)
+    output           uart_txd,       // to host (BL616 bridge, 115200 8N1)
+    input            uart_rxd        // from host
     );
 
     wire resetn_in = ~reset_in;
@@ -208,6 +210,23 @@ module top(
             if (&k_cnt) k_flag <= ~k_flag;
         end
     end
+
+    //------------------------------------------------------------------
+    // Phase 2: payload capture buffer + UART dump (see trace_capture.v)
+    //------------------------------------------------------------------
+    trace_capture #(
+        .ADDR_BITS    (14),                 // 16KiB
+        .BAUD_DIVIDER (50_000_000 / 115_200)
+    ) u_capture(
+        .pclk     (pclk_rx),
+        .prst     (rx_reset),
+        .in_valid (rx_is_d),
+        .in_data  (rx_data[7:0]),
+        .clk_sys  (clk_in),
+        .rst_sys  (reset_in),
+        .uart_rxd (uart_rxd),
+        .uart_txd (uart_txd)
+    );
 
     assign o_dat_lock    = rx_align & act_ok;
     assign o_dat_err     = err_pulse;

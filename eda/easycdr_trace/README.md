@@ -35,9 +35,19 @@ QT_QPA_PLATFORM=offscreen make synthesis GW_SH=~/gowin/1.9.12/IDE/bin/gw_sh
 make run
 ```
 
+## Phase 2: キャプチャバッファ + UARTダンプ
+
+受信ペイロードを16KiBのBSRAMバッファに取り込み、UART (BL616経由、
+C3=TX / B3=RX、115200 8N1) でホストにダンプします。
+
+- プロトコル: ホストから `S` でキャプチャ開始 (バッファ満杯で `K` 応答)、
+  `D` で16384バイトの生ダンプ
+- ホストツール: `host/trace_dump.py -p /dev/ttyUSBx`
+  (カウンタ連番の連続性を検証)
+
 ## ロードマップ
 
-- Phase 2: カウンタペイロード→リングバッファ+UARTドレイン+ホストツール
+- ~~Phase 2: カウンタペイロード→リングバッファ+UARTドレイン+ホストツール~~ 済
 - Phase 3: トレースフロントエンド (トリガ・圧縮、debug_probe_core資産流用)
 - TX移植: GW1N (Tang Nano 9K) / GW2A (Tang Primer 20K) 用PLLラッパ追加。
   CDRが±5000ppmを許容するため27MHz水晶の999Mbps (-1000ppm) でも
