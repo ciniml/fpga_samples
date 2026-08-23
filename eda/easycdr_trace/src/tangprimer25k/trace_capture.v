@@ -7,18 +7,20 @@
 // Control domain : clk_sys (50MHz), UART command/dump.
 //
 // UART protocol (single-byte commands from the host):
-//   'S' : arm the capture; the buffer fills with the next BUF_SIZE payload
-//         bytes and freezes. Replies 'K' when the buffer is full.
-//   'D' : dump the frozen buffer (BUF_SIZE raw bytes).
+//   'S' : arm the capture; the buffer fills with the next 2^ADDR_BITS
+//         entries and freezes. Replies 'K' when the buffer is full.
+//   'D' : dump the frozen buffer; each entry is sent as two bytes,
+//         {7'b0, K-flag} then the data byte.
 module trace_capture #(
-    parameter ADDR_BITS    = 14,               // 16KiB buffer
+    parameter ADDR_BITS    = 14,               // 16Ki entries
+    parameter DATA_BITS    = 9,                // {K flag, byte}
     parameter BAUD_DIVIDER = 434               // 50MHz / 115200
 ) (
     // capture side
-    input  wire       pclk,
-    input  wire       prst,        // active high (EasyCDR share reset)
-    input  wire       in_valid,    // payload byte strobe
-    input  wire [7:0] in_data,
+    input  wire                 pclk,
+    input  wire                 prst,      // active high (EasyCDR share reset)
+    input  wire                 in_valid,  // entry strobe
+    input  wire [DATA_BITS-1:0] in_data,
 
     // control / drain side
     input  wire       clk_sys,
@@ -58,10 +60,10 @@ module trace_capture #(
     //------------------------------------------------------------------
     // Capture memory: write @pclk, read @clk_sys (dual-clock BSRAM)
     //------------------------------------------------------------------
-    reg [7:0] buffer [0:(1<<ADDR_BITS)-1];
+    reg [DATA_BITS-1:0] buffer [0:(1<<ADDR_BITS)-1];
     reg [ADDR_BITS-1:0] waddr;
     reg [ADDR_BITS-1:0] raddr;
-    reg [7:0]           rdata;
+    reg [DATA_BITS-1:0] rdata;
 
     // arm request: clk_sys -> pclk (toggle + 2FF sync)
     reg arm_tgl_sys;
@@ -112,6 +114,7 @@ module trace_capture #(
 
     reg [1:0] state;
     reg       rd_pending;
+    reg       dump_lo;    // 0: send flag byte, 1: send data byte
     always @(posedge clk_sys or posedge rst_sys) begin
         if (rst_sys) begin
             state       <= ST_IDLE;
@@ -119,8 +122,9 @@ module trace_capture #(
             tx_valid    <= 1'b0;
             tx_data     <= 8'h00;
             raddr       <= {ADDR_BITS{1'b0}};
-            rdata       <= 8'h00;
+            rdata       <= {DATA_BITS{1'b0}};
             rd_pending  <= 1'b0;
+            dump_lo     <= 1'b0;
         end else begin
             if (tx_valid && tx_ready)
                 tx_valid <= 1'b0;
@@ -137,6 +141,7 @@ module trace_capture #(
                 end else if (rx_valid && rx_data == "D") begin
                     raddr      <= {ADDR_BITS{1'b0}};
                     rd_pending <= 1'b1;
+                    dump_lo    <= 1'b0;
                     state      <= ST_DUMP;
                 end
             end
@@ -149,13 +154,20 @@ module trace_capture #(
             end
             ST_DUMP: begin
                 if (!tx_valid && tx_ready && !rd_pending) begin
-                    tx_data  <= rdata;
-                    tx_valid <= 1'b1;
-                    if (raddr == LAST_ADDR) begin
-                        state <= ST_IDLE;
+                    if (!dump_lo) begin
+                        tx_data  <= {7'b0, rdata[DATA_BITS-1]};
+                        tx_valid <= 1'b1;
+                        dump_lo  <= 1'b1;
                     end else begin
-                        raddr      <= raddr + 1'b1;
-                        rd_pending <= 1'b1;
+                        tx_data  <= rdata[7:0];
+                        tx_valid <= 1'b1;
+                        dump_lo  <= 1'b0;
+                        if (raddr == LAST_ADDR) begin
+                            state <= ST_IDLE;
+                        end else begin
+                            raddr      <= raddr + 1'b1;
+                            rd_pending <= 1'b1;
+                        end
                     end
                 end
             end

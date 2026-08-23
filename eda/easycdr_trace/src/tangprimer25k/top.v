@@ -1,4 +1,9 @@
-// EasyCDR trace-link Phase 1: 8b10b link-layer loopback test (1Gbps).
+// EasyCDR trace-link (1Gbps, 8b10b): phase 3 - timestamped signal tracing.
+//
+// TX: trace_frontend samples a demo signal, emits [K28.1][ts x3][data x2]
+//     records into the link (K28.3 idle filler between records).
+// RX: records ({K flag, byte} entries) are captured into the buffer and
+//     dumped over UART; host/trace_view.py reconstructs the events.
 //
 // TX: easycdr_trace_tx_core (K28.5 comma every 16 words + incrementing
 //     counter payload, 8b10b encoded) -> OSER10 (FCLK 500MHz, PCLK 100MHz)
@@ -109,9 +114,43 @@ module top(
     wire tx_rstn = resetn_in & pll_tx_lock;
     wire [9:0] tx_symbol;
 
+    // Demo trace source: an 8-bit counter advancing every 256 cycles
+    // (2.56us) plus the raw UART RX line, so the host's own dump command
+    // shows up in the trace with 10ns-resolution timestamps.
+    reg [7:0] demo_div, demo_cnt;
+    reg [1:0] urx_sync;
+    always @(posedge txclk_100m or negedge tx_rstn) begin
+        if (!tx_rstn) begin
+            demo_div <= 8'd0;
+            demo_cnt <= 8'd0;
+            urx_sync <= 2'b11;
+        end else begin
+            demo_div <= demo_div + 1'b1;
+            if (&demo_div) demo_cnt <= demo_cnt + 1'b1;
+            urx_sync <= {urx_sync[0], uart_rxd};
+        end
+    end
+    wire [15:0] trace_sig = {7'b0, urx_sync[1], demo_cnt};
+
+    wire       fe_valid, fe_is_k, fe_ready;
+    wire [7:0] fe_data;
+    trace_frontend u_frontend(
+        .clk     (txclk_100m),
+        .rstn    (tx_rstn),
+        .sig     (trace_sig),
+        .o_valid (fe_valid),
+        .o_is_k  (fe_is_k),
+        .o_data  (fe_data),
+        .i_ready (fe_ready)
+    );
+
     easycdr_trace_tx_core #(.FRAME_LEN(16)) u_tx_core(
         .clk      (txclk_100m),
         .rstn     (tx_rstn),
+        .i_valid  (fe_valid),
+        .i_is_k   (fe_is_k),
+        .i_data   (fe_data),
+        .o_ready  (fe_ready),
         .o_symbol (tx_symbol)
     );
 
@@ -148,35 +187,21 @@ module top(
     wire rx_is_k    = rx_word_en &&  rx_data[8] && (rx_data[7:0] == K28_5);
     wire rx_is_d    = rx_word_en && !rx_data[8];
 
-    reg [7:0] expect_d;
-    reg       expect_vld;
     reg       err_pulse;
     reg [7:0] err_num;
     reg       decerr_sticky;
     always @(posedge pclk_rx or posedge rx_reset) begin
         if (rx_reset) begin
-            expect_d      <= 8'd0;
-            expect_vld    <= 1'b0;
             err_pulse     <= 1'b0;
             err_num       <= 8'd0;
             decerr_sticky <= 1'b0;
         end else begin
             err_pulse <= 1'b0;
-            if (rx_is_d) begin
-                if (expect_vld && rx_data[7:0] != expect_d) begin
-                    err_pulse <= 1'b1;
-                    err_num   <= err_num + 1'b1;
-                end
-                expect_d   <= rx_data[7:0] + 1'b1;  // resync on mismatch
-                expect_vld <= 1'b1;
-            end
             if (rx_data_en && rx_decerr) begin
                 err_pulse     <= 1'b1;
                 err_num       <= err_num + 1'b1;
                 decerr_sticky <= 1'b1;
             end
-            if (!rx_align)
-                expect_vld <= 1'b0;
         end
     end
 
@@ -214,14 +239,21 @@ module top(
     //------------------------------------------------------------------
     // Phase 2: payload capture buffer + UART dump (see trace_capture.v)
     //------------------------------------------------------------------
+    localparam [7:0] K28_1 = 8'h3c;   // start of record
+    localparam [7:0] K28_2 = 8'h5c;   // overflow marker
+    wire cap_valid = rx_word_en &&
+                     (!rx_data[8] ||
+                      rx_data[7:0] == K28_1 || rx_data[7:0] == K28_2);
+
     trace_capture #(
-        .ADDR_BITS    (14),                 // 16KiB
+        .ADDR_BITS    (14),                 // 16Ki entries ({K,byte})
+        .DATA_BITS    (9),
         .BAUD_DIVIDER (50_000_000 / 115_200)
     ) u_capture(
         .pclk     (pclk_rx),
         .prst     (rx_reset),
-        .in_valid (rx_is_d),
-        .in_data  (rx_data[7:0]),
+        .in_valid (cap_valid),
+        .in_data  (rx_data[8:0]),
         .clk_sys  (clk_in),
         .rst_sys  (reset_in),
         .uart_rxd (uart_rxd),
