@@ -20,20 +20,30 @@ if {${TARGET} == "tangprimer25k"} {
     set_option -use_i2c_as_gpio 1
 }
 
+set COMMON_DIR [file normalize ${SRC_DIR}/../common]
 add_file -type verilog [file normalize ${SRC_DIR}/top.v]
-add_file -type verilog [file normalize ${SRC_DIR}/tx_link_core.v]
-add_file -type verilog [file normalize ${SRC_DIR}/trace_capture.v]
-add_file -type verilog [file normalize ${SRC_DIR}/trace_frontend.v]
-add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_tx.sv]
-add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_rx.sv]
+add_file -type verilog [file normalize ${COMMON_DIR}/tx_link_core.v]
+add_file -type verilog [file normalize ${COMMON_DIR}/trace_frontend.v]
 add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/encoder_8b10b.sv]
-add_file -type verilog [file normalize ${SRC_DIR}/pll_rx_500m_4ph/pll_rx_500m_4ph.v]
-add_file -type verilog [file normalize ${SRC_DIR}/pll_tx_500m/pll_tx_500m.v]
 
-# EasyCDR IP: 10bit + Word Alignment + 8B/10B Decoding, 1Gbps (K28.5 comma).
-set_option -include_path [file normalize ${SRC_DIR}/easycdr_1912]
-add_file -type verilog [file normalize ${SRC_DIR}/easycdr_1912/EasyCDR_Top.v]
-add_file -type verilog [file normalize ${SRC_DIR}/easycdr_1912/EasyCDR.v]
+if {${TARGET} == "tangprimer25k"} {
+    # host side: EasyCDR RX + capture buffer + UART dump
+    add_file -type verilog [file normalize ${SRC_DIR}/trace_capture.v]
+    add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_tx.sv]
+    add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_rx.sv]
+    add_file -type verilog [file normalize ${SRC_DIR}/pll_rx_500m_4ph/pll_rx_500m_4ph.v]
+    add_file -type verilog [file normalize ${SRC_DIR}/pll_tx_500m/pll_tx_500m.v]
+
+    # EasyCDR IP: 10bit + Word Alignment + 8B/10B Decoding, 1Gbps (K28.5).
+    set_option -include_path [file normalize ${SRC_DIR}/easycdr_1912]
+    add_file -type verilog [file normalize ${SRC_DIR}/easycdr_1912/EasyCDR_Top.v]
+    add_file -type verilog [file normalize ${SRC_DIR}/easycdr_1912/EasyCDR.v]
+}
+
+if {${TARGET} == "tangnano9k_pmod"} {
+    # TX-only trace source (999Mbps from the 27MHz crystal)
+    add_file -type verilog [file normalize ${SRC_DIR}/pll_tx_4995/pll_tx_4995.v]
+}
 
 add_file -type cst [file normalize ${SRC_DIR}/pins.cst]
 add_file -type sdc [file normalize ${SRC_DIR}/timing.sdc]

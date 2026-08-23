@@ -60,11 +60,41 @@ TX側が信号の変化を検出してレコード化し、リンクへ流しま
 - ホストツール: `host/trace_view.py -p /dev/ttyUSBx` (レコードをデコードして
   タイムスタンプ/Δt付きで表示、`-o`でCSV保存)
 
+## Tang Nano 9K 送信側 (TARGET=tangnano9k_pmod)
+
+「安価なターゲットFPGA→GW5Aホスト」の非対称構成です。GW1NR-9Cは
+TX専用 (EasyCDRは受信側だけのIP) で、共通RTL (src/common/) をそのまま
+使います。
+
+- ラインレート: 27MHz×37/2×2 = **999Mbps** (ホストの1Gbps設定に対し
+  -1000ppm。CDRの±5000ppm許容内なのでホスト側は無変更)
+- クロック: rPLL 499.5MHz (VCO 999MHz) + CLKDIV/5 = 99.9MHz
+- TXピン: pmod0 ピン2/8 = ExtEasyCDRレーンL1 (IOB8真性ペア、pin26/25)。
+  ツールがo_serial_pをAサイド (pin25=PMODピン8=L1_N) に置くため、
+  OSER10のD入力で全ビット反転して線路極性を合わせている
+- デモトレース入力: 2.56µs周期カウンタ + **ボタンS2** (押すとホスト側の
+  trace_view.pyにタイムスタンプ付きイベントが現れる)
+- LED: lock (PLLロック) / heartbeat
+
+```sh
+DISPLAY= QT_QPA_PLATFORM=offscreen make synthesis TARGET=tangnano9k_pmod GW_SH=~/gowin/1.9.12/IDE/bin/gw_sh
+make run TARGET=tangnano9k_pmod
+```
+
+接続: Nano9K pmod0のExtEasyCDR ⇔ USB-Cケーブル ⇔ 25K pmod2のExtEasyCDR。
+ホスト側は既存のtangprimer25kビットストリームのままでOK
+(ホスト自身のTX(pmod0)は未使用になるだけ)。
+
+クロスファミリ検証はsimで実施済み: Nano9K TXネットリスト (GW1N simライブラリ)
+の送信波形を記録し、25K RXネットリスト (GW5A simライブラリ) に再生する
+2段方式で、-1000ppmオフセット込みのロックとボタンイベントの記録を確認。
+
 ## ロードマップ
 
 - ~~Phase 1: 8b10bリンク層~~ 済 (実機確認済み)
 - ~~Phase 2: キャプチャバッファ+UARTダンプ~~ 済 (実機確認済み)
-- ~~Phase 3: タイムスタンプ付きレコード~~ 済 (sim検証済み)
+- ~~Phase 3: タイムスタンプ付きレコード~~ 済 (実機確認済み)
+- ~~Nano9K TX~~ 済 (クロスファミリsim検証済み)
 - Phase 3: トレースフロントエンド (トリガ・圧縮、debug_probe_core資産流用)
 - TX移植: GW1N (Tang Nano 9K) / GW2A (Tang Primer 20K) 用PLLラッパ追加。
   CDRが±5000ppmを許容するため27MHz水晶の999Mbps (-1000ppm) でも
