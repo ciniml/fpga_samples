@@ -6,9 +6,11 @@
 //                  (rec_data & mask) == (value & mask) is met, POST more
 //                  entries are written and the buffer freezes. Entries
 //                  written before the trigger are the pre-trigger history.
-// Control domain : clk_sys, UART command / dump.
+// Control domain : clk_sys. The host transport is abstracted as a byte
+//                  stream (valid/ready both ways) so UART, USB CDC or any
+//                  other bridge can be attached at the top level.
 //
-// UART protocol (host -> FPGA):
+// Command protocol (host -> FPGA):
 //   'S'                         : arm, trigger immediately, fill the whole
 //                                 buffer (POST = buffer size)
 //   'T' mask[0..DB-1] val[0..DB-1]: set trigger mask/value (LSB first,
@@ -22,8 +24,7 @@ module trace_capture #(
     parameter ADDR_BITS    = 14,
     parameter DATA_BITS    = 9,
     parameter WIDTH        = 16,
-    parameter TS_BITS      = 24,
-    parameter BAUD_DIVIDER = 434
+    parameter TS_BITS      = 24
 ) (
     input  wire                 pclk,
     input  wire                 prst,
@@ -34,29 +35,23 @@ module trace_capture #(
 
     input  wire                 clk_sys,
     input  wire                 rst_sys,
-    input  wire                 uart_rxd,
-    output wire                 uart_txd
+    // host byte stream (transport-agnostic)
+    input  wire                 h_rx_valid,   // byte from host
+    input  wire [7:0]           h_rx_data,
+    output wire                 h_tx_valid,   // byte to host
+    output wire [7:0]           h_tx_data,
+    input  wire                 h_tx_ready
 );
     localparam DB = WIDTH / 8;
     localparam [ADDR_BITS-1:0] LAST_ADDR = {ADDR_BITS{1'b1}};
 
-    //------------------------------------------------------------------
-    // UART
-    //------------------------------------------------------------------
-    wire       rx_valid;
-    wire [7:0] rx_data;
-    uart_rx #(.BAUD_DIVIDER(BAUD_DIVIDER)) u_uart_rx(
-        .clock(clk_sys), .reset(rst_sys),
-        .data_valid(rx_valid), .data_ready(1'b1), .data_bits(rx_data),
-        .rx(uart_rxd), .overrun());
-
+    wire       rx_valid = h_rx_valid;
+    wire [7:0] rx_data  = h_rx_data;
     reg        tx_valid;
     reg  [7:0] tx_data;
-    wire       tx_ready;
-    uart_tx #(.BAUD_DIVIDER(BAUD_DIVIDER)) u_uart_tx(
-        .clock(clk_sys), .reset(rst_sys),
-        .data_valid(tx_valid), .data_ready(tx_ready), .data_bits(tx_data),
-        .tx(uart_txd));
+    wire       tx_ready = h_tx_ready;
+    assign h_tx_valid = tx_valid;
+    assign h_tx_data  = tx_data;
 
     //------------------------------------------------------------------
     // control registers (clk_sys), quasi-static towards pclk

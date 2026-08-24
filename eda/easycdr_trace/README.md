@@ -77,6 +77,20 @@ easycdr_trace_tx #(.WIDTH(16), .TS_BITS(24)) u_trace_tx(
 python3 host/trace_view.py -p /dev/ttyUSB2 --trigger 0x0100 0x0100 --post 8192
 ```
 
+### ホストトランスポートの差し替え (USBコア接続用)
+
+`trace_capture` はホスト側を**バイトストリーム (valid/ready)** で抽象化しており、
+UARTは top.v 側で外付けしているだけです。USB CDC等のコアは次の5本を
+`clk_sys` (50MHz) ドメインで繋げば、そのまま同じコマンドプロトコルで動きます:
+
+```verilog
+.h_rx_valid (host→FPGA バイト有効), .h_rx_data ([7:0])   // 受信側は常時ready
+.h_tx_valid (FPGA→host バイト有効), .h_tx_data ([7:0]), .h_tx_ready
+```
+
+UARTボーレートは top.v の `UART_BAUD` 1箇所。BL616ブリッジ向けに
+921600 / 2000000 のビルド変種を `variants/` (非管理) に作って試行中。
+
 ## Phase 3: タイムスタンプ付きトレースレコード
 
 TX側が信号の変化を検出してレコード化し、リンクへ流します。

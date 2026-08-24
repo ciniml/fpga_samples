@@ -251,23 +251,38 @@ module top(
         .ovf_seen  ()
     );
 
+    // Host transport: UART today; a USB CDC core can replace this block by
+    // driving the same byte-stream interface of trace_capture.
+    wire       h_rx_valid, h_tx_valid, h_tx_ready;
+    wire [7:0] h_rx_data,  h_tx_data;
+    uart_rx #(.BAUD_DIVIDER(50_000_000 / UART_BAUD)) u_uart_rx(
+        .clock(clk_in), .reset(reset_in),
+        .data_valid(h_rx_valid), .data_ready(1'b1), .data_bits(h_rx_data),
+        .rx(uart_rxd), .overrun());
+    uart_tx #(.BAUD_DIVIDER(50_000_000 / UART_BAUD)) u_uart_tx(
+        .clock(clk_in), .reset(reset_in),
+        .data_valid(h_tx_valid), .data_ready(h_tx_ready), .data_bits(h_tx_data),
+        .tx(uart_txd));
+
     trace_capture #(
         .ADDR_BITS    (14),                 // 16Ki entries ({K,byte})
         .DATA_BITS    (9),
         .WIDTH        (16),
-        .TS_BITS      (24),
-        .BAUD_DIVIDER (50_000_000 / UART_BAUD)
+        .TS_BITS      (24)
     ) u_capture(
-        .pclk      (pclk_rx),
-        .prst      (rx_reset),
-        .in_valid  (cap_valid),
-        .in_data   (rx_data[8:0]),
-        .rec_valid (rec_valid),
-        .rec_data  (rec_data),
-        .clk_sys   (clk_in),
-        .rst_sys   (reset_in),
-        .uart_rxd  (uart_rxd),
-        .uart_txd  (uart_txd)
+        .pclk       (pclk_rx),
+        .prst       (rx_reset),
+        .in_valid   (cap_valid),
+        .in_data    (rx_data[8:0]),
+        .rec_valid  (rec_valid),
+        .rec_data   (rec_data),
+        .clk_sys    (clk_in),
+        .rst_sys    (reset_in),
+        .h_rx_valid (h_rx_valid),
+        .h_rx_data  (h_rx_data),
+        .h_tx_valid (h_tx_valid),
+        .h_tx_data  (h_tx_data),
+        .h_tx_ready (h_tx_ready)
     );
 
     assign o_dat_lock    = rx_align & act_ok;
