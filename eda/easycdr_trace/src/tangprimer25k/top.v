@@ -36,6 +36,10 @@ module top(
 
     wire resetn_in = ~reset_in;
 
+    // Host UART baud rate (BL616 bridge). 115200 is the proven default;
+    // build variants at 921600 / 2000000 exist for faster dumps.
+    localparam UART_BAUD = 115200;
+
     //------------------------------------------------------------------
     // RX clocking: 500MHz x 4 phases for the EasyCDR IP (PLL_T)
     //------------------------------------------------------------------
@@ -252,7 +256,7 @@ module top(
         .DATA_BITS    (9),
         .WIDTH        (16),
         .TS_BITS      (24),
-        .BAUD_DIVIDER (50_000_000 / 115_200)
+        .BAUD_DIVIDER (50_000_000 / UART_BAUD)
     ) u_capture(
         .pclk      (pclk_rx),
         .prst      (rx_reset),
