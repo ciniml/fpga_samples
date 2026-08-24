@@ -94,7 +94,7 @@ make run TARGET=tangnano9k_pmod
 - ~~Phase 1: 8b10bリンク層~~ 済 (実機確認済み)
 - ~~Phase 2: キャプチャバッファ+UARTダンプ~~ 済 (実機確認済み)
 - ~~Phase 3: タイムスタンプ付きレコード~~ 済 (実機確認済み)
-- ~~Nano9K TX~~ 済 (クロスファミリsim検証済み)
+- ~~Nano9K TX~~ 済 (実機確認済み: 999Mbpsでロック、S2イベント記録)
 - Phase 3: トレースフロントエンド (トリガ・圧縮、debug_probe_core資産流用)
 - TX移植: GW1N (Tang Nano 9K) / GW2A (Tang Primer 20K) 用PLLラッパ追加。
   CDRが±5000ppmを許容するため27MHz水晶の999Mbps (-1000ppm) でも

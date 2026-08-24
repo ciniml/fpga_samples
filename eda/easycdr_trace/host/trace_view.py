@@ -7,7 +7,8 @@ trace records:
   [K28.1][ts 7:0][ts 15:8][ts 23:16][data 7:0][data 15:8]
 
 Timestamps count 100MHz link-clock cycles (10ns). data[7:0] is the demo
-counter, data[8] is the raw UART RX line.
+counter, data[8] is the demo "event" input (UART RX line on the
+Tang Primer 25K TX, button S2 on the Tang Nano 9K TX).
 """
 import argparse
 import sys
@@ -70,12 +71,12 @@ def main():
     for ts, data in records[:args.show]:
         dt = "" if prev_ts is None else f" (+{((ts - prev_ts) & 0xFFFFFF)*10}ns)"
         print(f"  ts={ts*10:>10}ns{dt:>16}  counter=0x{data & 0xFF:02x}  "
-              f"uart_rx={data >> 8 & 1}")
+              f"bit8={data >> 8 & 1}")
         prev_ts = ts
 
     if args.output:
         with open(args.output, "w") as f:
-            f.write("timestamp_ns,counter,uart_rx\n")
+            f.write("timestamp_ns,counter,bit8\n")
             for ts, data in records:
                 f.write(f"{ts*10},{data & 0xFF},{data >> 8 & 1}\n")
         print(f"saved {len(records)} records to {args.output}")
