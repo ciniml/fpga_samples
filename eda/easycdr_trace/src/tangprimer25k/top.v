@@ -132,26 +132,13 @@ module top(
     end
     wire [15:0] trace_sig = {7'b0, urx_sync[1], demo_cnt};
 
-    wire       fe_valid, fe_is_k, fe_ready;
-    wire [7:0] fe_data;
-    trace_frontend u_frontend(
-        .clk     (txclk_100m),
-        .rstn    (tx_rstn),
-        .sig     (trace_sig),
-        .o_valid (fe_valid),
-        .o_is_k  (fe_is_k),
-        .o_data  (fe_data),
-        .i_ready (fe_ready)
-    );
-
-    easycdr_trace_tx_core #(.FRAME_LEN(16)) u_tx_core(
-        .clk      (txclk_100m),
-        .rstn     (tx_rstn),
-        .i_valid  (fe_valid),
-        .i_is_k   (fe_is_k),
-        .i_data   (fe_data),
-        .o_ready  (fe_ready),
-        .o_symbol (tx_symbol)
+    // Trace transmitter IP (frontend + record framing + 8b10b link core)
+    easycdr_trace_tx #(.WIDTH(16), .TS_BITS(24)) u_trace_tx(
+        .clk        (txclk_100m),
+        .rstn       (tx_rstn),
+        .sig        (trace_sig),
+        .o_symbol   (tx_symbol),
+        .o_overflow ()
     );
 
     wire o_serial_data;
@@ -245,19 +232,38 @@ module top(
                      (!rx_data[8] ||
                       rx_data[7:0] == K28_1 || rx_data[7:0] == K28_2);
 
+    // on-the-fly record decoder feeding the trigger comparator
+    wire        rec_valid;
+    wire [23:0] rec_ts;
+    wire [15:0] rec_data;
+    trace_rx_decoder #(.WIDTH(16), .TS_BITS(24)) u_decoder(
+        .clk       (pclk_rx),
+        .rst       (rx_reset),
+        .in_valid  (rx_word_en),
+        .in_word   (rx_data[8:0]),
+        .rec_valid (rec_valid),
+        .rec_ts    (rec_ts),
+        .rec_data  (rec_data),
+        .ovf_seen  ()
+    );
+
     trace_capture #(
         .ADDR_BITS    (14),                 // 16Ki entries ({K,byte})
         .DATA_BITS    (9),
+        .WIDTH        (16),
+        .TS_BITS      (24),
         .BAUD_DIVIDER (50_000_000 / 115_200)
     ) u_capture(
-        .pclk     (pclk_rx),
-        .prst     (rx_reset),
-        .in_valid (cap_valid),
-        .in_data  (rx_data[8:0]),
-        .clk_sys  (clk_in),
-        .rst_sys  (reset_in),
-        .uart_rxd (uart_rxd),
-        .uart_txd (uart_txd)
+        .pclk      (pclk_rx),
+        .prst      (rx_reset),
+        .in_valid  (cap_valid),
+        .in_data   (rx_data[8:0]),
+        .rec_valid (rec_valid),
+        .rec_data  (rec_data),
+        .clk_sys   (clk_in),
+        .rst_sys   (reset_in),
+        .uart_rxd  (uart_rxd),
+        .uart_txd  (uart_txd)
     );
 
     assign o_dat_lock    = rx_align & act_ok;

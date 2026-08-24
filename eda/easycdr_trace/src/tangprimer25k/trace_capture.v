@@ -1,33 +1,43 @@
-// Phase 2: capture the received payload stream into a BSRAM buffer and dump
-// it to the host over UART on command.
+// Trace capture buffer with trigger / pre-trigger support and UART dump.
 //
-// Capture domain : pclk (125MHz EasyCDR parallel clock), payload bytes at up
-//                  to 100MB/s - far faster than the UART, so the model is
-//                  "arm, fill once, freeze, then drain slowly".
-// Control domain : clk_sys (50MHz), UART command/dump.
+// Capture domain : pclk (EasyCDR parallel clock). While armed, every entry
+//                  ({K flag, byte}) is written into a ring buffer. Records
+//                  are decoded on the fly; when the trigger condition
+//                  (rec_data & mask) == (value & mask) is met, POST more
+//                  entries are written and the buffer freezes. Entries
+//                  written before the trigger are the pre-trigger history.
+// Control domain : clk_sys, UART command / dump.
 //
-// UART protocol (single-byte commands from the host):
-//   'S' : arm the capture; the buffer fills with the next 2^ADDR_BITS
-//         entries and freezes. Replies 'K' when the buffer is full.
-//   'D' : dump the frozen buffer; each entry is sent as two bytes,
-//         {7'b0, K-flag} then the data byte.
+// UART protocol (host -> FPGA):
+//   'S'                         : arm, trigger immediately, fill the whole
+//                                 buffer (POST = buffer size)
+//   'T' mask[0..DB-1] val[0..DB-1]: set trigger mask/value (LSB first,
+//                                 DB = WIDTH/8 bytes each)
+//   'A' post_hi post_lo         : arm and wait for the trigger, then keep
+//                                 POST entries after it
+//   'D'                         : dump the buffer in chronological order
+//                                 (2 bytes per entry: {7'b0,K} then data)
+// FPGA -> host: 'K' when the capture has frozen.
 module trace_capture #(
-    parameter ADDR_BITS    = 14,               // 16Ki entries
-    parameter DATA_BITS    = 9,                // {K flag, byte}
-    parameter BAUD_DIVIDER = 434               // 50MHz / 115200
+    parameter ADDR_BITS    = 14,
+    parameter DATA_BITS    = 9,
+    parameter WIDTH        = 16,
+    parameter TS_BITS      = 24,
+    parameter BAUD_DIVIDER = 434
 ) (
-    // capture side
     input  wire                 pclk,
-    input  wire                 prst,      // active high (EasyCDR share reset)
-    input  wire                 in_valid,  // entry strobe
+    input  wire                 prst,
+    input  wire                 in_valid,   // entry strobe (buffer content)
     input  wire [DATA_BITS-1:0] in_data,
+    input  wire                 rec_valid,  // decoded record (trigger source)
+    input  wire [WIDTH-1:0]     rec_data,
 
-    // control / drain side
-    input  wire       clk_sys,
-    input  wire       rst_sys,     // active high
-    input  wire       uart_rxd,
-    output wire       uart_txd
+    input  wire                 clk_sys,
+    input  wire                 rst_sys,
+    input  wire                 uart_rxd,
+    output wire                 uart_txd
 );
+    localparam DB = WIDTH / 8;
     localparam [ADDR_BITS-1:0] LAST_ADDR = {ADDR_BITS{1'b1}};
 
     //------------------------------------------------------------------
@@ -36,144 +46,190 @@ module trace_capture #(
     wire       rx_valid;
     wire [7:0] rx_data;
     uart_rx #(.BAUD_DIVIDER(BAUD_DIVIDER)) u_uart_rx(
-        .clock      (clk_sys),
-        .reset      (rst_sys),
-        .data_valid (rx_valid),
-        .data_ready (1'b1),
-        .data_bits  (rx_data),
-        .rx         (uart_rxd),
-        .overrun    ()
-    );
+        .clock(clk_sys), .reset(rst_sys),
+        .data_valid(rx_valid), .data_ready(1'b1), .data_bits(rx_data),
+        .rx(uart_rxd), .overrun());
 
     reg        tx_valid;
     reg  [7:0] tx_data;
     wire       tx_ready;
     uart_tx #(.BAUD_DIVIDER(BAUD_DIVIDER)) u_uart_tx(
-        .clock      (clk_sys),
-        .reset      (rst_sys),
-        .data_valid (tx_valid),
-        .data_ready (tx_ready),
-        .data_bits  (tx_data),
-        .tx         (uart_txd)
-    );
+        .clock(clk_sys), .reset(rst_sys),
+        .data_valid(tx_valid), .data_ready(tx_ready), .data_bits(tx_data),
+        .tx(uart_txd));
 
     //------------------------------------------------------------------
-    // Capture memory: write @pclk, read @clk_sys (dual-clock BSRAM)
+    // control registers (clk_sys), quasi-static towards pclk
+    //------------------------------------------------------------------
+    reg [WIDTH-1:0]     trig_mask, trig_value;
+    reg [ADDR_BITS:0]   post_count;     // entries to keep after the trigger
+    reg                 arm_immediate;  // 1: 'S' (trigger at once)
+    reg                 arm_tgl_sys;
+
+    // arm request: clk_sys -> pclk
+    reg [2:0] arm_sync_p;
+    always @(posedge pclk or posedge prst)
+        if (prst) arm_sync_p <= 3'b000;
+        else      arm_sync_p <= {arm_sync_p[1:0], arm_tgl_sys};
+    wire arm_req_p = arm_sync_p[2] ^ arm_sync_p[1];
+
+    //------------------------------------------------------------------
+    // capture memory + FSM (pclk)
     //------------------------------------------------------------------
     reg [DATA_BITS-1:0] buffer [0:(1<<ADDR_BITS)-1];
     reg [ADDR_BITS-1:0] waddr;
-    reg [ADDR_BITS-1:0] raddr;
-    reg [DATA_BITS-1:0] rdata;
 
-    // arm request: clk_sys -> pclk (toggle + 2FF sync)
-    reg arm_tgl_sys;
-    reg [2:0] arm_sync_p;
-    always @(posedge pclk or posedge prst) begin
-        if (prst) arm_sync_p <= 3'b000;
-        else      arm_sync_p <= {arm_sync_p[1:0], arm_tgl_sys};
-    end
-    wire arm_req_p = arm_sync_p[2] ^ arm_sync_p[1];
+    localparam CS_IDLE = 2'd0;
+    localparam CS_WAIT = 2'd1;   // ring-writing, waiting for the trigger
+    localparam CS_POST = 2'd2;   // ring-writing, counting down
+    reg [1:0]         cstate;
+    reg [ADDR_BITS:0] post_left;
+    reg               full_tgl_p;
 
-    // capture FSM @pclk
-    reg capturing;
-    reg full_tgl_p;
+    wire trig_hit = rec_valid && ((rec_data & trig_mask) == (trig_value & trig_mask));
+
     always @(posedge pclk or posedge prst) begin
         if (prst) begin
-            capturing  <= 1'b0;
+            cstate     <= CS_IDLE;
             waddr      <= {ADDR_BITS{1'b0}};
+            post_left  <= 0;
             full_tgl_p <= 1'b0;
         end else begin
-            if (arm_req_p) begin
-                capturing <= 1'b1;
-                waddr     <= {ADDR_BITS{1'b0}};
-            end else if (capturing && in_valid) begin
+            if (cstate != CS_IDLE && in_valid) begin
                 buffer[waddr] <= in_data;
                 waddr <= waddr + 1'b1;
-                if (waddr == LAST_ADDR) begin
-                    capturing  <= 1'b0;
-                    full_tgl_p <= ~full_tgl_p;
-                end
             end
+            case (cstate)
+            CS_IDLE:
+                if (arm_req_p) begin
+                    post_left <= post_count;
+                    cstate    <= arm_immediate ? CS_POST : CS_WAIT;
+                end
+            CS_WAIT:
+                if (trig_hit) cstate <= CS_POST;
+            CS_POST:
+                if (in_valid) begin
+                    if (post_left <= 1) begin
+                        cstate     <= CS_IDLE;
+                        full_tgl_p <= ~full_tgl_p;
+                    end
+                    post_left <= post_left - 1'b1;
+                end
+            default: cstate <= CS_IDLE;
+            endcase
         end
     end
 
-    // full notification: pclk -> clk_sys
+    // capture-done notification: pclk -> clk_sys
     reg [2:0] full_sync_s;
-    always @(posedge clk_sys or posedge rst_sys) begin
+    always @(posedge clk_sys or posedge rst_sys)
         if (rst_sys) full_sync_s <= 3'b000;
         else         full_sync_s <= {full_sync_s[1:0], full_tgl_p};
-    end
     wire full_evt_s = full_sync_s[2] ^ full_sync_s[1];
 
-    //------------------------------------------------------------------
-    // Control / dump FSM @clk_sys
-    //------------------------------------------------------------------
-    localparam ST_IDLE  = 2'd0;
-    localparam ST_WAIT  = 2'd1;   // capture in progress
-    localparam ST_DUMP  = 2'd2;
+    // oldest entry = current write pointer (quasi-static once frozen)
+    reg [ADDR_BITS-1:0] waddr_s;
+    always @(posedge clk_sys) waddr_s <= waddr;
 
-    reg [1:0] state;
-    reg       rd_pending;
-    reg       dump_lo;    // 0: send flag byte, 1: send data byte
+    //------------------------------------------------------------------
+    // command parser / dump FSM (clk_sys)
+    //------------------------------------------------------------------
+    localparam ST_IDLE   = 3'd0;
+    localparam ST_ARGS   = 3'd1;   // collecting command arguments
+    localparam ST_WAIT   = 3'd2;   // capture in progress
+    localparam ST_DUMP   = 3'd3;
+
+    reg [2:0]           state;
+    reg [7:0]           cmd;
+    reg [7:0]           arg_idx;
+    reg [ADDR_BITS-1:0] raddr;
+    reg [ADDR_BITS:0]   dump_left;
+    reg [DATA_BITS-1:0] rdata;
+    reg                 rd_pending;
+    reg                 dump_lo;
+
     always @(posedge clk_sys or posedge rst_sys) begin
         if (rst_sys) begin
-            state       <= ST_IDLE;
-            arm_tgl_sys <= 1'b0;
-            tx_valid    <= 1'b0;
-            tx_data     <= 8'h00;
-            raddr       <= {ADDR_BITS{1'b0}};
-            rdata       <= {DATA_BITS{1'b0}};
-            rd_pending  <= 1'b0;
-            dump_lo     <= 1'b0;
+            state         <= ST_IDLE;
+            cmd           <= 8'h00;
+            arg_idx       <= 8'd0;
+            trig_mask     <= {WIDTH{1'b0}};
+            trig_value    <= {WIDTH{1'b0}};
+            post_count    <= 0;
+            arm_immediate <= 1'b0;
+            arm_tgl_sys   <= 1'b0;
+            tx_valid      <= 1'b0;
+            tx_data       <= 8'h00;
+            raddr         <= {ADDR_BITS{1'b0}};
+            dump_left     <= 0;
+            rdata         <= {DATA_BITS{1'b0}};
+            rd_pending    <= 1'b0;
+            dump_lo       <= 1'b0;
         end else begin
-            if (tx_valid && tx_ready)
-                tx_valid <= 1'b0;
-
-            // registered BSRAM read: rdata follows raddr by one cycle
+            if (tx_valid && tx_ready) tx_valid <= 1'b0;
             rdata      <= buffer[raddr];
             rd_pending <= 1'b0;
 
             case (state)
-            ST_IDLE: begin
-                if (rx_valid && rx_data == "S") begin
-                    arm_tgl_sys <= ~arm_tgl_sys;
-                    state       <= ST_WAIT;
-                end else if (rx_valid && rx_data == "D") begin
-                    raddr      <= {ADDR_BITS{1'b0}};
+            ST_IDLE: if (rx_valid) begin
+                cmd     <= rx_data;
+                arg_idx <= 8'd0;
+                case (rx_data)
+                "S": begin
+                    post_count    <= (1 << ADDR_BITS);
+                    arm_immediate <= 1'b1;
+                    arm_tgl_sys   <= ~arm_tgl_sys;
+                    state         <= ST_WAIT;
+                end
+                "T", "A": state <= ST_ARGS;
+                "D": begin
+                    raddr      <= waddr_s;
+                    dump_left  <= (1 << ADDR_BITS);
                     rd_pending <= 1'b1;
                     dump_lo    <= 1'b0;
                     state      <= ST_DUMP;
                 end
+                default: ;
+                endcase
             end
-            ST_WAIT: begin
-                if (full_evt_s) begin
-                    tx_data  <= "K";
-                    tx_valid <= 1'b1;
-                    state    <= ST_IDLE;
+            ST_ARGS: if (rx_valid) begin
+                arg_idx <= arg_idx + 1'b1;
+                if (cmd == "T") begin
+                    if (arg_idx < DB) trig_mask [arg_idx*8 +: 8]      <= rx_data;
+                    else              trig_value[(arg_idx-DB)*8 +: 8] <= rx_data;
+                    if (arg_idx == 2*DB-1) state <= ST_IDLE;
+                end else begin // "A": post count, big-endian 16 bit
+                    if (arg_idx == 0) post_count[ADDR_BITS:8] <= rx_data[ADDR_BITS-8:0];
+                    else begin
+                        post_count[7:0] <= rx_data;
+                        arm_immediate   <= 1'b0;
+                        arm_tgl_sys     <= ~arm_tgl_sys;
+                        state           <= ST_WAIT;
+                    end
                 end
             end
-            ST_DUMP: begin
-                if (!tx_valid && tx_ready && !rd_pending) begin
-                    if (!dump_lo) begin
-                        tx_data  <= {7'b0, rdata[DATA_BITS-1]};
-                        tx_valid <= 1'b1;
-                        dump_lo  <= 1'b1;
-                    end else begin
-                        tx_data  <= rdata[7:0];
-                        tx_valid <= 1'b1;
-                        dump_lo  <= 1'b0;
-                        if (raddr == LAST_ADDR) begin
-                            state <= ST_IDLE;
-                        end else begin
-                            raddr      <= raddr + 1'b1;
-                            rd_pending <= 1'b1;
-                        end
-                    end
+            ST_WAIT: if (full_evt_s) begin
+                tx_data  <= "K";
+                tx_valid <= 1'b1;
+                state    <= ST_IDLE;
+            end
+            ST_DUMP: if (!tx_valid && tx_ready && !rd_pending) begin
+                if (!dump_lo) begin
+                    tx_data  <= {7'b0, rdata[DATA_BITS-1]};
+                    tx_valid <= 1'b1;
+                    dump_lo  <= 1'b1;
+                end else begin
+                    tx_data  <= rdata[7:0];
+                    tx_valid <= 1'b1;
+                    dump_lo  <= 1'b0;
+                    raddr      <= raddr + 1'b1;
+                    rd_pending <= 1'b1;
+                    dump_left  <= dump_left - 1'b1;
+                    if (dump_left == 1) state <= ST_IDLE;
                 end
             end
             default: state <= ST_IDLE;
             endcase
         end
     end
-
 endmodule

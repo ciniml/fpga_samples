@@ -23,12 +23,13 @@ if {${TARGET} == "tangprimer25k"} {
 set COMMON_DIR [file normalize ${SRC_DIR}/../common]
 add_file -type verilog [file normalize ${SRC_DIR}/top.v]
 add_file -type verilog [file normalize ${COMMON_DIR}/tx_link_core.v]
-add_file -type verilog [file normalize ${COMMON_DIR}/trace_frontend.v]
+add_file -type verilog [file normalize ${COMMON_DIR}/easycdr_trace_tx.v]
 add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/encoder_8b10b.sv]
 
 if {${TARGET} == "tangprimer25k"} {
     # host side: EasyCDR RX + capture buffer + UART dump
     add_file -type verilog [file normalize ${SRC_DIR}/trace_capture.v]
+    add_file -type verilog [file normalize ${SRC_DIR}/trace_rx_decoder.v]
     add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_tx.sv]
     add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_rx.sv]
     add_file -type verilog [file normalize ${SRC_DIR}/pll_rx_500m_4ph/pll_rx_500m_4ph.v]

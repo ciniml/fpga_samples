@@ -45,6 +45,38 @@ C3=TX / B3=RX、115200 8N1) でホストにダンプします。
 - ホストツール: `host/trace_dump.py -p /dev/ttyUSBx`
   (カウンタ連番の連続性を検証)
 
+## トレースIP (`src/common/easycdr_trace_tx.v`) とトリガ付きキャプチャ
+
+TX側はIP化されており、ユーザーデザインには次を置くだけです:
+
+```verilog
+easycdr_trace_tx #(.WIDTH(16), .TS_BITS(24)) u_trace_tx(
+    .clk(link_parallel_clk),   // ラインレート/10 (1Gbpsなら100MHz)
+    .rstn(rstn),
+    .sig(any_signals),         // WIDTHビット (非同期入力可、内部で2FF同期)
+    .o_symbol(tx_symbol),      // → OSER10 D0..D9 (bit0が先頭)
+    .o_overflow());
+```
+
++ デバイス依存部 (PLL / OSER10 / 差動OBUF) は各ターゲットのtop.vを参照。
+`WIDTH` は8の倍数で任意 (レコードのdataバイト数=WIDTH/8、**チャネル拡張は
+パラメータ変更のみ**)。変化検出はパイプライン化済み (GW1Nで100MHz達成)。
+
+ホスト側はリングバッファ + トリガ + プリトリガをサポート:
+
+| コマンド | 内容 |
+|---|---|
+| `S` | 即時キャプチャ (バッファ全体を新規に埋める) |
+| `T` mask[DB] value[DB] | トリガ条件 `(data & mask) == value` を設定 (LSBファースト) |
+| `A` post_hi post_lo | トリガ待ちでアーム。トリガ後 `post` エントリ書いて凍結。
+  残り (バッファサイズ − post) が**プリトリガ履歴**になる |
+| `D` | 時系列順 (最古から) に2バイト/エントリでダンプ |
+
+```sh
+# Nano9KのS2押下 (bit8) をトリガに、前後半分ずつ取得
+python3 host/trace_view.py -p /dev/ttyUSB2 --trigger 0x0100 0x0100 --post 8192
+```
+
 ## Phase 3: タイムスタンプ付きトレースレコード
 
 TX側が信号の変化を検出してレコード化し、リンクへ流します。
@@ -95,6 +127,8 @@ make run TARGET=tangnano9k_pmod
 - ~~Phase 2: キャプチャバッファ+UARTダンプ~~ 済 (実機確認済み)
 - ~~Phase 3: タイムスタンプ付きレコード~~ 済 (実機確認済み)
 - ~~Nano9K TX~~ 済 (実機確認済み: 999Mbpsでロック、S2イベント記録)
+- ~~トレースIP化 + チャネル幅パラメータ化 + トリガ/プリトリガ~~ 済 (sim検証済み)
+- UART帯域強化 → USB FSソフトデバイス (計画中)
 - Phase 3: トレースフロントエンド (トリガ・圧縮、debug_probe_core資産流用)
 - TX移植: GW1N (Tang Nano 9K) / GW2A (Tang Primer 20K) 用PLLラッパ追加。
   CDRが±5000ppmを許容するため27MHz水晶の999Mbps (-1000ppm) でも

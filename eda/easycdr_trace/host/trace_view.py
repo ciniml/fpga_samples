@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
-"""EasyCDR trace-link phase 3 host tool.
+"""EasyCDR trace-link host tool: triggered / pre-trigger capture viewer.
 
-Arms the capture, dumps the 9-bit entry buffer and decodes the timestamped
-trace records:
+Records on the link: [K28.1][ts LSB..][data LSB..]. The host FPGA stores
+{K flag, byte} entries in a ring buffer and dumps them oldest-first.
 
-  [K28.1][ts 7:0][ts 15:8][ts 23:16][data 7:0][data 15:8]
-
-Timestamps count 100MHz link-clock cycles (10ns). data[7:0] is the demo
-counter, data[8] is the demo "event" input (UART RX line on the
-Tang Primer 25K TX, button S2 on the Tang Nano 9K TX).
+Examples:
+  trace_view.py -p /dev/ttyUSB2                         # immediate capture
+  trace_view.py -p /dev/ttyUSB2 --trigger 0x00ff 0x0042 --post 4096
+      # wait until (data & 0x00ff) == 0x42, keep 4096 entries after it
+      # (the rest of the buffer holds the pre-trigger history)
 """
 import argparse
 import sys
 import serial
 
-ENTRIES = 16384
 K28_1 = 0x3C
 K28_2 = 0x5C
 
@@ -22,63 +21,82 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("-p", "--port", default="/dev/ttyUSB1")
     ap.add_argument("-b", "--baud", type=int, default=115200)
-    ap.add_argument("-n", "--show", type=int, default=20,
-                    help="number of records to print")
+    ap.add_argument("--width", type=int, default=16, help="trace width (bits)")
+    ap.add_argument("--ts-bits", type=int, default=24)
+    ap.add_argument("--addr-bits", type=int, default=14, help="buffer entries = 2^n")
+    ap.add_argument("--trigger", nargs=2, metavar=("MASK", "VALUE"),
+                    help="trigger on (data & MASK) == VALUE (hex ok)")
+    ap.add_argument("--post", type=int, default=None,
+                    help="entries to keep after the trigger (default: half)")
+    ap.add_argument("-n", "--show", type=int, default=20)
     ap.add_argument("-o", "--output", help="save decoded records to CSV")
     args = ap.parse_args()
 
-    with serial.Serial(args.port, args.baud, timeout=10) as ser:
+    entries = 1 << args.addr_bits
+    db = args.width // 8
+    tb = args.ts_bits // 8
+
+    with serial.Serial(args.port, args.baud, timeout=30) as ser:
         ser.reset_input_buffer()
-        print("arming capture ('S')... (fills in ~7ms of link time)")
-        ser.write(b"S")
+        if args.trigger:
+            mask = int(args.trigger[0], 0)
+            value = int(args.trigger[1], 0)
+            post = args.post if args.post is not None else entries // 2
+            ser.write(b"T" + mask.to_bytes(db, "little") + value.to_bytes(db, "little"))
+            ser.write(b"A" + post.to_bytes(2, "big"))
+            print(f"armed: trigger (data & 0x{mask:0{db*2}x}) == 0x{value:0{db*2}x}, "
+                  f"post={post} entries; waiting...")
+        else:
+            ser.write(b"S")
+            print("armed: immediate capture; waiting...")
         ack = ser.read(1)
         if ack != b"K":
-            sys.exit(f"no 'K' ack (got {ack!r}) - is the link locked?")
-        print("capture complete, dumping...")
+            sys.exit(f"no 'K' ack (got {ack!r}) - link locked? trigger reachable?")
+        print("capture frozen, dumping...")
         ser.write(b"D")
-        raw = ser.read(ENTRIES * 2)
-        if len(raw) != ENTRIES * 2:
-            sys.exit(f"short read: {len(raw)}/{ENTRIES*2} bytes")
+        raw = ser.read(entries * 2)
+        if len(raw) != entries * 2:
+            sys.exit(f"short read: {len(raw)}/{entries*2} bytes")
 
-    entries = [(raw[2*i] & 1, raw[2*i+1]) for i in range(ENTRIES)]
-
-    records = []
-    overflows = 0
-    junk = 0
+    ents = [(raw[2*i] & 1, raw[2*i+1]) for i in range(entries)]
+    rec_len = tb + db
+    records, overflows, junk = [], 0, 0
     i = 0
-    while i < len(entries):
-        k, b = entries[i]
+    while i < len(ents):
+        k, b = ents[i]
         if k and b == K28_2:
-            overflows += 1
-            i += 1
-        elif k and b == K28_1 and i + 5 < len(entries):
-            body = entries[i+1:i+6]
-            if any(kk for kk, _ in body):
-                junk += 1
-                i += 1
-                continue
-            ts = body[0][1] | body[1][1] << 8 | body[2][1] << 16
-            data = body[3][1] | body[4][1] << 8
-            records.append((ts, data))
-            i += 6
+            overflows += 1; i += 1
+        elif k and b == K28_1 and i + rec_len < len(ents) and \
+                not any(kk for kk, _ in ents[i+1:i+1+rec_len]):
+            body = [bb for _, bb in ents[i+1:i+1+rec_len]]
+            ts = int.from_bytes(bytes(body[:tb]), "little")
+            data = int.from_bytes(bytes(body[tb:]), "little")
+            records.append((ts, data)); i += 1 + rec_len
         else:
-            junk += 1   # partial record at the start of the buffer etc.
-            i += 1
+            junk += 1; i += 1
 
-    print(f"{len(records)} records, {overflows} overflow markers, "
-          f"{junk} skipped entries")
-    prev_ts = None
-    for ts, data in records[:args.show]:
-        dt = "" if prev_ts is None else f" (+{((ts - prev_ts) & 0xFFFFFF)*10}ns)"
-        print(f"  ts={ts*10:>10}ns{dt:>16}  counter=0x{data & 0xFF:02x}  "
-              f"bit8={data >> 8 & 1}")
-        prev_ts = ts
+    trig_idx = None
+    if args.trigger:
+        for n, (ts, data) in enumerate(records):
+            if (data & mask) == (value & mask):
+                trig_idx = n; break
+    print(f"{len(records)} records, {overflows} overflow markers, {junk} skipped entries"
+          + (f", first trigger match at record #{trig_idx}" if trig_idx is not None else ""))
+
+    lo = 0 if trig_idx is None else max(0, trig_idx - args.show // 2)
+    prev = None
+    for n in range(lo, min(len(records), lo + args.show)):
+        ts, data = records[n]
+        dt = "" if prev is None else f"(+{((ts - prev) & ((1 << args.ts_bits) - 1)) * 10}ns)"
+        mark = " <-- trigger" if n == trig_idx else ""
+        print(f"  #{n:<5d} ts={ts*10:>11}ns {dt:>16}  data=0x{data:0{db*2}x}{mark}")
+        prev = ts
 
     if args.output:
         with open(args.output, "w") as f:
-            f.write("timestamp_ns,counter,bit8\n")
-            for ts, data in records:
-                f.write(f"{ts*10},{data & 0xFF},{data >> 8 & 1}\n")
+            f.write("index,timestamp_ns,data\n")
+            for n, (ts, data) in enumerate(records):
+                f.write(f"{n},{ts*10},{data}\n")
         print(f"saved {len(records)} records to {args.output}")
 
 if __name__ == "__main__":

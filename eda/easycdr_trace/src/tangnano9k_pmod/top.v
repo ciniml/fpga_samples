@@ -71,27 +71,13 @@ module top(
     //------------------------------------------------------------------
     // Frontend + link core + serializer
     //------------------------------------------------------------------
-    wire       fe_valid, fe_is_k, fe_ready;
-    wire [7:0] fe_data;
-    trace_frontend u_frontend(
-        .clk     (txclk_par),
-        .rstn    (tx_rstn),
-        .sig     (trace_sig),
-        .o_valid (fe_valid),
-        .o_is_k  (fe_is_k),
-        .o_data  (fe_data),
-        .i_ready (fe_ready)
-    );
-
     wire [9:0] tx_symbol;
-    easycdr_trace_tx_core #(.FRAME_LEN(16)) u_tx_core(
-        .clk      (txclk_par),
-        .rstn     (tx_rstn),
-        .i_valid  (fe_valid),
-        .i_is_k   (fe_is_k),
-        .i_data   (fe_data),
-        .o_ready  (fe_ready),
-        .o_symbol (tx_symbol)
+    easycdr_trace_tx #(.WIDTH(16), .TS_BITS(24)) u_trace_tx(
+        .clk        (txclk_par),
+        .rstn       (tx_rstn),
+        .sig        (trace_sig),
+        .o_symbol   (tx_symbol),
+        .o_overflow ()
     );
 
     wire o_serial_data;
