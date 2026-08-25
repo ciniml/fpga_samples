@@ -1,0 +1,478 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file ulpi_phy.veryl
+ * @brief ULPI (UTMI+ Low Pin Interface rev 1.1) PHY-side wrapper around
+ *        UsbPhy, i.e. the "Interface = ULPI" configuration of the Gowin
+ *        USB 2.0 SoftPHY IP. The link talks to this module with the
+ *        8-bit ULPI data bus, dir, nxt and stp (peripheral mode only).
+ *
+ * Implemented (ULPI 1.1 §3.8, §4):
+ *  - TXD CMD decode: Transmit (PID / NOPID), Register Write, Register
+ *    Read (immediate registers 0x00-0x18; extended addressing is not
+ *    supported).
+ *  - RX CMD generation with LineState, VbusState, RxEvent and alt_int,
+ *    sent on LineState change / interrupt while idle and interleaved
+ *    with received data.
+ *  - RX data with nxt, terminated by an RX CMD with RxActive = 0.
+ *  - Registers: Vendor/Product ID (RO), Function Control (0x04-0x06),
+ *    Interface Control (0x07-0x09, stored only), OTG Control (0x0A-0x0C),
+ *    USB Interrupt Enable Rising/Falling (0x0D-0x12), USB Interrupt
+ *    Status (0x13), USB Interrupt Latch (0x14, clear on read), Debug
+ *    (0x15), Scratch (0x16-0x18).
+ *
+ * The ULPI data bus is split into i_ulpi_data / o_ulpi_data; the top
+ * level should drive the pad from o_ulpi_data while o_ulpi_dir = 1.
+ * The link is expected to use the same 60 MHz clock (i_clk is the ULPI
+ * clock; the PHY is the clock source in a real system).
+ */
+import usb_pkg::*;
+
+pub module UlpiPhy #(
+    param FS_CLOCKS_PER_BIT: u32       = 5      ,
+    param LS_CLOCKS_PER_BIT: u32       = 40     ,
+    param VENDOR_ID        : logic<16> = 16'h1209,
+    param PRODUCT_ID       : logic<16> = 16'h0001,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    // ---- ULPI (PHY side) ----
+    i_ulpi_data: input  logic<8>,
+    o_ulpi_data: output logic<8>,
+    o_ulpi_dir : output logic   ,
+    o_ulpi_nxt : output logic   ,
+    i_ulpi_stp : input  logic   ,
+
+    // ---- optional status inputs reported through RX CMD / interrupts ----
+    i_vbus_valid: input logic, // tie 1 if not sensed
+
+    // ---- serial side ----
+    i_rx_dp: input  logic<8>,
+    i_rx_dn: input  logic<8>,
+    i_rx_dd: input  logic<8>,
+    o_tx_dp: output logic<8>,
+    o_tx_dn: output logic<8>,
+    o_tx_oe: output logic   ,
+
+    // ---- termination control ----
+    o_pullup_dp_en: output logic,
+    o_pullup_dn_en: output logic,
+    o_term_dp_en  : output logic,
+    o_term_dn_en  : output logic,
+    o_dp_pulldown : output logic, // OTG Control DpPulldown (host-side, informational)
+    o_dm_pulldown : output logic,
+) {
+    // -----------------------------------------------------------------
+    // Registers
+    // -----------------------------------------------------------------
+    var func_ctrl   : logic<7>; // [1:0] XcvrSelect [2] TermSelect [4:3] OpMode [5] Reset [6] SuspendM
+    var iface_ctrl  : logic<8>;
+    var otg_ctrl    : logic<8>;
+    var int_en_rise : logic<8>;
+    var int_en_fall : logic<8>;
+    var int_latch   : logic<8>;
+    var scratch     : logic<8>;
+    var int_status_d: logic<8>;
+
+    let phy_rst : '_ reset = i_rst || func_ctrl[5];
+    let xcvr    : logic<2> = func_ctrl[1:0];
+    let termsel : logic    = func_ctrl[2];
+    let opmode  : logic<2> = func_ctrl[4:3];
+
+    // Interrupt status: [0] HostDisconnect [1] VbusValid [2] SessValid
+    // [3] SessEnd [4] IdGnd. Only VBUS-derived bits are meaningful here.
+    let int_status: logic<8> = {3'b0, 1'b0, ~i_vbus_valid, i_vbus_valid, i_vbus_valid, 1'b0};
+
+    // -----------------------------------------------------------------
+    // UTMI PHY
+    // -----------------------------------------------------------------
+    var utmi_data_out : logic<8>;
+    var utmi_txvalid  : logic;
+    var utmi_txready  : logic;
+    var utmi_data_in  : logic<8>;
+    var utmi_rxactive : logic;
+    var utmi_rxvalid  : logic;
+    var utmi_rxerror  : logic;
+    var utmi_linestate: logic<2>;
+
+    inst u_phy: UsbPhy #(
+        FS_CLOCKS_PER_BIT: FS_CLOCKS_PER_BIT,
+        LS_CLOCKS_PER_BIT: LS_CLOCKS_PER_BIT,
+    ) (
+        i_clk            : i_clk         ,
+        i_rst            : phy_rst       ,
+        i_utmi_data_out  : utmi_data_out ,
+        i_utmi_txvalid   : utmi_txvalid  ,
+        o_utmi_txready   : utmi_txready  ,
+        o_utmi_data_in   : utmi_data_in  ,
+        o_utmi_rxactive  : utmi_rxactive ,
+        o_utmi_rxvalid   : utmi_rxvalid  ,
+        o_utmi_rxerror   : utmi_rxerror  ,
+        o_utmi_linestate : utmi_linestate,
+        i_utmi_opmode    : opmode        ,
+        i_utmi_xcvrselect: xcvr          ,
+        i_utmi_termselect: termsel       ,
+        i_rx_dp          : i_rx_dp       ,
+        i_rx_dn          : i_rx_dn       ,
+        i_rx_dd          : i_rx_dd       ,
+        o_tx_dp          : o_tx_dp       ,
+        o_tx_dn          : o_tx_dn       ,
+        o_tx_oe          : o_tx_oe       ,
+        o_pullup_dp_en   : o_pullup_dp_en,
+        o_pullup_dn_en   : o_pullup_dn_en,
+        o_term_dp_en     : o_term_dp_en  ,
+        o_term_dn_en     : o_term_dn_en  ,
+    );
+
+    assign o_dp_pulldown = otg_ctrl[1];
+    assign o_dm_pulldown = otg_ctrl[2];
+
+    // -----------------------------------------------------------------
+    // RX byte FIFO (UTMI RX -> ULPI). Depth 4 covers the turnaround
+    // latency; UTMI never delivers more than one byte per clock.
+    // -----------------------------------------------------------------
+    var rx_fifo   : logic<8> [4];
+    var rx_wp     : logic<2>;
+    var rx_rp     : logic<2>;
+    var rx_cnt    : logic<3>;
+    var err_pending: logic; // RxError seen, not yet reported in an RX CMD
+
+    let rx_empty: logic = rx_cnt == 0;
+    var rx_pop  : logic; // combinational, defined after the FSM state
+
+    always_ff (i_clk) {
+        if utmi_rxvalid {
+            rx_fifo[rx_wp] = utmi_data_in;
+        }
+    }
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            rx_wp  = 0;
+            rx_rp  = 0;
+            rx_cnt = 0;
+        } else {
+            if utmi_rxvalid {
+                rx_wp = rx_wp + 1;
+            }
+            if rx_pop {
+                rx_rp = rx_rp + 1;
+            }
+            if utmi_rxvalid && !rx_pop {
+                rx_cnt = rx_cnt + 1;
+            } else if !utmi_rxvalid && rx_pop {
+                rx_cnt = rx_cnt - 1;
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // ULPI state machine
+    // -----------------------------------------------------------------
+    enum State: logic<4> {
+        Idle,
+        TxAccept,
+        TxData,
+        RegWAccept,
+        RegWData,
+        RegWStp,
+        RegRAccept,
+        RegRTurn,
+        RegRData,
+        RxTurn,
+        RxData,
+    }
+
+    var state      : State;
+    // Pop whenever the FSM is in an RX data state and a byte is queued
+    // (combinational: the byte is registered into odata in the same cycle).
+    assign rx_pop = ((state == State::RxTurn) || (state == State::RxData)) && !rx_empty;
+    var dir        : logic;
+    var nxt        : logic;
+    var odata      : logic<8>;
+    var reg_addr   : logic<6>;
+    var reg_wdata  : logic<8>;
+    var pid_pending: logic;
+    var pid_reg    : logic<8>;
+    var tx_on      : logic;
+    var stp_seen   : logic; // stp received; finish once the PID is consumed
+    var rx_cmd_only: logic;
+    var ls_reported: logic<2>;
+    var int_pending: logic;
+    var cmd_inactive : logic; // last driven RX CMD reported RxActive = 0
+
+    // Interrupt latch: status bit changed in an enabled direction.
+    let int_rise: logic<8> = int_status & ~int_status_d & int_en_rise;
+    let int_fall: logic<8> = ~int_status & int_status_d & int_en_fall;
+    let alt_int : logic    = |int_latch;
+
+    // RX CMD byte (ULPI 1.1 table 6): [1:0] LineState, [3:2] VbusState,
+    // [5:4] RxEvent, [6] ID (1 = B-device), [7] alt_int.
+    let rx_active_now: logic    = utmi_rxactive || !rx_empty || err_pending;
+    // RxError is only expressible together with RxActive = 1, so a
+    // pending error is reported first, then the final RxActive = 0 CMD.
+    let rx_event     : logic<2> = if err_pending ? 2'b11 : (if rx_active_now ? 2'b01 : 2'b00);
+    let vbus_state   : logic<2> = if i_vbus_valid ? 2'b11 : 2'b00;
+    let rx_cmd       : logic<8> = {alt_int, 1'b1, rx_event, vbus_state, utmi_linestate};
+
+    // Register read mux.
+    var reg_rdata: logic<8>;
+    always_comb {
+        case reg_addr {
+            6'h00: reg_rdata = VENDOR_ID[7:0];
+            6'h01: reg_rdata = VENDOR_ID[15:8];
+            6'h02: reg_rdata = PRODUCT_ID[7:0];
+            6'h03: reg_rdata = PRODUCT_ID[15:8];
+            6'h04, 6'h05, 6'h06: reg_rdata = {1'b0, func_ctrl};
+            6'h07, 6'h08, 6'h09: reg_rdata = iface_ctrl;
+            6'h0A, 6'h0B, 6'h0C: reg_rdata = otg_ctrl;
+            6'h0D, 6'h0E, 6'h0F: reg_rdata = int_en_rise;
+            6'h10, 6'h11, 6'h12: reg_rdata = int_en_fall;
+            6'h13: reg_rdata = int_status;
+            6'h14: reg_rdata = int_latch;
+            6'h15: reg_rdata = {6'b0, utmi_linestate};
+            6'h16, 6'h17, 6'h18: reg_rdata = scratch;
+            default: reg_rdata = 8'h00;
+        }
+    }
+
+    // Register write with set/clear aliases (base, base+1 = set,
+    // base+2 = clear).
+    function apply_write(cur: input logic<8>, addr_lo: input logic<2>, base_lo: input logic<2>, d: input logic<8>) -> logic<8> {
+        let off: logic<2> = addr_lo - base_lo;
+        return if off == 2'd0 ? d : (if off == 2'd1 ? (cur | d) : (cur & ~d));
+    }
+    var wr_cur : logic<8>;
+    var wr_base: logic<2>;
+    always_comb {
+        case reg_addr {
+            6'h04, 6'h05, 6'h06: {
+                wr_cur  = {1'b0, func_ctrl};
+                wr_base = 2'd0;
+            }
+            6'h07, 6'h08, 6'h09: {
+                wr_cur  = iface_ctrl;
+                wr_base = 2'd3;
+            }
+            6'h0A, 6'h0B, 6'h0C: {
+                wr_cur  = otg_ctrl;
+                wr_base = 2'd2;
+            }
+            6'h0D, 6'h0E, 6'h0F: {
+                wr_cur  = int_en_rise;
+                wr_base = 2'd1;
+            }
+            6'h10, 6'h11, 6'h12: {
+                wr_cur  = int_en_fall;
+                wr_base = 2'd0;
+            }
+            default: {
+                wr_cur  = scratch;
+                wr_base = 2'd2;
+            }
+        }
+    }
+    let wr_new: logic<8> = apply_write(wr_cur, reg_addr[1:0], wr_base, reg_wdata);
+
+    let ulpi_cmd    : logic<2> = i_ulpi_data[7:6];
+    let stp_abort   : logic    = i_ulpi_stp && (i_ulpi_data == 8'hFF);
+
+    // UTMI TX driving: PID byte first (unless NOPID), then bus bytes.
+    // TxValid drops in the stp cycle so the PHY appends the EOP and does
+    // not treat the stp-cycle bus value as data -- unless the PID byte is
+    // still waiting for the PHY (stp right after the command, e.g. a
+    // handshake packet): then TxValid stays up until the PID is consumed.
+    assign utmi_txvalid  = tx_on && (pid_pending || !(i_ulpi_stp || stp_seen));
+    assign utmi_data_out = if pid_pending ? pid_reg : i_ulpi_data;
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            state         = State::Idle;
+            dir           = 0;
+            nxt           = 0;
+            odata         = 0;
+            reg_addr      = 0;
+            reg_wdata     = 0;
+            pid_pending   = 0;
+            pid_reg       = 0;
+            tx_on         = 0;
+            stp_seen      = 0;
+            rx_cmd_only   = 0;
+            ls_reported   = LINE_J;
+            int_pending   = 0;
+            cmd_inactive  = 0;
+            err_pending   = 0;
+            func_ctrl     = 7'h41; // FS, HS-term off, normal, SuspendM
+            iface_ctrl    = 0;
+            otg_ctrl      = 8'h06; // DpPulldown, DmPulldown
+            int_en_rise   = 0;
+            int_en_fall   = 0;
+            int_latch     = 0;
+            scratch       = 0;
+            int_status_d  = 0;
+        } else {
+            int_status_d = int_status;
+            int_latch    = int_latch | int_rise | int_fall;
+            if |(int_rise | int_fall) {
+                int_pending = 1;
+            }
+            if utmi_rxerror {
+                err_pending = 1;
+            }
+            if func_ctrl[5] {
+                func_ctrl[5] = 0; // self-clearing Reset
+            }
+
+            case state {
+                State::Idle: {
+                    dir   = 0;
+                    nxt   = 0;
+                    tx_on = 0;
+                    if utmi_rxactive || !rx_empty || (utmi_linestate != ls_reported) || int_pending {
+                        rx_cmd_only = !(utmi_rxactive || !rx_empty);
+                        dir         = 1;
+                        state       = State::RxTurn;
+                    } else if ulpi_cmd == 2'b01 {
+                        // Transmit: PID in [3:0]; 0 = NOPID (raw bytes).
+                        pid_pending = i_ulpi_data[3:0] != 4'h0;
+                        pid_reg     = pid_byte(i_ulpi_data[3:0]);
+                        nxt         = 1;
+                        tx_on       = 1;
+                        state       = State::TxAccept;
+                    } else if ulpi_cmd == 2'b10 {
+                        reg_addr = i_ulpi_data[5:0];
+                        nxt      = 1;
+                        state    = State::RegWAccept;
+                    } else if ulpi_cmd == 2'b11 {
+                        reg_addr = i_ulpi_data[5:0];
+                        nxt      = 1;
+                        state    = State::RegRAccept;
+                    }
+                }
+                State::TxAccept: {
+                    // Command accepted in the previous cycle; the link now
+                    // presents the first data byte.
+                    nxt      = 0;
+                    stp_seen = 0;
+                    state    = State::TxData;
+                    if pid_pending && utmi_txready {
+                        pid_pending = 0;
+                    }
+                }
+                State::TxData: {
+                    nxt = 0; // driven combinationally from txready in TxData
+                    if pid_pending && utmi_txready {
+                        pid_pending = 0;
+                    }
+                    if i_ulpi_stp {
+                        stp_seen = 1;
+                    }
+                    if (i_ulpi_stp || stp_seen) && !(pid_pending && !utmi_txready) {
+                        // PID consumed (or none pending): TxValid falls next
+                        // cycle and the PHY appends the EOP.
+                        tx_on    = 0;
+                        stp_seen = 0;
+                        state    = State::Idle;
+                    }
+                }
+                State::RegWAccept: {
+                    nxt   = 1; // accept the data byte presented this cycle
+                    state = State::RegWData;
+                }
+                State::RegWData: {
+                    reg_wdata = i_ulpi_data;
+                    nxt       = 0;
+                    state     = State::RegWStp;
+                }
+                State::RegWStp: {
+                    if i_ulpi_stp {
+                        case reg_addr {
+                            6'h04, 6'h05, 6'h06: func_ctrl   = wr_new[6:0];
+                            6'h07, 6'h08, 6'h09: iface_ctrl  = wr_new;
+                            6'h0A, 6'h0B, 6'h0C: otg_ctrl    = wr_new;
+                            6'h0D, 6'h0E, 6'h0F: int_en_rise = wr_new;
+                            6'h10, 6'h11, 6'h12: int_en_fall = wr_new;
+                            6'h16, 6'h17, 6'h18: scratch     = wr_new;
+                            default: {}
+                        }
+                        state = State::Idle;
+                    }
+                }
+                State::RegRAccept: {
+                    nxt   = 0;
+                    dir   = 1; // turnaround
+                    state = State::RegRTurn;
+                }
+                State::RegRTurn: {
+                    odata = reg_rdata;
+                    if reg_addr == 6'h14 {
+                        int_latch   = 0;
+                        int_pending = 0;
+                    }
+                    state = State::RegRData;
+                }
+                State::RegRData: {
+                    dir   = 0;
+                    state = State::Idle;
+                }
+                State::RxTurn: {
+                    // Bus turnaround cycle (dir already high).
+                    cmd_inactive = 0;
+                    state        = State::RxData;
+                    // Prepare the first output byte.
+                    if !rx_empty {
+                        odata  = rx_fifo[rx_rp];
+                        nxt    = 1;
+                    } else {
+                        odata        = rx_cmd;
+                        nxt          = 0;
+                        cmd_inactive = rx_event == 2'b00;
+                        ls_reported  = utmi_linestate;
+                        int_pending  = 0;
+                        if err_pending {
+                            err_pending = 0;
+                        }
+                    }
+                }
+                State::RxData: {
+                    if utmi_rxactive {
+                        rx_cmd_only = 0; // a packet started meanwhile
+                    }
+                    if !rx_empty {
+                        odata        = rx_fifo[rx_rp];
+                        nxt          = 1;
+                        cmd_inactive = 0;
+                    } else if !utmi_rxactive && !err_pending && (cmd_inactive || rx_cmd_only) {
+                        // The final RX CMD (RxActive = 0) has been driven for
+                        // one cycle: release the bus.
+                        dir   = 0;
+                        nxt   = 0;
+                        state = State::Idle;
+                    } else {
+                        odata        = rx_cmd;
+                        nxt          = 0;
+                        cmd_inactive = rx_event == 2'b00;
+                        ls_reported  = utmi_linestate;
+                        int_pending  = 0;
+                        if err_pending {
+                            err_pending = 0;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // In TxData nxt must track the PHY's TxReady in the same cycle (the
+    // byte on the bus is consumed at the clock edge where both are high);
+    // TxReady depends only on PHY-internal registers, so this is not a
+    // combinational path from link inputs.
+    let tx_nxt: logic = (state == State::TxData) && utmi_txready && !pid_pending && !i_ulpi_stp;
+    assign o_ulpi_dir  = dir;
+    assign o_ulpi_nxt  = nxt || tx_nxt;
+    assign o_ulpi_data = odata;
+}

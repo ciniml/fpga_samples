@@ -1,0 +1,200 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file ulpi_link.veryl
+ * @brief ULPI link-side adapter: presents a UTMI interface to a device
+ *        core and drives an external (or the UlpiPhy) ULPI PHY.
+ *
+ * Function Control (XcvrSelect / TermSelect / OpMode, SuspendM = 1) is
+ * written whenever the UTMI control inputs change, and OTG Control is
+ * cleared once after reset (peripheral: no pull-downs). Transmit uses
+ * the "Transmit with PID" command (the first UTMI byte is the PID) or
+ * NOPID when OpMode = RAW (chirp). Receive decodes RX CMDs into
+ * LineState / RxActive / RxError and data bytes into RxValid.
+ *
+ * A register write aborted by the PHY asserting dir is retried.
+ */
+import usb_pkg::*;
+
+pub module UlpiLink (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    // ---- UTMI (device core side) ----
+    i_utmi_data_out  : input  logic<8>,
+    i_utmi_txvalid   : input  logic   ,
+    o_utmi_txready   : output logic   ,
+    o_utmi_data_in   : output logic<8>,
+    o_utmi_rxactive  : output logic   ,
+    o_utmi_rxvalid   : output logic   ,
+    o_utmi_rxerror   : output logic   ,
+    o_utmi_linestate : output logic<2>,
+    i_utmi_opmode    : input  logic<2>,
+    i_utmi_xcvrselect: input  logic<2>,
+    i_utmi_termselect: input  logic   ,
+
+    // ---- ULPI (link side) ----
+    i_ulpi_data   : input  logic<8>,
+    o_ulpi_data   : output logic<8>,
+    o_ulpi_data_oe: output logic   , // 1 while the link drives the bus (dir = 0)
+    i_ulpi_dir    : input  logic   ,
+    i_ulpi_nxt    : input  logic   ,
+    o_ulpi_stp    : output logic   ,
+) {
+    enum State: logic<3> {
+        Idle,
+        RegAddr,
+        RegData,
+        RegStp,
+        TxCmd,
+        TxData,
+        Rx,
+    }
+
+    var state       : State;
+    var odata       : logic<8>;
+    var stp_r       : logic;
+    var dir_d       : logic;
+    var func_written: logic<7>;
+    var func_valid  : logic;
+    var otg_done    : logic;
+    var reg_is_otg  : logic;
+    var reg_value   : logic<8>;
+    var nopid       : logic;
+    var linestate   : logic<2>;
+    var rxactive    : logic;
+    var rxvalid     : logic;
+    var rxerror     : logic;
+    var data_in     : logic<8>;
+
+    let func_wanted: logic<7> = {1'b1, 1'b0, i_utmi_opmode, i_utmi_termselect, i_utmi_xcvrselect};
+    let need_func  : logic    = !func_valid || (func_written != func_wanted);
+
+    // Transmit data phase: the UTMI byte passes straight through to the
+    // bus and is consumed when the PHY asserts nxt; the core then
+    // presents its next byte in the following cycle (UTMI rule), which is
+    // exactly the ULPI timing. TxValid low during the data phase is the
+    // stp cycle (bus = 00).
+    let tx_stp: logic = (state == State::TxData) && !i_utmi_txvalid;
+
+    assign o_utmi_txready = ((state == State::TxData) && i_ulpi_nxt && !i_ulpi_dir && i_utmi_txvalid) ||
+                            ((state == State::TxCmd) && i_ulpi_nxt && !i_ulpi_dir && !nopid);
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            state        = State::Idle;
+            odata        = 0;
+            stp_r        = 0;
+            dir_d        = 0;
+            func_written = 0;
+            func_valid   = 0;
+            otg_done     = 0;
+            reg_is_otg   = 0;
+            reg_value    = 0;
+            nopid        = 0;
+            linestate    = LINE_J;
+            rxactive     = 0;
+            rxvalid      = 0;
+            rxerror      = 0;
+            data_in      = 0;
+        } else {
+            dir_d   = i_ulpi_dir;
+            rxvalid = 0;
+            rxerror = 0;
+            stp_r   = 0;
+
+            if i_ulpi_dir {
+                // PHY owns the bus: RX CMD / data, or an aborted command.
+                odata = 0; // never leave a stale command for the cycle after dir falls
+                if state != State::Rx {
+                    // Abort whatever was in flight; register writes are
+                    // retried because func_written is only updated on stp.
+                    state = State::Rx;
+                } else if dir_d {
+                    // Past the turnaround cycle.
+                    if i_ulpi_nxt {
+                        data_in  = i_ulpi_data;
+                        rxvalid  = 1;
+                        rxactive = 1;
+                    } else {
+                        linestate = i_ulpi_data[1:0];
+                        rxactive  = i_ulpi_data[5:4] != 2'b00;
+                        rxerror   = i_ulpi_data[5:4] == 2'b11;
+                    }
+                }
+            } else {
+                case state {
+                    State::Rx: {
+                        // dir dropped: bus is ours again from this cycle.
+                        rxactive = 0;
+                        state    = State::Idle;
+                        odata    = 0;
+                    }
+                    State::Idle: {
+                        odata = 0;
+                        if need_func {
+                            reg_is_otg = 0;
+                            reg_value  = {1'b0, func_wanted};
+                            odata      = {2'b10, 6'h04};
+                            state      = State::RegAddr;
+                        } else if !otg_done {
+                            reg_is_otg = 1;
+                            reg_value  = 8'h00;
+                            odata      = {2'b10, 6'h0A};
+                            state      = State::RegAddr;
+                        } else if i_utmi_txvalid {
+                            nopid = i_utmi_opmode == OPMODE_RAW;
+                            odata = if i_utmi_opmode == OPMODE_RAW ? 8'h40 : {4'h4, i_utmi_data_out[3:0]};
+                            state = State::TxCmd;
+                        }
+                    }
+                    State::RegAddr: {
+                        if i_ulpi_nxt {
+                            odata = reg_value;
+                            state = State::RegData;
+                        }
+                    }
+                    State::RegData: {
+                        if i_ulpi_nxt {
+                            odata = 0;
+                            stp_r = 1;
+                            state = State::RegStp;
+                        }
+                    }
+                    State::RegStp: {
+                        if reg_is_otg {
+                            otg_done = 1;
+                        } else {
+                            func_written = reg_value[6:0];
+                            func_valid   = 1;
+                        }
+                        state = State::Idle;
+                    }
+                    State::TxCmd: {
+                        if i_ulpi_nxt {
+                            state = State::TxData;
+                        }
+                    }
+                    State::TxData: {
+                        if tx_stp {
+                            odata = 0; // bus must be idle (00) right after stp
+                            state = State::Idle;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    assign o_ulpi_data      = if (state == State::TxData) ? (if tx_stp ? 8'h00 : i_utmi_data_out) : odata;
+    assign o_ulpi_stp       = stp_r || tx_stp;
+    assign o_ulpi_data_oe   = !i_ulpi_dir;
+    assign o_utmi_data_in   = data_in;
+    assign o_utmi_rxactive  = rxactive;
+    assign o_utmi_rxvalid   = rxvalid;
+    assign o_utmi_rxerror   = rxerror;
+    assign o_utmi_linestate = linestate;
+}

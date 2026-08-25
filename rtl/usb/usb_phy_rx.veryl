@@ -1,0 +1,281 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file usb_phy_rx.veryl
+ * @brief USB 2.0 PHY receive path: line sampling, NRZI decode, SYNC
+ *        detection, bit un-stuffing and byte assembly (UTMI RX side).
+ *
+ * Structure mirrors the Gowin USB 2.0 SoftPHY RX pipeline (IPUG781 §3.1:
+ * IDES8 -> NRZI decode -> bit unstuff -> data shift -> UTMI):
+ *
+ *  - The serial front end receives 8 samples per 60 MHz clock of three
+ *    receivers (bit 0 = earliest sample, i.e. the IDES8 Q0..Q7 order),
+ *    which is one sample per bit at 480 Mbps: the single-ended D+ and
+ *    D- comparators (i_dp/i_dn, LVDS input vs. a ~130 mV reference as
+ *    in Gowin TN710) and the differential D+/D- receiver (i_dd). In HS
+ *    mode all 8 samples are decoded per clock, J/K taken from i_dd and
+ *    SE0 (= squelch / HS idle) from i_dp & i_dn both low. In FS/LS mode
+ *    only sample 0 of the single-ended comparators
+ *    is used (60 MHz = 5x / 40x oversampling) and a simple DPLL that
+ *    re-centres on every D+/D- transition picks one sample per bit.
+ *  - The decoder is speed-agnostic: it consumes 0..8 line bits per
+ *    clock, NRZI-decodes them (bit = no transition), looks for the SYNC
+ *    pattern (>= 3 decoded zeros followed by a one, USB 2.0 §7.1.10,
+ *    allowing hub-shortened HS SYNCs), removes stuffed zeros after six
+ *    ones (§7.1.9) and emits one byte per 8 data bits, LSB first.
+ *  - End of packet: FS/LS = SE0 (§7.1.13.2); HS = intentional bit-stuff
+ *    error 0111111|1 (§7.1.13.2.2). A stuff error that lands exactly on
+ *    the 7-bit EOP boundary ends the packet cleanly; any other stuff
+ *    error or a non byte-aligned SE0 raises o_rxerror.
+ *
+ * Bit stuffing accounting starts with the SYNC's final one (ones = 1).
+ * o_rxactive rises with the SYNC's final K-K and falls at the first
+ * SE0 sample (FS/LS) or the EOP stuff error (HS); the TX side enforces
+ * the inter-packet turnaround (§7.1.18) from that point.
+ */
+import usb_pkg::*;
+
+pub module UsbPhyRx #(
+    param FS_CLOCKS_PER_BIT: u32 = 5 , // 60 MHz / 12 Mbps
+    param LS_CLOCKS_PER_BIT: u32 = 40, // 60 MHz / 1.5 Mbps
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    // 8 line samples per clock, [0] = earliest.
+    i_dp: input logic<8>, // single-ended D+ comparator (vs. ~130 mV reference)
+    i_dn: input logic<8>, // single-ended D- comparator
+    i_dd: input logic<8>, // differential receiver D+ - D- (HS data; TN710 USB_RX_D+/-)
+
+    i_xcvr   : input logic<2>, // usb_pkg::XCVR_*
+    i_termsel: input logic   , // 0: HS termination, 1: FS/LS pull-up
+    i_tx_oe  : input logic   , // own transmitter driving: RX squelched
+
+    o_linestate: output logic<2>, // {D-, D+}
+    o_rxactive : output logic   ,
+    o_rxvalid  : output logic   ,
+    o_rxerror  : output logic   ,
+    o_data     : output logic<8>,
+) {
+    // -----------------------------------------------------------------
+    // Front end
+    // -----------------------------------------------------------------
+    let hs_mode: logic = (i_xcvr == XCVR_HS) && !i_termsel;
+    let ls_mode: logic = i_xcvr == XCVR_LS;
+
+    const PHASE_BITS: u32 = $clog2(LS_CLOCKS_PER_BIT);
+    let bit_div     : logic<PHASE_BITS> = if ls_mode ? (LS_CLOCKS_PER_BIT - 1) as PHASE_BITS : (FS_CLOCKS_PER_BIT - 1) as PHASE_BITS;
+    let bit_mid     : logic<PHASE_BITS> = if ls_mode ? (LS_CLOCKS_PER_BIT / 2) as PHASE_BITS : (FS_CLOCKS_PER_BIT / 2) as PHASE_BITS;
+
+    var s_prev   : logic<2>;
+    var ls_filt  : logic<2>;
+    var phase    : logic<PHASE_BITS>;
+    var fe_j     : logic<8>; // line level per bit, 1 = J (speed polarity applied)
+    var fe_se0   : logic<8>;
+    var fe_n     : logic<4>; // number of valid entries in fe_j/fe_se0
+    var fe_hs    : logic;
+    var linestate: logic<2>;
+
+    let s_raw     : logic<2> = {i_dn[0], i_dp[0]};
+    let hs_all_se0: logic    = !(|i_dp) && !(|i_dn);
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            s_prev    = LINE_J;
+            ls_filt   = LINE_J;
+            phase     = 0;
+            fe_j      = 0;
+            fe_se0    = 0;
+            fe_n      = 0;
+            fe_hs     = 0;
+            linestate = LINE_J;
+        } else {
+            fe_hs = hs_mode;
+            if i_tx_oe {
+                fe_n   = 0;
+                phase  = 0;
+                s_prev = s_raw;
+            } else if hs_mode {
+                // HS: J/K from the differential receiver, SE0 (squelch
+                // substitute) from both single-ended comparators low.
+                fe_j      = i_dd;
+                fe_se0    = ~i_dp & ~i_dn;
+                fe_n      = 4'd8;
+                linestate = if hs_all_se0 ? LINE_SE0 : {i_dn[7], i_dp[7]};
+                s_prev    = s_raw;
+                phase     = 0;
+            } else {
+                // 2-sample glitch filter feeds both LineState and the
+                // DPLL sample point.
+                if s_raw == s_prev {
+                    ls_filt = s_raw;
+                }
+                linestate = ls_filt;
+                if s_raw != s_prev {
+                    phase = 0;
+                } else if phase == bit_div {
+                    phase = 0;
+                } else {
+                    phase = phase + 1;
+                }
+                s_prev = s_raw;
+                if phase == bit_mid {
+                    fe_n      = 4'd1;
+                    fe_j[0]   = if ls_mode ? ls_filt[1] : ls_filt[0];
+                    fe_se0[0] = ls_filt == LINE_SE0;
+                } else {
+                    fe_n = 0;
+                }
+            }
+        }
+    }
+
+    assign o_linestate = linestate;
+
+    // -----------------------------------------------------------------
+    // NRZI decode / SYNC / unstuff / byte assembly
+    // -----------------------------------------------------------------
+    var active  : logic;
+    var prev_j  : logic;
+    var ones    : logic<3>;
+    var zero_run: logic<3>;
+    var bitcnt  : logic<3>;
+    var sh      : logic<8>;
+    var err_wait: logic; // FS: ignore line until next SE0 after an error
+    var rxvalid : logic;
+    var rxerror : logic;
+    var rxdata  : logic<8>;
+
+    var n_active  : logic;
+    var n_prev_j  : logic;
+    var n_ones    : logic<3>;
+    var n_zero_run: logic<3>;
+    var n_bitcnt  : logic<3>;
+    var n_sh      : logic<8>;
+    var n_err_wait: logic;
+    var n_valid   : logic;
+    var n_error   : logic;
+    var n_data    : logic<8>;
+    var b         : logic;
+
+    always_comb {
+        n_active   = active;
+        n_prev_j   = prev_j;
+        n_ones     = ones;
+        n_zero_run = zero_run;
+        n_bitcnt   = bitcnt;
+        n_sh       = sh;
+        n_err_wait = err_wait;
+        n_valid    = 0;
+        n_error    = 0;
+        n_data     = rxdata;
+        b          = 0;
+        for i in 0..8 {
+            if (i as 4) <: fe_n {
+                if fe_se0[i] {
+                    if n_active {
+                        // FS/LS EOP, or an unexpected SE0 inside an HS
+                        // packet (HS packets end with the EOP stuff
+                        // error before the line returns to SE0).
+                        n_error  = (n_bitcnt != 0) || fe_hs;
+                        n_active = 0;
+                    }
+                    n_err_wait = 0;
+                    n_zero_run = 0;
+                    n_prev_j   = 1;
+                    n_ones     = 0;
+                } else {
+                    b        = fe_j[i] == n_prev_j;
+                    n_prev_j = fe_j[i];
+                    if n_active {
+                        if n_ones == 3'd6 {
+                            // Expect a stuffed zero.
+                            n_ones = 0;
+                            if b {
+                                n_active = 0;
+                                if fe_hs {
+                                    // HS EOP = 0 + 7 ones with no stuffing:
+                                    // the error fires after 7 data bits.
+                                    n_error = n_bitcnt != 3'd7;
+                                } else {
+                                    n_error    = 1;
+                                    n_err_wait = 1;
+                                }
+                            }
+                        } else {
+                            n_sh = {b, n_sh[7:1]};
+                            if b {
+                                n_ones = n_ones + 1;
+                            } else {
+                                n_ones = 0;
+                            }
+                            if n_bitcnt == 3'd7 {
+                                n_valid  = 1;
+                                n_data   = n_sh;
+                                n_bitcnt = 0;
+                            } else {
+                                n_bitcnt = n_bitcnt + 1;
+                            }
+                        }
+                    } else if !n_err_wait {
+                        // SYNC search: zeros (KJ alternation) then a one.
+                        if b {
+                            if n_zero_run >= 3'd3 {
+                                n_active = 1;
+                                n_ones   = 1; // SYNC's final one counts
+                                n_bitcnt = 0;
+                                n_sh     = 0;
+                            }
+                            n_zero_run = 0;
+                        } else if n_zero_run != 3'd7 {
+                            n_zero_run = n_zero_run + 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            active   = 0;
+            prev_j   = 1;
+            ones     = 0;
+            zero_run = 0;
+            bitcnt   = 0;
+            sh       = 0;
+            err_wait = 0;
+            rxvalid  = 0;
+            rxerror  = 0;
+            rxdata   = 0;
+        } else if i_tx_oe {
+            active   = 0;
+            prev_j   = 1;
+            ones     = 0;
+            zero_run = 0;
+            bitcnt   = 0;
+            err_wait = 0;
+            rxvalid  = 0;
+            rxerror  = 0;
+        } else {
+            active   = n_active;
+            prev_j   = n_prev_j;
+            ones     = n_ones;
+            zero_run = n_zero_run;
+            bitcnt   = n_bitcnt;
+            sh       = n_sh;
+            err_wait = n_err_wait;
+            rxvalid  = n_valid;
+            rxerror  = n_error;
+            rxdata   = n_data;
+        }
+    }
+
+    assign o_rxactive = active;
+    assign o_rxvalid  = rxvalid;
+    assign o_rxerror  = rxerror;
+    assign o_data     = rxdata;
+}

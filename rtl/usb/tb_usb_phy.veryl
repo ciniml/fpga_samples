@@ -1,0 +1,43 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_usb_phy.veryl
+ * @brief PHY-level tests: host BFM <-> UsbPhy over the serial interface.
+ *
+ * usb_phy_fs_loopback / usb_phy_hs_loopback:
+ *   1. Host sends packets (token, 0/1/64-byte data incl. all-ones
+ *      payloads that force bit stuffing); the UTMI RX side must deliver
+ *      the exact bytes with RxActive/RxValid and no RxError.
+ *   2. The UTMI TX side sends the same payloads; the BFM must decode
+ *      the SYNC/NRZI/stuffed stream and EOP correctly.
+ *   3. A bit-stuff violation injected by the host raises RxError.
+ * usb_phy_chirp: OpMode RAW with data 0x00 drives a steady K.
+ */
+
+module TbUsbPhy {}
+
+#[test(usb_phy_fs_loopback)]
+embed (inline) sv{{{
+module usb_phy_fs_loopback;
+    usb_phy_loopback_body #(.HS(0), .RUN(1)) body();
+endmodule
+}}}
+
+#[test(usb_phy_hs_loopback)]
+embed (inline) sv{{{
+module usb_phy_hs_loopback;
+    usb_phy_loopback_body #(.HS(1), .RUN(1)) body();
+endmodule
+}}}
+
+#[test(usb_phy_ls_loopback)]
+embed (inline) sv{{{
+module usb_phy_ls_loopback;
+    usb_phy_loopback_body #(.HS(0), .LS(1), .RUN(1)) body();
+endmodule
+}}}
+
+// The shared test body lives in test/usb_phy_loopback_body.sv.

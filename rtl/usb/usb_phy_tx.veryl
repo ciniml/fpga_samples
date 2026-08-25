@@ -1,0 +1,308 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file usb_phy_tx.veryl
+ * @brief USB 2.0 PHY transmit path: SYNC/EOP generation, bit stuffing,
+ *        NRZI encoding and serialisation (UTMI TX side).
+ *
+ * Mirrors the Gowin SoftPHY TX pipeline (IPUG781 §3.1: UTMI -> data
+ * shift -> bit stuff -> NRZI -> OSER8). Encoded line bits are queued in
+ * a small elastic buffer (up to 10 bits enter per accepted byte: 8 data
+ * bits plus at most two stuffed zeros) and drained at the line rate:
+ * 8 bits per clock in HS (one OSER8 word), one bit every 5 / 40 clocks
+ * in FS / LS.
+ *
+ * UTMI behaviour (UTMI 1.05 §5.3):
+ *  - TxValid rising while idle starts a packet: SYNC (8 bits FS/LS,
+ *    32 bits HS, §7.1.10) is queued, then bytes are accepted whenever
+ *    TxReady is high (buffer has room for 10 bits).
+ *  - TxValid low while in the data phase queues the EOP: FS/LS = SE0 x2
+ *    + J x1 then release (§7.1.13.2); HS = 0 + 7 ones without stuffing
+ *    (§7.1.13.2.2) then release. In HS the release happens on an 8-bit
+ *    boundary, so the last level may be held for up to 7 extra bit
+ *    times (~15 ns); harmless, the hub sees a slightly longer EOP.
+ *  - OpMode RAW (2'b10): no SYNC/EOP/stuffing/NRZI, data bits map
+ *    directly to line levels (1 = J, 0 = K), used for Chirp K.
+ *  - OpMode NON_DRIVING: the transmitter never drives.
+ *
+ * i_tx_allowed is the bus turnaround guard from the PHY top (receiver
+ * idle and the minimum inter-packet gap of §7.1.18 elapsed).
+ */
+import usb_pkg::*;
+
+pub module UsbPhyTx #(
+    param FS_CLOCKS_PER_BIT: u32 = 5 ,
+    param LS_CLOCKS_PER_BIT: u32 = 40,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_txvalid: input  logic   ,
+    i_data   : input  logic<8>,
+    o_txready: output logic   ,
+
+    i_xcvr      : input logic<2>,
+    i_opmode    : input logic<2>,
+    i_tx_allowed: input logic   ,
+
+    // 8 line samples per clock, [0] = earliest.
+    o_dp: output logic<8>,
+    o_dn: output logic<8>,
+    o_oe: output logic   ,
+
+    o_tx_active: output logic,
+) {
+    enum State: logic<3> {
+        Idle,
+        Sync,
+        Data,
+        Raw,
+        Drain,
+    }
+
+    const BUF_BITS  : u32 = 32;
+    const PHASE_BITS: u32 = $clog2(LS_CLOCKS_PER_BIT);
+
+    let hs_mode: logic              = i_xcvr == XCVR_HS;
+    let ls_mode: logic              = i_xcvr == XCVR_LS;
+    let bit_div: logic<PHASE_BITS> = if ls_mode ? (LS_CLOCKS_PER_BIT - 1) as PHASE_BITS : (FS_CLOCKS_PER_BIT - 1) as PHASE_BITS;
+
+    var state   : State;
+    var bl      : logic<BUF_BITS>; // queued line levels, 1 = J, [0] = next out
+    var bs      : logic<BUF_BITS>; // queued SE0 flags
+    var cnt     : logic<6>;
+    var phase   : logic<PHASE_BITS>;
+    var last    : logic;           // level of the most recently queued bit
+    var ones    : logic<3>;
+    var sync_idx: logic<2>;
+    var eop_done: logic;
+    var cur_lv  : logic<8>;
+    var cur_se  : logic<8>;
+    var oe      : logic;
+
+    var n_state   : State;
+    var n_bl      : logic<BUF_BITS>;
+    var n_bs      : logic<BUF_BITS>;
+    var n_cnt     : logic<6>;
+    var n_phase   : logic<PHASE_BITS>;
+    var n_last    : logic;
+    var n_ones    : logic<3>;
+    var n_sync_idx: logic<2>;
+    var n_eop_done: logic;
+    var n_cur_lv  : logic<8>;
+    var n_cur_se  : logic<8>;
+    var n_oe      : logic;
+    var db        : logic;
+
+    let txready: logic = ((state == State::Data) || (state == State::Raw)) && (cnt <= 6'd22);
+
+    always_comb {
+        n_state    = state;
+        n_bl       = bl;
+        n_bs       = bs;
+        n_cnt      = cnt;
+        n_phase    = phase;
+        n_last     = last;
+        n_ones     = ones;
+        n_sync_idx = sync_idx;
+        n_eop_done = eop_done;
+        n_cur_lv   = cur_lv;
+        n_cur_se   = cur_se;
+        n_oe       = oe;
+        db         = 0;
+
+        // ---------------- pop / serialise ----------------
+        if state != State::Idle {
+            if hs_mode {
+                if n_cnt >= 6'd8 {
+                    n_cur_lv = n_bl[7:0];
+                    n_cur_se = n_bs[7:0];
+                    n_bl     = n_bl >> 8;
+                    n_bs     = n_bs >> 8;
+                    n_cnt    = n_cnt - 6'd8;
+                    n_oe     = 1;
+                } else if n_cnt != 0 {
+                    // Partial final word: pad with the last level.
+                    for i in 0..8 {
+                        n_cur_lv[i] = if (i as 6) <: n_cnt ? n_bl[i] : n_last;
+                        n_cur_se[i] = if (i as 6) <: n_cnt ? n_bs[i] : 1'b0;
+                    }
+                    n_bl  = 0;
+                    n_bs  = 0;
+                    n_cnt = 0;
+                    n_oe  = 1;
+                } else if eop_done {
+                    n_oe    = 0;
+                    n_state = State::Idle;
+                } else {
+                    // Underrun: hold the last level (the hub will see a
+                    // stuff error / EOP, terminating the packet).
+                    n_cur_lv = {n_last repeat 8};
+                    n_cur_se = 0;
+                    n_oe     = 1;
+                }
+            } else {
+                if n_phase == bit_div {
+                    n_phase = 0;
+                    if n_cnt != 0 {
+                        n_cur_lv = {n_bl[0] repeat 8};
+                        n_cur_se = {n_bs[0] repeat 8};
+                        n_bl     = n_bl >> 1;
+                        n_bs     = n_bs >> 1;
+                        n_cnt    = n_cnt - 1;
+                        n_oe     = 1;
+                    } else if eop_done {
+                        n_oe    = 0;
+                        n_state = State::Idle;
+                    }
+                } else {
+                    n_phase = n_phase + 1;
+                }
+            }
+        }
+
+        // ---------------- push / encode ----------------
+        case state {
+            State::Idle: {
+                n_phase    = bit_div; // first bit goes out immediately
+                n_cnt      = 0;
+                n_bl       = 0;
+                n_bs       = 0;
+                n_eop_done = 0;
+                n_oe       = 0;
+                n_last     = 1; // idle = J
+                n_ones     = 0;
+                n_sync_idx = 0;
+                if i_txvalid && i_tx_allowed && (i_opmode != OPMODE_NON_DRIVING) {
+                    n_state = if i_opmode == OPMODE_RAW ? State::Raw : State::Sync;
+                }
+            }
+            State::Sync: {
+                if n_cnt <= 6'd24 {
+                    // KJKJKJKJ (=0x55 as levels, K first) chunks; the last
+                    // chunk ends with KK. FS: single chunk; HS: 4 chunks.
+                    let last_chunk: logic    = if hs_mode ? (sync_idx == 2'd3) : 1'b1;
+                    let chunk     : logic<8> = if last_chunk ? 8'b00101010 : 8'b10101010;
+                    for i in 0..8 {
+                        n_bl[n_cnt + (i as 6)] = chunk[i];
+                        n_bs[n_cnt + (i as 6)] = 1'b0;
+                    }
+                    n_cnt      = n_cnt + 6'd8;
+                    n_last     = 0;    // ends on K
+                    n_ones     = 1;    // final K-K is a one
+                    n_sync_idx = sync_idx + 1;
+                    if last_chunk {
+                        n_state = State::Data;
+                    }
+                }
+            }
+            State::Data: {
+                if i_txvalid && txready {
+                    for i in 0..8 {
+                        db = i_data[i];
+                        // NRZI: 1 = no transition, 0 = transition.
+                        if !db {
+                            n_last = ~n_last;
+                        }
+                        n_bl[n_cnt] = n_last;
+                        n_bs[n_cnt] = 1'b0;
+                        n_cnt       = n_cnt + 1;
+                        if db {
+                            n_ones = n_ones + 1;
+                            if n_ones == 3'd6 {
+                                // Stuffed zero.
+                                n_last      = ~n_last;
+                                n_bl[n_cnt] = n_last;
+                                n_bs[n_cnt] = 1'b0;
+                                n_cnt       = n_cnt + 1;
+                                n_ones      = 0;
+                            }
+                        } else {
+                            n_ones = 0;
+                        }
+                    }
+                } else if !i_txvalid && (n_cnt <= 6'd24) {
+                    if hs_mode {
+                        // 0 then seven 1s: one transition, then hold.
+                        n_last = ~n_last;
+                        for i in 0..8 {
+                            n_bl[n_cnt + (i as 6)] = n_last;
+                            n_bs[n_cnt + (i as 6)] = 1'b0;
+                        }
+                        n_cnt = n_cnt + 6'd8;
+                    } else {
+                        n_bl[n_cnt]         = 1'b0;
+                        n_bs[n_cnt]         = 1'b1;
+                        n_bl[n_cnt + 6'd1]  = 1'b0;
+                        n_bs[n_cnt + 6'd1]  = 1'b1;
+                        n_bl[n_cnt + 6'd2]  = 1'b1; // J
+                        n_bs[n_cnt + 6'd2]  = 1'b0;
+                        n_cnt               = n_cnt + 6'd3;
+                        n_last              = 1;
+                    }
+                    n_eop_done = 1;
+                    n_state    = State::Drain;
+                }
+            }
+            State::Raw: {
+                if i_txvalid && txready {
+                    for i in 0..8 {
+                        n_bl[n_cnt + (i as 6)] = i_data[i];
+                        n_bs[n_cnt + (i as 6)] = 1'b0;
+                    }
+                    n_cnt  = n_cnt + 6'd8;
+                    n_last = i_data[7];
+                } else if !i_txvalid {
+                    n_eop_done = 1;
+                    n_state    = State::Drain;
+                }
+            }
+            State::Drain: {}
+        }
+    }
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            state    = State::Idle;
+            bl       = 0;
+            bs       = 0;
+            cnt      = 0;
+            phase    = 0;
+            last     = 1;
+            ones     = 0;
+            sync_idx = 0;
+            eop_done = 0;
+            cur_lv   = 8'hFF;
+            cur_se   = 0;
+            oe       = 0;
+        } else {
+            state    = n_state;
+            bl       = n_bl;
+            bs       = n_bs;
+            cnt      = n_cnt;
+            phase    = n_phase;
+            last     = n_last;
+            ones     = n_ones;
+            sync_idx = n_sync_idx;
+            eop_done = n_eop_done;
+            cur_lv   = n_cur_lv;
+            cur_se   = n_cur_se;
+            oe       = n_oe;
+        }
+    }
+
+    // Level -> D+/D- with speed polarity (LS: J = D- high).
+    always_comb {
+        for i in 0..8 {
+            o_dp[i] = if cur_se[i] ? 1'b0 : (if ls_mode ? ~cur_lv[i] : cur_lv[i]);
+            o_dn[i] = if cur_se[i] ? 1'b0 : (if ls_mode ? cur_lv[i] : ~cur_lv[i]);
+        }
+    }
+
+    assign o_oe        = oe;
+    assign o_txready   = txready;
+    assign o_tx_active = state != State::Idle;
+}

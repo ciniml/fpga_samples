@@ -1,0 +1,224 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file usb_descriptor_rom.veryl
+ * @brief Descriptor ROM for the sample USB device (generated table).
+ *
+ * A single byte-addressed combinational ROM holding, in order:
+ *   DEV     @  0 len 18
+ *   CFG_FS  @ 18 len 32
+ *   CFG_HS  @ 50 len 32
+ *   QUAL    @ 82 len 10
+ *   STR0    @ 92 len 4
+ *   STR1    @ 96 len 26
+ *   STR2    @122 len 30
+ *   STR3    @152 len 14
+ *
+ * Device: vendor-specific class (0xFF), bMaxPacketSize0 = 64, one
+ * configuration with one interface and two bulk endpoints (EP1 OUT /
+ * EP1 IN, 64 bytes FS / 512 bytes HS). The HS variant of the
+ * configuration doubles as the OTHER_SPEED_CONFIGURATION (the device
+ * core patches bDescriptorType to 0x07 when serving it). Vendor / product
+ * IDs come from the parameters.
+ */
+pub package usb_desc_pkg {
+    const DEV_ADDR: logic<8> = 8'd0;
+    const DEV_LEN : logic<8> = 8'd18;
+    const CFG_FS_ADDR: logic<8> = 8'd18;
+    const CFG_FS_LEN : logic<8> = 8'd32;
+    const CFG_HS_ADDR: logic<8> = 8'd50;
+    const CFG_HS_LEN : logic<8> = 8'd32;
+    const QUAL_ADDR: logic<8> = 8'd82;
+    const QUAL_LEN : logic<8> = 8'd10;
+    const STR0_ADDR: logic<8> = 8'd92;
+    const STR0_LEN : logic<8> = 8'd4;
+    const STR1_ADDR: logic<8> = 8'd96;
+    const STR1_LEN : logic<8> = 8'd26;
+    const STR2_ADDR: logic<8> = 8'd122;
+    const STR2_LEN : logic<8> = 8'd30;
+    const STR3_ADDR: logic<8> = 8'd152;
+    const STR3_LEN : logic<8> = 8'd14;
+}
+
+pub module UsbDescriptorRom #(
+    param VENDOR_ID : logic<16> = 16'h1209,
+    param PRODUCT_ID: logic<16> = 16'h0001,
+) (
+    i_addr: input  logic<8>,
+    o_data: output logic<8>,
+) {
+    always_comb {
+        case i_addr {
+            8'd0: o_data = 8'h12;
+            8'd1: o_data = 8'h01;
+            8'd2: o_data = 8'h00;
+            8'd3: o_data = 8'h02;
+            8'd4: o_data = 8'hFF;
+            8'd5: o_data = 8'h00;
+            8'd6: o_data = 8'h00;
+            8'd7: o_data = 8'h40;
+            8'd8: o_data = VENDOR_ID[7:0];
+            8'd9: o_data = VENDOR_ID[15:8];
+            8'd10: o_data = PRODUCT_ID[7:0];
+            8'd11: o_data = PRODUCT_ID[15:8];
+            8'd12: o_data = 8'h00;
+            8'd13: o_data = 8'h01;
+            8'd14: o_data = 8'h01;
+            8'd15: o_data = 8'h02;
+            8'd16: o_data = 8'h03;
+            8'd17: o_data = 8'h01;
+            8'd18: o_data = 8'h09;
+            8'd19: o_data = 8'h02;
+            8'd20: o_data = 8'h20;
+            8'd21: o_data = 8'h00;
+            8'd22: o_data = 8'h01;
+            8'd23: o_data = 8'h01;
+            8'd24: o_data = 8'h00;
+            8'd25: o_data = 8'h80;
+            8'd26: o_data = 8'h32;
+            8'd27: o_data = 8'h09;
+            8'd28: o_data = 8'h04;
+            8'd29: o_data = 8'h00;
+            8'd30: o_data = 8'h00;
+            8'd31: o_data = 8'h02;
+            8'd32: o_data = 8'hFF;
+            8'd33: o_data = 8'h00;
+            8'd34: o_data = 8'h00;
+            8'd35: o_data = 8'h00;
+            8'd36: o_data = 8'h07;
+            8'd37: o_data = 8'h05;
+            8'd38: o_data = 8'h01;
+            8'd39: o_data = 8'h02;
+            8'd40: o_data = 8'h40;
+            8'd41: o_data = 8'h00;
+            8'd42: o_data = 8'h00;
+            8'd43: o_data = 8'h07;
+            8'd44: o_data = 8'h05;
+            8'd45: o_data = 8'h81;
+            8'd46: o_data = 8'h02;
+            8'd47: o_data = 8'h40;
+            8'd48: o_data = 8'h00;
+            8'd49: o_data = 8'h00;
+            8'd50: o_data = 8'h09;
+            8'd51: o_data = 8'h02;
+            8'd52: o_data = 8'h20;
+            8'd53: o_data = 8'h00;
+            8'd54: o_data = 8'h01;
+            8'd55: o_data = 8'h01;
+            8'd56: o_data = 8'h00;
+            8'd57: o_data = 8'h80;
+            8'd58: o_data = 8'h32;
+            8'd59: o_data = 8'h09;
+            8'd60: o_data = 8'h04;
+            8'd61: o_data = 8'h00;
+            8'd62: o_data = 8'h00;
+            8'd63: o_data = 8'h02;
+            8'd64: o_data = 8'hFF;
+            8'd65: o_data = 8'h00;
+            8'd66: o_data = 8'h00;
+            8'd67: o_data = 8'h00;
+            8'd68: o_data = 8'h07;
+            8'd69: o_data = 8'h05;
+            8'd70: o_data = 8'h01;
+            8'd71: o_data = 8'h02;
+            8'd72: o_data = 8'h00;
+            8'd73: o_data = 8'h02;
+            8'd74: o_data = 8'h00;
+            8'd75: o_data = 8'h07;
+            8'd76: o_data = 8'h05;
+            8'd77: o_data = 8'h81;
+            8'd78: o_data = 8'h02;
+            8'd79: o_data = 8'h00;
+            8'd80: o_data = 8'h02;
+            8'd81: o_data = 8'h00;
+            8'd82: o_data = 8'h0A;
+            8'd83: o_data = 8'h06;
+            8'd84: o_data = 8'h00;
+            8'd85: o_data = 8'h02;
+            8'd86: o_data = 8'hFF;
+            8'd87: o_data = 8'h00;
+            8'd88: o_data = 8'h00;
+            8'd89: o_data = 8'h40;
+            8'd90: o_data = 8'h01;
+            8'd91: o_data = 8'h00;
+            8'd92: o_data = 8'h04;
+            8'd93: o_data = 8'h03;
+            8'd94: o_data = 8'h09;
+            8'd95: o_data = 8'h04;
+            8'd96: o_data = 8'h1A;
+            8'd97: o_data = 8'h03;
+            8'd98: o_data = 8'h66;
+            8'd99: o_data = 8'h00;
+            8'd100: o_data = 8'h70;
+            8'd101: o_data = 8'h00;
+            8'd102: o_data = 8'h67;
+            8'd103: o_data = 8'h00;
+            8'd104: o_data = 8'h61;
+            8'd105: o_data = 8'h00;
+            8'd106: o_data = 8'h5F;
+            8'd107: o_data = 8'h00;
+            8'd108: o_data = 8'h73;
+            8'd109: o_data = 8'h00;
+            8'd110: o_data = 8'h61;
+            8'd111: o_data = 8'h00;
+            8'd112: o_data = 8'h6D;
+            8'd113: o_data = 8'h00;
+            8'd114: o_data = 8'h70;
+            8'd115: o_data = 8'h00;
+            8'd116: o_data = 8'h6C;
+            8'd117: o_data = 8'h00;
+            8'd118: o_data = 8'h65;
+            8'd119: o_data = 8'h00;
+            8'd120: o_data = 8'h73;
+            8'd121: o_data = 8'h00;
+            8'd122: o_data = 8'h1E;
+            8'd123: o_data = 8'h03;
+            8'd124: o_data = 8'h55;
+            8'd125: o_data = 8'h00;
+            8'd126: o_data = 8'h53;
+            8'd127: o_data = 8'h00;
+            8'd128: o_data = 8'h42;
+            8'd129: o_data = 8'h00;
+            8'd130: o_data = 8'h20;
+            8'd131: o_data = 8'h00;
+            8'd132: o_data = 8'h50;
+            8'd133: o_data = 8'h00;
+            8'd134: o_data = 8'h48;
+            8'd135: o_data = 8'h00;
+            8'd136: o_data = 8'h59;
+            8'd137: o_data = 8'h00;
+            8'd138: o_data = 8'h20;
+            8'd139: o_data = 8'h00;
+            8'd140: o_data = 8'h53;
+            8'd141: o_data = 8'h00;
+            8'd142: o_data = 8'h61;
+            8'd143: o_data = 8'h00;
+            8'd144: o_data = 8'h6D;
+            8'd145: o_data = 8'h00;
+            8'd146: o_data = 8'h70;
+            8'd147: o_data = 8'h00;
+            8'd148: o_data = 8'h6C;
+            8'd149: o_data = 8'h00;
+            8'd150: o_data = 8'h65;
+            8'd151: o_data = 8'h00;
+            8'd152: o_data = 8'h0E;
+            8'd153: o_data = 8'h03;
+            8'd154: o_data = 8'h30;
+            8'd155: o_data = 8'h00;
+            8'd156: o_data = 8'h30;
+            8'd157: o_data = 8'h00;
+            8'd158: o_data = 8'h30;
+            8'd159: o_data = 8'h00;
+            8'd160: o_data = 8'h30;
+            8'd161: o_data = 8'h00;
+            8'd162: o_data = 8'h30;
+            8'd163: o_data = 8'h00;
+            8'd164: o_data = 8'h31;
+            8'd165: o_data = 8'h00;
+            default: o_data = 8'h00;
+        }
+    }
+}

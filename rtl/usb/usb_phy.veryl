@@ -1,0 +1,135 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file usb_phy.veryl
+ * @brief USB 2.0 peripheral PHY with a UTMI (UTMI 1.05, 8-bit / 60 MHz)
+ *        link interface, modelled after the Gowin USB 2.0 SoftPHY IP
+ *        (IPUG781). Supports HS (480 Mbps), FS (12 Mbps) and LS
+ *        (1.5 Mbps) peripheral operation.
+ *
+ * Serial side: the PHY is SerDes-agnostic. It consumes / produces 8 line
+ * samples per 60 MHz clock (480 Msps, bit 0 first), which map directly
+ * onto Gowin IDES8 / OSER8 primitives (see gowin/usb_phy_gowin.v). The
+ * receiver set follows Gowin TN710: a differential D+/D- receiver for HS
+ * data plus two single-ended comparators for LineState / FS / SE0. For
+ * FS/LS-only designs use plain I/O: sample 0 only, i_rx_dd = i_rx_dp,
+ * and replicate the TX bit. Termination controls follow the Gowin port
+ * set: 1.5k pull-up enable and HS termination enables (pin driven low).
+ *
+ * Bus turnaround: o_rxactive falls at the start of the EOP; the
+ * transmitter is held off until the minimum inter-packet gap of USB 2.0
+ * §7.1.18 has elapsed (FS: 2 bit times after the SE0-SE0-J EOP, HS: 8
+ * bit times), so a link may assert TxValid as soon as RxActive drops.
+ */
+import usb_pkg::*;
+
+pub module UsbPhy #(
+    param FS_CLOCKS_PER_BIT: u32 = 5 ,
+    param LS_CLOCKS_PER_BIT: u32 = 40,
+) (
+    i_clk: input clock, // 60 MHz
+    i_rst: input reset,
+
+    // ---- UTMI (link side) ----
+    i_utmi_data_out  : input  logic<8>,
+    i_utmi_txvalid   : input  logic   ,
+    o_utmi_txready   : output logic   ,
+    o_utmi_data_in   : output logic<8>,
+    o_utmi_rxactive  : output logic   ,
+    o_utmi_rxvalid   : output logic   ,
+    o_utmi_rxerror   : output logic   ,
+    o_utmi_linestate : output logic<2>,
+    i_utmi_opmode    : input  logic<2>,
+    i_utmi_xcvrselect: input  logic<2>,
+    i_utmi_termselect: input  logic   ,
+
+    // ---- serial side (8 samples / clock, [0] earliest) ----
+    i_rx_dp: input  logic<8>, // single-ended D+ comparator
+    i_rx_dn: input  logic<8>, // single-ended D- comparator
+    i_rx_dd: input  logic<8>, // differential D+/D- receiver (HS data); tie to i_rx_dp for FS-only
+    o_tx_dp: output logic<8>,
+    o_tx_dn: output logic<8>,
+    o_tx_oe: output logic   ,
+
+    // ---- termination control ----
+    o_pullup_dp_en: output logic, // 1.5k pull-up on D+ (FS / HS-capable device)
+    o_pullup_dn_en: output logic, // 1.5k pull-up on D- (LS device)
+    o_term_dp_en  : output logic, // 45 ohm HS termination on D+
+    o_term_dn_en  : output logic, // 45 ohm HS termination on D-
+) {
+    var rxactive: logic;
+    var tx_oe   : logic;
+
+    let hs_mode: logic = i_utmi_xcvrselect == XCVR_HS;
+    let ls_mode: logic = i_utmi_xcvrselect == XCVR_LS;
+
+    // Inter-packet guard, measured from RxActive falling (= first SE0 of
+    // the FS EOP / HS EOP stuff error). FS: EOP(2 SE0 + 1 J) + 2 bit gap
+    // = 25 bit-clocks -> 26; LS scaled x8; HS: 8 bit times = 1 clock -> 3.
+    const GUARD_FS: u32 = FS_CLOCKS_PER_BIT * 5 + 1;
+    const GUARD_LS: u32 = LS_CLOCKS_PER_BIT * 5 + 1;
+    const GUARD_HS: u32 = 3;
+    var   gap_cnt : logic<9>;
+    let   guard   : logic<9> = if hs_mode ? GUARD_HS as 9 : (if ls_mode ? GUARD_LS as 9 : GUARD_FS as 9);
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            gap_cnt = 9'h1FF;
+        } else if rxactive {
+            gap_cnt = 0;
+        } else if gap_cnt != 9'h1FF {
+            gap_cnt = gap_cnt + 1;
+        }
+    }
+    let tx_allowed: logic = !rxactive && (gap_cnt >= guard);
+
+    inst u_rx: UsbPhyRx #(
+        FS_CLOCKS_PER_BIT: FS_CLOCKS_PER_BIT,
+        LS_CLOCKS_PER_BIT: LS_CLOCKS_PER_BIT,
+    ) (
+        i_clk      : i_clk            ,
+        i_rst      : i_rst            ,
+        i_dp       : i_rx_dp          ,
+        i_dn       : i_rx_dn          ,
+        i_dd       : i_rx_dd          ,
+        i_xcvr     : i_utmi_xcvrselect,
+        i_termsel  : i_utmi_termselect,
+        i_tx_oe    : tx_oe            ,
+        o_linestate: o_utmi_linestate ,
+        o_rxactive : rxactive         ,
+        o_rxvalid  : o_utmi_rxvalid   ,
+        o_rxerror  : o_utmi_rxerror   ,
+        o_data     : o_utmi_data_in   ,
+    );
+
+    inst u_tx: UsbPhyTx #(
+        FS_CLOCKS_PER_BIT: FS_CLOCKS_PER_BIT,
+        LS_CLOCKS_PER_BIT: LS_CLOCKS_PER_BIT,
+    ) (
+        i_clk       : i_clk            ,
+        i_rst       : i_rst            ,
+        i_txvalid   : i_utmi_txvalid   ,
+        i_data      : i_utmi_data_out  ,
+        o_txready   : o_utmi_txready   ,
+        i_xcvr      : i_utmi_xcvrselect,
+        i_opmode    : i_utmi_opmode    ,
+        i_tx_allowed: tx_allowed       ,
+        o_dp        : o_tx_dp          ,
+        o_dn        : o_tx_dn          ,
+        o_oe        : tx_oe            ,
+        o_tx_active : _                ,
+    );
+
+    assign o_utmi_rxactive = rxactive;
+    assign o_tx_oe         = tx_oe;
+
+    // TermSelect = 1: FS/LS pull-up (D+ for FS/HS-capable, D- for LS);
+    // TermSelect = 0: HS 45 ohm terminations (UTMI 1.05 table 3-5).
+    assign o_pullup_dp_en = i_utmi_termselect && !ls_mode;
+    assign o_pullup_dn_en = i_utmi_termselect && ls_mode;
+    assign o_term_dp_en   = !i_utmi_termselect;
+    assign o_term_dn_en   = !i_utmi_termselect;
+}

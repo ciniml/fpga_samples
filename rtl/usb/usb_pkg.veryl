@@ -1,0 +1,100 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file usb_pkg.veryl
+ * @brief Shared constants (UTMI encodings, PIDs) and CRC helpers for the
+ *        USB 2.0 PHY / ULPI / device cores.
+ *
+ * UTMI encodings follow the UTMI 1.05 spec (and the Gowin USB 2.0
+ * SoftPHY IP port definitions, IPUG781 table 4-1). PID values are the
+ * 4-bit PID field (USB 2.0 spec table 8-1); on the wire the byte is
+ * {~pid, pid}.
+ *
+ * CRC helpers implement the USB CRCs (USB 2.0 §8.3.5) as LSB-first
+ * (reflected) shift registers, which is the natural form for a bit
+ * stream that is transmitted LSB first:
+ *   CRC5 : poly x^5+x^2+1 -> reflected 0x14, init 0x1F, residual 0x06
+ *   CRC16: poly x^16+x^15+x^2+1 -> reflected 0xA001, init 0xFFFF,
+ *          residual 0xB001
+ * The value transmitted is the bitwise complement of the register, LSB
+ * first (CRC16: low byte first). Feeding the received CRC field through
+ * the same register leaves the residual constants above.
+ */
+pub package usb_pkg {
+    // UTMI XcvrSelect
+    const XCVR_HS: logic<2> = 2'b00;
+    const XCVR_FS: logic<2> = 2'b01;
+    const XCVR_LS: logic<2> = 2'b10;
+
+    // UTMI OpMode
+    const OPMODE_NORMAL     : logic<2> = 2'b00; // bit stuffing + NRZI
+    const OPMODE_NON_DRIVING: logic<2> = 2'b01; // TX high impedance
+    const OPMODE_RAW        : logic<2> = 2'b10; // no bit stuffing / NRZI (chirp)
+
+    // UTMI LineState = {D-, D+}
+    const LINE_SE0: logic<2> = 2'b00;
+    const LINE_J  : logic<2> = 2'b01; // FS polarity (D+ high)
+    const LINE_K  : logic<2> = 2'b10;
+    const LINE_SE1: logic<2> = 2'b11;
+
+    // Packet IDs (4-bit field, USB 2.0 table 8-1)
+    const PID_OUT  : logic<4> = 4'b0001;
+    const PID_IN   : logic<4> = 4'b1001;
+    const PID_SOF  : logic<4> = 4'b0101;
+    const PID_SETUP: logic<4> = 4'b1101;
+    const PID_DATA0: logic<4> = 4'b0011;
+    const PID_DATA1: logic<4> = 4'b1011;
+    const PID_DATA2: logic<4> = 4'b0111;
+    const PID_MDATA: logic<4> = 4'b1111;
+    const PID_ACK  : logic<4> = 4'b0010;
+    const PID_NAK  : logic<4> = 4'b1010;
+    const PID_STALL: logic<4> = 4'b1110;
+    const PID_NYET : logic<4> = 4'b0110;
+    const PID_PRE  : logic<4> = 4'b1100;
+    const PID_SPLIT: logic<4> = 4'b1000;
+    const PID_PING : logic<4> = 4'b0100;
+
+    const CRC5_INIT     : logic<5>  = 5'h1F;
+    const CRC5_RESIDUAL : logic<5>  = 5'h06;
+    const CRC16_INIT    : logic<16> = 16'hFFFF;
+    const CRC16_RESIDUAL: logic<16> = 16'hB001;
+
+    function pid_byte(pid: input logic<4>) -> logic<8> {
+        return {~pid, pid};
+    }
+
+    function crc5_bit(crc: input logic<5>, b: input logic) -> logic<5> {
+        let fb: logic = crc[0] ^ b;
+        let sh: logic<5> = {1'b0, crc[4:1]};
+        return if fb ? sh ^ 5'h14 : sh;
+    }
+
+    function crc16_bit(crc: input logic<16>, b: input logic) -> logic<16> {
+        let fb: logic = crc[0] ^ b;
+        let sh: logic<16> = {1'b0, crc[15:1]};
+        return if fb ? sh ^ 16'hA001 : sh;
+    }
+
+    // Update CRC16 with one byte (bit 0 first).
+    function crc16_byte(crc: input logic<16>, d: input logic<8>) -> logic<16> {
+        var c: logic<16>;
+        c = crc;
+        for i in 0..8 {
+            c = crc16_bit(c, d[i]);
+        }
+        return c;
+    }
+
+    // CRC5 over the 11-bit token field {endp, addr} (addr in bits 6:0).
+    function crc5_token(tok: input logic<11>) -> logic<5> {
+        var c: logic<5>;
+        c = CRC5_INIT;
+        for i in 0..11 {
+            c = crc5_bit(c, tok[i]);
+        }
+        return c;
+    }
+}

@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_usb_device.veryl
+ * @brief Device-level tests (body in test/usb_device_test_body.sv).
+ *
+ * usb_device_fs:      bus reset by an FS host (device chirps, gets no
+ *                     answer, stays FS), full enumeration sequence,
+ *                     vendor requests, bulk loopback incl. NAK/STALL,
+ *                     toggle handling, retransmission, FIFO full, halt.
+ * usb_device_hs:      reset with hub chirp K-J response -> HS, same
+ *                     sequence with 512-byte bulk packets and PING.
+ * usb_device_hs_ulpi: the HS sequence with UsbDevice -> UlpiLink ->
+ *                     UlpiPhy in place of the UTMI PHY.
+ */
+
+module TbUsbDevice {}
+
+#[test(usb_device_fs)]
+embed (inline) sv{{{
+module usb_device_fs;
+    usb_device_test_body #(.HS(0), .RUN(1)) body();
+endmodule
+}}}
+
+#[test(usb_device_hs)]
+embed (inline) sv{{{
+module usb_device_hs;
+    usb_device_test_body #(.HS(1), .RUN(1)) body();
+endmodule
+}}}
+
+#[test(usb_device_hs_ulpi)]
+embed (inline) sv{{{
+module usb_device_hs_ulpi;
+    usb_device_test_body #(.HS(1), .ULPI(1), .RUN(1)) body();
+endmodule
+}}}

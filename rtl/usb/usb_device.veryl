@@ -1,0 +1,847 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file usb_device.veryl
+ * @brief Minimal USB 2.0 device (peripheral) core on UTMI.
+ *
+ * What it does:
+ *  - Bus state handling (USB 2.0 §7.1.7.5, §9.1): reset detection (SE0
+ *    >= 2.5 us), HS detection handshake (Chirp K for 1.2 ms, then wait
+ *    for the hub's K-J-K-J-K-J chirp, 2.5 us filtered), reversion to FS
+ *    after 3 ms of HS idle to distinguish reset from suspend, suspend /
+ *    resume. HS_CAPABLE = 0 skips the chirp (FS-only device).
+ *  - Control endpoint 0 (§9.4): GET_DESCRIPTOR (device, configuration,
+ *    string, device_qualifier, other_speed_configuration), SET_ADDRESS,
+ *    SET/GET_CONFIGURATION, GET_STATUS, SET/CLEAR_FEATURE (ENDPOINT_HALT
+ *    on EP1), SET/GET_INTERFACE, plus two vendor requests (0x01 IN: read
+ *    i_vendor_status, 0x02 OUT: write wValue to o_vendor_reg). Anything
+ *    else is STALLed. IN data stages are chunked to 64 bytes with the
+ *    trailing zero-length packet rule (§8.5.3.2).
+ *  - Bulk loopback on EP1: OUT data is queued in a byte FIFO (BRAM) and
+ *    returned on EP1 IN (64-byte packets at FS, 512 at HS). NAK when the
+ *    FIFO cannot take a full packet / has nothing to send, PING
+ *    (§8.5.1) is answered from the FIFO space, data toggles are tracked
+ *    and retransmissions are handled by advancing only on ACK.
+ *
+ * Response timing: RxActive fall -> SIE (2 clocks) -> this core (1) ->
+ * SIE TX (1) -> PHY, well inside the 6.5 (FS) / 192 (HS) bit-time
+ * budget of §7.1.18; the PHY enforces the minimum gap.
+ */
+import usb_pkg::*;
+import usb_desc_pkg::*;
+
+pub module UsbDevice #(
+    param HS_CAPABLE     : bit       = 1       ,
+    param CLK_PER_US     : u32       = 60      ,
+    param VENDOR_ID      : logic<16> = 16'h1209,
+    param PRODUCT_ID     : logic<16> = 16'h0001,
+    param BULK_FIFO_DEPTH: u32       = 2048    , // power of two, >= 512
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    // ---- UTMI (to PHY or UlpiLink) ----
+    o_utmi_data_out  : output logic<8>,
+    o_utmi_txvalid   : output logic   ,
+    i_utmi_txready   : input  logic   ,
+    i_utmi_data_in   : input  logic<8>,
+    i_utmi_rxactive  : input  logic   ,
+    i_utmi_rxvalid   : input  logic   ,
+    i_utmi_rxerror   : input  logic   ,
+    i_utmi_linestate : input  logic<2>,
+    o_utmi_opmode    : output logic<2>,
+    o_utmi_xcvrselect: output logic<2>,
+    o_utmi_termselect: output logic   ,
+
+    // ---- status ----
+    o_high_speed: output logic    ,
+    o_configured: output logic    ,
+    o_suspended : output logic    ,
+    o_reset     : output logic    , // pulse on bus reset
+    o_address   : output logic<7> ,
+    o_frame     : output logic<11>,
+    o_sof       : output logic    ,
+
+    // ---- vendor request scratch ----
+    o_vendor_reg   : output logic<16>,
+    i_vendor_status: input  logic<32>,
+) {
+    // =================================================================
+    // Timers
+    // =================================================================
+    const T_2_5US: u32 = CLK_PER_US * 5 / 2;
+    const T_200US: u32 = CLK_PER_US * 200;
+    const T_CHIRP: u32 = CLK_PER_US * 1200;
+    const T_2_5MS: u32 = CLK_PER_US * 2500;
+    const T_3MS  : u32 = CLK_PER_US * 3000;
+    const TW     : u32 = $clog2(T_3MS + 1);
+    type timer_t = logic<TW>;
+
+    // =================================================================
+    // SIE
+    // =================================================================
+    var rx_pid       : logic<4>;
+    var rx_token     : logic;
+    var rx_sof       : logic;
+    var rx_addr      : logic<7>;
+    var rx_endp      : logic<4>;
+    var rx_frame     : logic<11>;
+    var rx_data_start: logic;
+    var rx_data_valid: logic;
+    var rx_data      : logic<8>;
+    var rx_data_end  : logic;
+    var rx_data_ok   : logic;
+    var rx_handshake : logic;
+    var sie_data_out : logic<8>;
+    var sie_txvalid  : logic;
+    var tx_start     : logic;
+    var tx_pid       : logic<4>;
+    var tx_len       : logic<10>;
+    var tx_data      : logic<8>;
+    var tx_idx       : logic<10>;
+    var tx_idx_next  : logic<10>;
+    var tx_busy      : logic;
+    var tx_done      : logic;
+
+    inst u_sie: UsbSie (
+        i_clk          : i_clk          ,
+        i_rst          : i_rst          ,
+        i_utmi_data_in : i_utmi_data_in ,
+        i_utmi_rxactive: i_utmi_rxactive,
+        i_utmi_rxvalid : i_utmi_rxvalid ,
+        i_utmi_rxerror : i_utmi_rxerror ,
+        o_utmi_data_out: sie_data_out   ,
+        o_utmi_txvalid : sie_txvalid    ,
+        i_utmi_txready : i_utmi_txready ,
+        o_rx_pid       : rx_pid         ,
+        o_rx_token     : rx_token       ,
+        o_rx_sof       : rx_sof         ,
+        o_rx_addr      : rx_addr        ,
+        o_rx_endp      : rx_endp        ,
+        o_rx_frame     : rx_frame       ,
+        o_rx_data_start: rx_data_start  ,
+        o_rx_data_valid: rx_data_valid  ,
+        o_rx_data      : rx_data        ,
+        o_rx_data_end  : rx_data_end    ,
+        o_rx_data_ok   : rx_data_ok     ,
+        o_rx_handshake : rx_handshake   ,
+        i_tx_start     : tx_start       ,
+        i_tx_pid       : tx_pid         ,
+        i_tx_len       : tx_len         ,
+        i_tx_data      : tx_data        ,
+        o_tx_idx       : tx_idx         ,
+        o_tx_idx_next  : tx_idx_next    ,
+        o_tx_busy      : tx_busy        ,
+        o_tx_done      : tx_done        ,
+    );
+
+    // =================================================================
+    // Bus state / speed negotiation
+    // =================================================================
+    enum Bus: logic<3> {
+        FsIdle,
+        ChirpK,
+        ChirpWait,
+        ResetWait,
+        Hs,
+        HsRevert,
+        Suspended,
+    }
+
+    var bus        : Bus;
+    var ls_d       : logic<2>;
+    var ls_timer   : timer_t; // duration of the current LineState
+    var timer      : timer_t; // state timer
+    var idle_timer : timer_t; // HS: SE0 without packets
+    var chirp_pairs: logic<2>;
+    var chirp_k    : logic;
+    var was_hs     : logic;
+    var hs         : logic;
+    var suspended  : logic;
+    var reset_evt  : logic;
+    var chirp_tx   : logic;
+
+    let ls: logic<2> = i_utmi_linestate;
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            bus         = Bus::FsIdle;
+            ls_d        = LINE_J;
+            ls_timer    = 0;
+            timer       = 0;
+            idle_timer  = 0;
+            chirp_pairs = 0;
+            chirp_k     = 0;
+            was_hs      = 0;
+            hs          = 0;
+            suspended   = 0;
+            reset_evt   = 0;
+            chirp_tx    = 0;
+        } else {
+            reset_evt = 0;
+            ls_d      = ls;
+            if ls != ls_d {
+                ls_timer = 0;
+            } else if ls_timer != (T_3MS as TW) {
+                ls_timer = ls_timer + 1;
+            }
+            timer = timer + 1;
+            if (ls == LINE_SE0) && !i_utmi_rxactive {
+                if idle_timer != (T_3MS as TW) {
+                    idle_timer = idle_timer + 1;
+                }
+            } else {
+                idle_timer = 0;
+            }
+
+            case bus {
+                Bus::FsIdle: {
+                    hs        = 0;
+                    suspended = 0;
+                    chirp_tx  = 0;
+                    if (ls == LINE_SE0) && (ls_timer == (T_2_5US as TW)) {
+                        reset_evt = 1;
+                        timer     = 0;
+                        bus       = if HS_CAPABLE ? Bus::ChirpK : Bus::ResetWait;
+                    } else if (ls == LINE_J) && (ls_timer == (T_3MS as TW)) {
+                        was_hs    = 0;
+                        suspended = 1;
+                        bus       = Bus::Suspended;
+                    }
+                }
+                Bus::ChirpK: {
+                    chirp_tx = 1;
+                    if timer == (T_CHIRP as TW) {
+                        chirp_tx    = 0;
+                        timer       = 0;
+                        chirp_pairs = 0;
+                        chirp_k     = 0;
+                        bus         = Bus::ChirpWait;
+                    }
+                }
+                Bus::ChirpWait: {
+                    // Hub answers with K-J pairs, each >= 40 us (TDCHBIT);
+                    // accept a level once it has lasted 2.5 us (TFILT).
+                    if (ls == LINE_K) && (ls_timer == (T_2_5US as TW)) {
+                        chirp_k = 1;
+                    }
+                    if (ls == LINE_J) && (ls_timer == (T_2_5US as TW)) && chirp_k {
+                        chirp_k     = 0;
+                        chirp_pairs = chirp_pairs + 1;
+                        if chirp_pairs == 2'd2 {
+                            hs         = 1;
+                            was_hs     = 1;
+                            idle_timer = 0;
+                            bus        = Bus::Hs;
+                        }
+                    }
+                    if timer == (T_2_5MS as TW) {
+                        bus = Bus::ResetWait; // no hub chirp: stay FS
+                    }
+                }
+                Bus::ResetWait: {
+                    if ls == LINE_J {
+                        bus = Bus::FsIdle;
+                    }
+                }
+                Bus::Hs: {
+                    if idle_timer == (T_3MS as TW) {
+                        // Reset or suspend: revert to FS terminations and look.
+                        hs    = 0;
+                        timer = 0;
+                        bus   = Bus::HsRevert;
+                    }
+                }
+                Bus::HsRevert: {
+                    if timer == (T_200US as TW) {
+                        if ls == LINE_SE0 {
+                            reset_evt = 1;
+                            timer     = 0;
+                            bus       = Bus::ChirpK;
+                        } else {
+                            suspended = 1;
+                            bus       = Bus::Suspended;
+                        }
+                    }
+                }
+                Bus::Suspended: {
+                    if (ls == LINE_SE0) && (ls_timer == (T_2_5US as TW)) {
+                        reset_evt = 1;
+                        suspended = 0;
+                        timer     = 0;
+                        bus       = if HS_CAPABLE ? Bus::ChirpK : Bus::ResetWait;
+                    } else if (ls != LINE_K) && (ls_d == LINE_K) && (ls_timer == 0) {
+                        // Resume signalling (K) ended.
+                        suspended  = 0;
+                        hs         = was_hs;
+                        idle_timer = 0;
+                        bus        = if was_hs ? Bus::Hs : Bus::FsIdle;
+                    }
+                }
+            }
+        }
+    }
+
+    // Chirp K: HS transceiver, FS termination, raw mode, data 0x00.
+    let chirping: logic = bus == Bus::ChirpK;
+    assign o_utmi_xcvrselect = if (hs || chirping || (bus == Bus::ChirpWait)) ? XCVR_HS : XCVR_FS;
+    assign o_utmi_termselect = !hs;
+    assign o_utmi_opmode     = if chirping ? OPMODE_RAW : OPMODE_NORMAL;
+
+    // =================================================================
+    // Bulk FIFO (EP1 OUT -> EP1 IN loopback)
+    // =================================================================
+    const PTR_BITS: u32 = $clog2(BULK_FIFO_DEPTH) + 1;
+    type ptr_t = logic<PTR_BITS>;
+    type idx_t = logic<PTR_BITS - 1>;
+
+    var fifo_mem: logic<8> [BULK_FIFO_DEPTH];
+    var fifo_q  : logic<8>;
+    var wr_ptr  : ptr_t;
+    var wr_tmp  : ptr_t;
+    var rd_ptr  : ptr_t;
+
+    let fifo_count: ptr_t = wr_ptr - rd_ptr;
+    let fifo_space: ptr_t = (BULK_FIFO_DEPTH as PTR_BITS) - (wr_ptr - rd_ptr);
+    let bulk_mps  : ptr_t = if hs ? (512 as PTR_BITS) : (64 as PTR_BITS);
+    let fifo_raddr: ptr_t = rd_ptr + (tx_idx_next as PTR_BITS);
+    // Write in the cycle the byte arrives (address = current wr_tmp).
+    var fifo_we   : logic;
+
+    always_ff (i_clk) {
+        if fifo_we {
+            fifo_mem[wr_tmp[PTR_BITS - 2:0]] = rx_data;
+        }
+        fifo_q = fifo_mem[fifo_raddr[PTR_BITS - 2:0]];
+    }
+
+    // =================================================================
+    // Protocol engine
+    // =================================================================
+    enum Ctrl: logic<3> {
+        Idle,
+        DataIn,
+        StatusOut,
+        StatusIn,
+        Stall,
+    }
+    enum Expect: logic<2> {
+        None,
+        Setup,
+        CtrlOut,
+        BulkOut,
+    }
+    enum TxSrc: logic<2> {
+        Rom,
+        Small,
+        Fifo,
+    }
+
+    var dev_addr     : logic<7>;
+    var addr_pending : logic<7>;
+    var addr_apply   : logic;
+    var configured   : logic;
+    var frame        : logic<11>;
+    var sof          : logic;
+    var vendor_reg   : logic<16>;
+    var halt_in      : logic;
+    var halt_out     : logic;
+    var toggle_in    : logic; // EP1 IN next DATAx
+    var toggle_out   : logic; // EP1 OUT expected DATAx
+    var ctrl         : Ctrl;
+    var ctrl_toggle  : logic; // EP0 IN next DATAx
+    var ctrl_base    : logic<8>;
+    var ctrl_off     : logic<8>;
+    var ctrl_remain  : logic<10>;
+    var ctrl_chunk   : logic<10>;
+    var ctrl_zlp     : logic;
+    var ctrl_other   : logic; // patch bDescriptorType -> OTHER_SPEED
+    var small_r        : logic<32>;
+    var src          : TxSrc;
+    var rx_expect       : Expect;
+    var expect_resp  : logic<4>;
+    var bulk_drop    : logic;
+    var setup        : logic<8> [8];
+    var setup_idx    : logic<4>;
+    var in_pending   : logic;   // EP1 IN data sent, waiting for ACK
+    var in_len       : ptr_t;
+    var ctrl_pending : logic;   // EP0 IN data sent, waiting for ACK
+    var status_in_tx : logic;   // status ZLP in flight
+    var last_in_ep1  : logic;   // which endpoint the pending IN belonged to
+
+    // Setup packet fields.
+    let bm_rt   : logic<8>  = setup[0];
+    let b_req   : logic<8>  = setup[1];
+    let w_value : logic<16> = {setup[3], setup[2]};
+    let w_index : logic<16> = {setup[5], setup[4]};
+    let w_length: logic<16> = {setup[7], setup[6]};
+    let req_in  : logic     = bm_rt[7];
+    let req_type: logic<2>  = bm_rt[6:5];
+    let req_rcpt: logic<5>  = bm_rt[4:0];
+
+    // Descriptor selection (GET_DESCRIPTOR).
+    var desc_addr : logic<8>;
+    var desc_len  : logic<8>;
+    var desc_ok   : logic;
+    var desc_other: logic;
+    always_comb {
+        desc_addr  = 0;
+        desc_len   = 0;
+        desc_ok    = 0;
+        desc_other = 0;
+        case w_value[15:8] {
+            8'h01: {
+                desc_addr = DEV_ADDR;
+                desc_len  = DEV_LEN;
+                desc_ok   = 1;
+            }
+            8'h02: {
+                desc_addr = if hs ? CFG_HS_ADDR : CFG_FS_ADDR;
+                desc_len  = CFG_FS_LEN;
+                desc_ok   = 1;
+            }
+            8'h03: {
+                case w_value[7:0] {
+                    8'h00: {
+                        desc_addr = STR0_ADDR;
+                        desc_len  = STR0_LEN;
+                        desc_ok   = 1;
+                    }
+                    8'h01: {
+                        desc_addr = STR1_ADDR;
+                        desc_len  = STR1_LEN;
+                        desc_ok   = 1;
+                    }
+                    8'h02: {
+                        desc_addr = STR2_ADDR;
+                        desc_len  = STR2_LEN;
+                        desc_ok   = 1;
+                    }
+                    8'h03: {
+                        desc_addr = STR3_ADDR;
+                        desc_len  = STR3_LEN;
+                        desc_ok   = 1;
+                    }
+                    default: {}
+                }
+            }
+            8'h06: {
+                desc_addr = QUAL_ADDR;
+                desc_len  = QUAL_LEN;
+                desc_ok   = HS_CAPABLE;
+            }
+            8'h07: {
+                desc_addr  = if hs ? CFG_FS_ADDR : CFG_HS_ADDR;
+                desc_len   = CFG_FS_LEN;
+                desc_ok    = HS_CAPABLE;
+                desc_other = 1;
+            }
+            default: {}
+        }
+    }
+
+    // Served length = min(len, wLength); ZLP needed when shorter than
+    // wLength and a multiple of 64.
+    function served_len(len: input logic<10>, wlen: input logic<16>) -> logic<10> {
+        return if ({6'b0, len} <: wlen) ? len : wlen[9:0];
+    }
+
+    let addr_match: logic = rx_addr == dev_addr;
+
+    // TX payload source mux.
+    let rom_addr: logic<8> = ctrl_base + tx_idx[7:0];
+    var rom_data: logic<8>;
+    inst u_rom: UsbDescriptorRom #(
+        VENDOR_ID : VENDOR_ID ,
+        PRODUCT_ID: PRODUCT_ID,
+    ) (
+        i_addr: rom_addr,
+        o_data: rom_data,
+    );
+    always_comb {
+        case src {
+            TxSrc::Rom: {
+                tx_data = if (ctrl_other && (ctrl_off == 0) && (tx_idx == 10'd1)) ? 8'h07 : rom_data;
+            }
+            TxSrc::Small: {
+                case tx_idx[1:0] {
+                    2'd0   : tx_data = small_r[7:0];
+                    2'd1   : tx_data = small_r[15:8];
+                    2'd2   : tx_data = small_r[23:16];
+                    default: tx_data = small_r[31:24];
+                }
+            }
+            default: {
+                tx_data = fifo_q;
+            }
+        }
+    }
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            dev_addr     = 0;
+            addr_pending = 0;
+            addr_apply   = 0;
+            configured   = 0;
+            frame        = 0;
+            sof          = 0;
+            vendor_reg   = 0;
+            halt_in      = 0;
+            halt_out     = 0;
+            toggle_in    = 0;
+            toggle_out   = 0;
+            ctrl         = Ctrl::Idle;
+            ctrl_toggle  = 0;
+            ctrl_base    = 0;
+            ctrl_off     = 0;
+            ctrl_remain  = 0;
+            ctrl_chunk   = 0;
+            ctrl_zlp     = 0;
+            ctrl_other   = 0;
+            small_r        = 0;
+            src          = TxSrc::Rom;
+            rx_expect       = Expect::None;
+            expect_resp  = PID_ACK;
+            bulk_drop    = 0;
+            setup_idx    = 0;
+            in_pending   = 0;
+            in_len       = 0;
+            ctrl_pending = 0;
+            status_in_tx = 0;
+            last_in_ep1  = 0;
+            wr_ptr       = 0;
+            wr_tmp       = 0;
+            rd_ptr       = 0;
+            tx_start     = 0;
+            tx_pid       = 0;
+            tx_len       = 0;
+        } else {
+            sof      = 0;
+            tx_start = 0;
+
+            if reset_evt {
+                dev_addr     = 0;
+                addr_apply   = 0;
+                configured   = 0;
+                halt_in      = 0;
+                halt_out     = 0;
+                toggle_in    = 0;
+                toggle_out   = 0;
+                ctrl         = Ctrl::Idle;
+                rx_expect       = Expect::None;
+                in_pending   = 0;
+                ctrl_pending = 0;
+                status_in_tx = 0;
+                wr_ptr       = 0;
+                wr_tmp       = 0;
+                rd_ptr       = 0;
+            }
+
+            // ---------------- SOF ----------------
+            if rx_sof {
+                frame = rx_frame;
+                sof   = 1;
+            }
+
+            // ---------------- tokens ----------------
+            if rx_token && addr_match {
+                in_pending   = 0;
+                ctrl_pending = 0;
+                rx_expect       = Expect::None;
+                case rx_pid {
+                    PID_SETUP: {
+                        if rx_endp == 0 {
+                            rx_expect      = Expect::Setup;
+                            setup_idx   = 0;
+                            ctrl        = Ctrl::Idle;
+                            expect_resp = PID_ACK;
+                        }
+                    }
+                    PID_OUT: {
+                        if rx_endp == 0 {
+                            rx_expect      = Expect::CtrlOut;
+                            expect_resp = if ctrl == Ctrl::Stall ? PID_STALL : PID_ACK;
+                        } else if rx_endp == 4'd1 {
+                            rx_expect      = Expect::BulkOut;
+                            wr_tmp      = wr_ptr;
+                            expect_resp = if (!configured || halt_out) ? PID_STALL : (if fifo_space >= bulk_mps ? PID_ACK : PID_NAK);
+                        }
+                    }
+                    PID_IN: {
+                        if rx_endp == 0 {
+                            last_in_ep1 = 0;
+                            case ctrl {
+                                Ctrl::DataIn: {
+                                    if (ctrl_remain == 0) && !ctrl_zlp {
+                                        tx_pid = PID_NAK;
+                                    } else {
+                                        ctrl_chunk   = if ctrl_remain >= 10'd64 ? 10'd64 : ctrl_remain;
+                                        tx_pid       = if ctrl_toggle ? PID_DATA1 : PID_DATA0;
+                                        tx_len       = if ctrl_remain >= 10'd64 ? 10'd64 : ctrl_remain;
+                                        ctrl_pending = 1;
+                                    }
+                                    tx_start = 1;
+                                }
+                                Ctrl::StatusIn: {
+                                    tx_pid       = PID_DATA1;
+                                    tx_len       = 0;
+                                    tx_start     = 1;
+                                    status_in_tx = 1;
+                                }
+                                Ctrl::Stall: {
+                                    tx_pid   = PID_STALL;
+                                    tx_start = 1;
+                                }
+                                default: {
+                                    tx_pid   = PID_NAK;
+                                    tx_start = 1;
+                                }
+                            }
+                        } else if rx_endp == 4'd1 {
+                            last_in_ep1 = 1;
+                            if !configured || halt_in {
+                                tx_pid   = PID_STALL;
+                                tx_start = 1;
+                            } else if fifo_count != 0 {
+                                in_len     = if fifo_count >= bulk_mps ? bulk_mps : fifo_count;
+                                tx_pid     = if toggle_in ? PID_DATA1 : PID_DATA0;
+                                tx_len     = if fifo_count >= bulk_mps ? bulk_mps[9:0] : fifo_count[9:0];
+                                src        = TxSrc::Fifo;
+                                in_pending = 1;
+                                tx_start   = 1;
+                            } else {
+                                tx_pid   = PID_NAK;
+                                tx_start = 1;
+                            }
+                        }
+                    }
+                    PID_PING: {
+                        if rx_endp == 0 {
+                            tx_pid   = PID_ACK;
+                            tx_start = 1;
+                        } else if rx_endp == 4'd1 {
+                            tx_pid   = if (configured && !halt_out && (fifo_space >= bulk_mps)) ? PID_ACK : PID_NAK;
+                            tx_start = 1;
+                        }
+                    }
+                    default: {}
+                }
+            }
+
+            // ---------------- handshakes ----------------
+            if rx_handshake && (rx_pid == PID_ACK) {
+                if in_pending && last_in_ep1 {
+                    rd_ptr     = rd_ptr + in_len;
+                    toggle_in  = ~toggle_in;
+                    in_pending = 0;
+                }
+                if ctrl_pending && !last_in_ep1 {
+                    ctrl_pending = 0;
+                    ctrl_toggle  = ~ctrl_toggle;
+                    if ctrl_remain == 0 {
+                        ctrl_zlp = 0; // the ZLP was acknowledged
+                        ctrl     = Ctrl::StatusOut;
+                    } else {
+                        ctrl_remain = ctrl_remain - ctrl_chunk;
+                        ctrl_base   = ctrl_base + ctrl_chunk[7:0];
+                        ctrl_off    = ctrl_off + ctrl_chunk[7:0];
+                        if (ctrl_remain - ctrl_chunk == 0) && !ctrl_zlp {
+                            ctrl = Ctrl::StatusOut;
+                        }
+                    }
+                }
+            }
+
+            // ---------------- status IN complete ----------------
+            if tx_done && status_in_tx {
+                status_in_tx = 0;
+                ctrl         = Ctrl::Idle;
+                if addr_apply {
+                    dev_addr   = addr_pending;
+                    addr_apply = 0;
+                }
+            }
+
+            // ---------------- data packets ----------------
+            if rx_data_start {
+                bulk_drop = rx_pid[3] != toggle_out; // repeated packet
+                if (rx_expect == Expect::Setup) && (rx_pid != PID_DATA0) {
+                    rx_expect = Expect::None;
+                }
+            }
+            if rx_data_valid {
+                case rx_expect {
+                    Expect::Setup: {
+                        if setup_idx <: 4'd8 {
+                            setup[setup_idx[2:0]] = rx_data;
+                            setup_idx             = setup_idx + 1;
+                        } else {
+                            setup_idx = 4'd15; // too long -> ignore
+                        }
+                    }
+                    Expect::BulkOut: {
+                        if (expect_resp == PID_ACK) && !bulk_drop {
+                            wr_tmp = wr_tmp + 1;
+                        }
+                    }
+                    default: {}
+                }
+            }
+            if rx_data_end {
+                case rx_expect {
+                    Expect::Setup: {
+                        if rx_data_ok && (setup_idx == 4'd8) {
+                            tx_pid      = PID_ACK;
+                            tx_start    = 1;
+                            ctrl_toggle = 1;
+                            ctrl_other  = 0;
+                            ctrl_off    = 0;
+                            ctrl_zlp    = 0;
+                            src         = TxSrc::Small;
+                            // Default: unsupported -> STALL.
+                            ctrl = Ctrl::Stall;
+                            if req_type == 2'b00 {
+                                case b_req {
+                                    8'h00: { // GET_STATUS
+                                        if req_in && (w_length == 16'd2) {
+                                            small_r = 0;
+                                            if (req_rcpt == 5'd2) && (w_index[3:0] == 4'd1) {
+                                                small_r[0] = if w_index[7] ? halt_in : halt_out;
+                                            }
+                                            ctrl_remain = 10'd2;
+                                            ctrl        = if w_length == 0 ? Ctrl::StatusIn : Ctrl::DataIn;
+                                        }
+                                    }
+                                    8'h01, 8'h03: { // CLEAR_FEATURE / SET_FEATURE
+                                        if (req_rcpt == 5'd2) && (w_value == 16'd0) && (w_index[3:0] == 4'd1) {
+                                            if w_index[7] {
+                                                halt_in = b_req == 8'h03;
+                                                if b_req == 8'h01 {
+                                                    toggle_in = 0;
+                                                }
+                                            } else {
+                                                halt_out = b_req == 8'h03;
+                                                if b_req == 8'h01 {
+                                                    toggle_out = 0;
+                                                }
+                                            }
+                                            ctrl = Ctrl::StatusIn;
+                                        } else if (req_rcpt == 5'd0) && (w_value == 16'd1) {
+                                            ctrl = Ctrl::StatusIn; // DEVICE_REMOTE_WAKEUP: accepted, ignored
+                                        }
+                                    }
+                                    8'h05: { // SET_ADDRESS
+                                        addr_pending = w_value[6:0];
+                                        addr_apply   = 1;
+                                        ctrl         = Ctrl::StatusIn;
+                                    }
+                                    8'h06: { // GET_DESCRIPTOR
+                                        if req_in && desc_ok {
+                                            src         = TxSrc::Rom;
+                                            ctrl_base   = desc_addr;
+                                            ctrl_other  = desc_other;
+                                            ctrl_remain = served_len({2'b0, desc_len}, w_length);
+                                            ctrl_zlp    = ({8'b0, desc_len} <: w_length) && (desc_len[5:0] == 6'd0);
+                                            ctrl        = if w_length == 0 ? Ctrl::StatusIn : Ctrl::DataIn;
+                                        }
+                                    }
+                                    8'h08: { // GET_CONFIGURATION
+                                        if req_in {
+                                            small_r       = {31'b0, configured};
+                                            ctrl_remain = served_len(10'd1, w_length);
+                                            ctrl        = if w_length == 0 ? Ctrl::StatusIn : Ctrl::DataIn;
+                                        }
+                                    }
+                                    8'h09: { // SET_CONFIGURATION
+                                        if w_value[7:0] <= 8'd1 {
+                                            configured = w_value[0];
+                                            halt_in    = 0;
+                                            halt_out   = 0;
+                                            toggle_in  = 0;
+                                            toggle_out = 0;
+                                            wr_ptr     = 0;
+                                            rd_ptr     = 0;
+                                            ctrl       = Ctrl::StatusIn;
+                                        }
+                                    }
+                                    8'h0A: { // GET_INTERFACE
+                                        if req_in && configured && (w_index[7:0] == 8'd0) {
+                                            small_r       = 0;
+                                            ctrl_remain = served_len(10'd1, w_length);
+                                            ctrl        = if w_length == 0 ? Ctrl::StatusIn : Ctrl::DataIn;
+                                        }
+                                    }
+                                    8'h0B: { // SET_INTERFACE
+                                        if configured && (w_index[7:0] == 8'd0) && (w_value[7:0] == 8'd0) {
+                                            toggle_in  = 0;
+                                            toggle_out = 0;
+                                            ctrl       = Ctrl::StatusIn;
+                                        }
+                                    }
+                                    default: {}
+                                }
+                            } else if req_type == 2'b10 {
+                                case b_req {
+                                    8'h01: { // vendor IN: status word
+                                        if req_in {
+                                            small_r       = i_vendor_status;
+                                            ctrl_remain = served_len(10'd4, w_length);
+                                            ctrl        = if w_length == 0 ? Ctrl::StatusIn : Ctrl::DataIn;
+                                        }
+                                    }
+                                    8'h02: { // vendor OUT: write scratch register
+                                        if !req_in && (w_length == 0) {
+                                            vendor_reg = w_value;
+                                            ctrl       = Ctrl::StatusIn;
+                                        }
+                                    }
+                                    default: {}
+                                }
+                            }
+                        }
+                    }
+                    Expect::CtrlOut: {
+                        if rx_data_ok {
+                            tx_pid   = expect_resp;
+                            tx_start = 1;
+                            if (expect_resp == PID_ACK) && (ctrl == Ctrl::StatusOut) {
+                                ctrl = Ctrl::Idle;
+                            }
+                        }
+                    }
+                    Expect::BulkOut: {
+                        if rx_data_ok {
+                            tx_pid   = expect_resp;
+                            tx_start = 1;
+                            if (expect_resp == PID_ACK) && !bulk_drop {
+                                wr_ptr     = wr_tmp;
+                                toggle_out = ~toggle_out;
+                            }
+                        }
+                    }
+                    default: {}
+                }
+                rx_expect = Expect::None;
+            }
+        }
+    }
+
+    assign fifo_we = rx_data_valid && (rx_expect == Expect::BulkOut) && (expect_resp == PID_ACK) && !bulk_drop;
+
+    assign o_high_speed = hs;
+    assign o_configured = configured;
+    assign o_suspended  = suspended;
+    assign o_reset      = reset_evt;
+    assign o_address    = dev_addr;
+    assign o_frame      = frame;
+    assign o_sof        = sof;
+    assign o_vendor_reg = vendor_reg;
+
+    // Chirp K drive: the SIE is idle during the chirp, so the raw byte
+    // stream (0x00 = K in OpMode RAW) is injected here.
+    assign o_utmi_txvalid  = sie_txvalid || chirp_tx;
+    assign o_utmi_data_out = if chirp_tx ? 8'h00 : sie_data_out;
+}

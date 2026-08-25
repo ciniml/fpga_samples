@@ -1,0 +1,164 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_ulpi.veryl
+ * @brief ULPI tests.
+ *
+ * ulpi_registers: a hand-driven ULPI link performs register reads
+ *   (Vendor/Product ID, Function Control default 0x41, OTG Control
+ *   default 0x06), writes (Scratch, Function Control), the set/clear
+ *   aliases, and checks the RX CMD that follows a LineState change.
+ * ulpi_fs_loopback / ulpi_hs_loopback: the PHY loopback body routed
+ *   UTMI -> UlpiLink -> UlpiPhy -> serial, exercising Transmit-with-PID,
+ *   NOPID (chirp), RX data / RX CMD and Function Control programming.
+ */
+
+module TbUlpi {}
+
+#[test(ulpi_fs_loopback)]
+embed (inline) sv{{{
+module ulpi_fs_loopback;
+    usb_phy_loopback_body #(.HS(0), .ULPI(1), .RUN(1)) body();
+endmodule
+}}}
+
+#[test(ulpi_hs_loopback)]
+embed (inline) sv{{{
+module ulpi_hs_loopback;
+    usb_phy_loopback_body #(.HS(1), .ULPI(1), .RUN(1)) body();
+endmodule
+}}}
+
+#[test(ulpi_registers)]
+embed (inline) sv{{{
+`timescale 1ns/1ps
+module ulpi_registers;
+    logic clk = 0;
+    logic rst = 1;
+    always #8.333 clk = ~clk;
+
+    logic [7:0] p2l, l2p, bus;
+    logic dir, nxt, stp, l_oe;
+    logic [7:0] rx_dp, rx_dn, tx_dp, tx_dn;
+    logic tx_oe, pu_dp, pu_dn, term_dp, term_dn;
+    assign bus = dir ? p2l : l2p;
+
+    UlpiPhy dut (
+        .i_clk(clk), .i_rst(rst),
+        .i_ulpi_data(bus), .o_ulpi_data(p2l), .o_ulpi_dir(dir), .o_ulpi_nxt(nxt), .i_ulpi_stp(stp),
+        .i_vbus_valid(1'b1),
+        .i_rx_dp(rx_dp), .i_rx_dn(rx_dn), .i_rx_dd(rx_dp), .o_tx_dp(tx_dp), .o_tx_dn(tx_dn), .o_tx_oe(tx_oe),
+        .o_pullup_dp_en(pu_dp), .o_pullup_dn_en(pu_dn), .o_term_dp_en(term_dp), .o_term_dn_en(term_dn),
+        .o_dp_pulldown(), .o_dm_pulldown()
+    );
+
+    int errors = 0;
+
+    // Drive on negedge so values are stable at the PHY's posedge.
+    task automatic wait_idle();
+        int t = 0;
+        while (dir && t < 100) begin @(negedge clk); t++; end
+    endtask
+
+    task automatic reg_write(input logic [5:0] addr, input logic [7:0] data);
+        int t;
+        wait_idle();
+        @(negedge clk);
+        l2p = {2'b10, addr};
+        t = 0;
+        while (!nxt && t < 50) begin @(negedge clk); t++; end   // cmd accepted at the posedge where nxt=1
+        if (!nxt) begin $display("ERROR: reg_write %h: no nxt", addr); errors++; return; end
+        @(negedge clk);
+        l2p = data;
+        t = 0;
+        while (!nxt && t < 50) begin @(negedge clk); t++; end
+        @(negedge clk);
+        l2p = 8'h00; stp = 1;
+        @(negedge clk);
+        stp = 0;
+    endtask
+
+    task automatic reg_read(input logic [5:0] addr, output logic [7:0] data);
+        int t;
+        wait_idle();
+        @(negedge clk);
+        l2p = {2'b11, addr};
+        t = 0;
+        while (!nxt && t < 50) begin @(negedge clk); t++; end
+        if (!nxt) begin $display("ERROR: reg_read %h: no nxt", addr); errors++; data = 8'hXX; return; end
+        @(negedge clk);
+        l2p = 8'h00;
+        t = 0;
+        while (!dir && t < 50) begin @(negedge clk); t++; end   // turnaround cycle
+        @(negedge clk);                                          // data cycle
+        data = bus;
+        @(negedge clk);
+    endtask
+
+    task automatic check(input string what, input logic [7:0] got, input logic [7:0] exp);
+        if (got !== exp) begin $display("ERROR: %s: got %h expected %h", what, got, exp); errors++; end
+    endtask
+
+    logic [7:0] d;
+    int t;
+    initial begin
+        l2p = 0; stp = 0; rx_dp = 8'hFF; rx_dn = 8'h00; // FS idle J
+        repeat (5) @(posedge clk);
+        rst = 0;
+        repeat (10) @(negedge clk);
+
+        reg_read(6'h00, d); check("VID low", d, 8'h09);
+        reg_read(6'h01, d); check("VID high", d, 8'h12);
+        reg_read(6'h02, d); check("PID low", d, 8'h01);
+        reg_read(6'h03, d); check("PID high", d, 8'h00);
+        reg_read(6'h04, d); check("FuncCtrl default", d, 8'h41);
+        reg_read(6'h0A, d); check("OtgCtrl default", d, 8'h06);
+        reg_read(6'h15, d); check("Debug linestate J", d, 8'h01);
+
+        reg_write(6'h16, 8'hA5);
+        reg_read(6'h16, d); check("Scratch write", d, 8'hA5);
+        reg_write(6'h17, 8'h0A);          // set
+        reg_read(6'h16, d); check("Scratch set", d, 8'hAF);
+        reg_write(6'h18, 8'h0F);          // clear
+        reg_read(6'h16, d); check("Scratch clear", d, 8'hA0);
+
+        reg_write(6'h0C, 8'h06);          // clear pull-downs
+        reg_read(6'h0A, d); check("OtgCtrl cleared", d, 8'h00);
+
+        // Function Control: FS, TermSelect=1 -> D+ pull-up
+        reg_write(6'h04, 8'h45);
+        reg_read(6'h04, d); check("FuncCtrl FS/term", d, 8'h45);
+        @(negedge clk);
+        if (!pu_dp || term_dp) begin $display("ERROR: FS termination after FuncCtrl"); errors++; end
+        // HS: XcvrSelect=00, TermSelect=0
+        reg_write(6'h04, 8'h40);
+        @(negedge clk);
+        if (pu_dp || !term_dp) begin $display("ERROR: HS termination after FuncCtrl"); errors++; end
+        reg_write(6'h04, 8'h45);
+
+        // LineState change -> unsolicited RX CMD (dir=1, nxt=0, [1:0]=SE0)
+        wait_idle();
+        @(negedge clk);
+        rx_dp = 8'h00; rx_dn = 8'h00;
+        t = 0;
+        while (!dir && t < 50) begin @(negedge clk); t++; end
+        if (!dir) begin $display("ERROR: no RX CMD on linestate change"); errors++; end
+        else begin
+            @(negedge clk);   // RX CMD cycle after the turnaround
+            check("RX CMD linestate SE0", bus & 8'h3F, 8'h0C); // VbusValid(11) | SE0
+            if (nxt) begin $display("ERROR: RX CMD with nxt=1"); errors++; end
+        end
+        rx_dp = 8'hFF; rx_dn = 8'h00;
+        wait_idle();
+        repeat (20) @(negedge clk);
+        reg_read(6'h15, d); check("Debug linestate J again", d, 8'h01);
+
+        if (errors == 0) $display("PASS: ulpi_registers");
+        else $fatal(1, "FAIL: ulpi_registers errors=%0d", errors);
+        $finish;
+    end
+endmodule
+}}}
