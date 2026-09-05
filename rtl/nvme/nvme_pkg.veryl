@@ -38,8 +38,18 @@ pub package nvme_pkg {
     const CNS_NS_DESC_LIST  : logic<8> = 8'h03;
 
     // Feature identifiers (DW10[7:0])
-    const FID_NUMBER_OF_QUEUES: logic<8> = 8'h07;
+    const FID_ARBITRATION     : logic<8> = 8'h01;
+    const FID_POWER_MGMT      : logic<8> = 8'h02;
+    const FID_TEMP_THRESHOLD  : logic<8> = 8'h04;
+    const FID_ERROR_RECOVERY  : logic<8> = 8'h05;
     const FID_VOLATILE_WC     : logic<8> = 8'h06;
+    const FID_NUMBER_OF_QUEUES: logic<8> = 8'h07;
+    const FID_KEEP_ALIVE_TIMER: logic<8> = 8'h0F;
+
+    // Log page identifiers (DW10[7:0])
+    const LID_ERROR_INFO   : logic<8> = 8'h01;
+    const LID_SMART_HEALTH : logic<8> = 8'h02;
+    const LID_FIRMWARE_SLOT: logic<8> = 8'h03;
 
     // Generic command status codes (SCT = 0)
     const SC_SUCCESS         : logic<8> = 8'h00;

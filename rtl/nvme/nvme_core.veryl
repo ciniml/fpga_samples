@@ -27,8 +27,10 @@
  *
  * Supported commands:
  *  - Admin: Identify (CNS 00h namespace / 01h controller / 02h active
- *    NS list, each 4096 bytes), Set/Get Features (Number of Queues,
- *    Volatile Write Cache as no-ops).
+ *    NS list / 03h NS descriptors, each 4096 bytes), Get Log Page
+ *    (01h Error Information, 02h SMART/Health, 03h Firmware Slot),
+ *    Set/Get Features (FIDs 01h-0Fh accepted with default values;
+ *    Number of Queues grants 1 SQ / 1 CQ).
  *  - NVM: Read (02h), Write (01h), Flush (00h, no-op). One namespace
  *    (NSID 1), 512-byte blocks, LBA_COUNT blocks.
  *
@@ -88,11 +90,14 @@ pub module NvmeCore #(
         Cpl,     // present the completion
     }
 
-    enum IdKind: logic<2> {
+    enum IdKind: logic<3> {
         Ns,
         Ctrl,
         NsList,
         NsDesc,
+        LogErr,   // Get Log Page 01h: Error Information (all clear)
+        LogSmart, // Get Log Page 02h: SMART / Health
+        LogFw,    // Get Log Page 03h: Firmware Slot Information
     }
 
     var state: State;
@@ -199,13 +204,42 @@ pub module NvmeCore #(
         return r;
     }
 
+    // SMART / Health Information (512B): no warnings, composite
+    // temperature 299K, 100% spare (threshold 10%), 0% used, no errors
+    function log_smart_dword(idx: input logic<10>) -> logic<32> {
+        var r: logic<32>;
+        r = 32'h0;
+        case idx {
+            10'd0  : r = 32'h6401_2B00; // spare=100 | temp=0x012B | warning=0
+            10'd1  : r = 32'h0000_000A; // percentage used=0, spare threshold=10
+            default: r = 32'h0;
+        }
+        return r;
+    }
+
+    // Firmware Slot Information (512B): slot 1 active, FRS1 = "0.1"
+    function log_fw_dword(idx: input logic<10>) -> logic<32> {
+        var r: logic<32>;
+        r = 32'h0;
+        case idx {
+            10'd0  : r = 32'h0000_0001; // AFI: slot 1 active
+            10'd2  : r = 32'h2031_2E30; // FRS1 "0.1 "
+            10'd3  : r = 32'h2020_2020;
+            default: r = 32'h0;
+        }
+        return r;
+    }
+
     function id_dword(kind: input IdKind, idx: input logic<10>) -> logic<32> {
         var r: logic<32>;
         r = 32'h0;
         case kind {
-            IdKind::Ctrl  : r = id_ctrl_dword(idx);
-            IdKind::Ns    : r = id_ns_dword(idx);
-            IdKind::NsDesc: r = id_ns_desc_dword(idx);
+            IdKind::Ctrl    : r = id_ctrl_dword(idx);
+            IdKind::Ns      : r = id_ns_dword(idx);
+            IdKind::NsDesc  : r = id_ns_desc_dword(idx);
+            IdKind::LogErr  : r = 32'h0;
+            IdKind::LogSmart: r = log_smart_dword(idx);
+            IdKind::LogFw   : r = log_fw_dword(idx);
             IdKind::NsList: {
                 // Active namespace ID list: NSID 1 only
                 r = if idx == 10'd0 ? 32'h0000_0001 : 32'h0;
@@ -227,7 +261,9 @@ pub module NvmeCore #(
     assign o_mem_addr  = daddr[MEM_ADDR_BITS - 1:0];
 
     assign o_c2h_valid = (state == State::IdSend) || (state == State::RdSend);
-    assign o_c2h_data  = if (state == State::IdSend) ? id_dword(id_kind, xfer_cnt[9:0]) : (if from_mem ? i_mem_rdata : rbuf);
+    // identify/log data beyond the first 4KiB (oversized log requests) reads as zeros
+    let id_data: logic<32> = if xfer_cnt[23:10] == 14'h0 ? id_dword(id_kind, xfer_cnt[9:0]) : 32'h0;
+    assign o_c2h_data  = if (state == State::IdSend) ? id_data : (if from_mem ? i_mem_rdata : rbuf);
     assign o_c2h_last  = o_c2h_valid && (xfer_cnt == xfer_len - 24'd1);
 
     assign o_cpl_valid  = state == State::Cpl;
@@ -326,18 +362,36 @@ pub module NvmeCore #(
                                 }
                             }
                             ADM_OPC_SET_FEATURES: {
-                                case cmd_dw10[7:0] {
-                                    // report 1 SQ / 1 CQ granted (0-based)
-                                    FID_NUMBER_OF_QUEUES: cpl_dw0 = 32'h0;
-                                    FID_VOLATILE_WC     : cpl_dw0 = 32'h0;
-                                    default             : sts     = error_status(SC_INVALID_FIELD);
+                                // the standard features are accepted as
+                                // no-ops (nothing here is configurable);
+                                // Number of Queues reports 1 SQ / 1 CQ
+                                if (cmd_dw10[7:0] >= 8'h01) && (cmd_dw10[7:0] <= 8'h0F) {
+                                    cpl_dw0 = 32'h0;
+                                } else {
+                                    sts = error_status(SC_INVALID_FIELD);
                                 }
                             }
                             ADM_OPC_GET_FEATURES: {
                                 case cmd_dw10[7:0] {
-                                    FID_NUMBER_OF_QUEUES: cpl_dw0 = 32'h0;
-                                    FID_VOLATILE_WC     : cpl_dw0 = 32'h0;
-                                    default             : sts     = error_status(SC_INVALID_FIELD);
+                                    FID_TEMP_THRESHOLD: cpl_dw0 = 32'h0000_0170; // 368K over-temp
+                                    default: {
+                                        if (cmd_dw10[7:0] >= 8'h01) && (cmd_dw10[7:0] <= 8'h0F) {
+                                            cpl_dw0 = 32'h0;
+                                        } else {
+                                            sts = error_status(SC_INVALID_FIELD);
+                                        }
+                                    }
+                                }
+                            }
+                            ADM_OPC_GET_LOG_PAGE: {
+                                // NUMDL (DW10[31:16], 0-based dwords) sets the length;
+                                // pages are 512B, larger requests read as zeros
+                                xfer_len = {8'h0, cmd_dw10[31:16]} + 24'd1;
+                                case cmd_dw10[7:0] {
+                                    LID_ERROR_INFO   : { id_kind = IdKind::LogErr;   state = State::IdSend; }
+                                    LID_SMART_HEALTH : { id_kind = IdKind::LogSmart; state = State::IdSend; }
+                                    LID_FIRMWARE_SLOT: { id_kind = IdKind::LogFw;    state = State::IdSend; }
+                                    default          : sts = error_status(SC_INVALID_FIELD);
                                 }
                             }
                             default: sts = error_status(SC_INVALID_OPCODE);

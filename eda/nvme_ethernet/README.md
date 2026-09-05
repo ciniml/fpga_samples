@@ -27,8 +27,8 @@ $ make TARGET=tangnano9k_pmod GW_SH=~/gowin/1.9.10.03_edu/IDE/bin/gw_sh synthesi
 $ make TARGET=tangnano9k_pmod run      # openFPGALoader で SRAM へ
 ```
 
-リソース: Logic 80% (6,859/8,640)、BSRAM 89% (23/26)、
-Fmax 51.5MHz @ 50MHz 制約 (両ターゲットともタイミングクローズ済み)。
+リソース: Logic 81% (6,969/8,640)、BSRAM 89% (23/26)、
+Fmax 50.4MHz @ 50MHz 制約 (tangnano9k_pmod、タイミングクローズ済み)。
 
 ## ホスト側 (すべてユーザーモード)
 
@@ -53,9 +53,11 @@ $ spdk_nvme_perf --no-huge -s 512 -o 4096 -q 4 -w randrw -M 50 -t 10 \
 - `spdk_nvme_perf` 4KiB randrw 50/50 QD4 10s: **999.8 IOPS / 3.91 MiB/s**
   (平均レイテンシ 4.0ms、シミュレーションの約 13 倍)
 
-`get_feature(...) failed` / `get log page failed` は未実装のオプション
-機能、終了時の `CQ transport error -6` は SPDK の切断処理のログで、
-いずれもシミュレーション時と同じ良性のメッセージ。
+その後 Get Log Page (Error / SMART / Firmware Slot) と Get/Set Features
+(FID 01h-0Fh のデフォルト値) を追加し、`get_feature(...) failed` /
+`get log page failed` の警告は出なくなった (identify が SMART 温度・
+FW スロット等まで表示する)。終了時の `CQ transport error -6` は SPDK の
+切断処理のログで良性。
 
 同じ RTL は `rtl/nvme/sim` の TAP ブリッジ (`make eth_nvme`) で
 シミュレーションでも検証済み (ping / smoke / SPDK identify・perf)。

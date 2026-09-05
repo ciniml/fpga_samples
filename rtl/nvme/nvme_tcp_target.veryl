@@ -665,6 +665,9 @@ pub module NvmeTcpTarget #(
                         if ex_adm && (sqe_dw[0][7:0] == ADM_OPC_IDENTIFY) {
                             xfer_len = 32'd4096;
                             ex_patch = sqe_dw[10][7:0] == CNS_CONTROLLER;
+                        } else if ex_adm && (sqe_dw[0][7:0] == ADM_OPC_GET_LOG_PAGE) {
+                            // (NUMDL + 1) dwords
+                            xfer_len = ({16'h0, sqe_dw[10][31:16]} + 32'd1) << 2;
                         } else if !ex_adm && (sqe_dw[0][7:0] == NVM_OPC_READ) {
                             xfer_len = ({16'h0, sqe_dw[12][15:0]} + 1) << 9;
                         } else {

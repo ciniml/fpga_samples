@@ -225,6 +225,32 @@ module nvme_core_test_body #(
         get_cpl("set features NQ", 16'h1105, STS_OK);
         check32("set features NQ dw0", cpl_dw0, 32'h0);
 
+        // ---- Get Log Page: SMART/Health, 512 bytes (NUMDL=127) ----
+        make_sqe(sqe, 8'h02, 16'h1108, 32'hFFFF_FFFF, 32'h007F_0002, 32'h0, 32'h0);
+        send_sqe(1, sqe);
+        recv_c2h("get log smart", 128, 1);
+        get_cpl("get log smart", 16'h1108, STS_OK);
+        check32("smart temp/spare", cbuf[0], 32'h6401_2B00);
+        check32("smart spare threshold", cbuf[1], 32'h0000_000A);
+
+        // ---- Get Log Page: unknown LID -> invalid field, no data ----
+        make_sqe(sqe, 8'h02, 16'h1109, 32'hFFFF_FFFF, 32'h007F_0077, 32'h0, 32'h0);
+        send_sqe(1, sqe);
+        get_cpl("get log bad lid", 16'h1109, STS_INVALID_FLD);
+
+        // ---- Get/Set Features: arbitration (default 0), temp threshold ----
+        make_sqe(sqe, 8'h0A, 16'h110A, 32'h0, 32'h0000_0001, 32'h0, 32'h0);
+        send_sqe(1, sqe);
+        get_cpl("get features arb", 16'h110A, STS_OK);
+        check32("arb dw0", cpl_dw0, 32'h0);
+        make_sqe(sqe, 8'h0A, 16'h110B, 32'h0, 32'h0000_0004, 32'h0, 32'h0);
+        send_sqe(1, sqe);
+        get_cpl("get features temp", 16'h110B, STS_OK);
+        check32("temp threshold dw0", cpl_dw0, 32'h0000_0170);
+        make_sqe(sqe, 8'h09, 16'h110C, 32'h0, 32'h0000_000B, 32'h0, 32'h0);
+        send_sqe(1, sqe);
+        get_cpl("set features async event", 16'h110C, STS_OK);
+
         // ---- unknown admin opcode ----
         make_sqe(sqe, 8'hC0, 16'h1106, 32'h0, 32'h0, 32'h0, 32'h0);
         send_sqe(1, sqe);

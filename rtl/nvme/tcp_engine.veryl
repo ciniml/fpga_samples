@@ -122,6 +122,9 @@ pub module TcpEngine #(
     var p_trunc  : logic    ; // payload byte dropped (FIFO full)
     var p_wr_t   : logic<12>; // tentative FIFO write pointer
     var p_plen   : logic<12>; // accepted payload bytes
+    var p_istcp_r: logic    ; // p_is_tcp registered at pos 47 (0 for shorter frames)
+    var p_payoff_r: logic<12>; // registered p_payoff (valid from pos 48)
+    var p_ipend_r : logic<12>; // registered p_ipend (valid from pos 48)
 
     // peer MAC per connection (captured from the SYN)
     var rmac0: logic<48>;
@@ -134,8 +137,10 @@ pub module TcpEngine #(
 
     // payload byte arriving THIS cycle (needed because the last byte
     // coincides with tlast: the commit must include it)
-    let pay_now: logic = i_rx_valid && p_is_tcp && p_accept &&
-     (rx_pos >= p_payoff) && (rx_pos <: p_ipend);
+    // (p_accept already implies p_is_tcp; the registered window keeps
+    // the header compare chain off the per-byte FIFO write path)
+    let pay_now: logic = i_rx_valid && p_accept &&
+     (rx_pos >= p_payoff_r) && (rx_pos <: p_ipend_r);
     let pay_ok : logic     = pay_now && (occ12(p_wr_t, rxf_rd[p_conn[0]]) <: 12'd2048);
     let p_wr_e : logic<12> = p_wr_t + (if pay_ok ? 12'd1 : 12'd0);
     let p_len_e: logic<12> = p_plen + (if pay_ok ? 12'd1 : 12'd0);
@@ -267,57 +272,58 @@ pub module TcpEngine #(
     }
 
     // frame byte source (checksum fields return 0 during pass 1)
-    function hdr_byte(i: input logic<12>, pass2: input logic) -> logic<8> {
+    // (headers never exceed 58 bytes; the caller masks i >= 64)
+    function hdr_byte(i: input logic<6>, pass2: input logic) -> logic<8> {
         var r: logic<8>;
         r = 8'h00;
         case i {
-            12'd12 : r = 8'h08;
-            12'd13 : r = 8'h00;
-            12'd14 : r = 8'h45;
-            12'd16 : r = f_iplen[15:8];
-            12'd17 : r = f_iplen[7:0];
-            12'd18 : r = ip_id[15:8];
-            12'd19 : r = ip_id[7:0];
-            12'd20 : r = 8'h40; // DF
-            12'd22 : r = 8'h40; // TTL
-            12'd23 : r = 8'h06; // TCP
-            12'd24 : r = if pass2 ? f_ipck[15:8] : 8'h00;
-            12'd25 : r = if pass2 ? f_ipck[7:0] : 8'h00;
-            12'd26 : r = LOCAL_IP[31:24];
-            12'd27 : r = LOCAL_IP[23:16];
-            12'd28 : r = LOCAL_IP[15:8];
-            12'd29 : r = LOCAL_IP[7:0];
-            12'd30 : r = r_rip[31:24];
-            12'd31 : r = r_rip[23:16];
-            12'd32 : r = r_rip[15:8];
-            12'd33 : r = r_rip[7:0];
-            12'd34 : r = LOCAL_PORT[15:8];
-            12'd35 : r = LOCAL_PORT[7:0];
-            12'd36 : r = r_rport[15:8];
-            12'd37 : r = r_rport[7:0];
-            12'd38 : r = f_seq[31:24];
-            12'd39 : r = f_seq[23:16];
-            12'd40 : r = f_seq[15:8];
-            12'd41 : r = f_seq[7:0];
-            12'd42 : r = f_ack[31:24];
-            12'd43 : r = f_ack[23:16];
-            12'd44 : r = f_ack[15:8];
-            12'd45 : r = f_ack[7:0];
-            12'd46 : r = if f_tcpo == 12'd24 ? 8'h60 : 8'h50; // data offset
-            12'd47 : r = f_flags;
-            12'd48 : r = f_win[15:8];
-            12'd49 : r = f_win[7:0];
-            12'd50 : r = if pass2 ? f_tcpck[15:8] : 8'h00;
-            12'd51 : r = if pass2 ? f_tcpck[7:0] : 8'h00;
+            6'd12 : r = 8'h08;
+            6'd13 : r = 8'h00;
+            6'd14 : r = 8'h45;
+            6'd16 : r = f_iplen[15:8];
+            6'd17 : r = f_iplen[7:0];
+            6'd18 : r = ip_id[15:8];
+            6'd19 : r = ip_id[7:0];
+            6'd20 : r = 8'h40; // DF
+            6'd22 : r = 8'h40; // TTL
+            6'd23 : r = 8'h06; // TCP
+            6'd24 : r = if pass2 ? f_ipck[15:8] : 8'h00;
+            6'd25 : r = if pass2 ? f_ipck[7:0] : 8'h00;
+            6'd26 : r = LOCAL_IP[31:24];
+            6'd27 : r = LOCAL_IP[23:16];
+            6'd28 : r = LOCAL_IP[15:8];
+            6'd29 : r = LOCAL_IP[7:0];
+            6'd30 : r = r_rip[31:24];
+            6'd31 : r = r_rip[23:16];
+            6'd32 : r = r_rip[15:8];
+            6'd33 : r = r_rip[7:0];
+            6'd34 : r = LOCAL_PORT[15:8];
+            6'd35 : r = LOCAL_PORT[7:0];
+            6'd36 : r = r_rport[15:8];
+            6'd37 : r = r_rport[7:0];
+            6'd38 : r = f_seq[31:24];
+            6'd39 : r = f_seq[23:16];
+            6'd40 : r = f_seq[15:8];
+            6'd41 : r = f_seq[7:0];
+            6'd42 : r = f_ack[31:24];
+            6'd43 : r = f_ack[23:16];
+            6'd44 : r = f_ack[15:8];
+            6'd45 : r = f_ack[7:0];
+            6'd46 : r = if f_tcpo == 6'd24 ? 8'h60 : 8'h50; // data offset
+            6'd47 : r = f_flags;
+            6'd48 : r = f_win[15:8];
+            6'd49 : r = f_win[7:0];
+            6'd50 : r = if pass2 ? f_tcpck[15:8] : 8'h00;
+            6'd51 : r = if pass2 ? f_tcpck[7:0] : 8'h00;
             // MSS option (SYN-ACK only)
-            12'd54 : r = if f_tcpo == 12'd24 ? 8'h02 : 8'h00;
-            12'd55 : r = if f_tcpo == 12'd24 ? 8'h04 : 8'h00;
-            12'd56 : r = if f_tcpo == 12'd24 ? 8'h05 : 8'h00;
-            12'd57 : r = if f_tcpo == 12'd24 ? 8'hB4 : 8'h00; // 1460
+            6'd54 : r = if f_tcpo == 6'd24 ? 8'h02 : 8'h00;
+            6'd55 : r = if f_tcpo == 6'd24 ? 8'h04 : 8'h00;
+            6'd56 : r = if f_tcpo == 6'd24 ? 8'h05 : 8'h00;
+            6'd57 : r = if f_tcpo == 6'd24 ? 8'hB4 : 8'h00; // 1460
             default: {}
         }
         // destination MAC: the peer's (registered in PreSum)
-        if i <= 12'd5 {
+        if i <= 6'd5 {
             case i[2:0] {
                 3'd0   : r = r_rmac[47:40];
                 3'd1   : r = r_rmac[39:32];
@@ -327,7 +333,7 @@ pub module TcpEngine #(
                 default: r = r_rmac[7:0];
             }
         }
-        if (i >= 12'd6) && (i <= 12'd11) {
+        if (i >= 6'd6) && (i <= 6'd11) {
             r = mac_byte(i[2:0] - 3'd6);
         }
         return r;
@@ -350,7 +356,8 @@ pub module TcpEngine #(
     var p_smac: logic<48>; // source MAC of the frame being parsed
 
     let f_paybyte: logic = (f_i >= f_payoff) && (f_i <: f_total);
-    let f_curb: logic<8> = if f_paybyte ? f_prb : (if f_i <: f_total ? hdr_byte(f_i, tx_st == TxSt::Emit) : 8'h00);
+    let f_hdrb: logic<8> = if f_i[11:6] == 6'h0 ? hdr_byte(f_i[5:0], tx_st == TxSt::Emit) : 8'h00;
+    let f_curb: logic<8> = if f_paybyte ? f_prb : (if f_i <: f_total ? f_hdrb : 8'h00);
 
     // registered output stage (keeps the byte mux off the MAC paths)
     var otx_v: logic   ;
@@ -449,6 +456,9 @@ pub module TcpEngine #(
             p_accept = 0;
             p_trunc  = 0;
             p_wr_t   = 0;
+            p_istcp_r  = 0;
+            p_payoff_r = 0;
+            p_ipend_r  = 0;
             p_plen   = 0;
             ar_st = ArSt::Idle;
             ar_c  = 0;
@@ -504,8 +514,9 @@ pub module TcpEngine #(
             if i_rx_valid {
                 case rx_pos {
                     12'd0: {
-                        p_ethok = i_rx_data == mac_byte(0);
-                        p_conn  = 2;
+                        p_ethok   = i_rx_data == mac_byte(0);
+                        p_conn    = 2;
+                        p_istcp_r = 0;
                     }
                     12'd1: p_ethok = p_ethok && (i_rx_data == mac_byte(1));
                     12'd2: p_ethok = p_ethok && (i_rx_data == mac_byte(2));
@@ -566,7 +577,10 @@ pub module TcpEngine #(
                         p_accept = (p_conn <: 2'd2) && p_is_tcp &&
                          (p_seq == rcv_nxt[p_conn[0]]) && !i_rx_data[1] && // no SYN
                          ((st[p_conn[0]] == ConnSt::Estab) || (st[p_conn[0]] == ConnSt::SynRcvd));
-                        p_wr_t = rxf_wr[p_conn[0]];
+                        p_wr_t     = rxf_wr[p_conn[0]];
+                        p_istcp_r  = p_is_tcp;
+                        p_payoff_r = p_payoff;
+                        p_ipend_r  = p_ipend;
                     }
                     default: {}
                 }
@@ -582,7 +596,7 @@ pub module TcpEngine #(
                 if i_rx_last {
                     rx_pos = 0;
                     // hand the frame to the commit stage (next cycle)
-                    cm_v     = !i_rx_user && p_is_tcp && (p_dport == LOCAL_PORT);
+                    cm_v     = !i_rx_user && p_istcp_r && (p_dport == LOCAL_PORT);
                     cm_conn  = p_conn;
                     cm_flags = p_flags;
                     cm_seq   = p_seq;
@@ -749,13 +763,14 @@ pub module TcpEngine #(
                     pf_pa     = f_seq[10:0];
                     sum_first = 1;
                     f_i     = 14;
+                    // pseudo header, local half (peer IP added in PreSum2)
+                    f_tcpsum = {16'h0, LOCAL_IP[31:16]} + {16'h0, LOCAL_IP[15:0]} +
+                     32'h6 + {16'h0, 4'h0, f_tcpo} + {16'h0, 4'h0, f_plen};
                     tx_st   = TxSt::PreSum2;
                 }
                 TxSt::PreSum2: {
-                    // TCP pseudo header into the running sum
-                    f_tcpsum = {16'h0, LOCAL_IP[31:16]} + {16'h0, LOCAL_IP[15:0]} +
-                     {16'h0, r_rip[31:16]} + {16'h0, r_rip[15:0]} +
-                     32'h6 + {16'h0, f_iplen - 16'd20};
+                    // TCP pseudo header, peer half
+                    f_tcpsum = f_tcpsum + {16'h0, r_rip[31:16]} + {16'h0, r_rip[15:0]};
                     tx_st = TxSt::Sum;
                 }
                 TxSt::Sum: {
