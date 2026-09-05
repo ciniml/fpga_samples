@@ -139,7 +139,8 @@ def main():
     check("cntlid", cntlid == 1, f"got {cntlid}")
 
     cap = prop_get(aq, 0x0, size8=True)
-    check("CAP.MQES", (cap & 0xFFFF) == 255, f"cap={cap:#x}")
+    # C++ bridge advertises MQES=255, the RTL target 15 (FIFO sizing)
+    check("CAP.MQES", (cap & 0xFFFF) in (255, 15), f"cap={cap:#x}")
     check("CAP.CSS=NVM", (cap >> 37) & 0xFF == 1, f"cap={cap:#x}")
     vs = prop_get(aq, 0x8)
     check("VS=1.4", vs == 0x00010400, f"vs={vs:#x}")

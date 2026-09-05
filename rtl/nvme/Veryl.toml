@@ -11,12 +11,14 @@ omit_project_prefix = true
 include_files = [
     "test/nvme_core_test_body.sv",
     "test/nvme_controller_test_body.sv",
+    "test/nvme_tcp_target_test_body.sv",
 ]
 
 [test.verilator]
 compile_args = [
     "nvme_core_test_body.sv",
     "nvme_controller_test_body.sv",
+    "nvme_tcp_target_test_body.sv",
     "-Wno-WIDTHEXPAND",
     "-Wno-WIDTHTRUNC",
     "-Wno-CASEINCOMPLETE",

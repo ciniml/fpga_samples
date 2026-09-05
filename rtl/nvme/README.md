@@ -11,7 +11,8 @@ SQE (Submission Queue Entry) をストリームで受け取り、コマンドを
 |---|---|
 | `nvme_pkg.veryl` | オペコード・ステータスコード定数 (NVMe Base Spec 1.4) |
 | `nvme_core.veryl` | `NvmeCore` 本体 (トランスポート非依存のコマンド実行) |
-| `nvme_controller.veryl` | `NvmeController`: レジスタ + SQ/CQ キューエンジン + PRP データエンジン |
+| `nvme_controller.veryl` | `NvmeController`: レジスタ + SQ/CQ キューエンジン + PRP データエンジン (PCIe 型) |
+| `nvme_tcp_pkg.veryl` / `nvme_tcp_target.veryl` | `NvmeTcpTarget`: NVMe/TCP (NVMe-oF) ターゲットの RTL 実装 |
 | `tb_nvme_*.veryl` / `test/*.sv` | テスト (`veryl test`) |
 
 ## インタフェース (すべて valid/ready ハンドシェイク)
@@ -110,6 +111,37 @@ $ spdk_nvme_identify --no-huge -s 512 \
 動作確認済み (SPDK 25.x / Verilator 5.022): identify がコントローラ/
 ネームスペースを正しく列挙し、perf が 4KiB random R/W 50/50 QD4 で
 約 5,000 IOPS (RTL シミュレーション上) を完走します。
+
+## NvmeTcpTarget — NVMe/TCP ターゲットの RTL 化 (Ethernet ボード向け)
+
+`NvmeTcpTarget` は NVMe/TCP ターゲットの PDU 層をすべて RTL にしたもの
+です。境界は「コネクションごとの生 TCP バイトストリーム」(8bit
+valid/ready × 2 本: admin + I/O キュー。NVMe/TCP はキューごとに 1 TCP
+コネクション) で、下位の TCP はシミュレーションではソケットポンプ
+(`sim/nvme_tcp_rtl_bridge.cpp`、NVMe ロジックなし)、実機では FPGA の
+TCP エンジンが担います。
+
+- ICReq/ICResp (ダイジェスト無効、MAXH2CDATA=128KiB)、Fabrics
+  Connect / Property Get/Set、Keep Alive、AER 保留
+- 受信は 2 コネクションをバイト単位でインターリーブ処理 (1 バイト/
+  サイクル)。SQE は共有 FIFO (64 スロット、BRAM 4KiB) へ
+- ライトは R2T フローで、H2CData ペイロードを `NvmeCore` の h2c へ
+  直結 — パイプライン化されたコマンドが先行してもデータバッファ不要。
+  CAP.MQES=15 (キュー深さ 16) が FIFO のデッドロックフリーを保証
+- リード/Identify は c2h から単一の C2HData PDU (LAST 付き) へ直結。
+  Identify Controller の fabrics 固有フィールド (CNTLID/KAS/MAXCMD/
+  SGLS/SUBNQN/IOCCSZ 等) は dword インデックスでオンザフライパッチ
+
+```console
+$ cd sim && make tcp_rtl
+$ BRIDGE_BIN=$PWD/obj_tcp/nvme_tcp_rtl_bridge ./run_smoke.sh
+$ BRIDGE_BIN=$PWD/obj_tcp/nvme_tcp_rtl_bridge ./run_spdk.sh all
+```
+
+SPDK identify/perf が RTL ターゲットに対して完走します (性能は
+1 バイト/サイクル処理なりですが、Tang Nano 9K + 100M PHY の回線速度
+には十分)。実機化に必要な残りは Ethernet 側 (MAC/ARP/IPv4 + 2〜4
+コネクションの簡易 TCP) です。
 
 ### vfio-user 接続 (キュー機構まで RTL で検証)
 

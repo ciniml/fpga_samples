@@ -1,0 +1,38 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file nvme_tcp_pkg.veryl
+ * @brief Constants for the NVMe/TCP (NVMe over Fabrics) target.
+ *
+ * PDU types and layouts follow the NVMe/TCP Transport Specification
+ * 1.0; fabrics command types follow NVMe-oF 1.1.
+ */
+pub package nvme_tcp_pkg {
+    // PDU types (CH byte 0)
+    const PDU_ICREQ    : logic<8> = 8'h00;
+    const PDU_ICRESP   : logic<8> = 8'h01;
+    const PDU_H2C_TERM : logic<8> = 8'h02;
+    const PDU_C2H_TERM : logic<8> = 8'h03;
+    const PDU_CAPS_CMD : logic<8> = 8'h04;
+    const PDU_CAPS_RESP: logic<8> = 8'h05;
+    const PDU_H2C_DATA : logic<8> = 8'h06;
+    const PDU_C2H_DATA : logic<8> = 8'h07;
+    const PDU_R2T      : logic<8> = 8'h09;
+
+    const PDU_FLAG_LAST: logic<8> = 8'h04; // C2HData/H2CData LAST_PDU
+
+    // Fabrics command types (SQE byte 4, opcode 7Fh)
+    const FCTYPE_PROP_SET  : logic<8> = 8'h00;
+    const FCTYPE_CONNECT   : logic<8> = 8'h01;
+    const FCTYPE_PROP_GET  : logic<8> = 8'h04;
+    const FCTYPE_DISCONNECT: logic<8> = 8'h08;
+
+    // Controller properties (offsets)
+    const PROP_CAP : logic<32> = 32'h00;
+    const PROP_VS  : logic<32> = 32'h08;
+    const PROP_CC  : logic<32> = 32'h14;
+    const PROP_CSTS: logic<32> = 32'h1C;
+}

@@ -28,11 +28,24 @@ VERILATOR_FLAGS = --cc --exe --build -j 8 -O2 --top-module NvmeCore \
 	-Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEINCOMPLETE \
 	-Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM
 
-.PHONY: all vfio run smoke clean
+RTL_TCP = $(RTL) ../nvme_tcp_pkg.sv ../nvme_tcp_target.sv
+TCP_RTL_BRIDGE = obj_tcp/nvme_tcp_rtl_bridge
+
+.PHONY: all vfio tcp_rtl run smoke clean
 
 all: $(BRIDGE)
 
 vfio: $(VFIO_BRIDGE)
+
+tcp_rtl: $(TCP_RTL_BRIDGE)
+
+$(TCP_RTL_BRIDGE): $(RTL_TCP) nvme_tcp_rtl_bridge.cpp
+	verilator --cc --exe --build -j 8 -O2 --top-module NvmeTcpTarget --Mdir obj_tcp \
+	  -GLBA_COUNT=$(LBA_COUNT) \
+	  -CFLAGS "-O2 -DSIM_LBA_COUNT=$(LBA_COUNT)" \
+	  -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEINCOMPLETE \
+	  -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM \
+	  $(RTL_TCP) nvme_tcp_rtl_bridge.cpp -o nvme_tcp_rtl_bridge
 
 $(BRIDGE): $(RTL) nvme_tcp_bridge.cpp
 	verilator $(VERILATOR_FLAGS) $(RTL) nvme_tcp_bridge.cpp -o nvme_tcp_bridge
@@ -53,4 +66,4 @@ smoke: $(BRIDGE)
 	./run_smoke.sh $(PORT)
 
 clean:
-	rm -rf obj_dir obj_vfio
+	rm -rf obj_dir obj_vfio obj_tcp

@@ -24,7 +24,8 @@ for bin in "$IDENTIFY" "$PERF"; do
     [ -x "$bin" ] || { echo "not found: $bin (build SPDK first)"; exit 1; }
 done
 
-"$DIR"/obj_dir/nvme_tcp_bridge "$PORT" &
+BRIDGE_BIN=${BRIDGE_BIN:-$DIR/obj_dir/nvme_tcp_bridge}
+"$BRIDGE_BIN" "$PORT" &
 BRIDGE_PID=$!
 trap 'kill $BRIDGE_PID 2>/dev/null' EXIT
 

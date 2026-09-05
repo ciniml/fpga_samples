@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_nvme_tcp_target.veryl
+ * @brief NvmeTcpTarget tests.
+ *
+ * nvme_tcp_target: the test body (test/nvme_tcp_target_test_body.sv)
+ *   acts as an NVMe/TCP host on the two byte-stream connections:
+ *   ICReq/ICResp, fabrics Connect and Property Get/Set, Identify
+ *   Controller (checking the on-the-fly fabrics field patches and the
+ *   C2HData framing), a Write via the R2T flow, a Read back, and an
+ *   error completion without a data phase.
+ */
+
+module TbNvmeTcpTarget {}
+
+#[test(nvme_tcp_target)]
+embed (inline) sv{{{
+module nvme_tcp_target_test;
+    nvme_tcp_target_test_body #(.RUN(1)) body();
+endmodule
+}}}

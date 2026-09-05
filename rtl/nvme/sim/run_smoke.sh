@@ -4,7 +4,8 @@ set -u
 PORT=${1:-4420}
 DIR=$(cd "$(dirname "$0")" && pwd)
 
-"$DIR"/obj_dir/nvme_tcp_bridge "$PORT" &
+BRIDGE_BIN=${BRIDGE_BIN:-$DIR/obj_dir/nvme_tcp_bridge}
+"$BRIDGE_BIN" "$PORT" &
 BRIDGE_PID=$!
 trap 'kill $BRIDGE_PID 2>/dev/null' EXIT
 

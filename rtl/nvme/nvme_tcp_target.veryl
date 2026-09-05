@@ -1,0 +1,724 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file nvme_tcp_target.veryl
+ * @brief NVMe/TCP (NVMe over Fabrics) target: everything between raw
+ *        TCP byte streams and NvmeCore, in RTL.
+ *
+ * Two connections (NVMe/TCP uses one TCP connection per queue; the
+ * core grants one I/O queue, so admin + I/O = 2). Per connection the
+ * module consumes an RX byte stream and produces a TX byte stream
+ * (valid/ready, 8 bit); the TCP stack below (a Verilator socket pump
+ * in simulation, an FPGA TCP engine on hardware) only moves bytes.
+ *
+ * What it implements (previously the C++ bridge's job):
+ *  - ICReq/ICResp negotiation (digests off, MAXH2CDATA=128KiB)
+ *  - CapsuleCmd parsing into a shared SQE FIFO (64 slots, BRAM);
+ *    RX handles the two connections byte-interleaved, one byte/cycle
+ *  - Fabrics commands: Connect (records QID/SQSIZE, returns CNTLID 1),
+ *    Property Get/Set (CAP/VS/CC/CSTS), Disconnect; Keep Alive; AER
+ *    is swallowed (it completes only on an event)
+ *  - Write data via R2T: H2CData payload bytes stream straight into
+ *    NvmeCore's h2c port, so no data buffering is needed even with
+ *    pipelined commands (capsules that arrive before the H2CData go
+ *    to the FIFO, the payload flows through)
+ *  - Read/Identify data streams from c2h into a single C2HData PDU
+ *    (LAST_PDU set), followed by the CapsuleResp with SQHD; the
+ *    fabrics-specific Identify Controller fields (CNTLID, KAS, MAXCMD,
+ *    SGLS, SUBNQN, IOCCSZ/IORCSZ/MSDBD) are patched on the fly
+ *  - CAP advertises MQES=15, so a queue is at most 16 deep and the
+ *    shared FIFO can never deadlock behind an R2T
+ *
+ * Error completions have no data phase (the C2HData header is only
+ * sent once the first c2h dword arrives). Dropping a connection
+ * (i_conn_active low) resets its parser; when both connections are
+ * down and the executor is idle, the FIFO is cleared.
+ */
+import nvme_pkg::*;
+import nvme_tcp_pkg::*;
+
+pub module NvmeTcpTarget #(
+    /// Number of 512-byte logical blocks in the backing memory.
+    param LBA_COUNT: u32 = 2048,
+    /// Dword address width of the backing memory (do not override).
+    param MEM_ADDR_BITS: u32 = $clog2(LBA_COUNT) + 7,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    // ---- per-connection TCP byte streams (bits [c] / byte lanes [8c+7:8c]) ----
+    i_conn_active: input  logic<2> ,
+    i_rx_valid   : input  logic<2> ,
+    o_rx_ready   : output logic<2> ,
+    i_rx_data    : input  logic<16>,
+    o_tx_valid   : output logic<2> ,
+    i_tx_ready   : input  logic<2> ,
+    o_tx_data    : output logic<16>,
+
+    // ---- backing memory (exported from NvmeCore) ----
+    o_mem_addr : output logic<MEM_ADDR_BITS>,
+    o_mem_wen  : output logic               ,
+    o_mem_wdata: output logic<32>           ,
+    o_mem_ren  : output logic               ,
+    i_mem_rdata: input  logic<32>           ,
+) {
+    // -----------------------------------------------------------------
+    // NvmeCore instance
+    // -----------------------------------------------------------------
+    var core_sq_valid: logic    ;
+    var core_sq_ready: logic    ;
+    var core_sq_data : logic<32>;
+    var core_sq_admin: logic    ;
+    var core_cpl_valid : logic    ;
+    var core_cpl_ready : logic    ;
+    var core_cpl_cid   : logic<16>;
+    var core_cpl_status: logic<15>;
+    var core_cpl_dw0   : logic<32>;
+    var core_h2c_valid: logic    ;
+    var core_h2c_ready: logic    ;
+    var core_h2c_data : logic<32>;
+    var core_c2h_valid: logic    ;
+    var core_c2h_ready: logic    ;
+    var core_c2h_data : logic<32>;
+    var core_c2h_last : logic    ;
+
+    inst core: NvmeCore #(
+        LBA_COUNT: LBA_COUNT,
+    ) (
+        i_clk: i_clk,
+        i_rst: i_rst,
+        i_sq_valid   : core_sq_valid,
+        o_sq_ready   : core_sq_ready,
+        i_sq_data    : core_sq_data ,
+        i_sq_is_admin: core_sq_admin,
+        o_cpl_valid : core_cpl_valid ,
+        i_cpl_ready : core_cpl_ready ,
+        o_cpl_cid   : core_cpl_cid   ,
+        o_cpl_status: core_cpl_status,
+        o_cpl_dw0   : core_cpl_dw0   ,
+        i_h2c_valid: core_h2c_valid,
+        o_h2c_ready: core_h2c_ready,
+        i_h2c_data : core_h2c_data ,
+        o_c2h_valid: core_c2h_valid,
+        i_c2h_ready: core_c2h_ready,
+        o_c2h_data : core_c2h_data ,
+        o_c2h_last : core_c2h_last ,
+        o_mem_addr : o_mem_addr ,
+        o_mem_wen  : o_mem_wen  ,
+        o_mem_wdata: o_mem_wdata,
+        o_mem_ren  : o_mem_ren  ,
+        i_mem_rdata: i_mem_rdata,
+    );
+
+    // -----------------------------------------------------------------
+    // Controller state (fabrics properties, per-connection queue info)
+    // -----------------------------------------------------------------
+    var cc  : logic<32>;
+    var csts: logic<32>;
+
+    var conn_qid : logic<16>[2]; // from Fabrics Connect (0 = admin)
+    var conn_sqsz: logic<16>[2]; // SQSIZE (0-based)
+    var sqhd     : logic<16>[2];
+
+    // -----------------------------------------------------------------
+    // RX parser: one byte per cycle, alternating between connections
+    // -----------------------------------------------------------------
+    var rr_sel  : logic       ;
+    var rx_pos  : logic<32>[2]; // byte position within the current PDU
+    var rx_type : logic<8> [2];
+    var rx_pdo  : logic<8> [2];
+    var rx_plen : logic<32>[2];
+    var rx_shift: logic<32>[2]; // SQE byte-to-dword gearbox
+    var icreq_pend: logic<2>;
+
+    // shared SQE FIFO: 64 slots x 16 dwords
+    var fifo_ram  : logic<32>[1024];
+    var fifo_valid: logic<64>;
+    var fifo_conn : logic<64>;
+    var fifo_wr   : logic<6> ;
+    var fifo_count: logic<7> ;
+    var cur_slot  : logic<6>[2];
+
+    function pdo_eff(pdo: input logic<8>) -> logic<32> {
+        return if pdo == 8'h0 ? 32'd24 : {24'h0, pdo};
+    }
+
+    // h2c gearbox (R2T'ed write data -> core h2c)
+    var h2c_sh    : logic<32>;
+    var h2c_cnt   : logic<2> ;
+    var h2c_full  : logic    ;
+    var h2c_expect: logic    ; // executor is waiting for write data
+
+    var exec_c: logic; // connection of the executing command
+
+    // per-connection H2CData payload position
+    var h2c_pay: logic<2>;
+    always_comb {
+        for c in 0..2 {
+            h2c_pay[c] = (rx_pos[c] >= 8) && (rx_type[c] == PDU_H2C_DATA) &&
+             (rx_pos[c] >= pdo_eff(rx_pdo[c]));
+        }
+    }
+
+    // per-connection permission to consume the next byte
+    var rx_ok: logic<2>;
+    always_comb {
+        for c in 0..2 {
+            rx_ok[c] = 1;
+            // a CapsuleCmd needs a FIFO slot at its first SQE byte
+            if (rx_pos[c] == 32'd8) && (rx_type[c] == PDU_CAPS_CMD) && (fifo_count >= 7'd64) {
+                rx_ok[c] = 0;
+            }
+            // write payload stalls while the dword gearbox is full
+            if h2c_pay[c] && h2c_expect && h2c_full &&
+             ((exec_c && (c == 1)) || (!exec_c && (c == 0))) {
+                rx_ok[c] = 0;
+            }
+        }
+    }
+
+    let want0  : logic    = i_rx_valid[0] && rx_ok[0] && i_conn_active[0];
+    let want1  : logic    = i_rx_valid[1] && rx_ok[1] && i_conn_active[1];
+    let sel    : logic    = if want0 && want1 ? rr_sel : want1;
+    let rx_take: logic    = want0 || want1;
+    let rx_byte: logic<8> = if sel ? i_rx_data[15:8] : i_rx_data[7:0];
+
+    assign o_rx_ready = {want1 && sel, want0 && !sel};
+
+    let fifo_alloc: logic = rx_take && (rx_pos[sel] == 32'd8) && (rx_type[sel] == PDU_CAPS_CMD);
+    let h2c_take  : logic = rx_take && h2c_pay[sel] && h2c_expect && (exec_c == sel);
+    var sqe_wi: logic<4>[2]; // SQE dword write index within the slot
+
+    // -----------------------------------------------------------------
+    // Executor
+    // -----------------------------------------------------------------
+    enum ExSt: logic<4> {
+        Idle,
+        PopStart,
+        Pop,     // read the 16 SQE dwords from the FIFO RAM
+        Decode,
+        R2t,     // send the R2T PDU (writes)
+        Push,    // stream the SQE into NvmeCore
+        WaitWr,  // write data flows h2c; wait for the completion
+        WaitFirst, // c2h command: data or an error completion?
+        C2hHdr,  // send the C2HData header
+        C2hPay,  // stream c2h dwords out as bytes
+        WaitCpl,
+        Resp,    // send the CapsuleResp
+    }
+
+    var ex_st     : ExSt      ;
+    var ex_slot   : logic<6>  ;
+    var ex_idx    : logic<7>  ;
+    var sqe_dw    : logic<32>[16];
+    var fifo_rdata: logic<32> ;
+    var ex_cid    : logic<16> ;
+    var ex_sts    : logic<15> ;
+    var ex_dw0    : logic<32> ;
+    var ex_dw1    : logic<32> ;
+    var ex_patch  : logic     ; // patch Identify Controller data
+    var xfer_len  : logic<32> ; // data bytes (R2T length / C2HData length)
+    var c2h_left  : logic<32> ;
+    var c2h_sh    : logic<32> ;
+    var c2h_have  : logic<3>  ;
+    var dwidx     : logic<10> ;
+
+    let fifo_pop: logic = ex_st == ExSt::PopStart;
+    let ex_adm  : logic = conn_qid[exec_c] == 16'h0;
+
+    // ICResp senders (one per connection)
+    var ic_act: logic<2>    ;
+    var ic_idx: logic<8> [2];
+
+    function icresp_byte(i: input logic<8>) -> logic<8> {
+        var r: logic<8>;
+        case i {
+            8'd0   : r = PDU_ICRESP;
+            8'd2   : r = 8'd128; // hlen
+            8'd4   : r = 8'd128; // plen
+            8'd14  : r = 8'h02;  // MAXH2CDATA = 0x0002_0000 (128KiB)
+            default: r = 8'h00;
+        }
+        return r;
+    }
+
+    function r2t_byte(i: input logic<5>) -> logic<8> {
+        var r: logic<8>;
+        case i {
+            5'd0   : r = PDU_R2T;
+            5'd2   : r = 8'd24; // hlen
+            5'd4   : r = 8'd24; // plen
+            5'd8   : r = ex_cid[7:0];
+            5'd9   : r = ex_cid[15:8];
+            5'd10  : r = 8'h01; // ttag
+            5'd16  : r = xfer_len[7:0];
+            5'd17  : r = xfer_len[15:8];
+            5'd18  : r = xfer_len[23:16];
+            5'd19  : r = xfer_len[31:24];
+            default: r = 8'h00;
+        }
+        return r;
+    }
+
+    let c2h_plen: logic<32> = xfer_len + 32'd24;
+    function c2h_hdr_byte(i: input logic<5>) -> logic<8> {
+        var r: logic<8>;
+        case i {
+            5'd0   : r = PDU_C2H_DATA;
+            5'd1   : r = PDU_FLAG_LAST;
+            5'd2   : r = 8'd24; // hlen
+            5'd3   : r = 8'd24; // pdo
+            5'd4   : r = c2h_plen[7:0];
+            5'd5   : r = c2h_plen[15:8];
+            5'd6   : r = c2h_plen[23:16];
+            5'd7   : r = c2h_plen[31:24];
+            5'd8   : r = ex_cid[7:0];
+            5'd9   : r = ex_cid[15:8];
+            5'd16  : r = xfer_len[7:0];
+            5'd17  : r = xfer_len[15:8];
+            5'd18  : r = xfer_len[23:16];
+            5'd19  : r = xfer_len[31:24];
+            default: r = 8'h00;
+        }
+        return r;
+    }
+
+    function resp_byte(i: input logic<5>) -> logic<8> {
+        var r: logic<8>;
+        case i {
+            5'd0   : r = PDU_CAPS_RESP;
+            5'd2   : r = 8'd24; // hlen
+            5'd4   : r = 8'd24; // plen
+            5'd8   : r = ex_dw0[7:0];
+            5'd9   : r = ex_dw0[15:8];
+            5'd10  : r = ex_dw0[23:16];
+            5'd11  : r = ex_dw0[31:24];
+            5'd12  : r = ex_dw1[7:0];
+            5'd13  : r = ex_dw1[15:8];
+            5'd14  : r = ex_dw1[23:16];
+            5'd15  : r = ex_dw1[31:24];
+            5'd16  : r = sqhd[exec_c][7:0];
+            5'd17  : r = sqhd[exec_c][15:8];
+            5'd20  : r = ex_cid[7:0];
+            5'd21  : r = ex_cid[15:8];
+            5'd22  : r = {ex_sts[6:0], 1'b0};  // status field << 1, phase 0
+            5'd23  : r = ex_sts[14:7];
+            default: r = 8'h00;
+        }
+        return r;
+    }
+
+    // Fabrics-specific Identify Controller fields (NVMe-oF 1.1 fig 30);
+    // the transport owns these, NvmeCore stays transport-neutral.
+    function id_patch(idx: input logic<10>, d: input logic<32>) -> logic<32> {
+        var r: logic<32>;
+        case idx {
+            10'd19 : r = 32'h0001_0100; // CNTLID=1 (MDTS=1 kept)
+            10'd80 : r = 32'h0000_000A; // KAS: 1s granularity
+            10'd128: r = 32'h0080_4466; // MAXCMD=128 | SQES/CQES
+            10'd134: r = 32'h0030_0001; // SGLS: SGL + offset + transport data block
+            10'd192: r = 32'h2E6E_716E; // SUBNQN "nqn."
+            10'd193: r = 32'h3632_3032; // "2026"
+            10'd194: r = 32'h2E39_302D; // "-09."
+            10'd195: r = 32'h2E67_726F; // "org."
+            10'd196: r = 32'h6167_7566; // "fuga"
+            10'd197: r = 32'h6167_7566; // "fuga"
+            10'd198: r = 32'h6D76_6E3A; // ":nvm"
+            10'd199: r = 32'h6576_3A65; // "e:ve"
+            10'd200: r = 32'h2D6C_7972; // "ryl-"
+            10'd201: r = 32'h006D_6973; // "sim\0"
+            10'd448: r = 32'h0000_0004; // IOCCSZ: 64B capsule, no in-capsule data
+            10'd449: r = 32'h0000_0001; // IORCSZ
+            10'd450: r = 32'h0100_0000; // MSDBD=1
+            default: r = d;
+        }
+        return r;
+    }
+
+    // -----------------------------------------------------------------
+    // Core-facing combinationals
+    // -----------------------------------------------------------------
+    assign core_sq_valid  = ex_st == ExSt::Push;
+    assign core_sq_data   = sqe_dw[ex_idx[3:0]];
+    assign core_sq_admin  = ex_adm;
+    assign core_cpl_ready = (ex_st == ExSt::WaitWr) || (ex_st == ExSt::WaitFirst) ||
+     (ex_st == ExSt::WaitCpl);
+    assign core_h2c_valid = h2c_full;
+    assign core_h2c_data  = h2c_sh;
+    assign core_c2h_ready = (ex_st == ExSt::C2hPay) && (c2h_have == 3'd0);
+
+    // -----------------------------------------------------------------
+    // TX muxing: per-connection ICResp sender, executor elsewhere
+    // -----------------------------------------------------------------
+    let exec_txv: logic = (ex_st == ExSt::R2t) || (ex_st == ExSt::C2hHdr) ||
+     (ex_st == ExSt::Resp) || ((ex_st == ExSt::C2hPay) && (c2h_have != 3'd0));
+    let exec_txb: logic<8> = if (ex_st == ExSt::R2t) ? r2t_byte(ex_idx[4:0]) :
+     if (ex_st == ExSt::C2hHdr) ? c2h_hdr_byte(ex_idx[4:0]) :
+     if (ex_st == ExSt::Resp) ? resp_byte(ex_idx[4:0]) : c2h_sh[7:0];
+    // a dead connection acts as an always-ready sink so the executor
+    // can drain the core's output instead of wedging
+    let exec_tx_ready: logic = (i_tx_ready[exec_c] && !ic_act[exec_c]) || !i_conn_active[exec_c];
+
+    assign o_tx_valid = {
+        ic_act[1] || (exec_txv && (exec_c == 1'b1) && i_conn_active[1]),
+        ic_act[0] || (exec_txv && (exec_c == 1'b0) && i_conn_active[0])
+    };
+    assign o_tx_data = {
+        if ic_act[1] ? icresp_byte(ic_idx[1]) : exec_txb,
+        if ic_act[0] ? icresp_byte(ic_idx[0]) : exec_txb
+    };
+
+    // -----------------------------------------------------------------
+    // Sequential logic
+    // -----------------------------------------------------------------
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            cc   = 0;
+            csts = 0;
+            rr_sel = 0;
+            icreq_pend = 0;
+            fifo_valid = 0;
+            fifo_conn  = 0;
+            fifo_wr    = 0;
+            fifo_count = 0;
+            h2c_sh     = 0;
+            h2c_cnt    = 0;
+            h2c_full   = 0;
+            h2c_expect = 0;
+            exec_c     = 0;
+            ex_st      = ExSt::Idle;
+            ex_slot    = 0;
+            ex_idx     = 0;
+            fifo_rdata = 0;
+            ex_cid     = 0;
+            ex_sts     = 0;
+            ex_dw0     = 0;
+            ex_dw1     = 0;
+            ex_patch   = 0;
+            xfer_len   = 0;
+            c2h_left   = 0;
+            c2h_sh     = 0;
+            c2h_have   = 0;
+            dwidx      = 0;
+            ic_act     = 0;
+            for c in 0..2 {
+                rx_pos[c]    = 0;
+                rx_type[c]   = 0;
+                rx_pdo[c]    = 0;
+                rx_plen[c]   = 0;
+                rx_shift[c]  = 0;
+                cur_slot[c]  = 0;
+                conn_qid[c]  = 16'hFFFF;
+                conn_sqsz[c] = 0;
+                sqhd[c]      = 0;
+                ic_idx[c]    = 0;
+            }
+            for i in 0..16 {
+                sqe_dw[i] = 0;
+            }
+        } else {
+            // ---- connection teardown ----
+            for c in 0..2 {
+                if !i_conn_active[c] {
+                    rx_pos[c]     = 0;
+                    icreq_pend[c] = 0;
+                    ic_act[c]     = 0;
+                    conn_qid[c]   = 16'hFFFF;
+                    sqhd[c]       = 0;
+                }
+            }
+            if (i_conn_active == 2'b00) && (ex_st == ExSt::Idle) {
+                fifo_valid = 0;
+                fifo_wr    = 0;
+                fifo_count = 0;
+                h2c_expect = 0;
+                h2c_full   = 0;
+                h2c_cnt    = 0;
+            }
+
+            // ---- ICResp senders ----
+            for c in 0..2 {
+                if icreq_pend[c] && !ic_act[c] {
+                    icreq_pend[c] = 0;
+                    ic_act[c]     = 1;
+                    ic_idx[c]     = 0;
+                }
+                if ic_act[c] && i_tx_ready[c] {
+                    if ic_idx[c] == 8'd127 {
+                        ic_act[c] = 0;
+                    } else {
+                        ic_idx[c] = ic_idx[c] + 1;
+                    }
+                }
+            }
+
+            // ---- RX parser ----
+            if rx_take {
+                rr_sel = ~sel;
+                // header capture
+                if rx_pos[sel] == 32'd0 {
+                    rx_type[sel] = rx_byte;
+                }
+                if rx_pos[sel] == 32'd3 {
+                    rx_pdo[sel] = rx_byte;
+                }
+                if rx_pos[sel] == 32'd4 {
+                    rx_plen[sel][7:0] = rx_byte;
+                    rx_plen[sel][31:8] = 0;
+                }
+                if rx_pos[sel] == 32'd5 {
+                    rx_plen[sel][15:8] = rx_byte;
+                }
+                if rx_pos[sel] == 32'd6 {
+                    rx_plen[sel][23:16] = rx_byte;
+                }
+                if rx_pos[sel] == 32'd7 {
+                    rx_plen[sel][31:24] = rx_byte;
+                }
+                // CapsuleCmd: SQE bytes 8..71 into the FIFO RAM
+                if (rx_type[sel] == PDU_CAPS_CMD) && (rx_pos[sel] >= 32'd8) && (rx_pos[sel] <= 32'd71) {
+                    rx_shift[sel] = {rx_byte, rx_shift[sel][31:8]};
+                    if rx_pos[sel][1:0] == 2'b11 { // bytes 11, 15, ... complete a dword
+                        fifo_ram[{cur_slot[sel], sqe_wi[sel]}] = {rx_byte, rx_shift[sel][31:8]};
+                        sqe_wi[sel] = sqe_wi[sel] + 1;
+                    }
+                    if rx_pos[sel] == 32'd71 {
+                        fifo_valid[cur_slot[sel]] = 1;
+                    }
+                }
+                if fifo_alloc {
+                    cur_slot[sel]      = fifo_wr;
+                    sqe_wi[sel]        = 0;
+                    fifo_conn[fifo_wr] = sel;
+                    fifo_wr            = fifo_wr + 1;
+                }
+                // H2CData payload -> h2c gearbox (only for the executing write)
+                if h2c_take {
+                    h2c_sh = {rx_byte, h2c_sh[31:8]};
+                    if h2c_cnt == 2'd3 {
+                        h2c_cnt  = 0;
+                        h2c_full = 1;
+                    } else {
+                        h2c_cnt = h2c_cnt + 1;
+                    }
+                }
+                // end of PDU / advance
+                if (rx_pos[sel] >= 32'd7) && (rx_pos[sel] + 1 == rx_plen[sel]) {
+                    if rx_type[sel] == PDU_ICREQ {
+                        icreq_pend[sel] = 1;
+                    }
+                    rx_pos[sel] = 0;
+                } else {
+                    rx_pos[sel] = rx_pos[sel] + 1;
+                }
+            }
+
+            // h2c dword consumed by the core
+            if h2c_full && core_h2c_ready && !(h2c_take && (h2c_cnt == 2'd3)) {
+                h2c_full = 0;
+            }
+
+            // FIFO occupancy (alloc and pop can coincide)
+            if fifo_alloc && !fifo_pop {
+                fifo_count = fifo_count + 1;
+            } else if fifo_pop && !fifo_alloc {
+                fifo_count = fifo_count - 1;
+            }
+
+            // ---- executor ----
+            case ex_st {
+                ExSt::Idle: {
+                    if (fifo_count != 7'd0) && fifo_valid[fifo_wr - fifo_count[5:0]] {
+                        ex_slot = fifo_wr - fifo_count[5:0];
+                        ex_st   = ExSt::PopStart;
+                    }
+                }
+                ExSt::PopStart: {
+                    exec_c = fifo_conn[ex_slot];
+                    fifo_valid[ex_slot] = 0;
+                    ex_idx = 0;
+                    ex_st  = ExSt::Pop;
+                }
+                ExSt::Pop: {
+                    if ex_idx >= 7'd1 {
+                        sqe_dw[ex_idx[3:0] - 4'd1] = fifo_rdata;
+                    }
+                    fifo_rdata = fifo_ram[{ex_slot, ex_idx[3:0]}];
+                    if ex_idx == 7'd16 {
+                        ex_idx = 0;
+                        ex_st  = ExSt::Decode;
+                    } else {
+                        ex_idx = ex_idx + 1;
+                    }
+                }
+                ExSt::Decode: {
+                    ex_cid   = sqe_dw[0][31:16];
+                    ex_sts   = STS_SUCCESS;
+                    ex_dw0   = 0;
+                    ex_dw1   = 0;
+                    ex_idx   = 0;
+                    ex_patch = 0;
+                    if sqe_dw[0][7:0] == 8'h7F { // Fabrics
+                        ex_st = ExSt::Resp;
+                        case sqe_dw[1][7:0] {
+                            FCTYPE_CONNECT: {
+                                conn_qid[exec_c]  = sqe_dw[10][31:16];
+                                conn_sqsz[exec_c] = sqe_dw[11][15:0];
+                                sqhd[exec_c]      = 0;
+                                ex_dw0            = 32'h0000_0001; // CNTLID
+                            }
+                            FCTYPE_PROP_SET: {
+                                if sqe_dw[11] == PROP_CC {
+                                    cc = sqe_dw[12];
+                                    if sqe_dw[12][0] {
+                                        csts[0] = 1;
+                                    } else {
+                                        csts[0] = 0;
+                                    }
+                                    if sqe_dw[12][15:14] != 2'b00 {
+                                        csts[3:2] = 2'b10; // shutdown complete
+                                    }
+                                }
+                            }
+                            FCTYPE_PROP_GET: {
+                                case sqe_dw[11] {
+                                    PROP_CAP: {
+                                        // MQES=15, TO=15, CSS=NVM
+                                        ex_dw0 = 32'h0F00_000F;
+                                        ex_dw1 = 32'h0000_0020;
+                                    }
+                                    PROP_VS  : ex_dw0 = 32'h0001_0400;
+                                    PROP_CC  : ex_dw0 = cc;
+                                    PROP_CSTS: ex_dw0 = csts;
+                                    default  : {}
+                                }
+                            }
+                            FCTYPE_DISCONNECT: {}
+                            default: ex_sts = error_status(SC_INVALID_FIELD);
+                        }
+                    } else if ex_adm && (sqe_dw[0][7:0] == 8'h18) { // Keep Alive
+                        ex_st = ExSt::Resp;
+                    } else if ex_adm && (sqe_dw[0][7:0] == 8'h0C) { // AER: hold forever
+                        ex_st = ExSt::Idle;
+                    } else if !ex_adm && (sqe_dw[0][7:0] == NVM_OPC_WRITE) {
+                        xfer_len = ({16'h0, sqe_dw[12][15:0]} + 1) << 9;
+                        ex_st    = ExSt::R2t;
+                    } else {
+                        if ex_adm && (sqe_dw[0][7:0] == ADM_OPC_IDENTIFY) {
+                            xfer_len = 32'd4096;
+                            ex_patch = sqe_dw[10][7:0] == CNS_CONTROLLER;
+                        } else if !ex_adm && (sqe_dw[0][7:0] == NVM_OPC_READ) {
+                            xfer_len = ({16'h0, sqe_dw[12][15:0]} + 1) << 9;
+                        } else {
+                            xfer_len = 0;
+                        }
+                        ex_st = ExSt::Push;
+                    }
+                }
+                ExSt::R2t: {
+                    if exec_tx_ready {
+                        if ex_idx == 7'd23 {
+                            ex_idx     = 0;
+                            h2c_expect = 1;
+                            h2c_cnt    = 0;
+                            ex_st      = ExSt::Push;
+                        } else {
+                            ex_idx = ex_idx + 1;
+                        }
+                    }
+                }
+                ExSt::Push: {
+                    if core_sq_ready {
+                        if ex_idx == 7'd15 {
+                            ex_idx = 0;
+                            if h2c_expect {
+                                ex_st = ExSt::WaitWr;
+                            } else if xfer_len != 32'd0 {
+                                ex_st = ExSt::WaitFirst;
+                            } else {
+                                ex_st = ExSt::WaitCpl;
+                            }
+                        } else {
+                            ex_idx = ex_idx + 1;
+                        }
+                    }
+                }
+                ExSt::WaitWr: {
+                    if core_cpl_valid {
+                        ex_sts     = core_cpl_status;
+                        ex_dw0     = core_cpl_dw0;
+                        ex_cid     = core_cpl_cid;
+                        ex_idx     = 0;
+                        h2c_expect = 0;
+                        ex_st      = ExSt::Resp;
+                    }
+                }
+                ExSt::WaitFirst: {
+                    if core_cpl_valid { // error: no data phase
+                        ex_sts = core_cpl_status;
+                        ex_dw0 = core_cpl_dw0;
+                        ex_cid = core_cpl_cid;
+                        ex_idx = 0;
+                        ex_st  = ExSt::Resp;
+                    } else if core_c2h_valid {
+                        ex_idx   = 0;
+                        dwidx    = 0;
+                        c2h_left = xfer_len;
+                        c2h_have = 0;
+                        ex_st    = ExSt::C2hHdr;
+                    }
+                }
+                ExSt::C2hHdr: {
+                    if exec_tx_ready {
+                        if ex_idx == 7'd23 {
+                            ex_idx = 0;
+                            ex_st  = ExSt::C2hPay;
+                        } else {
+                            ex_idx = ex_idx + 1;
+                        }
+                    }
+                }
+                ExSt::C2hPay: {
+                    if (c2h_have == 3'd0) && core_c2h_valid {
+                        c2h_sh   = if ex_patch ? id_patch(dwidx, core_c2h_data) : core_c2h_data;
+                        c2h_have = 3'd4;
+                        dwidx    = dwidx + 1;
+                    } else if (c2h_have != 3'd0) && exec_tx_ready {
+                        c2h_sh   = {8'h00, c2h_sh[31:8]};
+                        c2h_have = c2h_have - 1;
+                        c2h_left = c2h_left - 1;
+                        if c2h_left == 32'd1 {
+                            ex_st = ExSt::WaitCpl;
+                        }
+                    }
+                }
+                ExSt::WaitCpl: {
+                    if core_cpl_valid {
+                        ex_sts = core_cpl_status;
+                        ex_dw0 = core_cpl_dw0;
+                        ex_cid = core_cpl_cid;
+                        ex_idx = 0;
+                        ex_st  = ExSt::Resp;
+                    }
+                }
+                ExSt::Resp: {
+                    if exec_tx_ready {
+                        if ex_idx == 7'd23 {
+                            ex_idx = 0;
+                            sqhd[exec_c] = if sqhd[exec_c] == conn_sqsz[exec_c] ?
+                             16'h0 : sqhd[exec_c] + 1;
+                            ex_st = ExSt::Idle;
+                        } else {
+                            ex_idx = ex_idx + 1;
+                        }
+                    }
+                }
+                default: ex_st = ExSt::Idle;
+            }
+        }
+    }
+
+}
