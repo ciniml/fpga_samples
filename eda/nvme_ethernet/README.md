@@ -44,5 +44,25 @@ $ spdk_nvme_perf --no-huge -s 512 -o 4096 -q 4 -w randrw -M 50 -t 10 \
     -r 'trtype:TCP adrfam:IPv4 traddr:192.168.37.2 trsvcid:4420 subnqn:nqn.2026-09.org.fugafuga:nvme:veryl-sim'
 ```
 
+## 実機結果 (2026-09-06, Tang Nano 9K Pmod + LAN8720, 100BASE-TX 直結)
+
+- `ping 192.168.37.2`: 応答 OK
+- `smoke_host.py`: 全チェック PASS (Connect / Property / Identify /
+  I/O キューのライト・リード往復 / エラーステータス / Flush)
+- `spdk_nvme_identify`: SN `VERYL-NVME-0001`、NSID 1 (64 ブロック) 列挙
+- `spdk_nvme_perf` 4KiB randrw 50/50 QD4 10s: **999.8 IOPS / 3.91 MiB/s**
+  (平均レイテンシ 4.0ms、シミュレーションの約 13 倍)
+
+`get_feature(...) failed` / `get log page failed` は未実装のオプション
+機能、終了時の `CQ transport error -6` は SPDK の切断処理のログで、
+いずれもシミュレーション時と同じ良性のメッセージ。
+
 同じ RTL は `rtl/nvme/sim` の TAP ブリッジ (`make eth_nvme`) で
 シミュレーションでも検証済み (ping / smoke / SPDK identify・perf)。
+
+## ブリングアップで踏んだ罠 (rtl/nvme の設計メモも参照)
+
+- ARP 応答 (42B) のランタフレーム → NIC が無言で破棄 (TAP シムは通す)
+- シム用 TAP (192.168.37.1/24) が同一サブネットの経路を奪う → 実機時は down
+- 可変インデックス配列要素へのビット部分代入 (`arr[i][7:0] <= x`) が
+  合成で化ける → 要素単位の代入に統一
