@@ -131,8 +131,21 @@ pub module NvmeTcpTarget #(
     var rx_type : logic<8> [2];
     var rx_pdo  : logic<8> [2];
     var rx_plen : logic<32>[2];
+    var rx_pm2  : logic<32>[2]; // rx_plen - 2 (equality-only end check)
     var rx_shift: logic<32>[2]; // SQE byte-to-dword gearbox
     var icreq_pend: logic<2>;
+
+    // registered region flags (keep position compares off the
+    // byte-accept enable paths; each describes the NEXT byte)
+    var is_caps : logic<2>; // PDU is a CapsuleCmd
+    var is_h2c  : logic<2>; // PDU is H2CData
+    var is_icreq: logic<2>;
+    var at_alloc: logic<2>; // next byte allocates the SQE FIFO slot
+    var at71    : logic<2>; // next byte is the last SQE byte
+    var at_last : logic<2>; // next byte is the last PDU byte
+    var in_sqe  : logic<2>; // inside the 64 SQE bytes
+    var in_pay  : logic<2>; // inside the H2CData payload
+    var fifo_near_full: logic;
 
     // shared SQE FIFO: 64 slots x 16 dwords
     var fifo_ram  : logic<32>[1024];
@@ -154,42 +167,39 @@ pub module NvmeTcpTarget #(
 
     var exec_c: logic; // connection of the executing command
 
-    // per-connection H2CData payload position
-    var h2c_pay: logic<2>;
-    always_comb {
-        for c in 0..2 {
-            h2c_pay[c] = (rx_pos[c] >= 8) && (rx_type[c] == PDU_H2C_DATA) &&
-             (rx_pos[c] >= pdo_eff(rx_pdo[c]));
-        }
-    }
-
     // per-connection permission to consume the next byte
+    // (registered flags only: this feeds every accept enable)
     var rx_ok: logic<2>;
     always_comb {
         for c in 0..2 {
             rx_ok[c] = 1;
-            // a CapsuleCmd needs a FIFO slot at its first SQE byte
-            if (rx_pos[c] == 32'd8) && (rx_type[c] == PDU_CAPS_CMD) && (fifo_count >= 7'd64) {
+            // a CapsuleCmd needs a FIFO slot
+            if at_alloc[c] && fifo_near_full {
                 rx_ok[c] = 0;
             }
             // write payload stalls while the dword gearbox is full
-            if h2c_pay[c] && h2c_expect && h2c_full &&
+            if in_pay[c] && h2c_expect && h2c_full &&
              ((exec_c && (c == 1)) || (!exec_c && (c == 0))) {
                 rx_ok[c] = 0;
             }
         }
     }
 
+    // registered byte arbitration (2 cycles per byte, ample for a
+    // 100Mbps line): the pick feeds only two flops, so every parser
+    // enable reduces to take_r/sel_r
+    var take_r: logic;
+    var sel_r : logic;
     let want0  : logic    = i_rx_valid[0] && rx_ok[0] && i_conn_active[0];
     let want1  : logic    = i_rx_valid[1] && rx_ok[1] && i_conn_active[1];
-    let sel    : logic    = if want0 && want1 ? rr_sel : want1;
-    let rx_take: logic    = want0 || want1;
-    let rx_byte: logic<8> = if sel ? i_rx_data[15:8] : i_rx_data[7:0];
+    let sel    : logic    = sel_r;
+    let rx_take: logic    = take_r;
+    let rx_byte: logic<8> = if sel_r ? i_rx_data[15:8] : i_rx_data[7:0];
 
-    assign o_rx_ready = {want1 && sel, want0 && !sel};
+    assign o_rx_ready = {take_r && sel_r, take_r && !sel_r};
 
-    let fifo_alloc: logic = rx_take && (rx_pos[sel] == 32'd8) && (rx_type[sel] == PDU_CAPS_CMD);
-    let h2c_take  : logic = rx_take && h2c_pay[sel] && h2c_expect && (exec_c == sel);
+    let fifo_alloc: logic = rx_take && at_alloc[sel];
+    let h2c_take  : logic = rx_take && in_pay[sel] && h2c_expect && (exec_c == sel);
     var sqe_wi: logic<4>[2]; // SQE dword write index within the slot
 
     // -----------------------------------------------------------------
@@ -379,7 +389,18 @@ pub module NvmeTcpTarget #(
             cc   = 0;
             csts = 0;
             rr_sel = 0;
+            take_r = 0;
+            sel_r  = 0;
             icreq_pend = 0;
+            is_caps  = 0;
+            is_h2c   = 0;
+            is_icreq = 0;
+            at_alloc = 0;
+            at71     = 0;
+            at_last  = 0;
+            in_sqe   = 0;
+            in_pay   = 0;
+            fifo_near_full = 0;
             fifo_valid = 0;
             fifo_conn  = 0;
             fifo_wr    = 0;
@@ -409,6 +430,7 @@ pub module NvmeTcpTarget #(
                 rx_type[c]   = 0;
                 rx_pdo[c]    = 0;
                 rx_plen[c]   = 0;
+                rx_pm2[c]    = 0;
                 rx_shift[c]  = 0;
                 cur_slot[c]  = 0;
                 sqe_wi[c]    = 0;
@@ -457,11 +479,26 @@ pub module NvmeTcpTarget #(
             }
 
             // ---- RX parser ----
+            // pick stage: choose the connection for the next byte
+            if !take_r && (want0 || want1) {
+                sel_r  = if want0 && want1 ? rr_sel : want1;
+                take_r = 1;
+            }
+            // consume stage: enables reduce to take_r/sel_r and the
+            // registered region flags
             if rx_take {
+                take_r = 0;
                 rr_sel = ~sel;
                 // header capture
                 if rx_pos[sel] == 32'd0 {
-                    rx_type[sel] = rx_byte;
+                    rx_type[sel]  = rx_byte;
+                    is_caps[sel]  = rx_byte == PDU_CAPS_CMD;
+                    is_h2c[sel]   = rx_byte == PDU_H2C_DATA;
+                    is_icreq[sel] = rx_byte == PDU_ICREQ;
+                    in_sqe[sel]   = 0;
+                    in_pay[sel]   = 0;
+                    at_alloc[sel] = 0;
+                    at71[sel]     = 0;
                 }
                 if rx_pos[sel] == 32'd3 {
                     rx_pdo[sel] = rx_byte;
@@ -478,23 +515,37 @@ pub module NvmeTcpTarget #(
                 }
                 if rx_pos[sel] == 32'd7 {
                     rx_plen[sel][31:24] = rx_byte;
+                    rx_pm2[sel] = {rx_byte, rx_plen[sel][23:0]} - 2;
                 }
-                // CapsuleCmd: SQE bytes 8..71 into the FIFO RAM
-                if (rx_type[sel] == PDU_CAPS_CMD) && (rx_pos[sel] >= 32'd8) && (rx_pos[sel] <= 32'd71) {
+                // region flags for the NEXT byte
+                at_alloc[sel] = is_caps[sel] && (rx_pos[sel] == 32'd6);
+                at71[sel]     = in_sqe[sel] && (rx_pos[sel] == 32'd70);
+                if rx_pos[sel] >= 32'd7 {
+                    at_last[sel] = rx_pos[sel] == rx_pm2[sel];
+                } else {
+                    at_last[sel] = 0;
+                }
+                if at_alloc[sel] { // this byte is pos 7: SQE starts next
+                    in_sqe[sel] = 1;
+                    cur_slot[sel]      = fifo_wr;
+                    sqe_wi[sel]        = 0;
+                    fifo_conn[fifo_wr] = sel;
+                    fifo_wr            = fifo_wr + 1;
+                }
+                if is_h2c[sel] && ((rx_pos[sel] + 1) == pdo_eff(rx_pdo[sel])) {
+                    in_pay[sel] = 1;
+                }
+                // CapsuleCmd: SQE bytes into the FIFO RAM
+                if in_sqe[sel] {
                     rx_shift[sel] = {rx_byte, rx_shift[sel][31:8]};
                     if rx_pos[sel][1:0] == 2'b11 { // bytes 11, 15, ... complete a dword
                         fifo_ram[{cur_slot[sel], sqe_wi[sel]}] = {rx_byte, rx_shift[sel][31:8]};
                         sqe_wi[sel] = sqe_wi[sel] + 1;
                     }
-                    if rx_pos[sel] == 32'd71 {
+                    if at71[sel] { // last SQE byte
                         fifo_valid[cur_slot[sel]] = 1;
+                        in_sqe[sel] = 0;
                     }
-                }
-                if fifo_alloc {
-                    cur_slot[sel]      = fifo_wr;
-                    sqe_wi[sel]        = 0;
-                    fifo_conn[fifo_wr] = sel;
-                    fifo_wr            = fifo_wr + 1;
                 }
                 // H2CData payload -> h2c gearbox (only for the executing write)
                 if h2c_take {
@@ -507,11 +558,16 @@ pub module NvmeTcpTarget #(
                     }
                 }
                 // end of PDU / advance
-                if (rx_pos[sel] >= 32'd7) && (rx_pos[sel] + 1 == rx_plen[sel]) {
-                    if rx_type[sel] == PDU_ICREQ {
+                if at_last[sel] {
+                    if is_icreq[sel] {
                         icreq_pend[sel] = 1;
                     }
-                    rx_pos[sel] = 0;
+                    rx_pos[sel]   = 0;
+                    in_sqe[sel]   = 0;
+                    in_pay[sel]   = 0;
+                    at_last[sel]  = 0;
+                    at_alloc[sel] = 0;
+                    at71[sel]     = 0;
                 } else {
                     rx_pos[sel] = rx_pos[sel] + 1;
                 }
@@ -522,11 +578,14 @@ pub module NvmeTcpTarget #(
                 h2c_full = 0;
             }
 
-            // FIFO occupancy (alloc and pop can coincide)
+            // FIFO occupancy (alloc and pop can coincide); the
+            // registered near-full flag gates new allocations
             if fifo_alloc && !fifo_pop {
-                fifo_count = fifo_count + 1;
+                fifo_count     = fifo_count + 1;
+                fifo_near_full = fifo_count >= 7'd59;
             } else if fifo_pop && !fifo_alloc {
-                fifo_count = fifo_count - 1;
+                fifo_count     = fifo_count - 1;
+                fifo_near_full = fifo_count >= 7'd61;
             }
 
             // ---- executor ----

@@ -257,7 +257,6 @@ pub module EthIpStack #(
                             tx_kind = Kind::Arp;
                             tx_len  = 11'd42;
                             tx_busy = 1;
-                            cs_adj  = 0;
                             tx_oi   = 0;
                             tx_pf   = 0;
                             tx_v    = 0;
@@ -267,7 +266,6 @@ pub module EthIpStack #(
                             tx_kind = Kind::Icmp;
                             tx_len  = rx_idx + 1;
                             tx_busy = 1;
-                            cs_adj  = icmp_cs_sum[15:0] + {15'h0, icmp_cs_sum[16]};
                             tx_oi   = 0;
                             tx_pf   = 0;
                             tx_v    = 0;
@@ -277,6 +275,10 @@ pub module EthIpStack #(
                     rx_over = 0;
                 }
             }
+
+            // adjusted ICMP checksum, tracked continuously (stable by
+            // the time a reply is transmitted; off the decision paths)
+            cs_adj = icmp_cs_sum[15:0] + {15'h0, icmp_cs_sum[16]};
 
             // ---- TX: pipelined single-port BRAM read ----
             // (unconditional sync read so the buffer infers as BRAM)

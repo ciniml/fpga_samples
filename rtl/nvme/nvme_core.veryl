@@ -79,6 +79,7 @@ pub module NvmeCore #(
 ) {
     enum State: logic<3> {
         Collect, // gather the 16 SQE dwords
+        PreDec,  // register the derived command fields (timing)
         Decode,  // one cycle: pick the handler
         IdSend,  // stream identify data (1024 dwords)
         RdIssue, // issue one memory read
@@ -117,10 +118,14 @@ pub module NvmeCore #(
     var cpl_dw0 : logic<32>;
 
     // NVM Read/Write geometry: SLBA = DW11:DW10, NLB (0-based) = DW12[15:0].
-    // 512-byte blocks = 128 dwords per block.
+    // 512-byte blocks = 128 dwords per block. Registered in PreDec so
+    // the 64-bit range compare stays off the Decode branch paths.
     let nlb_blocks  : logic<17> = {1'b0, cmd_dw12[15:0]} + 17'd1;
     let slba        : logic<64> = {cmd_dw11, cmd_dw10};
     let lba_in_range: logic     = (slba + {47'b0, nlb_blocks}) <= {32'b0, LBA_COUNT as 32};
+    var pd_lba_ok: logic    ;
+    var pd_daddr : logic<32>;
+    var pd_len   : logic<24>;
 
     // ---------------------------------------------------------------
     // Identify data (NVMe 1.4). Byte offsets are little-endian within
@@ -252,6 +257,9 @@ pub module NvmeCore #(
             rbuf      = 0;
             sts       = STS_SUCCESS;
             cpl_dw0   = 0;
+            pd_lba_ok = 0;
+            pd_daddr  = 0;
+            pd_len    = 0;
         } else {
             case state {
                 State::Collect: {
@@ -270,9 +278,15 @@ pub module NvmeCore #(
                         }
                         dw_cnt = dw_cnt + 1;
                         if dw_cnt == 4'd15 {
-                            state = State::Decode;
+                            state = State::PreDec;
                         }
                     }
+                }
+                State::PreDec: {
+                    pd_lba_ok = lba_in_range;
+                    pd_daddr  = {cmd_dw10[24:0], 7'b0};
+                    pd_len    = {nlb_blocks, 7'b0};
+                    state     = State::Decode;
                 }
                 State::Decode: {
                     xfer_cnt = 0;
@@ -334,22 +348,22 @@ pub module NvmeCore #(
                             NVM_OPC_WRITE: {
                                 if cmd_nsid != 32'd1 {
                                     sts = error_status(SC_INVALID_NSID);
-                                } else if !lba_in_range {
+                                } else if !pd_lba_ok {
                                     sts = error_status(SC_LBA_OUT_OF_RANGE);
                                 } else {
-                                    daddr    = {cmd_dw10[24:0], 7'b0};
-                                    xfer_len = {nlb_blocks, 7'b0};
+                                    daddr    = pd_daddr;
+                                    xfer_len = pd_len;
                                     state    = State::WrData;
                                 }
                             }
                             NVM_OPC_READ: {
                                 if cmd_nsid != 32'd1 {
                                     sts = error_status(SC_INVALID_NSID);
-                                } else if !lba_in_range {
+                                } else if !pd_lba_ok {
                                     sts = error_status(SC_LBA_OUT_OF_RANGE);
                                 } else {
-                                    daddr    = {cmd_dw10[24:0], 7'b0};
-                                    xfer_len = {nlb_blocks, 7'b0};
+                                    daddr    = pd_daddr;
+                                    xfer_len = pd_len;
                                     state    = State::RdIssue;
                                 }
                             }
