@@ -121,7 +121,7 @@ module eth_ip_test_body #(
         f[28] = 8'd192; f[29] = 8'd168; f[30] = 8'd37; f[31] = 8'd1; // sender IP
         f[38] = 8'd192; f[39] = 8'd168; f[40] = 8'd37; f[41] = 8'd2; // target IP
         send_frame(f, 60, 0);
-        wait_frame(42);
+        wait_frame(60); // ARP reply padded to the Ethernet minimum
         for (int i = 0; i < 6; i++) check("arp dst", txq[i], HOST_MAC[i]);
         for (int i = 0; i < 6; i++) check("arp src", txq[6 + i], OUR_MAC[i]);
         check("arp op", {txq[20], txq[21]}, 16'h0002);
@@ -129,7 +129,8 @@ module eth_ip_test_body #(
         check("arp sender ip", {txq[28], txq[29], txq[30], txq[31]}, 32'hC0A82502);
         for (int i = 0; i < 6; i++) check("arp target hw", txq[32 + i], HOST_MAC[i]);
         check("arp target ip", {txq[38], txq[39], txq[40], txq[41]}, 32'hC0A82501);
-        check("arp reply len", txq.size(), 42);
+        check("arp reply len", txq.size(), 60);
+        for (int i = 42; i < 60; i++) check("arp padding", txq[i], 0);
         txq.delete();
 
         // ---- ICMP echo request ----

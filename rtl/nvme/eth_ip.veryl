@@ -157,14 +157,18 @@ pub module EthIpStack #(
 
     // TX pipeline control: the BRAM address must lead the presented
     // byte by exactly one accepted transfer
-    let tx_done : logic     = tx_v && i_tx_ready && (tx_oi == tx_len - 1);
+    // pad to the Ethernet minimum (60 bytes before FCS): anything
+    // shorter is a runt that real NICs silently drop (the ARP reply
+    // is only 42 bytes)
+    let tx_padded: logic<11> = if tx_len <: 11'd60 ? 11'd60 : tx_len;
+    let tx_done : logic     = tx_v && i_tx_ready && (tx_oi == tx_padded - 1);
     let tx_adv  : logic     = tx_busy && tx_warm && (!tx_v || i_tx_ready) && !tx_done;
     let tx_pf_n : logic<11> = if tx_adv ? tx_pf + 1 : tx_pf;
     let tx_raddr: logic<11> = src_idx(tx_kind, tx_pf_n);
 
     assign o_tx_valid = tx_v;
-    assign o_tx_data  = patch_byte(tx_kind, tx_oi, cur_b);
-    assign o_tx_last  = tx_v && (tx_oi == tx_len - 1);
+    assign o_tx_data  = if tx_oi <: tx_len ? patch_byte(tx_kind, tx_oi, cur_b) : 8'h00;
+    assign o_tx_last  = tx_v && (tx_oi == tx_padded - 1);
 
     always_ff (i_clk, i_rst) {
         if_reset {
@@ -304,6 +308,8 @@ pub module EthIpStack #(
                 tx_warm = 0;
                 tx_kind = Kind::None;
             } else if tx_adv {
+                // (bytes beyond tx_len are zero padding; the stale
+                // prefetch value is masked combinationally)
                 cur_b = pf_data;
                 tx_oi = tx_pf;
                 tx_pf = tx_pf + 1;
