@@ -39,7 +39,7 @@ ETH_SV = $(ETH_DIR)/rmii_mac/rmii_mac.sv \
 	$(ETH_DIR)/mii_axis/rmii_to_axis.sv $(ETH_DIR)/mii_axis/axis_to_rmii.sv \
 	$(ETH_DIR)/mii_axis/mii_to_axis.sv $(ETH_DIR)/mii_axis/axis_to_mii.sv \
 	$(ETH_DIR)/mii_axis/prepend_preamble.sv \
-	$(ETH_DIR)/crc/crc_mac.sv $(ETH_DIR)/util/simple_fifo.v
+	$(ETH_DIR)/mii_mac/crc_mac.sv $(ETH_DIR)/util/simple_fifo.v
 ETH_BRIDGE = obj_eth/eth_tap_bridge
 
 .PHONY: all vfio tcp_rtl eth run smoke clean

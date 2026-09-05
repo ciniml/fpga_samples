@@ -122,8 +122,16 @@ int main(int argc, char** argv) {
                 if (crc == fcs) {
                     ssize_t rc = write(tap, rx_frame.data(), rx_frame.size() - 4);
                     (void)rc;
+                    printf("[eth] DUT -> TAP %zu bytes (type %02x%02x)\n",
+                           rx_frame.size() - 4, rx_frame[12], rx_frame[13]);
+                    fflush(stdout);
                 } else {
-                    fprintf(stderr, "[eth] bad FCS on DUT TX (len %zu)\n", rx_frame.size());
+                    fprintf(stderr, "[eth] bad FCS on DUT TX (len %zu, calc %08x got %08x)\n",
+                            rx_frame.size(), crc, fcs);
+                    for (size_t i = 0; i < rx_frame.size(); i++) {
+                        fprintf(stderr, "%02x%s", rx_frame[i], (i % 16 == 15) ? "\n" : " ");
+                    }
+                    fprintf(stderr, "\n");
                 }
             }
             rx_sync = false;
@@ -158,6 +166,9 @@ int main(int argc, char** argv) {
     for (;;) {
         ssize_t n = read(tap, buf, sizeof(buf));
         if (n > 0) {
+            printf("[eth] TAP -> DUT %zd bytes (type %02x%02x) [rx=%u err=%u tx=%u]\n",
+                   n, buf[12], buf[13], dut->dbg_rx_frames, dut->dbg_rx_errs, dut->dbg_tx_frames);
+            fflush(stdout);
             push_frame(buf, (size_t)n);
         }
         for (int i = 0; i < 8192; i++) tick();
