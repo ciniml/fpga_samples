@@ -22,6 +22,9 @@ set_option -route_option 2
 if {${TARGET} == "tangnano9k"} {
     set_option -use_sspi_as_gpio 1
 }
+if {${TARGET} == "tangnano9k_pmod"} {
+    set_option -use_sspi_as_gpio 1
+}
 
 # verified RMII MAC (rtl/ethernet, mii_mac/crc_mac.sv is the 8-bit CRC)
 add_file -type verilog [file normalize ${ETHERNET_DIR}/util/simple_fifo.v]

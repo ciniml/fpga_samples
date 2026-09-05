@@ -67,6 +67,9 @@ pub module EthIpStack #(
     // ---- TX side ----
     var tx_kind: Kind     ;
     var tx_len : logic<11>;
+    var e_pend : logic    ; // commit stage (one cycle after tlast)
+    var e_len  : logic<11>;
+    var e_okf  : logic    ; // FCS ok, fits, addressed to us, long enough
     var tx_busy: logic    ;
     var tx_warm: logic    ; // first BRAM read has completed
     var tx_oi  : logic<11>; // byte index being presented
@@ -180,6 +183,9 @@ pub module EthIpStack #(
             tx_kind  = Kind::None;
             tx_len   = 0;
             tx_busy  = 0;
+            e_pend   = 0;
+            e_len    = 0;
+            e_okf    = 0;
             tx_warm  = 0;
             tx_oi    = 0;
             tx_pf    = 0;
@@ -190,7 +196,8 @@ pub module EthIpStack #(
         } else {
             // ---- RX capture ----
             if i_rx_valid {
-                if !rx_over {
+                // do not clobber the buffer while a reply reads it
+                if !rx_over && !tx_busy {
                     rxbuf[rx_idx] = i_rx_data;
                 }
                 case rx_idx {
@@ -251,28 +258,36 @@ pub module EthIpStack #(
                     rx_idx = rx_idx + 1;
                 }
                 if i_rx_last {
-                    if !i_rx_user && !rx_over && !tx_busy && eth_dst_ok {
-                        if (eth_type == 16'h0806) && (arp_op == 16'h0001) && (arp_tip == IP_ADDR) &&
-                         (rx_idx >= 11'd41) {
-                            tx_kind = Kind::Arp;
-                            tx_len  = 11'd42;
-                            tx_busy = 1;
-                            tx_oi   = 0;
-                            tx_pf   = 0;
-                            tx_v    = 0;
-                        } else if (eth_type == 16'h0800) && (ip_vihl == 8'h45) &&
-                         (ip_proto == 8'h01) && (ip_dst == IP_ADDR) && (icmp_ty == 8'h08) &&
-                         (rx_idx >= 11'd41) {
-                            tx_kind = Kind::Icmp;
-                            tx_len  = rx_idx + 1;
-                            tx_busy = 1;
-                            tx_oi   = 0;
-                            tx_pf   = 0;
-                            tx_v    = 0;
-                        }
-                    }
+                    // decide one cycle later, from registers only
+                    e_pend = 1;
+                    e_len  = rx_idx + 1;
+                    e_okf  = !i_rx_user && !rx_over && !tx_busy && eth_dst_ok &&
+                     (rx_idx >= 11'd41);
                     rx_idx  = 0;
                     rx_over = 0;
+                }
+            }
+
+            // ---- commit stage ----
+            if e_pend {
+                e_pend = 0;
+                if e_okf && !tx_busy {
+                    if (eth_type == 16'h0806) && (arp_op == 16'h0001) && (arp_tip == IP_ADDR) {
+                        tx_kind = Kind::Arp;
+                        tx_len  = 11'd42;
+                        tx_busy = 1;
+                        tx_oi   = 0;
+                        tx_pf   = 0;
+                        tx_v    = 0;
+                    } else if (eth_type == 16'h0800) && (ip_vihl == 8'h45) &&
+                     (ip_proto == 8'h01) && (ip_dst == IP_ADDR) && (icmp_ty == 8'h08) {
+                        tx_kind = Kind::Icmp;
+                        tx_len  = e_len;
+                        tx_busy = 1;
+                        tx_oi   = 0;
+                        tx_pf   = 0;
+                        tx_v    = 0;
+                    }
                 }
             }
 

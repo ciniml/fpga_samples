@@ -1,0 +1,42 @@
+// Tang Nano 9K Pmod base board + Pmod Ethernet adapter (LAN8720).
+// The Ethernet Pmod sits in the rightmost port (PORT2), same wiring as
+// eda/ethernet_video tangnano9k_pmod (pin values taken from its
+// generated pins.cst / eda/targets/tangnano9k_pmod/pmod_ports.csv).
+
+IO_LOC "button_s2" 84;
+IO_PORT "button_s2" IO_TYPE=LVCMOS15;
+
+IO_LOC  "led[0]" 10;
+IO_LOC  "led[1]" 11;
+IO_LOC  "led[2]" 13;
+IO_LOC  "led[3]" 14;
+IO_LOC  "led[4]" 15;
+IO_LOC  "led[5]" 16;
+IO_PORT "led[0]" IO_TYPE=LVCMOS18;
+IO_PORT "led[1]" IO_TYPE=LVCMOS18;
+IO_PORT "led[2]" IO_TYPE=LVCMOS18;
+IO_PORT "led[3]" IO_TYPE=LVCMOS18;
+IO_PORT "led[4]" IO_TYPE=LVCMOS18;
+IO_PORT "led[5]" IO_TYPE=LVCMOS18;
+
+// PORT2 (Pmod Ethernet w/ adapter)
+IO_LOC "rmii_txclk"  32;
+IO_LOC "rmii_rxd[0]" 57;
+IO_LOC "rmii_rxd[1]" 56;
+IO_LOC "rmii_crs_dv" 31;
+IO_LOC "rmii_txd[0]" 54;
+IO_LOC "rmii_txd[1]" 53;
+IO_LOC "rmii_txen"   55;
+// MDIO/MDC (jumper wires; unused by this design)
+IO_LOC "rmii_mdio"   68;
+IO_LOC "rmii_mdc"    69;
+
+IO_PORT "rmii_txclk"  IO_TYPE=LVCMOS33;
+IO_PORT "rmii_rxd[0]" IO_TYPE=LVCMOS33;
+IO_PORT "rmii_rxd[1]" IO_TYPE=LVCMOS33;
+IO_PORT "rmii_crs_dv" IO_TYPE=LVCMOS33;
+IO_PORT "rmii_txd[0]" IO_TYPE=LVCMOS33;
+IO_PORT "rmii_txd[1]" IO_TYPE=LVCMOS33;
+IO_PORT "rmii_txen"   IO_TYPE=LVCMOS33;
+IO_PORT "rmii_mdio"   IO_TYPE=LVCMOS33;
+IO_PORT "rmii_mdc"    IO_TYPE=LVCMOS33;

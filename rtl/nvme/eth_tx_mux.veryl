@@ -5,8 +5,11 @@
 //          https://www.boost.org/LICENSE_1_0.txt)
 /**
  * @file eth_tx_mux.veryl
- * @brief Two-input AXIS frame arbiter for the MAC TX path: a grant is
- *        taken at idle and held until tlast (port 0 has priority).
+ * @brief Two-input AXIS frame arbiter for the MAC TX path with a
+ *        registered output (skid buffer): a grant is taken at idle and
+ *        held until tlast (port 0 has priority), and the upstream
+ *        ready signals are registers so the MAC's combinational ready
+ *        never reaches the producers' logic.
  */
 pub module EthTxMux (
     i_clk: input clock,
@@ -30,22 +33,63 @@ pub module EthTxMux (
     var busy: logic;
     var gsel: logic;
 
-    let sel: logic = if busy ? gsel : (if i_s0_valid ? 1'b0 : 1'b1);
-    let act: logic = busy || i_s0_valid || i_s1_valid;
+    // output + skid registers
+    var ov: logic   ; // output stage
+    var od: logic<8>;
+    var ol: logic   ;
+    var sv: logic   ; // skid stage
+    var sd: logic<8>;
+    var sl: logic   ;
 
-    assign o_m_valid  = act && (if sel ? i_s1_valid : i_s0_valid);
-    assign o_m_data   = if sel ? i_s1_data : i_s0_data;
-    assign o_m_last   = if sel ? i_s1_last : i_s0_last;
-    assign o_s0_ready = act && !sel && i_m_ready;
-    assign o_s1_ready = act && sel && i_m_ready;
+    assign o_m_valid = ov;
+    assign o_m_data  = od;
+    assign o_m_last  = ol;
+
+    let sel: logic = if busy ? gsel : (if i_s0_valid ? 1'b0 : 1'b1);
+    let in_valid: logic    = if sel ? i_s1_valid : i_s0_valid;
+    let in_data : logic<8> = if sel ? i_s1_data : i_s0_data;
+    let in_last : logic    = if sel ? i_s1_last : i_s0_last;
+
+    // registered ready: accept while the skid register is free
+    let in_ready: logic = !sv;
+    let in_take : logic = in_valid && in_ready;
+    let out_adv : logic = i_m_ready || !ov; // output stage can load
+
+    assign o_s0_ready = in_ready && !sel;
+    assign o_s1_ready = in_ready && sel;
 
     always_ff (i_clk, i_rst) {
         if_reset {
             busy = 0;
             gsel = 0;
+            ov   = 0;
+            od   = 0;
+            ol   = 0;
+            sv   = 0;
+            sd   = 0;
+            sl   = 0;
         } else {
-            if o_m_valid && i_m_ready {
-                if o_m_last {
+            if out_adv {
+                if sv {
+                    ov = 1;
+                    od = sd;
+                    ol = sl;
+                    sv = 0;
+                } else if in_take {
+                    ov = 1;
+                    od = in_data;
+                    ol = in_last;
+                } else {
+                    ov = 0;
+                }
+            } else if in_take {
+                // output occupied and not draining: park in the skid
+                sv = 1;
+                sd = in_data;
+                sl = in_last;
+            }
+            if in_take {
+                if in_last {
                     busy = 0;
                 } else {
                     busy = 1;

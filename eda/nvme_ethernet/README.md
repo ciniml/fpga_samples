@@ -2,8 +2,17 @@
 
 `rtl/nvme` の NVMe-oF スタック (NvmeCore + NvmeTcpTarget + TcpEngine +
 EthIpStack) を Tang Nano 9K + LAN8720 (RMII) に載せる実機プロジェクト。
-配線・クロックは動作実績のある `eda/ethernet_icmp` (tangnano9k) と同一で、
 全ロジックが PHY の 50MHz RMII クロックで動作します。
+
+ターゲットは 2 種:
+
+- **`tangnano9k_pmod` (推奨・現行配線)**: Tang Nano 9K Pmod ベース
+  ボード + Pmod Ethernet アダプタ。Ethernet Pmod は右端の PORT2 に
+  挿す (`eda/ethernet_video` の tangnano9k_pmod と同一配線):
+  txclk=32, crs_dv=31, rxd0=57, rxd1=56, txd0=54, txd1=53, txen=55
+  (MDIO/MDC 68/69 はジャンパ線用・本デザイン未使用)。
+  リセットは button_s2 (ピン 84)
+- `tangnano9k`: 旧・直配線 (eda/ethernet_icmp tangnano9k と同一)
 
 - IP: **192.168.37.2** (ARP/ICMP echo 応答)
 - NVMe/TCP: port **4420**、NQN `nqn.2026-09.org.fugafuga:nvme:veryl-sim`
@@ -14,12 +23,12 @@ EthIpStack) を Tang Nano 9K + LAN8720 (RMII) に載せる実機プロジェク�
 ## ビルドと書き込み
 
 ```console
-$ make TARGET=tangnano9k GW_SH=~/gowin/1.9.10.03_edu/IDE/bin/gw_sh synthesis
-$ make TARGET=tangnano9k run      # openFPGALoader で SRAM へ
+$ make TARGET=tangnano9k_pmod GW_SH=~/gowin/1.9.10.03_edu/IDE/bin/gw_sh synthesis
+$ make TARGET=tangnano9k_pmod run      # openFPGALoader で SRAM へ
 ```
 
-リソース: Logic 78% (6,710/8,640)、BSRAM 89% (23/26)、
-Fmax 50.01MHz @ 50MHz 制約 (タイミングクローズ済み)。
+リソース: Logic 80% (6,859/8,640)、BSRAM 89% (23/26)、
+Fmax 51.5MHz @ 50MHz 制約 (両ターゲットともタイミングクローズ済み)。
 
 ## ホスト側 (すべてユーザーモード)
 
