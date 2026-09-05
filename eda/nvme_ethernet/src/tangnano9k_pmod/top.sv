@@ -37,10 +37,12 @@ module top(
         reset_button <= {1'b0, reset_button[2:1]};
     end
 
+    // Power-on reset only: the base-board button polarity is not
+    // relied upon (a wrong assumption would hold the design in reset).
     logic reset;
     reset_seq reset_seq_ext(
         .clock(rmii_txclk),
-        .reset_in(reset_button[0] | !button_s2),
+        .reset_in(reset_button[0]),
         .reset_out(reset)
     );
 
@@ -121,20 +123,25 @@ module top(
         if (mem_ren) mem_rdata <= bmem[mem_addr];
     end
 
-    // LEDs (active low): heartbeat, RX activity, TX activity, conn 0/1
+    // LEDs (active low):
+    //  [5] heartbeat (clock alive)  [4] MAC RX frame  [3] TX frame
+    //  [2:1] TCP connections        [0] raw CRS_DV activity at the pin
     logic [24:0] hb = 0;
-    wire rx_act, tx_act;
-    logic [20:0] rx_hold = 0, tx_hold = 0;
+    wire rx_act, tx_act, crs_act;
+    logic [20:0] rx_hold = 0, tx_hold = 0, crs_hold = 0;
     always_ff @(posedge rmii_txclk) begin
         hb <= hb + 1;
         if (rx_tvalid && rx_tlast) rx_hold <= '1;
         else if (rx_hold != 0) rx_hold <= rx_hold - 1;
         if (tx_tvalid && tx_tready && tx_tlast) tx_hold <= '1;
         else if (tx_hold != 0) tx_hold <= tx_hold - 1;
+        if (rmii_crs_dv) crs_hold <= '1;
+        else if (crs_hold != 0) crs_hold <= crs_hold - 1;
     end
     assign rx_act = rx_hold != 0;
     assign tx_act = tx_hold != 0;
-    assign led = ~{hb[24], rx_act, tx_act, conn_active, 1'b0};
+    assign crs_act = crs_hold != 0;
+    assign led = ~{hb[24], rx_act, tx_act, conn_active, crs_act};
 
 endmodule
 `default_nettype wire
