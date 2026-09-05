@@ -5,3 +5,4 @@ dependencies
 Veryl.lock
 *.sv
 !test/*.sv
+obj_eth/

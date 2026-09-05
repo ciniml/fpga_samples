@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_eth_ip.veryl
+ * @brief EthIpStack tests.
+ *
+ * eth_ip: the test body (test/eth_ip_test_body.sv) plays the network:
+ *   an ARP request (checking the full reply layout), an ICMP echo with
+ *   a verified checksum and payload, and frames that must be ignored
+ *   (wrong IP, echo reply, FCS error) without wedging the responder.
+ */
+
+module TbEthIp {}
+
+#[test(eth_ip)]
+embed (inline) sv{{{
+module eth_ip_test;
+    eth_ip_test_body #(.RUN(1)) body();
+endmodule
+}}}

@@ -1,0 +1,300 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file eth_ip.veryl
+ * @brief Minimal ARP + IPv4/ICMP endpoint behind the rtl/ethernet MAC.
+ *
+ * Sits on the MAC's 8-bit AXIS streams (rmii_mac: RX with tuser = FCS
+ * error at tlast; TX gets preamble/FCS appended by the MAC). One frame
+ * is buffered at a time (2KiB BRAM); a frame arriving while the
+ * responder is transmitting is dropped (ARP/ping retry).
+ *
+ * Answers:
+ *  - ARP requests for IP_ADDR (opcode 1 -> 2, sender/target swapped)
+ *  - ICMP echo requests to IP_ADDR (type 8 -> 0; the checksum is
+ *    adjusted incrementally, the IP header checksum is unchanged
+ *    because swapping the addresses keeps the sum identical; TTL is
+ *    echoed as received)
+ *
+ * IPv4 frames must have IHL=5 (no options). Everything else is
+ * silently dropped. The TCP hook for the NVMe/TCP target will be added
+ * next to this parser.
+ */
+pub module EthIpStack #(
+    param MAC_ADDR: logic<48> = 48'h02A5_0F01_0203,
+    param IP_ADDR : logic<32> = 32'hC0A8_2502, // 192.168.37.2
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    // MAC RX (master side of rmii_mac)
+    i_rx_data : input logic<8>,
+    i_rx_valid: input logic   ,
+    i_rx_user : input logic   , // FCS/length error, valid with tlast
+    i_rx_last : input logic   ,
+
+    // MAC TX (slave side of rmii_mac)
+    o_tx_data : output logic<8>,
+    o_tx_valid: output logic   ,
+    i_tx_ready: input  logic   ,
+    o_tx_last : output logic   ,
+) {
+    enum Kind: logic<2> {
+        None,
+        Arp,
+        Icmp,
+    }
+
+    var rxbuf: logic<8>[2048];
+
+    // ---- RX side ----
+    var rx_idx  : logic<11>;
+    var rx_over : logic    ; // frame longer than the buffer
+    var eth_dst_ok: logic  ; // ours or broadcast (checked bytes 0-5)
+    var eth_bcast : logic  ;
+    var eth_type: logic<16>;
+    var arp_op  : logic<16>;
+    var arp_tip : logic<32>;
+    var ip_vihl : logic<8> ;
+    var ip_proto: logic<8> ;
+    var ip_dst  : logic<32>;
+    var icmp_ty : logic<8> ;
+    var icmp_cs : logic<16>;
+
+    // ---- TX side ----
+    var tx_kind: Kind     ;
+    var tx_len : logic<11>;
+    var tx_busy: logic    ;
+    var tx_warm: logic    ; // first BRAM read has completed
+    var tx_oi  : logic<11>; // byte index being presented
+    var tx_pf  : logic<11>; // byte index being prefetched
+    var pf_data: logic<8> ; // BRAM sync-read output (byte tx_pf)
+    var cur_b  : logic<8> ; // byte being presented (tx_oi)
+    var tx_v   : logic    ;
+    var cs_adj : logic<16>; // adjusted ICMP checksum
+
+    function mac_byte(i: input logic<3>) -> logic<8> {
+        var r: logic<8>;
+        case i {
+            3'd0   : r = MAC_ADDR[47:40];
+            3'd1   : r = MAC_ADDR[39:32];
+            3'd2   : r = MAC_ADDR[31:24];
+            3'd3   : r = MAC_ADDR[23:16];
+            3'd4   : r = MAC_ADDR[15:8];
+            default: r = MAC_ADDR[7:0];
+        }
+        return r;
+    }
+    function ip_byte(i: input logic<2>) -> logic<8> {
+        var r: logic<8>;
+        case i {
+            2'd0   : r = IP_ADDR[31:24];
+            2'd1   : r = IP_ADDR[23:16];
+            2'd2   : r = IP_ADDR[15:8];
+            default: r = IP_ADDR[7:0];
+        }
+        return r;
+    }
+
+    // buffer index the output byte oi is read from (identity for most)
+    function src_idx(kind: input Kind, oi: input logic<11>) -> logic<11> {
+        var r: logic<11>;
+        r = oi;
+        if oi <= 11'd5 {
+            r = oi + 6; // dst MAC <- received src MAC
+        } else if kind == Kind::Arp {
+            if (oi >= 11'd32) && (oi <= 11'd41) {
+                r = oi - 10; // target HW/IP <- received sender HW/IP
+            }
+        } else { // Icmp
+            if (oi >= 11'd26) && (oi <= 11'd29) {
+                r = oi + 4; // IP src <- received IP dst
+            } else if (oi >= 11'd30) && (oi <= 11'd33) {
+                r = oi - 4; // IP dst <- received IP src
+            }
+        }
+        return r;
+    }
+
+    // constant/patched output bytes (others come from the buffer)
+    function patch_byte(kind: input Kind, oi: input logic<11>, b: input logic<8>) -> logic<8> {
+        var r: logic<8>;
+        r = b;
+        if (oi >= 11'd6) && (oi <= 11'd11) {
+            r = mac_byte(oi[2:0] - 3'd6); // src MAC = ours
+        }
+        if kind == Kind::Arp {
+            if oi == 11'd21 {
+                r = 8'h02; // ARP reply
+            }
+            if (oi >= 11'd22) && (oi <= 11'd27) {
+                r = mac_byte(oi[2:0] - 3'd6); // sender HW = ours (22-27: low bits 6..3+8? see note)
+            }
+            if (oi >= 11'd28) && (oi <= 11'd31) {
+                r = ip_byte(oi[1:0]); // sender IP = ours
+            }
+        } else if kind == Kind::Icmp {
+            if oi == 11'd34 {
+                r = 8'h00; // echo reply
+            }
+            if oi == 11'd36 {
+                r = cs_adj[15:8];
+            }
+            if oi == 11'd37 {
+                r = cs_adj[7:0];
+            }
+        }
+        return r;
+    }
+
+    let icmp_cs_sum: logic<17> = {1'b0, icmp_cs} + 17'h00800;
+
+    // TX pipeline control: the BRAM address must lead the presented
+    // byte by exactly one accepted transfer
+    let tx_done : logic     = tx_v && i_tx_ready && (tx_oi == tx_len - 1);
+    let tx_adv  : logic     = tx_busy && tx_warm && (!tx_v || i_tx_ready) && !tx_done;
+    let tx_pf_n : logic<11> = if tx_adv ? tx_pf + 1 : tx_pf;
+    let tx_raddr: logic<11> = src_idx(tx_kind, tx_pf_n);
+
+    assign o_tx_valid = tx_v;
+    assign o_tx_data  = patch_byte(tx_kind, tx_oi, cur_b);
+    assign o_tx_last  = tx_v && (tx_oi == tx_len - 1);
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            rx_idx   = 0;
+            rx_over  = 0;
+            eth_dst_ok = 1;
+            eth_bcast  = 1;
+            eth_type = 0;
+            arp_op   = 0;
+            arp_tip  = 0;
+            ip_vihl  = 0;
+            ip_proto = 0;
+            ip_dst   = 0;
+            icmp_ty  = 0;
+            icmp_cs  = 0;
+            tx_kind  = Kind::None;
+            tx_len   = 0;
+            tx_busy  = 0;
+            tx_warm  = 0;
+            tx_oi    = 0;
+            tx_pf    = 0;
+            pf_data  = 0;
+            cur_b    = 0;
+            tx_v     = 0;
+            cs_adj   = 0;
+        } else {
+            // ---- RX capture ----
+            if i_rx_valid {
+                if !rx_over {
+                    rxbuf[rx_idx] = i_rx_data;
+                }
+                case rx_idx {
+                    11'd0: {
+                        eth_bcast  = i_rx_data == 8'hFF;
+                        eth_dst_ok = (i_rx_data == mac_byte(0)) || (i_rx_data == 8'hFF);
+                    }
+                    11'd1: {
+                        eth_bcast  = eth_bcast && (i_rx_data == 8'hFF);
+                        eth_dst_ok = (eth_dst_ok && (i_rx_data == mac_byte(1))) ||
+                         (eth_bcast && (i_rx_data == 8'hFF));
+                    }
+                    11'd2: {
+                        eth_bcast  = eth_bcast && (i_rx_data == 8'hFF);
+                        eth_dst_ok = (eth_dst_ok && (i_rx_data == mac_byte(2))) ||
+                         (eth_bcast && (i_rx_data == 8'hFF));
+                    }
+                    11'd3: {
+                        eth_bcast  = eth_bcast && (i_rx_data == 8'hFF);
+                        eth_dst_ok = (eth_dst_ok && (i_rx_data == mac_byte(3))) ||
+                         (eth_bcast && (i_rx_data == 8'hFF));
+                    }
+                    11'd4: {
+                        eth_bcast  = eth_bcast && (i_rx_data == 8'hFF);
+                        eth_dst_ok = (eth_dst_ok && (i_rx_data == mac_byte(4))) ||
+                         (eth_bcast && (i_rx_data == 8'hFF));
+                    }
+                    11'd5: {
+                        eth_bcast  = eth_bcast && (i_rx_data == 8'hFF);
+                        eth_dst_ok = (eth_dst_ok && (i_rx_data == mac_byte(5))) ||
+                         (eth_bcast && (i_rx_data == 8'hFF));
+                    }
+                    11'd12: eth_type[15:8] = i_rx_data;
+                    11'd13: eth_type[7:0] = i_rx_data;
+                    // ARP
+                    11'd20: arp_op[15:8] = i_rx_data;
+                    11'd21: arp_op[7:0] = i_rx_data;
+                    11'd38: arp_tip[31:24] = i_rx_data;
+                    11'd39: arp_tip[23:16] = i_rx_data;
+                    11'd40: arp_tip[15:8] = i_rx_data;
+                    11'd41: arp_tip[7:0] = i_rx_data;
+                    // IPv4 (bytes 38-41 above are ICMP payload here; captures
+                    // are qualified by eth_type when the frame completes)
+                    11'd14: ip_vihl = i_rx_data;
+                    11'd23: ip_proto = i_rx_data;
+                    11'd30: ip_dst[31:24] = i_rx_data;
+                    11'd31: ip_dst[23:16] = i_rx_data;
+                    11'd32: ip_dst[15:8] = i_rx_data;
+                    11'd33: ip_dst[7:0] = i_rx_data;
+                    11'd34: icmp_ty = i_rx_data;
+                    11'd36: icmp_cs[15:8] = i_rx_data;
+                    11'd37: icmp_cs[7:0] = i_rx_data;
+                    default: {}
+                }
+                if rx_idx == 11'h7FF {
+                    rx_over = 1;
+                } else {
+                    rx_idx = rx_idx + 1;
+                }
+                if i_rx_last {
+                    if !i_rx_user && !rx_over && !tx_busy && eth_dst_ok {
+                        if (eth_type == 16'h0806) && (arp_op == 16'h0001) && (arp_tip == IP_ADDR) &&
+                         (rx_idx >= 11'd41) {
+                            tx_kind = Kind::Arp;
+                            tx_len  = 11'd42;
+                            tx_busy = 1;
+                            cs_adj  = 0;
+                            tx_oi   = 0;
+                            tx_pf   = 0;
+                            tx_v    = 0;
+                        } else if (eth_type == 16'h0800) && (ip_vihl == 8'h45) &&
+                         (ip_proto == 8'h01) && (ip_dst == IP_ADDR) && (icmp_ty == 8'h08) &&
+                         (rx_idx >= 11'd41) {
+                            tx_kind = Kind::Icmp;
+                            tx_len  = rx_idx + 1;
+                            tx_busy = 1;
+                            cs_adj  = icmp_cs_sum[15:0] + {15'h0, icmp_cs_sum[16]};
+                            tx_oi   = 0;
+                            tx_pf   = 0;
+                            tx_v    = 0;
+                        }
+                    }
+                    rx_idx  = 0;
+                    rx_over = 0;
+                }
+            }
+
+            // ---- TX: pipelined single-port BRAM read ----
+            // (unconditional sync read so the buffer infers as BRAM)
+            pf_data = rxbuf[tx_raddr];
+            if tx_done {
+                tx_v    = 0;
+                tx_busy = 0;
+                tx_warm = 0;
+                tx_kind = Kind::None;
+            } else if tx_adv {
+                cur_b = pf_data;
+                tx_oi = tx_pf;
+                tx_pf = tx_pf + 1;
+                tx_v  = 1;
+            }
+            if tx_busy && !tx_warm {
+                tx_warm = 1;
+            }
+        }
+    }
+}
