@@ -244,7 +244,7 @@ pub module NvmeController #(
         14'h000C: intms,
         14'h0010: intms,
         14'h0014: cc,
-        14'h001C: {26'h0, shst, 3'h0, csts_rdy},
+        14'h001C: {28'h0, shst, 1'b0, csts_rdy}, // SHST[3:2], CFS[1]=0, RDY[0]
         14'h0024: aqa,
         14'h0028: asq[31:0],
         14'h002C: asq[63:32],

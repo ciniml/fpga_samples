@@ -312,6 +312,11 @@ module nvme_controller_test_body #(
         wait_cqe("delete iocq", ACQ, adm_cpl % ACQ_SIZE, adm_phase(), 16'h1109, 15'h0, dw0, dw2);
         adm_cpl++;
 
+        // ---- shutdown notification -> CSTS.SHST = 10b ----
+        csr_write(14'h0014, 32'h0046_4001); // CC.SHN=01b (normal shutdown)
+        csr_read(14'h001C, d);
+        check32("CSTS.SHST", (d >> 2) & 3, 2);
+
         if (errors == 0) $display("PASS: nvme_controller");
         else $fatal(1, "FAIL: nvme_controller errors=%0d", errors);
         $finish;

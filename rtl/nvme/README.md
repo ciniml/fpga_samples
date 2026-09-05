@@ -104,10 +104,33 @@ $ spdk_nvme_identify --no-huge -s 512 \
 ネームスペースを正しく列挙し、perf が 4KiB random R/W 50/50 QD4 で
 約 5,000 IOPS (RTL シミュレーション上) を完走します。
 
+### vfio-user 接続 (キュー機構まで RTL で検証)
+
+`sim/nvme_vfio_bridge.cpp` は `NvmeController` を vfio-user の PCI
+デバイス (クラスコード 010802h) として公開します。NVMe/TCP ブリッジと
+違い、ブリッジに NVMe のロジックはありません: BAR0 アクセスは CSR
+ポートへ、ドアベルページ (BAR0+1000h) は共有メモリの sparse mmap を
+ポーリングして RTL へ、SQE/CQE/PRP は RTL の DMA ポートからクライアント
+の DMA マップ済みメモリへ (`VFU_SGL_DIRECT_ACCESS` 必須 — SPDK の
+クライアントはキューポーリング中にサーバ発の DMA メッセージへ応答
+しない)。SPDK の VFIOUSER イニシエータが本物のリング/ドアベル/PRP で
+RTL を叩きます。こちらも全ユーザー空間・hugepages 不要です。
+
+```console
+$ make vfio VFU_PREFIX=<libvfio-user と json-c を入れた prefix>
+$ ./run_spdk_vfio.sh all
+```
+
+SPDK 側は `./configure --with-vfio-user` が必要です (イニシエータは
+lib/vfio_user + lib/nvme のみで libvfio-user 不要。同梱サブモジュールの
+ビルドが cmocka の版差で失敗する場合は `make -C lib/vfio_user &&
+make -C lib/nvme` して各アプリを個別リンク)。
+
 注意点:
 - SPDK は Identify CNS 03h (NS Identification Descriptor list) が
   エラーを返すとネームスペースを inactive 扱いにするため、コアは
   CNS 03h (EUI-64 + CSI デスクリプタ) を実装しています。
+- SPDK はシャットダウン時に CSTS.SHST (bits 3:2) をポーリングします。
 - SPDK のビルドは `./configure --without-nvme-cuse` +
   `make DPDKBUILD_FLAGS="-Dmax_numa_nodes=1"` (libnuma なしの場合)。
   libaio がない場合 spdk_nvme_identify/perf は
