@@ -124,16 +124,28 @@ $ spdk_nvme_identify --no-huge -s 512 \
 RTL を叩きます。こちらも全ユーザー空間・hugepages 不要です。
 
 ```console
-$ make vfio VFU_PREFIX=<libvfio-user と json-c を入れた prefix>
+$ make vfio      # VFU_PREFIX は既定で ~/opt/vfu (libvfio-user の install prefix)
 $ ./run_spdk_vfio.sh all
 ```
 
 `spdk_nvme_perf -c 0xF` で 4 コア = 4 I/O キューペアが作られ、
 ラウンドロビン調停まで実ホストで検証できます (各コアの IOPS が
-均等になります)。SPDK 側は `./configure --with-vfio-user` が必要です (イニシエータは
-lib/vfio_user + lib/nvme のみで libvfio-user 不要。同梱サブモジュールの
-ビルドが cmocka の版差で失敗する場合は `make -C lib/vfio_user &&
-make -C lib/nvme` して各アプリを個別リンク)。
+均等になります)。
+
+### 依存パッケージ / ビルド手順
+
+```console
+$ sudo apt-get install libnuma-dev libaio-dev libjson-c-dev libcmocka-dev \
+    meson ninja-build python3-jinja2 python3-yaml python3-tabulate python3-pyelftools
+# libvfio-user (Ubuntu パッケージなし)
+$ git clone https://github.com/nutanix/libvfio-user && cd libvfio-user
+$ meson setup build --prefix=$HOME/opt/vfu -Ddefault_library=static
+$ meson compile -C build && meson install -C build
+# SPDK
+$ git clone --recurse-submodules https://github.com/spdk/spdk && cd spdk
+$ ./configure --with-vfio-user --without-nvme-cuse --disable-tests --disable-unit-tests
+$ make -j$(nproc)
+```
 
 注意点:
 - SPDK は Identify CNS 03h (NS Identification Descriptor list) が

@@ -14,9 +14,12 @@ RTL_CTRL = $(RTL) ../nvme_controller.sv
 
 BRIDGE = obj_dir/nvme_tcp_bridge
 
-# vfio-user bridge: needs libvfio-user (+ json-c). Point VFU_PREFIX at a
-# prefix containing include/libvfio-user.h and lib/libvfio-user.a.
-VFU_PREFIX ?= /usr/local
+# vfio-user bridge: needs libvfio-user (built from source; json-c comes
+# from the system). Point VFU_PREFIX at its install prefix - both the
+# plain and the meson (include/vfio-user, lib/<multiarch>) layouts work.
+VFU_PREFIX ?= $(HOME)/opt/vfu
+VFU_INC := $(firstword $(wildcard $(VFU_PREFIX)/include/vfio-user $(VFU_PREFIX)/include))
+VFU_LIB := $(firstword $(wildcard $(VFU_PREFIX)/lib/x86_64-linux-gnu/libvfio-user.a $(VFU_PREFIX)/lib/libvfio-user.a))
 VFIO_BRIDGE = obj_vfio/nvme_vfio_bridge
 
 VERILATOR_FLAGS = --cc --exe --build -j 8 -O2 --top-module NvmeCore \
@@ -37,8 +40,8 @@ $(BRIDGE): $(RTL) nvme_tcp_bridge.cpp
 $(VFIO_BRIDGE): $(RTL_CTRL) nvme_vfio_bridge.cpp
 	verilator --cc --exe --build -j 8 -O2 --top-module NvmeController --Mdir obj_vfio \
 	  -GLBA_COUNT=$(LBA_COUNT) \
-	  -CFLAGS "-O2 -DSIM_LBA_COUNT=$(LBA_COUNT) -I$(VFU_PREFIX)/include" \
-	  -LDFLAGS "$(VFU_PREFIX)/lib/libvfio-user.a $(VFU_PREFIX)/lib/libjson-c.a" \
+	  -CFLAGS "-O2 -DSIM_LBA_COUNT=$(LBA_COUNT) -I$(VFU_INC)" \
+	  -LDFLAGS "$(VFU_LIB) -ljson-c" \
 	  -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEINCOMPLETE \
 	  -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM \
 	  $(RTL_CTRL) nvme_vfio_bridge.cpp -o nvme_vfio_bridge
