@@ -1,0 +1,27 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_nvme_controller.veryl
+ * @brief NvmeController tests.
+ *
+ * nvme_controller: the test body (test/nvme_controller_test_body.sv)
+ *   models the host: 1MiB host memory on the DMA port, CSR accesses,
+ *   SQ/CQ rings with doorbells and phase-tag polling. Covers CAP/VS,
+ *   controller enable, Identify via PRP (including a PRP1 offset that
+ *   crosses into PRP2), Create/Delete I/O queues (with the mandated
+ *   deletion-order error), an 8KiB PRP1+PRP2 write/read round trip,
+ *   CQ phase wrap on both queues, error status in the CQE, and the
+ *   interrupt line with the CQ head doorbell.
+ */
+
+module TbNvmeController {}
+
+#[test(nvme_controller)]
+embed (inline) sv{{{
+module nvme_controller_test;
+    nvme_controller_test_body #(.RUN(1)) body();
+endmodule
+}}}

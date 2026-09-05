@@ -1,0 +1,68 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file nvme_pkg.veryl
+ * @brief Shared constants for the transport-independent NVMe command core.
+ *
+ * Opcodes and status codes follow the NVMe Base Specification 1.4
+ * (figure 140: admin opcodes, figure 346: NVM opcodes, figure 126:
+ * generic command status values).
+ *
+ * The status value used here is the 15-bit Status Field of CQE DW3
+ * bits 31:17, i.e. {DNR, M, CRD[1:0], SCT[2:0], SC[7:0]}. The transport
+ * places it into the CQE together with the phase tag (bit 16).
+ */
+pub package nvme_pkg {
+    // Admin command opcodes (SQE DW0[7:0], admin queue)
+    const ADM_OPC_DELETE_IO_SQ : logic<8> = 8'h00;
+    const ADM_OPC_CREATE_IO_SQ : logic<8> = 8'h01;
+    const ADM_OPC_GET_LOG_PAGE : logic<8> = 8'h02;
+    const ADM_OPC_DELETE_IO_CQ : logic<8> = 8'h04;
+    const ADM_OPC_CREATE_IO_CQ : logic<8> = 8'h05;
+    const ADM_OPC_IDENTIFY     : logic<8> = 8'h06;
+    const ADM_OPC_SET_FEATURES : logic<8> = 8'h09;
+    const ADM_OPC_GET_FEATURES : logic<8> = 8'h0A;
+
+    // NVM command opcodes (I/O queue)
+    const NVM_OPC_FLUSH: logic<8> = 8'h00;
+    const NVM_OPC_WRITE: logic<8> = 8'h01;
+    const NVM_OPC_READ : logic<8> = 8'h02;
+
+    // Identify CNS values (DW10[7:0])
+    const CNS_NAMESPACE     : logic<8> = 8'h00;
+    const CNS_CONTROLLER    : logic<8> = 8'h01;
+    const CNS_ACTIVE_NS_LIST: logic<8> = 8'h02;
+    const CNS_NS_DESC_LIST  : logic<8> = 8'h03;
+
+    // Feature identifiers (DW10[7:0])
+    const FID_NUMBER_OF_QUEUES: logic<8> = 8'h07;
+    const FID_VOLATILE_WC     : logic<8> = 8'h06;
+
+    // Generic command status codes (SCT = 0)
+    const SC_SUCCESS         : logic<8> = 8'h00;
+    const SC_INVALID_OPCODE  : logic<8> = 8'h01;
+    const SC_INVALID_FIELD   : logic<8> = 8'h02;
+    const SC_INVALID_NSID    : logic<8> = 8'h0B;
+    const SC_LBA_OUT_OF_RANGE: logic<8> = 8'h80;
+
+    // Command-specific status codes (SCT = 1, queue management)
+    const SC_INVALID_CQ   : logic<8> = 8'h00;
+    const SC_INVALID_QID  : logic<8> = 8'h01;
+    const SC_INVALID_QSIZE: logic<8> = 8'h02;
+
+    const STS_SUCCESS: logic<15> = 15'h0000;
+
+    // Status Field {DNR, M, CRD, SCT=0 (generic), SC}. DNR is set:
+    // retrying any of the errors this core reports cannot succeed.
+    function error_status(sc: input logic<8>) -> logic<15> {
+        return {1'b1, 1'b0, 2'b00, 3'b000, sc};
+    }
+
+    // Status Field with SCT=1 (command specific), DNR set.
+    function cmd_error_status(sc: input logic<8>) -> logic<15> {
+        return {1'b1, 1'b0, 2'b00, 3'b001, sc};
+    }
+}

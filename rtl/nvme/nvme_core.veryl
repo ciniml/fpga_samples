@@ -1,0 +1,407 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file nvme_core.veryl
+ * @brief Transport-independent NVMe command processing core.
+ *
+ * Executes NVMe commands against a small dword-wide backing memory
+ * without knowing anything about the transport (PCIe, serial bridge,
+ * testbench, ...). The transport is responsible for queue mechanics
+ * (doorbells, SQ/CQ rings, phase tag, SQ head pointer) and for host
+ * data placement (PRP/SGL walking); this core sees only:
+ *
+ *  - SQE input: the 64-byte submission queue entry as a stream of 16
+ *    dwords (DW0 first), valid/ready handshake. i_sq_is_admin
+ *    distinguishes admin from I/O commands and is sampled with DW0.
+ *  - Command data: two dword streams. Commands that read host data
+ *    (Write) consume the h2c stream; commands that produce data
+ *    (Read, Identify) drive the c2h stream with a last marker. The
+ *    transport must move exactly the command's transfer length.
+ *  - Completion: {CID, Status Field, CQE DW0} with valid/ready. The
+ *    transport builds the CQE (adds phase tag, SQ head, SQID).
+ *  - Backing memory: dword-addressed, write strobe + read with 1-cycle
+ *    latency (a plain synchronous BRAM port).
+ *
+ * Supported commands:
+ *  - Admin: Identify (CNS 00h namespace / 01h controller / 02h active
+ *    NS list, each 4096 bytes), Set/Get Features (Number of Queues,
+ *    Volatile Write Cache as no-ops).
+ *  - NVM: Read (02h), Write (01h), Flush (00h, no-op). One namespace
+ *    (NSID 1), 512-byte blocks, LBA_COUNT blocks.
+ *
+ * Errors complete with DNR set and no data phase, so the transport
+ * must not expect data for an error completion.
+ */
+import nvme_pkg::*;
+
+pub module NvmeCore #(
+    /// Number of 512-byte logical blocks in the backing memory.
+    param LBA_COUNT: u32 = 128,
+    /// Dword address width of the backing memory (do not override).
+    param MEM_ADDR_BITS: u32 = $clog2(LBA_COUNT) + 7,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    // ---- SQE input: 16 dwords, DW0 first ----
+    i_sq_valid   : input  logic    ,
+    o_sq_ready   : output logic    ,
+    i_sq_data    : input  logic<32>,
+    i_sq_is_admin: input  logic    , // sampled with DW0
+
+    // ---- completion ----
+    o_cpl_valid : output logic    ,
+    i_cpl_ready : input  logic    ,
+    o_cpl_cid   : output logic<16>,
+    o_cpl_status: output logic<15>, // {DNR, M, CRD, SCT, SC} = CQE DW3[31:17]
+    o_cpl_dw0   : output logic<32>,
+
+    // ---- host-to-controller data (Write payload) ----
+    i_h2c_valid: input  logic    ,
+    o_h2c_ready: output logic    ,
+    i_h2c_data : input  logic<32>,
+
+    // ---- controller-to-host data (Read / Identify payload) ----
+    o_c2h_valid: output logic    ,
+    i_c2h_ready: input  logic    ,
+    o_c2h_data : output logic<32>,
+    o_c2h_last : output logic    ,
+
+    // ---- backing memory: dword-addressed sync RAM, 1-cycle read latency ----
+    o_mem_addr : output logic<MEM_ADDR_BITS>,
+    o_mem_wen  : output logic               ,
+    o_mem_wdata: output logic<32>           ,
+    o_mem_ren  : output logic               ,
+    i_mem_rdata: input  logic<32>           ,
+) {
+    enum State: logic<3> {
+        Collect, // gather the 16 SQE dwords
+        Decode,  // one cycle: pick the handler
+        IdSend,  // stream identify data (1024 dwords)
+        RdIssue, // issue one memory read
+        RdSend,  // deliver the read dword on c2h
+        WrData,  // consume h2c dwords into memory
+        Cpl,     // present the completion
+    }
+
+    enum IdKind: logic<2> {
+        Ns,
+        Ctrl,
+        NsList,
+        NsDesc,
+    }
+
+    var state: State;
+
+    // Captured SQE fields
+    var dw_cnt   : logic<4> ;
+    var cmd_opc  : logic<8> ;
+    var cmd_cid  : logic<16>;
+    var cmd_admin: logic    ;
+    var cmd_nsid : logic<32>;
+    var cmd_dw10 : logic<32>;
+    var cmd_dw11 : logic<32>;
+    var cmd_dw12 : logic<32>;
+
+    // Execution state
+    var id_kind : IdKind   ;
+    var xfer_cnt: logic<24>; // dwords transferred
+    var xfer_len: logic<24>; // total dwords of the data phase
+    var daddr   : logic<32>; // current dword address in backing memory
+    var from_mem: logic    ; // c2h data is on i_mem_rdata (not yet in rbuf)
+    var rbuf    : logic<32>;
+    var sts     : logic<15>;
+    var cpl_dw0 : logic<32>;
+
+    // NVM Read/Write geometry: SLBA = DW11:DW10, NLB (0-based) = DW12[15:0].
+    // 512-byte blocks = 128 dwords per block.
+    let nlb_blocks  : logic<17> = {1'b0, cmd_dw12[15:0]} + 17'd1;
+    let slba        : logic<64> = {cmd_dw11, cmd_dw10};
+    let lba_in_range: logic     = (slba + {47'b0, nlb_blocks}) <= {32'b0, LBA_COUNT as 32};
+
+    // ---------------------------------------------------------------
+    // Identify data (NVMe 1.4). Byte offsets are little-endian within
+    // each dword: dword N covers bytes 4N .. 4N+3.
+    // ---------------------------------------------------------------
+    function id_ctrl_dword(idx: input logic<10>) -> logic<32> {
+        var r: logic<32>;
+        r = 32'h0;
+        case idx {
+            // SN (bytes 4-23): "VERYL-NVME-0001     "
+            10'd1: r = 32'h5952_4556; // "VERY"
+            10'd2: r = 32'h564E_2D4C; // "L-NV"
+            10'd3: r = 32'h302D_454D; // "ME-0"
+            10'd4: r = 32'h2031_3030; // "01  "
+            10'd5: r = 32'h2020_2020;
+            // MN (bytes 24-63): "Veryl NVMe Sample Controller"
+            10'd6 : r = 32'h7972_6556; // "Very"
+            10'd7 : r = 32'h564E_206C; // "l NV"
+            10'd8 : r = 32'h5320_654D; // "Me S"
+            10'd9 : r = 32'h6C70_6D61; // "ampl"
+            10'd10: r = 32'h6F43_2065; // "e Co"
+            10'd11: r = 32'h6F72_746E; // "ntro"
+            10'd12: r = 32'h7265_6C6C; // "ller"
+            10'd13: r = 32'h2020_2020;
+            10'd14: r = 32'h2020_2020;
+            10'd15: r = 32'h2020_2020;
+            // FR (bytes 64-71): "0.1     "
+            10'd16: r = 32'h2031_2E30; // "0.1 "
+            10'd17: r = 32'h2020_2020;
+            // MDTS (byte 77): 2^1 * 4KiB min page = 8KiB, so a PRP-based
+            // transport never needs PRP lists (PRP1 + PRP2 suffice)
+            10'd19: r = 32'h0000_0100;
+            // VER (bytes 80-83): 1.4.0
+            10'd20: r = 32'h0001_0400;
+            // SQES/CQES (bytes 512-513): 64B SQE, 16B CQE required & max
+            10'd128: r = 32'h0000_4466;
+            // NN (bytes 516-519): one namespace
+            10'd129: r = 32'h0000_0001;
+            default: r = 32'h0;
+        }
+        return r;
+    }
+
+    function id_ns_dword(idx: input logic<10>) -> logic<32> {
+        var r: logic<32>;
+        r = 32'h0;
+        case idx {
+            10'd0: r = LBA_COUNT as 32; // NSZE low
+            10'd2: r = LBA_COUNT as 32; // NCAP low
+            10'd4: r = LBA_COUNT as 32; // NUSE low
+            // LBAF0 (bytes 128-131): MS=0, LBADS=9 (512B), RP=0
+            10'd32 : r = 32'h0009_0000;
+            default: r = 32'h0;
+        }
+        return r;
+    }
+
+    // NS Identification Descriptor list (CNS 03h): an EUI-64 descriptor
+    // (NIDT=1, NIDL=8, "VERYL" + 0001) followed by a CSI descriptor
+    // (NIDT=4, NIDL=1, CSI=NVM) and the terminating zero descriptor.
+    function id_ns_desc_dword(idx: input logic<10>) -> logic<32> {
+        var r: logic<32>;
+        r = 32'h0;
+        case idx {
+            10'd0  : r = 32'h0000_0801; // NIDT=1 (EUI64), NIDL=8
+            10'd1  : r = 32'h5952_4556; // EUI64 bytes 0-3: "VERY"
+            10'd2  : r = 32'h0100_004C; // EUI64 bytes 4-7: 'L', 00, 00, 01
+            10'd3  : r = 32'h0000_0104; // NIDT=4 (CSI), NIDL=1; CSI=0 (NVM) follows
+            default: r = 32'h0;
+        }
+        return r;
+    }
+
+    function id_dword(kind: input IdKind, idx: input logic<10>) -> logic<32> {
+        var r: logic<32>;
+        r = 32'h0;
+        case kind {
+            IdKind::Ctrl  : r = id_ctrl_dword(idx);
+            IdKind::Ns    : r = id_ns_dword(idx);
+            IdKind::NsDesc: r = id_ns_desc_dword(idx);
+            IdKind::NsList: {
+                // Active namespace ID list: NSID 1 only
+                r = if idx == 10'd0 ? 32'h0000_0001 : 32'h0;
+            }
+            default: r = 32'h0;
+        }
+        return r;
+    }
+
+    // ---------------------------------------------------------------
+    // Outputs
+    // ---------------------------------------------------------------
+    assign o_sq_ready  = state == State::Collect;
+    assign o_h2c_ready = state == State::WrData;
+
+    assign o_mem_wen   = (state == State::WrData) && i_h2c_valid;
+    assign o_mem_wdata = i_h2c_data;
+    assign o_mem_ren   = state == State::RdIssue;
+    assign o_mem_addr  = daddr[MEM_ADDR_BITS - 1:0];
+
+    assign o_c2h_valid = (state == State::IdSend) || (state == State::RdSend);
+    assign o_c2h_data  = if (state == State::IdSend) ? id_dword(id_kind, xfer_cnt[9:0]) : (if from_mem ? i_mem_rdata : rbuf);
+    assign o_c2h_last  = o_c2h_valid && (xfer_cnt == xfer_len - 24'd1);
+
+    assign o_cpl_valid  = state == State::Cpl;
+    assign o_cpl_cid    = cmd_cid;
+    assign o_cpl_status = sts;
+    assign o_cpl_dw0    = cpl_dw0;
+
+    // ---------------------------------------------------------------
+    // Command engine
+    // ---------------------------------------------------------------
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            state     = State::Collect;
+            dw_cnt    = 0;
+            cmd_opc   = 0;
+            cmd_cid   = 0;
+            cmd_admin = 0;
+            cmd_nsid  = 0;
+            cmd_dw10  = 0;
+            cmd_dw11  = 0;
+            cmd_dw12  = 0;
+            id_kind   = IdKind::Ns;
+            xfer_cnt  = 0;
+            xfer_len  = 0;
+            daddr     = 0;
+            from_mem  = 0;
+            rbuf      = 0;
+            sts       = STS_SUCCESS;
+            cpl_dw0   = 0;
+        } else {
+            case state {
+                State::Collect: {
+                    if i_sq_valid {
+                        case dw_cnt {
+                            4'd0: {
+                                cmd_opc   = i_sq_data[7:0];
+                                cmd_cid   = i_sq_data[31:16];
+                                cmd_admin = i_sq_is_admin;
+                            }
+                            4'd1 : cmd_nsid = i_sq_data;
+                            4'd10: cmd_dw10 = i_sq_data;
+                            4'd11: cmd_dw11 = i_sq_data;
+                            4'd12: cmd_dw12 = i_sq_data;
+                            default: {}
+                        }
+                        dw_cnt = dw_cnt + 1;
+                        if dw_cnt == 4'd15 {
+                            state = State::Decode;
+                        }
+                    }
+                }
+                State::Decode: {
+                    xfer_cnt = 0;
+                    sts      = STS_SUCCESS;
+                    cpl_dw0  = 0;
+                    state    = State::Cpl;
+                    if cmd_admin {
+                        case cmd_opc {
+                            ADM_OPC_IDENTIFY: {
+                                xfer_len = 24'd1024; // always 4096 bytes
+                                case cmd_dw10[7:0] {
+                                    CNS_CONTROLLER: {
+                                        id_kind = IdKind::Ctrl;
+                                        state   = State::IdSend;
+                                    }
+                                    CNS_NAMESPACE: {
+                                        if cmd_nsid == 32'd1 {
+                                            id_kind = IdKind::Ns;
+                                            state   = State::IdSend;
+                                        } else {
+                                            sts = error_status(SC_INVALID_NSID);
+                                        }
+                                    }
+                                    CNS_ACTIVE_NS_LIST: {
+                                        id_kind = IdKind::NsList;
+                                        state   = State::IdSend;
+                                    }
+                                    CNS_NS_DESC_LIST: {
+                                        if cmd_nsid == 32'd1 {
+                                            id_kind = IdKind::NsDesc;
+                                            state   = State::IdSend;
+                                        } else {
+                                            sts = error_status(SC_INVALID_NSID);
+                                        }
+                                    }
+                                    default: sts = error_status(SC_INVALID_FIELD);
+                                }
+                            }
+                            ADM_OPC_SET_FEATURES: {
+                                case cmd_dw10[7:0] {
+                                    // report 1 SQ / 1 CQ granted (0-based)
+                                    FID_NUMBER_OF_QUEUES: cpl_dw0 = 32'h0;
+                                    FID_VOLATILE_WC     : cpl_dw0 = 32'h0;
+                                    default             : sts     = error_status(SC_INVALID_FIELD);
+                                }
+                            }
+                            ADM_OPC_GET_FEATURES: {
+                                case cmd_dw10[7:0] {
+                                    FID_NUMBER_OF_QUEUES: cpl_dw0 = 32'h0;
+                                    FID_VOLATILE_WC     : cpl_dw0 = 32'h0;
+                                    default             : sts     = error_status(SC_INVALID_FIELD);
+                                }
+                            }
+                            default: sts = error_status(SC_INVALID_OPCODE);
+                        }
+                    } else {
+                        case cmd_opc {
+                            NVM_OPC_FLUSH: {} // no volatile cache: success
+                            NVM_OPC_WRITE: {
+                                if cmd_nsid != 32'd1 {
+                                    sts = error_status(SC_INVALID_NSID);
+                                } else if !lba_in_range {
+                                    sts = error_status(SC_LBA_OUT_OF_RANGE);
+                                } else {
+                                    daddr    = {cmd_dw10[24:0], 7'b0};
+                                    xfer_len = {nlb_blocks, 7'b0};
+                                    state    = State::WrData;
+                                }
+                            }
+                            NVM_OPC_READ: {
+                                if cmd_nsid != 32'd1 {
+                                    sts = error_status(SC_INVALID_NSID);
+                                } else if !lba_in_range {
+                                    sts = error_status(SC_LBA_OUT_OF_RANGE);
+                                } else {
+                                    daddr    = {cmd_dw10[24:0], 7'b0};
+                                    xfer_len = {nlb_blocks, 7'b0};
+                                    state    = State::RdIssue;
+                                }
+                            }
+                            default: sts = error_status(SC_INVALID_OPCODE);
+                        }
+                    }
+                }
+                State::IdSend: {
+                    if i_c2h_ready {
+                        xfer_cnt = xfer_cnt + 1;
+                        if xfer_cnt == xfer_len - 24'd1 {
+                            state = State::Cpl;
+                        }
+                    }
+                }
+                State::RdIssue: {
+                    from_mem = 1;
+                    state    = State::RdSend;
+                }
+                State::RdSend: {
+                    if i_c2h_ready {
+                        daddr    = daddr + 1;
+                        xfer_cnt = xfer_cnt + 1;
+                        if xfer_cnt == xfer_len - 24'd1 {
+                            state = State::Cpl;
+                        } else {
+                            state = State::RdIssue;
+                        }
+                    } else if from_mem {
+                        // hold the data: the RAM output is only valid
+                        // in the cycle after the read
+                        rbuf     = i_mem_rdata;
+                        from_mem = 0;
+                    }
+                }
+                State::WrData: {
+                    if i_h2c_valid {
+                        daddr    = daddr + 1;
+                        xfer_cnt = xfer_cnt + 1;
+                        if xfer_cnt == xfer_len - 24'd1 {
+                            state = State::Cpl;
+                        }
+                    }
+                }
+                State::Cpl: {
+                    if i_cpl_ready {
+                        dw_cnt = 0;
+                        state  = State::Collect;
+                    }
+                }
+                default: state = State::Collect;
+            }
+        }
+    }
+}

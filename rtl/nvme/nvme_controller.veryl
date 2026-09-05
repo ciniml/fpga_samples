@@ -1,0 +1,517 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file nvme_controller.veryl
+ * @brief Memory-mapped NVMe controller: register file + queue engine +
+ *        PRP data engine wrapped around the transport-independent
+ *        NvmeCore.
+ *
+ * Implements the PCIe-style controller mechanics that the NVMe/TCP
+ * bridge previously performed in software:
+ *  - Controller registers (CAP/VS/INTMS/INTMC/CC/CSTS/AQA/ASQ/ACQ)
+ *    and SQ tail / CQ head doorbells (stride 0, at offset 1000h).
+ *  - SQE fetch from host-memory submission rings, CQE writeback with
+ *    phase tag and SQ head pointer, one interrupt line.
+ *  - Create/Delete I/O SQ/CQ admin commands handled locally (one I/O
+ *    queue pair, QID 1); everything else is forwarded to NvmeCore.
+ *  - PRP1/PRP2 data-phase transfers. MDTS is 8KiB (see NvmeCore's
+ *    Identify data) so PRP lists are never required; PRP1 may carry a
+ *    dword-aligned offset, PRP2 must be page aligned. Page size is
+ *    fixed at 4KiB (CAP.MPSMIN = MPSMAX = 0).
+ *
+ * The host-memory master port issues one 32-bit access at a time:
+ * o_hm_valid/i_hm_ready accepts a request; reads return with
+ * i_hm_rvalid/i_hm_rdata at least one cycle later. CSR reads are
+ * combinational.
+ *
+ * The backing storage port of NvmeCore is exported unchanged.
+ */
+import nvme_pkg::*;
+
+pub module NvmeController #(
+    /// Number of 512-byte logical blocks in the backing memory.
+    param LBA_COUNT: u32 = 128,
+    /// Dword address width of the backing memory (do not override).
+    param MEM_ADDR_BITS: u32 = $clog2(LBA_COUNT) + 7,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    // ---- controller registers (BAR0), 32-bit access ----
+    i_csr_addr : input  logic<14>, // byte address
+    i_csr_wen  : input  logic    ,
+    i_csr_wdata: input  logic<32>,
+    o_csr_rdata: output logic<32>, // combinational
+    o_irq      : output logic    ,
+
+    // ---- host memory master (DMA), 32-bit data ----
+    o_hm_valid : output logic    ,
+    o_hm_write : output logic    ,
+    o_hm_addr  : output logic<64>,
+    o_hm_wdata : output logic<32>,
+    i_hm_ready : input  logic    ,
+    i_hm_rvalid: input  logic    ,
+    i_hm_rdata : input  logic<32>,
+
+    // ---- backing memory (exported from NvmeCore) ----
+    o_mem_addr : output logic<MEM_ADDR_BITS>,
+    o_mem_wen  : output logic               ,
+    o_mem_wdata: output logic<32>           ,
+    o_mem_ren  : output logic               ,
+    i_mem_rdata: input  logic<32>           ,
+) {
+    // -----------------------------------------------------------------
+    // Register file
+    // -----------------------------------------------------------------
+    // CAP: MQES=63, CQR=1, TO=15 (7.5s), DSTRD=0, CSS=NVM, MPSMIN/MAX=4KiB
+    const CAP_LO: logic<32> = 32'h0F01_003F;
+    const CAP_HI: logic<32> = 32'h0000_0020;
+    const VS_1_4: logic<32> = 32'h0001_0400;
+
+    var cc      : logic<32>;
+    var csts_rdy: logic    ;
+    var shst    : logic<2> ;
+    var intms   : logic<32>;
+    var aqa     : logic<32>;
+    var asq     : logic<64>;
+    var acq     : logic<64>;
+
+    let cc_en: logic = cc[0];
+
+    // Queue state. Sizes are entry counts (1-based); tails/heads are
+    // entry indices.
+    var asq_size: logic<13>;
+    var acq_size: logic<13>;
+    var sq0_tail: logic<16>; // doorbell (host)
+    var sq0_head: logic<16>;
+    var acq_tail: logic<16>;
+    var acq_phase: logic   ;
+    var acq_headdb: logic<16>;
+
+    var iosq_en  : logic    ;
+    var iocq_en  : logic    ;
+    var iosq_base: logic<64>;
+    var iocq_base: logic<64>;
+    var iosq_size: logic<16>;
+    var iocq_size: logic<16>;
+    var sq1_tail : logic<16>;
+    var sq1_head : logic<16>;
+    var iocq_tail: logic<16>;
+    var iocq_phase: logic   ;
+    var iocq_headdb: logic<16>;
+
+    // -----------------------------------------------------------------
+    // NvmeCore instance
+    // -----------------------------------------------------------------
+    var core_sq_valid: logic    ;
+    var core_sq_ready: logic    ;
+    var core_sq_data : logic<32>;
+    var core_sq_admin: logic    ;
+    var core_cpl_valid : logic    ;
+    var core_cpl_ready : logic    ;
+    var core_cpl_cid   : logic<16>;
+    var core_cpl_status: logic<15>;
+    var core_cpl_dw0   : logic<32>;
+    var core_h2c_valid: logic    ;
+    var core_h2c_ready: logic    ;
+    var core_h2c_data : logic<32>;
+    var core_c2h_valid: logic    ;
+    var core_c2h_ready: logic    ;
+    var core_c2h_data : logic<32>;
+    var core_c2h_last : logic    ;
+
+    inst core: NvmeCore #(
+        LBA_COUNT: LBA_COUNT,
+    ) (
+        i_clk: i_clk,
+        i_rst: i_rst,
+        i_sq_valid   : core_sq_valid,
+        o_sq_ready   : core_sq_ready,
+        i_sq_data    : core_sq_data ,
+        i_sq_is_admin: core_sq_admin,
+        o_cpl_valid : core_cpl_valid ,
+        i_cpl_ready : core_cpl_ready ,
+        o_cpl_cid   : core_cpl_cid   ,
+        o_cpl_status: core_cpl_status,
+        o_cpl_dw0   : core_cpl_dw0   ,
+        i_h2c_valid: core_h2c_valid,
+        o_h2c_ready: core_h2c_ready,
+        i_h2c_data : core_h2c_data ,
+        o_c2h_valid: core_c2h_valid,
+        i_c2h_ready: core_c2h_ready,
+        o_c2h_data : core_c2h_data ,
+        o_c2h_last : core_c2h_last ,
+        o_mem_addr : o_mem_addr ,
+        o_mem_wen  : o_mem_wen  ,
+        o_mem_wdata: o_mem_wdata,
+        o_mem_ren  : o_mem_ren  ,
+        i_mem_rdata: i_mem_rdata,
+    );
+
+    // -----------------------------------------------------------------
+    // Queue engine
+    // -----------------------------------------------------------------
+    enum State: logic<4> {
+        Idle,
+        SqeIssue, // read one SQE dword from host memory
+        SqeWait,
+        Decode,
+        PushSqe, // stream the SQE into NvmeCore
+        Exec,    // move data / wait for the core completion
+        H2cRead, // fetch one write-data dword from host memory
+        H2cWait,
+        H2cFeed,
+        C2hWrite, // store one read-data dword to host memory
+        CplWrite, // write the 4 CQE dwords
+        CplDone,
+    }
+
+    var state   : State    ;
+    var cur_qid : logic    ; // 0 = admin, 1 = I/O
+    var sqe_idx : logic<5> ;
+    var sqe_dw  : logic<32>[16];
+    var xfer_off: logic<16>; // data-phase byte offset
+    var dbuf    : logic<32>;
+    var cpl_sts : logic<15>;
+    var cpl_dw0v: logic<32>;
+    var cpl_cid : logic<16>;
+    var cpl_idx : logic<3> ;
+    var new_sqhd: logic<16>;
+
+    let cur_sq_base: logic<64> = if cur_qid ? iosq_base : asq;
+    let cur_sq_head: logic<16> = if cur_qid ? sq1_head : sq0_head;
+    let cur_sq_size: logic<16> = if cur_qid ? iosq_size : {3'b000, asq_size};
+    let cur_cq_base: logic<64> = if cur_qid ? iocq_base : acq;
+    let cur_cq_tail: logic<16> = if cur_qid ? iocq_tail : acq_tail;
+    let cur_cq_size: logic<16> = if cur_qid ? iocq_size : {3'b000, acq_size};
+    let cur_cq_phase: logic    = if cur_qid ? iocq_phase : acq_phase;
+
+    let prp1: logic<64> = {sqe_dw[7], sqe_dw[6]};
+    let prp2: logic<64> = {sqe_dw[9], sqe_dw[8]};
+
+    // Data-phase host address for byte offset `off` (4KiB pages,
+    // PRP1 may be offset, PRP2 page-aligned; MDTS keeps off < 8KiB+page)
+    function prp_addr(p1: input logic<64>, p2: input logic<64>, off: input logic<16>) -> logic<64> {
+        let first: logic<16> = 16'd4096 - {4'b0000, p1[11:0]};
+        if off <: first {
+            return p1 + {48'h0, off};
+        } else {
+            return {p2[63:12], 12'h0} + {48'h0, off - first};
+        }
+    }
+
+    // CQE dword for index i
+    function cqe_dword(i: input logic<3>) -> logic<32> {
+        var r: logic<32>;
+        case i {
+            3'd0   : r = cpl_dw0v;
+            3'd1   : r = 32'h0;
+            3'd2   : r = {15'h0, cur_qid, new_sqhd};
+            3'd3   : r = {cpl_sts, cur_cq_phase, cpl_cid};
+            default: r = 32'h0;
+        }
+        return r;
+    }
+
+    // -----------------------------------------------------------------
+    // Combinational outputs
+    // -----------------------------------------------------------------
+    assign o_hm_valid = (state == State::SqeIssue) || (state == State::H2cRead) ||
+     (state == State::C2hWrite) || (state == State::CplWrite);
+    assign o_hm_write = (state == State::C2hWrite) || (state == State::CplWrite);
+    assign o_hm_addr = if (state == State::SqeIssue) ?
+        cur_sq_base + {42'h0, cur_sq_head, 6'h0} + {58'h0, sqe_idx[3:0], 2'h0} :
+     if ((state == State::H2cRead) || (state == State::C2hWrite)) ?
+        prp_addr(prp1, prp2, xfer_off) :
+        cur_cq_base + {44'h0, cur_cq_tail, 4'h0} + {59'h0, cpl_idx, 2'h0};
+    assign o_hm_wdata = if (state == State::C2hWrite) ? dbuf : cqe_dword(cpl_idx);
+
+    assign core_sq_valid = state == State::PushSqe;
+    assign core_sq_data  = sqe_dw[sqe_idx[3:0]];
+    assign core_sq_admin = ~cur_qid;
+    assign core_cpl_ready = state == State::Exec;
+    assign core_c2h_ready = state == State::Exec;
+    assign core_h2c_valid = state == State::H2cFeed;
+    assign core_h2c_data  = dbuf;
+
+    assign o_csr_rdata = case i_csr_addr {
+        14'h0000: CAP_LO,
+        14'h0004: CAP_HI,
+        14'h0008: VS_1_4,
+        14'h000C: intms,
+        14'h0010: intms,
+        14'h0014: cc,
+        14'h001C: {26'h0, shst, 3'h0, csts_rdy},
+        14'h0024: aqa,
+        14'h0028: asq[31:0],
+        14'h002C: asq[63:32],
+        14'h0030: acq[31:0],
+        14'h0034: acq[63:32],
+        default : 32'h0,
+    };
+
+    assign o_irq = ~intms[0] && csts_rdy &&
+     ((acq_tail != acq_headdb) || (iocq_en && (iocq_tail != iocq_headdb)));
+
+    // -----------------------------------------------------------------
+    // Sequential logic
+    // -----------------------------------------------------------------
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            cc        = 0;
+            csts_rdy  = 0;
+            shst      = 0;
+            intms     = 0;
+            aqa       = 0;
+            asq       = 0;
+            acq       = 0;
+            asq_size  = 0;
+            acq_size  = 0;
+            sq0_tail  = 0;
+            sq0_head  = 0;
+            acq_tail  = 0;
+            acq_phase = 0;
+            acq_headdb = 0;
+            iosq_en   = 0;
+            iocq_en   = 0;
+            iosq_base = 0;
+            iocq_base = 0;
+            iosq_size = 0;
+            iocq_size = 0;
+            sq1_tail  = 0;
+            sq1_head  = 0;
+            iocq_tail = 0;
+            iocq_phase = 0;
+            iocq_headdb = 0;
+            state    = State::Idle;
+            cur_qid  = 0;
+            sqe_idx  = 0;
+            xfer_off = 0;
+            dbuf     = 0;
+            cpl_sts  = 0;
+            cpl_dw0v = 0;
+            cpl_cid  = 0;
+            cpl_idx  = 0;
+            new_sqhd = 0;
+            for i in 0..16 {
+                sqe_dw[i] = 0;
+            }
+        } else {
+            // ---- CSR writes ----
+            if i_csr_wen {
+                case i_csr_addr {
+                    14'h000C: intms = intms | i_csr_wdata;
+                    14'h0010: intms = intms & ~i_csr_wdata;
+                    14'h0014: {
+                        cc = i_csr_wdata;
+                        if i_csr_wdata[0] && !cc_en {
+                            // enable: latch the admin queue configuration
+                            asq_size  = {1'b0, aqa[11:0]} + 1;
+                            acq_size  = {1'b0, aqa[27:16]} + 1;
+                            sq0_tail  = 0;
+                            sq0_head  = 0;
+                            acq_tail  = 0;
+                            acq_phase = 1;
+                            acq_headdb = 0;
+                            csts_rdy  = 1;
+                        }
+                        if !i_csr_wdata[0] {
+                            csts_rdy = 0;
+                            iosq_en  = 0;
+                            iocq_en  = 0;
+                        }
+                        if i_csr_wdata[15:14] != 2'b00 {
+                            shst = 2'b10; // shutdown complete
+                        }
+                    }
+                    14'h0024: aqa = i_csr_wdata;
+                    14'h0028: asq[31:0] = i_csr_wdata;
+                    14'h002C: asq[63:32] = i_csr_wdata;
+                    14'h0030: acq[31:0] = i_csr_wdata;
+                    14'h0034: acq[63:32] = i_csr_wdata;
+                    14'h1000: sq0_tail = i_csr_wdata[15:0];
+                    14'h1004: acq_headdb = i_csr_wdata[15:0];
+                    14'h1008: sq1_tail = i_csr_wdata[15:0];
+                    14'h100C: iocq_headdb = i_csr_wdata[15:0];
+                    default: {}
+                }
+            }
+
+            // ---- queue engine ----
+            case state {
+                State::Idle: {
+                    if csts_rdy {
+                        if sq0_tail != sq0_head {
+                            cur_qid = 0;
+                            sqe_idx = 0;
+                            state   = State::SqeIssue;
+                        } else if iosq_en && (sq1_tail != sq1_head) {
+                            cur_qid = 1;
+                            sqe_idx = 0;
+                            state   = State::SqeIssue;
+                        }
+                    }
+                }
+                State::SqeIssue: {
+                    if i_hm_ready {
+                        state = State::SqeWait;
+                    }
+                }
+                State::SqeWait: {
+                    if i_hm_rvalid {
+                        sqe_dw[sqe_idx[3:0]] = i_hm_rdata;
+                        if sqe_idx == 5'd15 {
+                            sqe_idx = 0;
+                            state   = State::Decode;
+                        } else {
+                            sqe_idx = sqe_idx + 1;
+                            state   = State::SqeIssue;
+                        }
+                    }
+                }
+                State::Decode: {
+                    // advance SQ head now; new_sqhd goes into the CQE
+                    new_sqhd = if cur_sq_head + 1 == cur_sq_size ? 16'h0 : cur_sq_head + 1;
+                    xfer_off = 0;
+                    cpl_cid  = sqe_dw[0][31:16];
+                    cpl_dw0v = 0;
+                    cpl_sts  = STS_SUCCESS;
+                    if (cur_qid == 1'b0) && ((sqe_dw[0][7:0] == ADM_OPC_CREATE_IO_SQ) ||
+                     (sqe_dw[0][7:0] == ADM_OPC_CREATE_IO_CQ) ||
+                     (sqe_dw[0][7:0] == ADM_OPC_DELETE_IO_SQ) ||
+                     (sqe_dw[0][7:0] == ADM_OPC_DELETE_IO_CQ)) {
+                        // local queue management (single I/O queue pair, QID 1)
+                        case sqe_dw[0][7:0] {
+                            ADM_OPC_CREATE_IO_CQ: {
+                                if sqe_dw[10][15:0] != 16'd1 {
+                                    cpl_sts = cmd_error_status(SC_INVALID_QID);
+                                } else {
+                                    iocq_base  = prp1;
+                                    iocq_size  = sqe_dw[10][31:16] + 1;
+                                    iocq_tail  = 0;
+                                    iocq_phase = 1;
+                                    iocq_headdb = 0;
+                                    iocq_en    = 1;
+                                }
+                            }
+                            ADM_OPC_CREATE_IO_SQ: {
+                                if sqe_dw[10][15:0] != 16'd1 {
+                                    cpl_sts = cmd_error_status(SC_INVALID_QID);
+                                } else if (!iocq_en) || (sqe_dw[11][31:16] != 16'd1) {
+                                    cpl_sts = cmd_error_status(SC_INVALID_CQ);
+                                } else {
+                                    iosq_base = prp1;
+                                    iosq_size = sqe_dw[10][31:16] + 1;
+                                    sq1_tail  = 0;
+                                    sq1_head  = 0;
+                                    iosq_en   = 1;
+                                }
+                            }
+                            ADM_OPC_DELETE_IO_SQ: {
+                                if sqe_dw[10][15:0] != 16'd1 {
+                                    cpl_sts = cmd_error_status(SC_INVALID_QID);
+                                } else {
+                                    iosq_en = 0;
+                                }
+                            }
+                            default: { // ADM_OPC_DELETE_IO_CQ
+                                if sqe_dw[10][15:0] != 16'd1 {
+                                    cpl_sts = cmd_error_status(SC_INVALID_QID);
+                                } else if iosq_en {
+                                    cpl_sts = cmd_error_status(SC_INVALID_CQ); // SQ still uses it
+                                } else {
+                                    iocq_en = 0;
+                                }
+                            }
+                        }
+                        cpl_idx = 0;
+                        state   = State::CplWrite;
+                    } else {
+                        state = State::PushSqe;
+                    }
+                }
+                State::PushSqe: {
+                    if core_sq_ready {
+                        if sqe_idx == 5'd15 {
+                            sqe_idx = 0;
+                            state   = State::Exec;
+                        } else {
+                            sqe_idx = sqe_idx + 1;
+                        }
+                    }
+                }
+                State::Exec: {
+                    if core_cpl_valid {
+                        cpl_sts  = core_cpl_status;
+                        cpl_dw0v = core_cpl_dw0;
+                        cpl_cid  = core_cpl_cid;
+                        cpl_idx  = 0;
+                        state    = State::CplWrite;
+                    } else if core_c2h_valid {
+                        dbuf  = core_c2h_data; // consumed this cycle (c2h_ready=1)
+                        state = State::C2hWrite;
+                    } else if core_h2c_ready {
+                        state = State::H2cRead;
+                    }
+                }
+                State::C2hWrite: {
+                    if i_hm_ready {
+                        xfer_off = xfer_off + 4;
+                        state    = State::Exec;
+                    }
+                }
+                State::H2cRead: {
+                    if i_hm_ready {
+                        state = State::H2cWait;
+                    }
+                }
+                State::H2cWait: {
+                    if i_hm_rvalid {
+                        dbuf  = i_hm_rdata;
+                        state = State::H2cFeed;
+                    }
+                }
+                State::H2cFeed: {
+                    if core_h2c_ready {
+                        xfer_off = xfer_off + 4;
+                        state    = State::Exec;
+                    }
+                }
+                State::CplWrite: {
+                    if i_hm_ready {
+                        if cpl_idx == 3'd3 {
+                            state = State::CplDone;
+                        } else {
+                            cpl_idx = cpl_idx + 1;
+                        }
+                    }
+                }
+                State::CplDone: {
+                    // retire: advance SQ head and CQ tail (phase wraps)
+                    if cur_qid {
+                        sq1_head = new_sqhd;
+                        if iocq_tail + 1 == iocq_size {
+                            iocq_tail  = 0;
+                            iocq_phase = ~iocq_phase;
+                        } else {
+                            iocq_tail = iocq_tail + 1;
+                        }
+                    } else {
+                        sq0_head = new_sqhd;
+                        if acq_tail + 1 == {3'b000, acq_size} {
+                            acq_tail  = 0;
+                            acq_phase = ~acq_phase;
+                        } else {
+                            acq_tail = acq_tail + 1;
+                        }
+                    }
+                    state = State::Idle;
+                }
+                default: state = State::Idle;
+            }
+        }
+    }
+}
