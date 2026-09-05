@@ -23,6 +23,7 @@ module nvme_controller_test_body #(
     logic [31:0] csr_wdata = 0;
     logic [31:0] csr_rdata;
     logic        irq;
+    logic [7:0]  irq_vec;
 
     logic        hm_valid, hm_write;
     logic [63:0] hm_addr;
@@ -39,7 +40,7 @@ module nvme_controller_test_body #(
     NvmeController #(.LBA_COUNT(LBA_COUNT)) dut (
         .i_clk(clk), .i_rst(rst),
         .i_csr_addr(csr_addr), .i_csr_wen(csr_wen), .i_csr_wdata(csr_wdata),
-        .o_csr_rdata(csr_rdata), .o_irq(irq),
+        .o_csr_rdata(csr_rdata), .o_irq(irq), .o_irq_vec(irq_vec),
         .o_hm_valid(hm_valid), .o_hm_write(hm_write), .o_hm_addr(hm_addr),
         .o_hm_wdata(hm_wdata), .i_hm_ready(hm_ready),
         .i_hm_rvalid(hm_rvalid), .i_hm_rdata(hm_rdata),
@@ -93,6 +94,8 @@ module nvme_controller_test_body #(
     localparam IOSQ = 32'h0_5000; // 4 entries
     localparam WBUF0 = 32'h0_8000, WBUF1 = 32'h0_9000;
     localparam RBUF0 = 32'h0_A000, RBUF1 = 32'h0_B000;
+    localparam IOCQ2 = 32'h0_6000; // second queue pair (QID 2)
+    localparam IOSQ2 = 32'h0_7000;
     localparam OFSBUF = 32'h0_C800; // PRP1 with 0x800 in-page offset
     localparam OFSBUF2 = 32'h0_D000;
 
@@ -274,6 +277,44 @@ module nvme_controller_test_body #(
             end
         end
 
+        // ---- second queue pair (QID 2) on interrupt vector 3 ----
+        write_sqe(ASQ, adm_slot, 8'h05, 16'h1110, 0, IOCQ2, 0,
+                  ((IOQ_SIZE - 1) << 16) | 16'd2, (3 << 16) | 32'h3, 0);
+        ring_adm();
+        wait_cqe("create iocq2", ACQ, adm_cpl % ACQ_SIZE, adm_phase(), 16'h1110, 15'h0, dw0, dw2);
+        adm_cpl++;
+        write_sqe(ASQ, adm_slot, 8'h01, 16'h1111, 0, IOSQ2, 0,
+                  ((IOQ_SIZE - 1) << 16) | 16'd2, 32'h0002_0001, 0);
+        ring_adm();
+        wait_cqe("create iosq2", ACQ, adm_cpl % ACQ_SIZE, adm_phase(), 16'h1111, 15'h0, dw0, dw2);
+        adm_cpl++;
+
+        // flush on QID 2: own CQ, fresh phase, sqid=2 in the CQE
+        write_sqe(IOSQ2, 0, 8'h00, 16'h2301, 1, 0, 0, 0, 0, 0);
+        csr_write(14'h1010, 1); // SQ2 tail doorbell
+        wait_cqe("q2 flush", IOCQ2, 0, 1'b1, 16'h2301, 15'h0, dw0, dw2);
+        check32("q2 flush sqhd/sqid", dw2, 32'h0002_0001);
+        if (irq_vec[3] !== 1'b1) begin $display("ERROR: irq_vec[3] not set for CQ2"); errors++; end
+        csr_write(14'h1014, 1); // CQ2 head doorbell
+        @(negedge clk);
+        if (irq_vec[3] !== 1'b0) begin $display("ERROR: irq_vec[3] still set after head db"); errors++; end
+
+        // both queues pending at once: submit to SQ1 and SQ2, both complete
+        write_sqe(IOSQ, io_slot, 8'h00, 16'h2302, 1, 0, 0, 0, 0, 0);
+        write_sqe(IOSQ2, 1, 8'h00, 16'h2303, 1, 0, 0, 0, 0, 0);
+        ring_io();
+        csr_write(14'h1010, 2);
+        wait_cqe("q1 flush (both)", IOCQ, io_cpl % IOQ_SIZE, io_phase(), 16'h2302, 15'h0, dw0, dw2);
+        io_cpl++;
+        wait_cqe("q2 flush (both)", IOCQ2, 1, 1'b1, 16'h2303, 15'h0, dw0, dw2);
+
+        // ---- admin: Create I/O CQ with an out-of-range vector ----
+        write_sqe(ASQ, adm_slot, 8'h05, 16'h1112, 0, IOCQ2, 0,
+                  ((IOQ_SIZE - 1) << 16) | 16'd3, (9 << 16) | 32'h3, 0);
+        ring_adm();
+        wait_cqe("create iocq bad iv", ACQ, adm_cpl % ACQ_SIZE, adm_phase(), 16'h1112, 15'h4108, dw0, dw2);
+        adm_cpl++;
+
         // ---- admin: Identify with PRP1 offset crossing into PRP2 ----
         write_sqe(ASQ, adm_slot, 8'h06, 16'h1104, 0, OFSBUF, OFSBUF2, 32'h1, 0, 0);
         ring_adm();
@@ -291,7 +332,7 @@ module nvme_controller_test_body #(
         write_sqe(ASQ, adm_slot, 8'h0A, 16'h1105, 0, 0, 0, 32'h7, 0, 0);
         ring_adm();
         wait_cqe("get features", ACQ, adm_cpl % ACQ_SIZE, adm_phase(), 16'h1105, 15'h0, dw0, dw2);
-        check32("get features dw0", dw0, 0);
+        check32("get features NQ dw0", dw0, 32'h0003_0003); // 4 SQs / 4 CQs (0-based)
         adm_cpl++;
         write_sqe(ASQ, adm_slot, 8'h09, 16'h1106, 0, 0, 0, 32'h7, 0, 0);
         ring_adm();
@@ -301,7 +342,7 @@ module nvme_controller_test_body #(
         // ---- admin: queue deletion (CQ first must fail) ----
         write_sqe(ASQ, adm_slot, 8'h04, 16'h1107, 0, 0, 0, 32'd1, 0, 0);
         ring_adm();
-        wait_cqe("delete iocq early", ACQ, adm_cpl % ACQ_SIZE, adm_phase(), 16'h1107, 15'h4100, dw0, dw2);
+        wait_cqe("delete iocq early", ACQ, adm_cpl % ACQ_SIZE, adm_phase(), 16'h1107, 15'h410C, dw0, dw2);
         adm_cpl++;
         write_sqe(ASQ, adm_slot, 8'h00, 16'h1108, 0, 0, 0, 32'd1, 0, 0);
         ring_adm();
@@ -310,6 +351,14 @@ module nvme_controller_test_body #(
         write_sqe(ASQ, adm_slot, 8'h04, 16'h1109, 0, 0, 0, 32'd1, 0, 0);
         ring_adm();
         wait_cqe("delete iocq", ACQ, adm_cpl % ACQ_SIZE, adm_phase(), 16'h1109, 15'h0, dw0, dw2);
+        adm_cpl++;
+        write_sqe(ASQ, adm_slot, 8'h00, 16'h110A, 0, 0, 0, 32'd2, 0, 0);
+        ring_adm();
+        wait_cqe("delete iosq2", ACQ, adm_cpl % ACQ_SIZE, adm_phase(), 16'h110A, 15'h0, dw0, dw2);
+        adm_cpl++;
+        write_sqe(ASQ, adm_slot, 8'h04, 16'h110B, 0, 0, 0, 32'd2, 0, 0);
+        ring_adm();
+        wait_cqe("delete iocq2", ACQ, adm_cpl % ACQ_SIZE, adm_phase(), 16'h110B, 15'h0, dw0, dw2);
         adm_cpl++;
 
         // ---- shutdown notification -> CSTS.SHST = 10b ----

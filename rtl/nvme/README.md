@@ -46,9 +46,16 @@ PRP リストは不要です (PRP1 + PRP2 で足りる)。
 - コントローラレジスタ (CAP/VS/INTMS/INTMC/CC/CSTS/AQA/ASQ/ACQ) と
   1000h からのドアベル (DSTRD=0)
 - ホストメモリ上の SQ から SQE をフェッチし、CQE を Phase Tag /
-  SQ Head 付きで CQ へ書き戻し。割り込み 1 本 (CQ head ドアベルで解除)
-- Create/Delete I/O SQ/CQ をローカル処理 (I/O キューは QID 1 の 1 組。
-  SQ が残った状態の CQ 削除はエラー)、それ以外は `NvmeCore` へ転送
+  SQ Head 付きで CQ へ書き戻し
+- I/O キューは最大 4 組 (QID 1..4、`NUM_IO_QUEUES`)。ペンディングの
+  SQ 間はラウンドロビン調停 (admin 優先)。SQ は任意の作成済み CQ に
+  完了を返せる。Create/Delete I/O SQ/CQ と Number of Queues feature を
+  ローカル処理 (SQ が残った状態の CQ 削除は Invalid Queue Deletion)、
+  それ以外は `NvmeCore` へ転送
+- MSI-X 相当の割り込みベクタ 8 本 (`o_irq_vec`): Create I/O CQ の IV を
+  CQ ごとに保持し、未消費エントリがある間レベルアサート (CQ head
+  ドアベルで解除)。admin CQ はベクタ 0。`o_irq` はレガシー 1 本
+  (INTMS bit0 でマスク)
 - PRP1/PRP2 のデータ転送 (ページ 4KiB 固定、PRP1 はページ内オフセット可)
 
 ホストメモリへは 32-bit 単発アクセスの DMA マスタポート
@@ -121,7 +128,9 @@ $ make vfio VFU_PREFIX=<libvfio-user と json-c を入れた prefix>
 $ ./run_spdk_vfio.sh all
 ```
 
-SPDK 側は `./configure --with-vfio-user` が必要です (イニシエータは
+`spdk_nvme_perf -c 0xF` で 4 コア = 4 I/O キューペアが作られ、
+ラウンドロビン調停まで実ホストで検証できます (各コアの IOPS が
+均等になります)。SPDK 側は `./configure --with-vfio-user` が必要です (イニシエータは
 lib/vfio_user + lib/nvme のみで libvfio-user 不要。同梱サブモジュールの
 ビルドが cmocka の版差で失敗する場合は `make -C lib/vfio_user &&
 make -C lib/nvme` して各アプリを個別リンク)。

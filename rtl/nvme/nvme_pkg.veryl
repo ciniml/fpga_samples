@@ -49,9 +49,11 @@ pub package nvme_pkg {
     const SC_LBA_OUT_OF_RANGE: logic<8> = 8'h80;
 
     // Command-specific status codes (SCT = 1, queue management)
-    const SC_INVALID_CQ   : logic<8> = 8'h00;
-    const SC_INVALID_QID  : logic<8> = 8'h01;
-    const SC_INVALID_QSIZE: logic<8> = 8'h02;
+    const SC_INVALID_CQ            : logic<8> = 8'h00;
+    const SC_INVALID_QID           : logic<8> = 8'h01;
+    const SC_INVALID_QSIZE         : logic<8> = 8'h02;
+    const SC_INVALID_IRQ_VECTOR    : logic<8> = 8'h08;
+    const SC_INVALID_QUEUE_DELETION: logic<8> = 8'h0C;
 
     const STS_SUCCESS: logic<15> = 15'h0000;
 

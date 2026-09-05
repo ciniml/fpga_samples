@@ -14,9 +14,17 @@
  *  - Controller registers (CAP/VS/INTMS/INTMC/CC/CSTS/AQA/ASQ/ACQ)
  *    and SQ tail / CQ head doorbells (stride 0, at offset 1000h).
  *  - SQE fetch from host-memory submission rings, CQE writeback with
- *    phase tag and SQ head pointer, one interrupt line.
- *  - Create/Delete I/O SQ/CQ admin commands handled locally (one I/O
- *    queue pair, QID 1); everything else is forwarded to NvmeCore.
+ *    phase tag and SQ head pointer.
+ *  - Up to NUM_IO_QUEUES (1..4) I/O queue pairs (QID 1..N) with
+ *    round-robin arbitration between pending submission queues (the
+ *    admin queue always goes first). Create/Delete I/O SQ/CQ and the
+ *    Number of Queues feature are handled locally; a submission queue
+ *    may target any created completion queue.
+ *  - MSI-X-style interrupt vectors: each I/O CQ carries the vector
+ *    from Create I/O CQ (IV, 8 vectors) and o_irq_vec[v] is level-
+ *    asserted while any CQ on vector v has unconsumed entries (the CQ
+ *    head doorbell retires them). The admin CQ uses vector 0. o_irq is
+ *    the legacy single line (all vectors ORed, masked by INTMS bit 0).
  *  - PRP1/PRP2 data-phase transfers. MDTS is 8KiB (see NvmeCore's
  *    Identify data) so PRP lists are never required; PRP1 may carry a
  *    dword-aligned offset, PRP2 must be page aligned. Page size is
@@ -34,6 +42,8 @@ import nvme_pkg::*;
 pub module NvmeController #(
     /// Number of 512-byte logical blocks in the backing memory.
     param LBA_COUNT: u32 = 128,
+    /// I/O queue pairs offered to the host (1..4).
+    param NUM_IO_QUEUES: u32 = 4,
     /// Dword address width of the backing memory (do not override).
     param MEM_ADDR_BITS: u32 = $clog2(LBA_COUNT) + 7,
 ) (
@@ -45,7 +55,8 @@ pub module NvmeController #(
     i_csr_wen  : input  logic    ,
     i_csr_wdata: input  logic<32>,
     o_csr_rdata: output logic<32>, // combinational
-    o_irq      : output logic    ,
+    o_irq      : output logic    , // legacy single line
+    o_irq_vec  : output logic<8> , // per-vector level interrupts
 
     // ---- host memory master (DMA), 32-bit data ----
     o_hm_valid : output logic    ,
@@ -81,27 +92,31 @@ pub module NvmeController #(
 
     let cc_en: logic = cc[0];
 
-    // Queue state. Sizes are entry counts (1-based); tails/heads are
-    // entry indices.
-    var asq_size: logic<13>;
-    var acq_size: logic<13>;
-    var sq0_tail: logic<16>; // doorbell (host)
-    var sq0_head: logic<16>;
-    var acq_tail: logic<16>;
-    var acq_phase: logic   ;
+    // Admin queue state. Sizes are entry counts (1-based); tails/heads
+    // are entry indices.
+    var asq_size  : logic<13>;
+    var acq_size  : logic<13>;
+    var sq0_tail  : logic<16>; // doorbell (host)
+    var sq0_head  : logic<16>;
+    var acq_tail  : logic<16>;
+    var acq_phase : logic    ;
     var acq_headdb: logic<16>;
 
-    var iosq_en  : logic    ;
-    var iocq_en  : logic    ;
-    var iosq_base: logic<64>;
-    var iocq_base: logic<64>;
-    var iosq_size: logic<16>;
-    var iocq_size: logic<16>;
-    var sq1_tail : logic<16>;
-    var sq1_head : logic<16>;
-    var iocq_tail: logic<16>;
-    var iocq_phase: logic   ;
-    var iocq_headdb: logic<16>;
+    // I/O queue state, indexed by QID-1 (up to 4 pairs)
+    var iosq_en    : logic    [4];
+    var iocq_en    : logic    [4];
+    var iosq_base  : logic<64>[4];
+    var iocq_base  : logic<64>[4];
+    var iosq_size  : logic<16>[4];
+    var iocq_size  : logic<16>[4];
+    var iosq_tail  : logic<16>[4]; // doorbells (host)
+    var iosq_head  : logic<16>[4];
+    var iosq_cqid  : logic<2> [4]; // CQ index this SQ completes into
+    var iocq_tail  : logic<16>[4];
+    var iocq_phase : logic    [4];
+    var iocq_headdb: logic<16>[4];
+    var iocq_iv    : logic<3> [4]; // interrupt vector
+    var iocq_ien   : logic    [4];
 
     // -----------------------------------------------------------------
     // NvmeCore instance
@@ -170,7 +185,8 @@ pub module NvmeController #(
     }
 
     var state   : State    ;
-    var cur_qid : logic    ; // 0 = admin, 1 = I/O
+    var cur_qid : logic<3> ; // 0 = admin, 1..4 = I/O
+    var rr_q    : logic<2> ; // round-robin start for I/O SQ arbitration
     var sqe_idx : logic<5> ;
     var sqe_dw  : logic<32>[16];
     var xfer_off: logic<16>; // data-phase byte offset
@@ -181,13 +197,30 @@ pub module NvmeController #(
     var cpl_idx : logic<3> ;
     var new_sqhd: logic<16>;
 
-    let cur_sq_base: logic<64> = if cur_qid ? iosq_base : asq;
-    let cur_sq_head: logic<16> = if cur_qid ? sq1_head : sq0_head;
-    let cur_sq_size: logic<16> = if cur_qid ? iosq_size : {3'b000, asq_size};
-    let cur_cq_base: logic<64> = if cur_qid ? iocq_base : acq;
-    let cur_cq_tail: logic<16> = if cur_qid ? iocq_tail : acq_tail;
-    let cur_cq_size: logic<16> = if cur_qid ? iocq_size : {3'b000, acq_size};
-    let cur_cq_phase: logic    = if cur_qid ? iocq_phase : acq_phase;
+    let cur_adm: logic    = cur_qid == 3'd0;
+    let ioi    : logic<2> = cur_qid[1:0] - 2'd1; // I/O queue index (QID-1)
+    let cur_cqi: logic<2> = iosq_cqid[ioi];
+
+    let cur_sq_base : logic<64> = if cur_adm ? asq : iosq_base[ioi];
+    let cur_sq_head : logic<16> = if cur_adm ? sq0_head : iosq_head[ioi];
+    let cur_sq_size : logic<16> = if cur_adm ? {3'b000, asq_size} : iosq_size[ioi];
+    let cur_cq_base : logic<64> = if cur_adm ? acq : iocq_base[cur_cqi];
+    let cur_cq_tail : logic<16> = if cur_adm ? acq_tail : iocq_tail[cur_cqi];
+    let cur_cq_size : logic<16> = if cur_adm ? {3'b000, acq_size} : iocq_size[cur_cqi];
+    let cur_cq_phase: logic     = if cur_adm ? acq_phase : iocq_phase[cur_cqi];
+
+    // I/O SQ arbitration: rotating priority starting at rr_q
+    var io_pend: logic<4>;
+    always_comb {
+        for q in 0..4 {
+            io_pend[q] = iosq_en[q] && (iosq_tail[q] != iosq_head[q]);
+        }
+    }
+    let pend8  : logic<8> = {io_pend, io_pend};
+    let rot    : logic<8> = pend8 >> rr_q;
+    let arb_off: logic<2> = if rot[0] ? 2'd0 : (if rot[1] ? 2'd1 : (if rot[2] ? 2'd2 : 2'd3));
+    let io_any : logic    = io_pend != 4'h0;
+    let arb_q  : logic<2> = rr_q + arb_off;
 
     let prp1: logic<64> = {sqe_dw[7], sqe_dw[6]};
     let prp2: logic<64> = {sqe_dw[9], sqe_dw[8]};
@@ -209,7 +242,7 @@ pub module NvmeController #(
         case i {
             3'd0   : r = cpl_dw0v;
             3'd1   : r = 32'h0;
-            3'd2   : r = {15'h0, cur_qid, new_sqhd};
+            3'd2   : r = {13'h0, cur_qid, new_sqhd};
             3'd3   : r = {cpl_sts, cur_cq_phase, cpl_cid};
             default: r = 32'h0;
         }
@@ -231,7 +264,7 @@ pub module NvmeController #(
 
     assign core_sq_valid = state == State::PushSqe;
     assign core_sq_data  = sqe_dw[sqe_idx[3:0]];
-    assign core_sq_admin = ~cur_qid;
+    assign core_sq_admin = cur_adm;
     assign core_cpl_ready = state == State::Exec;
     assign core_c2h_ready = state == State::Exec;
     assign core_h2c_valid = state == State::H2cFeed;
@@ -253,41 +286,61 @@ pub module NvmeController #(
         default : 32'h0,
     };
 
-    assign o_irq = ~intms[0] && csts_rdy &&
-     ((acq_tail != acq_headdb) || (iocq_en && (iocq_tail != iocq_headdb)));
+    // interrupt vectors: level-held while a CQ on the vector has
+    // entries the host has not consumed via the CQ head doorbell
+    var vec_pend: logic<8>;
+    always_comb {
+        vec_pend = 8'h0;
+        if acq_tail != acq_headdb {
+            vec_pend[0] = 1;
+        }
+        for q in 0..4 {
+            if iocq_en[q] && iocq_ien[q] && (iocq_tail[q] != iocq_headdb[q]) {
+                vec_pend[iocq_iv[q]] = 1;
+            }
+        }
+    }
+    assign o_irq_vec = if csts_rdy ? vec_pend : 8'h0;
+    assign o_irq     = ~intms[0] && csts_rdy && (vec_pend != 8'h0);
 
     // -----------------------------------------------------------------
     // Sequential logic
     // -----------------------------------------------------------------
     always_ff (i_clk, i_rst) {
         if_reset {
-            cc        = 0;
-            csts_rdy  = 0;
-            shst      = 0;
-            intms     = 0;
-            aqa       = 0;
-            asq       = 0;
-            acq       = 0;
-            asq_size  = 0;
-            acq_size  = 0;
-            sq0_tail  = 0;
-            sq0_head  = 0;
-            acq_tail  = 0;
-            acq_phase = 0;
+            cc         = 0;
+            csts_rdy   = 0;
+            shst       = 0;
+            intms      = 0;
+            aqa        = 0;
+            asq        = 0;
+            acq        = 0;
+            asq_size   = 0;
+            acq_size   = 0;
+            sq0_tail   = 0;
+            sq0_head   = 0;
+            acq_tail   = 0;
+            acq_phase  = 0;
             acq_headdb = 0;
-            iosq_en   = 0;
-            iocq_en   = 0;
-            iosq_base = 0;
-            iocq_base = 0;
-            iosq_size = 0;
-            iocq_size = 0;
-            sq1_tail  = 0;
-            sq1_head  = 0;
-            iocq_tail = 0;
-            iocq_phase = 0;
-            iocq_headdb = 0;
+            for q in 0..4 {
+                iosq_en[q]     = 0;
+                iocq_en[q]     = 0;
+                iosq_base[q]   = 0;
+                iocq_base[q]   = 0;
+                iosq_size[q]   = 0;
+                iocq_size[q]   = 0;
+                iosq_tail[q]   = 0;
+                iosq_head[q]   = 0;
+                iosq_cqid[q]   = 0;
+                iocq_tail[q]   = 0;
+                iocq_phase[q]  = 0;
+                iocq_headdb[q] = 0;
+                iocq_iv[q]     = 0;
+                iocq_ien[q]    = 0;
+            }
             state    = State::Idle;
             cur_qid  = 0;
+            rr_q     = 0;
             sqe_idx  = 0;
             xfer_off = 0;
             dbuf     = 0;
@@ -309,19 +362,21 @@ pub module NvmeController #(
                         cc = i_csr_wdata;
                         if i_csr_wdata[0] && !cc_en {
                             // enable: latch the admin queue configuration
-                            asq_size  = {1'b0, aqa[11:0]} + 1;
-                            acq_size  = {1'b0, aqa[27:16]} + 1;
-                            sq0_tail  = 0;
-                            sq0_head  = 0;
-                            acq_tail  = 0;
-                            acq_phase = 1;
+                            asq_size   = {1'b0, aqa[11:0]} + 1;
+                            acq_size   = {1'b0, aqa[27:16]} + 1;
+                            sq0_tail   = 0;
+                            sq0_head   = 0;
+                            acq_tail   = 0;
+                            acq_phase  = 1;
                             acq_headdb = 0;
-                            csts_rdy  = 1;
+                            csts_rdy   = 1;
                         }
                         if !i_csr_wdata[0] {
                             csts_rdy = 0;
-                            iosq_en  = 0;
-                            iocq_en  = 0;
+                            for q in 0..4 {
+                                iosq_en[q] = 0;
+                                iocq_en[q] = 0;
+                            }
                         }
                         if i_csr_wdata[15:14] != 2'b00 {
                             shst = 2'b10; // shutdown complete
@@ -334,8 +389,14 @@ pub module NvmeController #(
                     14'h0034: acq[63:32] = i_csr_wdata;
                     14'h1000: sq0_tail = i_csr_wdata[15:0];
                     14'h1004: acq_headdb = i_csr_wdata[15:0];
-                    14'h1008: sq1_tail = i_csr_wdata[15:0];
-                    14'h100C: iocq_headdb = i_csr_wdata[15:0];
+                    14'h1008: iosq_tail[0] = i_csr_wdata[15:0];
+                    14'h100C: iocq_headdb[0] = i_csr_wdata[15:0];
+                    14'h1010: iosq_tail[1] = i_csr_wdata[15:0];
+                    14'h1014: iocq_headdb[1] = i_csr_wdata[15:0];
+                    14'h1018: iosq_tail[2] = i_csr_wdata[15:0];
+                    14'h101C: iocq_headdb[2] = i_csr_wdata[15:0];
+                    14'h1020: iosq_tail[3] = i_csr_wdata[15:0];
+                    14'h1024: iocq_headdb[3] = i_csr_wdata[15:0];
                     default: {}
                 }
             }
@@ -348,8 +409,8 @@ pub module NvmeController #(
                             cur_qid = 0;
                             sqe_idx = 0;
                             state   = State::SqeIssue;
-                        } else if iosq_en && (sq1_tail != sq1_head) {
-                            cur_qid = 1;
+                        } else if io_any {
+                            cur_qid = {1'b0, arb_q} + 3'd1;
                             sqe_idx = 0;
                             state   = State::SqeIssue;
                         }
@@ -379,52 +440,75 @@ pub module NvmeController #(
                     cpl_cid  = sqe_dw[0][31:16];
                     cpl_dw0v = 0;
                     cpl_sts  = STS_SUCCESS;
-                    if (cur_qid == 1'b0) && ((sqe_dw[0][7:0] == ADM_OPC_CREATE_IO_SQ) ||
+                    if cur_adm && ((sqe_dw[0][7:0] == ADM_OPC_CREATE_IO_SQ) ||
                      (sqe_dw[0][7:0] == ADM_OPC_CREATE_IO_CQ) ||
                      (sqe_dw[0][7:0] == ADM_OPC_DELETE_IO_SQ) ||
-                     (sqe_dw[0][7:0] == ADM_OPC_DELETE_IO_CQ)) {
-                        // local queue management (single I/O queue pair, QID 1)
+                     (sqe_dw[0][7:0] == ADM_OPC_DELETE_IO_CQ) ||
+                     (((sqe_dw[0][7:0] == ADM_OPC_SET_FEATURES) ||
+                       (sqe_dw[0][7:0] == ADM_OPC_GET_FEATURES)) &&
+                      (sqe_dw[10][7:0] == FID_NUMBER_OF_QUEUES))) {
+                        // local queue management (QID 1..NUM_IO_QUEUES)
                         case sqe_dw[0][7:0] {
                             ADM_OPC_CREATE_IO_CQ: {
-                                if sqe_dw[10][15:0] != 16'd1 {
+                                if (sqe_dw[10][15:0] == 16'd0) ||
+                                 (sqe_dw[10][15:0] >: NUM_IO_QUEUES as 16) {
                                     cpl_sts = cmd_error_status(SC_INVALID_QID);
+                                } else if sqe_dw[11][31:16] >= 16'd8 {
+                                    cpl_sts = cmd_error_status(SC_INVALID_IRQ_VECTOR);
                                 } else {
-                                    iocq_base  = prp1;
-                                    iocq_size  = sqe_dw[10][31:16] + 1;
-                                    iocq_tail  = 0;
-                                    iocq_phase = 1;
-                                    iocq_headdb = 0;
-                                    iocq_en    = 1;
+                                    iocq_base[sqe_dw[10][1:0] - 2'd1]   = prp1;
+                                    iocq_size[sqe_dw[10][1:0] - 2'd1]   = sqe_dw[10][31:16] + 1;
+                                    iocq_tail[sqe_dw[10][1:0] - 2'd1]   = 0;
+                                    iocq_phase[sqe_dw[10][1:0] - 2'd1]  = 1;
+                                    iocq_headdb[sqe_dw[10][1:0] - 2'd1] = 0;
+                                    iocq_iv[sqe_dw[10][1:0] - 2'd1]     = sqe_dw[11][18:16];
+                                    iocq_ien[sqe_dw[10][1:0] - 2'd1]    = sqe_dw[11][1];
+                                    iocq_en[sqe_dw[10][1:0] - 2'd1]     = 1;
                                 }
                             }
                             ADM_OPC_CREATE_IO_SQ: {
-                                if sqe_dw[10][15:0] != 16'd1 {
+                                if (sqe_dw[10][15:0] == 16'd0) ||
+                                 (sqe_dw[10][15:0] >: NUM_IO_QUEUES as 16) {
                                     cpl_sts = cmd_error_status(SC_INVALID_QID);
-                                } else if (!iocq_en) || (sqe_dw[11][31:16] != 16'd1) {
+                                } else if (sqe_dw[11][31:16] == 16'd0) ||
+                                 (sqe_dw[11][31:16] >: NUM_IO_QUEUES as 16) ||
+                                 (!iocq_en[sqe_dw[11][17:16] - 2'd1]) {
                                     cpl_sts = cmd_error_status(SC_INVALID_CQ);
                                 } else {
-                                    iosq_base = prp1;
-                                    iosq_size = sqe_dw[10][31:16] + 1;
-                                    sq1_tail  = 0;
-                                    sq1_head  = 0;
-                                    iosq_en   = 1;
+                                    iosq_base[sqe_dw[10][1:0] - 2'd1] = prp1;
+                                    iosq_size[sqe_dw[10][1:0] - 2'd1] = sqe_dw[10][31:16] + 1;
+                                    iosq_tail[sqe_dw[10][1:0] - 2'd1] = 0;
+                                    iosq_head[sqe_dw[10][1:0] - 2'd1] = 0;
+                                    iosq_cqid[sqe_dw[10][1:0] - 2'd1] = sqe_dw[11][17:16] - 2'd1;
+                                    iosq_en[sqe_dw[10][1:0] - 2'd1]   = 1;
                                 }
                             }
                             ADM_OPC_DELETE_IO_SQ: {
-                                if sqe_dw[10][15:0] != 16'd1 {
+                                if (sqe_dw[10][15:0] == 16'd0) ||
+                                 (sqe_dw[10][15:0] >: NUM_IO_QUEUES as 16) ||
+                                 (!iosq_en[sqe_dw[10][1:0] - 2'd1]) {
                                     cpl_sts = cmd_error_status(SC_INVALID_QID);
                                 } else {
-                                    iosq_en = 0;
+                                    iosq_en[sqe_dw[10][1:0] - 2'd1] = 0;
                                 }
                             }
-                            default: { // ADM_OPC_DELETE_IO_CQ
-                                if sqe_dw[10][15:0] != 16'd1 {
+                            ADM_OPC_DELETE_IO_CQ: {
+                                if (sqe_dw[10][15:0] == 16'd0) ||
+                                 (sqe_dw[10][15:0] >: NUM_IO_QUEUES as 16) ||
+                                 (!iocq_en[sqe_dw[10][1:0] - 2'd1]) {
                                     cpl_sts = cmd_error_status(SC_INVALID_QID);
-                                } else if iosq_en {
-                                    cpl_sts = cmd_error_status(SC_INVALID_CQ); // SQ still uses it
+                                } else if (iosq_en[0] && (iosq_cqid[0] == sqe_dw[10][1:0] - 2'd1)) ||
+                                 (iosq_en[1] && (iosq_cqid[1] == sqe_dw[10][1:0] - 2'd1)) ||
+                                 (iosq_en[2] && (iosq_cqid[2] == sqe_dw[10][1:0] - 2'd1)) ||
+                                 (iosq_en[3] && (iosq_cqid[3] == sqe_dw[10][1:0] - 2'd1)) {
+                                    // an SQ still completes into this CQ
+                                    cpl_sts = cmd_error_status(SC_INVALID_QUEUE_DELETION);
                                 } else {
-                                    iocq_en = 0;
+                                    iocq_en[sqe_dw[10][1:0] - 2'd1] = 0;
                                 }
+                            }
+                            default: { // Set/Get Features: Number of Queues
+                                cpl_dw0v = {(NUM_IO_QUEUES - 1) as 16, (NUM_IO_QUEUES - 1) as 16};
                             }
                         }
                         cpl_idx = 0;
@@ -491,15 +575,7 @@ pub module NvmeController #(
                 }
                 State::CplDone: {
                     // retire: advance SQ head and CQ tail (phase wraps)
-                    if cur_qid {
-                        sq1_head = new_sqhd;
-                        if iocq_tail + 1 == iocq_size {
-                            iocq_tail  = 0;
-                            iocq_phase = ~iocq_phase;
-                        } else {
-                            iocq_tail = iocq_tail + 1;
-                        }
-                    } else {
+                    if cur_adm {
                         sq0_head = new_sqhd;
                         if acq_tail + 1 == {3'b000, acq_size} {
                             acq_tail  = 0;
@@ -507,6 +583,15 @@ pub module NvmeController #(
                         } else {
                             acq_tail = acq_tail + 1;
                         }
+                    } else {
+                        iosq_head[ioi] = new_sqhd;
+                        if iocq_tail[cur_cqi] + 1 == iocq_size[cur_cqi] {
+                            iocq_tail[cur_cqi]  = 0;
+                            iocq_phase[cur_cqi] = ~iocq_phase[cur_cqi];
+                        } else {
+                            iocq_tail[cur_cqi] = iocq_tail[cur_cqi] + 1;
+                        }
+                        rr_q = ioi + 1; // fairness: next queue first
                     }
                     state = State::Idle;
                 }

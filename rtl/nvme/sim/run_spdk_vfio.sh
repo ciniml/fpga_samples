@@ -37,5 +37,7 @@ fi
 if [ "$MODE" = perf ] || [ "$MODE" = all ]; then
     echo "=== spdk_nvme_perf (vfio-user, 4KiB randrw QD4, 5s) ==="
     "$PERF" --no-huge -s 512 -r "$TRID" -o 4096 -q 4 -w randrw -M 50 -t 5 || RC=1
+    echo "=== spdk_nvme_perf (4 cores -> 4 I/O queue pairs) ==="
+    "$PERF" --no-huge -s 512 -r "$TRID" -o 4096 -q 4 -w randrw -M 50 -t 5 -c 0xF || RC=1
 fi
 exit $RC

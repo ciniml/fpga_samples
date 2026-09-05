@@ -245,7 +245,7 @@ int main(int argc, char** argv) {
            sock.c_str(), (unsigned)SIM_LBA_COUNT);
     fflush(stdout);
 
-    uint32_t db_shadow[4] = {0, 0, 0, 0};
+    uint32_t db_shadow[10] = {}; // admin + 4 I/O pairs
     bool attached = false;
     for (;;) {
         if (!attached) {
@@ -280,9 +280,9 @@ int main(int argc, char** argv) {
             }
         }
 
-        // forward doorbell writes (SQ0/CQ0/SQ1/CQ1 at BAR0+1000h)
+        // forward doorbell writes (SQ/CQ pairs for QID 0..4 at BAR0+1000h)
         volatile uint32_t* db = dbmem + DB_OFFSET / 4;
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < 10; i++) {
             uint32_t v = db[i];
             if (v != db_shadow[i]) {
                 db_shadow[i] = v;
