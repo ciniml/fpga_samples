@@ -123,6 +123,13 @@ module top(
         if (mem_ren) mem_rdata <= bmem[mem_addr];
     end
 
+    // DEBUG LEDs (active low) - ICResp path trace, sticky until reset:
+    //  [5] heartbeat
+    //  [4] engine->target byte handshake happened (RX delivery)
+    //  [3] target produced a response byte (app TX valid seen)
+    //  [2] engine accepted a response byte into the TX ring
+    //  [1] TCP connection 0 established
+    //  [0] engine reader presented a byte (RX FIFO -> target valid)
     // LEDs (active low):
     //  [5] heartbeat (clock alive)  [4] MAC RX frame  [3] TX frame
     //  [2:1] TCP connections        [0] raw CRS_DV activity at the pin

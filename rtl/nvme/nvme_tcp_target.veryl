@@ -503,19 +503,14 @@ pub module NvmeTcpTarget #(
                 if rx_pos[sel] == 32'd3 {
                     rx_pdo[sel] = rx_byte;
                 }
-                if rx_pos[sel] == 32'd4 {
-                    rx_plen[sel][7:0] = rx_byte;
-                    rx_plen[sel][31:8] = 0;
-                }
-                if rx_pos[sel] == 32'd5 {
-                    rx_plen[sel][15:8] = rx_byte;
-                }
-                if rx_pos[sel] == 32'd6 {
-                    rx_plen[sel][23:16] = rx_byte;
+                // PLEN (little-endian bytes 4..7) shifted in as whole-word
+                // writes: part-selects on a variable-indexed array element
+                // are not reliably synthesized
+                if (rx_pos[sel] >= 32'd4) && (rx_pos[sel] <= 32'd7) {
+                    rx_plen[sel] = {rx_byte, rx_plen[sel][31:8]};
                 }
                 if rx_pos[sel] == 32'd7 {
-                    rx_plen[sel][31:24] = rx_byte;
-                    rx_pm2[sel] = {rx_byte, rx_plen[sel][23:0]} - 2;
+                    rx_pm2[sel] = {rx_byte, rx_plen[sel][31:8]} - 2;
                 }
                 // region flags for the NEXT byte
                 at_alloc[sel] = is_caps[sel] && (rx_pos[sel] == 32'd6);
