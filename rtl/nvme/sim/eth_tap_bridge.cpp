@@ -36,6 +36,23 @@
 #include <memory>
 #include <vector>
 
+static void tcp_log(const char* dir, const uint8_t* f, size_t n) {
+    if (n < 54 || f[12] != 0x08 || f[13] != 0x00 || f[23] != 0x06) return;
+    uint16_t iplen = (f[16] << 8) | f[17];
+    int doff = (f[46] >> 4) * 4;
+    int plen = iplen - 20 - doff;
+    uint32_t seq = (f[38] << 24) | (f[39] << 16) | (f[40] << 8) | f[41];
+    uint32_t ack = (f[42] << 24) | (f[43] << 16) | (f[44] << 8) | f[45];
+    printf("[tcp] %s seq=%08x ack=%08x flags=%02x win=%u plen=%d\n",
+           dir, seq, ack, f[47], (f[48] << 8) | f[49], plen);
+    if (dir[0] == 'O') {
+        for (size_t i = 0; i < n && i < 64; i++)
+            printf("%02x%s", f[i], (i % 16 == 15) ? "\n" : " ");
+        printf("\n");
+    }
+    fflush(stdout);
+}
+
 static uint32_t crc32_step(uint32_t crc, uint8_t b) {
     crc ^= b;
     for (int i = 0; i < 8; i++)
@@ -122,9 +139,7 @@ int main(int argc, char** argv) {
                 if (crc == fcs) {
                     ssize_t rc = write(tap, rx_frame.data(), rx_frame.size() - 4);
                     (void)rc;
-                    printf("[eth] DUT -> TAP %zu bytes (type %02x%02x)\n",
-                           rx_frame.size() - 4, rx_frame[12], rx_frame[13]);
-                    fflush(stdout);
+                    tcp_log("OUT", rx_frame.data(), rx_frame.size() - 4);
                 } else {
                     fprintf(stderr, "[eth] bad FCS on DUT TX (len %zu, calc %08x got %08x)\n",
                             rx_frame.size(), crc, fcs);
@@ -166,8 +181,17 @@ int main(int argc, char** argv) {
     for (;;) {
         ssize_t n = read(tap, buf, sizeof(buf));
         if (n > 0) {
-            printf("[eth] TAP -> DUT %zd bytes (type %02x%02x) [rx=%u err=%u tx=%u]\n",
-                   n, buf[12], buf[13], dut->dbg_rx_frames, dut->dbg_rx_errs, dut->dbg_tx_frames);
+            tcp_log("IN ", buf, (size_t)n);
+            printf("[eth] TAP -> DUT %zd bytes (type %02x%02x) [rx=%u err=%u tx=%u]"
+#ifdef DBG_APP
+                   " [conn=%x arx=%u atx=%u]"
+#endif
+                   "\n",
+                   n, buf[12], buf[13], dut->dbg_rx_frames, dut->dbg_rx_errs, dut->dbg_tx_frames
+#ifdef DBG_APP
+                   , dut->dbg_conn, dut->dbg_app_rx, dut->dbg_app_tx
+#endif
+                   );
             fflush(stdout);
             push_frame(buf, (size_t)n);
         }

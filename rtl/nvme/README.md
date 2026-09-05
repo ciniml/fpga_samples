@@ -140,8 +140,29 @@ $ BRIDGE_BIN=$PWD/obj_tcp/nvme_tcp_rtl_bridge ./run_spdk.sh all
 
 SPDK identify/perf が RTL ターゲットに対して完走します (性能は
 1 バイト/サイクル処理なりですが、Tang Nano 9K + 100M PHY の回線速度
-には十分)。実機化に必要な残りは Ethernet 側 (MAC/ARP/IPv4 + 2〜4
-コネクションの簡易 TCP) です。
+には十分)。
+
+## Ethernet フルスタック (`eth_ip.veryl` / `tcp_engine.veryl`)
+
+実機 (Tang Nano 9K + LAN8720, RMII) に載せる Ethernet 側の RTL:
+
+- `EthIpStack`: ARP 応答 + ICMP エコー (2KiB フレームバッファ 1 面)
+- `TcpEngine`: TCP-lite — port 4420 の passive open × 2 コネクション、
+  SYN-ACK で MSS=1460 通知、受信は in-order のみ (2KiB FIFO の空きを
+  ウィンドウ広告、ドレイン時にウィンドウ更新 ACK)、送信は 2KiB リング
+  兼 Go-back-N 再送バッファ、IP/TCP チェックサムは 2 パス生成
+  (RX 側 TCP チェックサム検証は省略 — FCS で保護)
+- `EthTxMux`: フレーム境界の TX アービタ
+
+検証は実カーネル相手 (TAP): `sim/eth_nvme_top.sv` (実 MAC + 全スタック
++ NVMe ターゲット) を `make eth_nvme` でビルドし、
+`ping` / `smoke_host.py 4420 192.168.37.2` / SPDK identify・perf
+(`traddr:192.168.37.2`) がすべて RMII ピンレベルシミュレーションを
+通ります。
+
+yosys 概算では NVMe+IP+TCP 合計 ~9k LUT 相当と Tang Nano 9K (8.6k) を
+やや超過するため、実機化には TCP エンジンの 32-bit 演算削減などの
+最適化パス (または Tang Primer 20K) が必要です。
 
 ### vfio-user 接続 (キュー機構まで RTL で検証)
 

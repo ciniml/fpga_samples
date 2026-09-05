@@ -1,0 +1,757 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tcp_engine.veryl
+ * @brief TCP-lite: a lean TCP server engine for the NVMe/TCP target.
+ *
+ * Two fixed connection slots (NVMe/TCP uses one connection per queue:
+ * admin + I/O), passive open on LOCAL_PORT. Per connection:
+ *  - RX: in-order segments only (seq == rcv_nxt, else the segment is
+ *    dropped and a duplicate ACK is sent). Payload lands in a 2KiB
+ *    FIFO whose free space is the advertised receive window, so the
+ *    peer cannot overrun it; a window-update ACK is sent when the
+ *    application drains it. Writes commit only when the frame's FCS
+ *    was good.
+ *  - TX: application bytes go into a 2KiB ring that doubles as the
+ *    Go-back-N retransmission buffer (snd_una..wr_seq). Segments are
+ *    cut at 1024 bytes, or flushed after the application stream idles;
+ *    on retransmission timeout snd_nxt falls back to snd_una.
+ *  - Frames are built in two passes over a byte-source function:
+ *    pass 1 accumulates the IPv4 and TCP checksums (pseudo header
+ *    included), pass 2 emits the bytes (padded to the 60-byte
+ *    minimum). The SYN-ACK carries an MSS=1460 option.
+ *  - Teardown: on an in-order FIN the connection ACKs, drops
+ *    conn_active (resetting the NVMe/TCP parser), sends its own FIN
+ *    once the ring is drained and closes on the final ACK. RST closes
+ *    immediately.
+ *
+ * Lean by design: no TCP checksum verification on RX (frames are
+ * already FCS-checked by the MAC), no out-of-order reassembly, no
+ * congestion control, options ignored (header length honoured). The
+ * peer's window is not tracked - at most 2KiB (the ring) is in flight.
+ */
+import nvme_tcp_pkg::*;
+
+pub module TcpEngine #(
+    param LOCAL_MAC : logic<48> = 48'h02A5_0F01_0203,
+    param LOCAL_IP  : logic<32> = 32'hC0A8_2502,
+    param LOCAL_PORT: logic<16> = 16'd4420,
+    /// retransmission timeout in clock cycles
+    param RTO_CYCLES: u32 = 25_000_000,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    // MAC RX (tap; no backpressure, tuser = FCS error with tlast)
+    i_rx_data : input logic<8>,
+    i_rx_valid: input logic   ,
+    i_rx_user : input logic   ,
+    i_rx_last : input logic   ,
+
+    // MAC TX (via EthTxMux)
+    o_tx_data : output logic<8>,
+    o_tx_valid: output logic   ,
+    i_tx_ready: input  logic   ,
+    o_tx_last : output logic   ,
+
+    // application byte streams (NvmeTcpTarget), lanes [8c+7:8c]
+    o_conn_active : output logic<2> ,
+    o_app_rx_valid: output logic<2> ,
+    i_app_rx_ready: input  logic<2> ,
+    o_app_rx_data : output logic<16>,
+    i_app_tx_valid: input  logic<2> ,
+    o_app_tx_ready: output logic<2> ,
+    i_app_tx_data : input  logic<16>,
+) {
+    enum ConnSt: logic<2> {
+        Closed,
+        SynRcvd,
+        Estab,
+        LastAck,
+    }
+
+    // ---- per-connection state ----
+    var st      : ConnSt   [2];
+    var rip     : logic<32>[2]; // peer IP
+    var rport   : logic<16>[2]; // peer port
+    var rcv_nxt : logic<32>[2];
+    var snd_una : logic<32>[2];
+    var snd_nxt : logic<32>[2];
+    var wr_seq  : logic<32>[2]; // ring write sequence (una + buffered)
+    var iss     : logic<32>[2];
+    var synack_p: logic<2>;     // pending SYN-ACK
+    var ack_p   : logic<2>;     // pending pure ACK
+    var fin_rcvd: logic<2>;
+    var fin_sent: logic<2>;
+    var win_adv : logic<16>[2]; // last advertised window
+    var rto_cnt : logic<32>[2];
+    var idle_cnt: logic<16>[2]; // app-TX flush timer
+
+    // RX FIFO (app-bound payload): 2KiB per connection
+    var rxf_ram : logic<8>[4096];
+    var rxf_wr  : logic<12>[2]; // committed (11-bit ring + wrap bit)
+    var rxf_rd  : logic<12>[2];
+
+    // TX ring (retransmission buffer): 2KiB per connection
+    var txr_ram: logic<8>[4096];
+
+    function occ12(wr: input logic<12>, rd: input logic<12>) -> logic<12> {
+        return wr - rd;
+    }
+
+    // ---- RX parser ----
+    var rx_pos   : logic<12>;
+    var p_ethok  : logic    ;
+    var p_type   : logic<16>;
+    var p_vihl   : logic<8> ;
+    var p_iplen  : logic<16>;
+    var p_proto  : logic<8> ;
+    var p_sip    : logic<32>;
+    var p_dip    : logic<32>;
+    var p_sport  : logic<16>;
+    var p_dport  : logic<16>;
+    var p_seq    : logic<32>;
+    var p_ack    : logic<32>;
+    var p_doff   : logic<4> ;
+    var p_flags  : logic<8> ;
+    var p_conn   : logic<2> ; // 0/1 = match, 2 = none
+    var p_accept : logic    ; // payload accepted into the FIFO
+    var p_trunc  : logic    ; // payload byte dropped (FIFO full)
+    var p_wr_t   : logic<12>; // tentative FIFO write pointer
+    var p_plen   : logic<12>; // accepted payload bytes
+
+    // peer MAC per connection (captured from the SYN)
+    var rmac0: logic<48>;
+    var rmac1: logic<48>;
+
+    let p_is_tcp : logic     = (p_type == 16'h0800) && (p_vihl == 8'h45) &&
+     (p_proto == 8'h06) && (p_dip == LOCAL_IP) && p_ethok;
+    let p_payoff : logic<12> = 12'd34 + {6'h0, p_doff, 2'h0}; // 34 + doff*4
+    let p_ipend  : logic<12> = 12'd14 + p_iplen[11:0];        // end of IP payload
+
+    // payload byte arriving THIS cycle (needed because the last byte
+    // coincides with tlast: the commit must include it)
+    let pay_now: logic = i_rx_valid && p_is_tcp && p_accept &&
+     (rx_pos >= p_payoff) && (rx_pos <: p_ipend);
+    let pay_ok : logic     = pay_now && (occ12(p_wr_t, rxf_rd[p_conn[0]]) <: 12'd2048);
+    let p_wr_e : logic<12> = p_wr_t + (if pay_ok ? 12'd1 : 12'd0);
+    let p_len_e: logic<12> = p_plen + (if pay_ok ? 12'd1 : 12'd0);
+    // whole payload (if any) accepted, including this cycle's byte
+    let p_all_ok: logic = p_accept && !p_trunc && !(pay_now && !pay_ok);
+
+    function mac_byte(i: input logic<3>) -> logic<8> {
+        var r: logic<8>;
+        case i {
+            3'd0   : r = LOCAL_MAC[47:40];
+            3'd1   : r = LOCAL_MAC[39:32];
+            3'd2   : r = LOCAL_MAC[31:24];
+            3'd3   : r = LOCAL_MAC[23:16];
+            3'd4   : r = LOCAL_MAC[15:8];
+            default: r = LOCAL_MAC[7:0];
+        }
+        return r;
+    }
+
+    // ---- app-side RX reader (FIFO -> NvmeTcpTarget) ----
+    enum ArSt: logic<2> {
+        Idle,
+        Wait,
+        Present,
+    }
+    var ar_st: ArSt    ;
+    var ar_c : logic   ;
+    var ar_b : logic<8>;
+    var ar_rr: logic   ;
+
+    assign o_app_rx_valid = {
+        (ar_st == ArSt::Present) && ar_c,
+        (ar_st == ArSt::Present) && !ar_c
+    };
+    assign o_app_rx_data = {ar_b, ar_b};
+
+    // ---- app-side TX writer (NvmeTcpTarget -> ring) ----
+    var aw_take: logic; // registered ready for conn aw_c
+    var aw_c   : logic;
+    var aw_rr  : logic;
+
+    assign o_app_tx_ready = {aw_take && aw_c, aw_take && !aw_c};
+
+    let ring_full0: logic = (wr_seq[0] - snd_una[0]) >= 32'd2048;
+    let ring_full1: logic = (wr_seq[1] - snd_una[1]) >= 32'd2048;
+
+    // ---- TX frame scheduler ----
+    enum TxSt: logic<3> {
+        Idle,
+        Latch,  // latch the segment parameters
+        PreSum, // init the checksums (f_tcpo/f_plen now stable)
+        Sum,    // pass 1: checksums
+        Emit,   // pass 2: bytes out
+        Done,
+    }
+    var tx_st   : TxSt     ;
+    var tx_rr   : logic    ;
+    var f_c     : logic    ; // connection
+    var f_kind  : logic<2> ; // 0=ctrl(ack) 1=synack 2=data 3=fin
+    var f_seq   : logic<32>;
+    var f_ack   : logic<32>;
+    var f_win   : logic<16>;
+    var f_plen  : logic<12>; // payload bytes
+    var f_tcpo  : logic<12>; // TCP header bytes (20 or 24)
+    var f_flags : logic<8> ;
+    var f_i     : logic<12>; // byte cursor
+    var f_ipsum : logic<32>;
+    var f_tcpsum: logic<32>;
+    var f_ipck  : logic<16>;
+    var f_tcpck : logic<16>;
+    var f_prb   : logic<8> ; // ring prefetch for byte f_i
+    var f_warm  : logic    ;
+    var ip_id   : logic<16>;
+
+    // frame geometry, derived combinationally from the latched regs
+    // (never read in the same cycle Latch writes them)
+    let f_iplen : logic<16> = 16'd20 + {4'h0, f_tcpo} + {4'h0, f_plen};
+    let f_total : logic<12> = 12'd34 + f_tcpo + f_plen;
+    let f_payoff: logic<12> = 12'd34 + f_tcpo;
+    let f_padded: logic<12> = if f_total <: 12'd60 ? 12'd60 : f_total;
+
+    // free receive window of a connection (used for advertisement)
+    function rx_free(c: input logic) -> logic<16> {
+        return 16'd2048 - {4'h0, occ12(rxf_wr[c], rxf_rd[c])};
+    }
+
+    function fold_sum(s: input logic<32>) -> logic<16> {
+        var t: logic<32>;
+        t = {16'h0, s[31:16]} + {16'h0, s[15:0]};
+        t = {16'h0, t[31:16]} + {16'h0, t[15:0]};
+        return ~t[15:0];
+    }
+
+    // frame byte source (checksum fields return 0 during pass 1)
+    function hdr_byte(i: input logic<12>, pass2: input logic) -> logic<8> {
+        var r: logic<8>;
+        r = 8'h00;
+        case i {
+            12'd12 : r = 8'h08;
+            12'd13 : r = 8'h00;
+            12'd14 : r = 8'h45;
+            12'd16 : r = f_iplen[15:8];
+            12'd17 : r = f_iplen[7:0];
+            12'd18 : r = ip_id[15:8];
+            12'd19 : r = ip_id[7:0];
+            12'd20 : r = 8'h40; // DF
+            12'd22 : r = 8'h40; // TTL
+            12'd23 : r = 8'h06; // TCP
+            12'd24 : r = if pass2 ? f_ipck[15:8] : 8'h00;
+            12'd25 : r = if pass2 ? f_ipck[7:0] : 8'h00;
+            12'd26 : r = LOCAL_IP[31:24];
+            12'd27 : r = LOCAL_IP[23:16];
+            12'd28 : r = LOCAL_IP[15:8];
+            12'd29 : r = LOCAL_IP[7:0];
+            12'd30 : r = rip[f_c][31:24];
+            12'd31 : r = rip[f_c][23:16];
+            12'd32 : r = rip[f_c][15:8];
+            12'd33 : r = rip[f_c][7:0];
+            12'd34 : r = LOCAL_PORT[15:8];
+            12'd35 : r = LOCAL_PORT[7:0];
+            12'd36 : r = rport[f_c][15:8];
+            12'd37 : r = rport[f_c][7:0];
+            12'd38 : r = f_seq[31:24];
+            12'd39 : r = f_seq[23:16];
+            12'd40 : r = f_seq[15:8];
+            12'd41 : r = f_seq[7:0];
+            12'd42 : r = f_ack[31:24];
+            12'd43 : r = f_ack[23:16];
+            12'd44 : r = f_ack[15:8];
+            12'd45 : r = f_ack[7:0];
+            12'd46 : r = if f_tcpo == 12'd24 ? 8'h60 : 8'h50; // data offset
+            12'd47 : r = f_flags;
+            12'd48 : r = f_win[15:8];
+            12'd49 : r = f_win[7:0];
+            12'd50 : r = if pass2 ? f_tcpck[15:8] : 8'h00;
+            12'd51 : r = if pass2 ? f_tcpck[7:0] : 8'h00;
+            // MSS option (SYN-ACK only)
+            12'd54 : r = if f_tcpo == 12'd24 ? 8'h02 : 8'h00;
+            12'd55 : r = if f_tcpo == 12'd24 ? 8'h04 : 8'h00;
+            12'd56 : r = if f_tcpo == 12'd24 ? 8'h05 : 8'h00;
+            12'd57 : r = if f_tcpo == 12'd24 ? 8'hB4 : 8'h00; // 1460
+            default: {}
+        }
+        // destination MAC: the peer's, captured per frame is not kept;
+        // reply frames reuse the last received source MAC per conn
+        if i <= 12'd5 {
+            r = rmac_b(f_c, i[2:0]);
+        }
+        if (i >= 12'd6) && (i <= 12'd11) {
+            r = mac_byte(i[2:0] - 3'd6);
+        }
+        return r;
+    }
+
+    function rmac_b(c: input logic, i: input logic<3>) -> logic<8> {
+        var m: logic<48>;
+        var r: logic<8>;
+        m = if c ? rmac1 : rmac0;
+        case i {
+            3'd0   : r = m[47:40];
+            3'd1   : r = m[39:32];
+            3'd2   : r = m[31:24];
+            3'd3   : r = m[23:16];
+            3'd4   : r = m[15:8];
+            default: r = m[7:0];
+        }
+        return r;
+    }
+    var p_smac: logic<48>; // source MAC of the frame being parsed
+
+    let f_paybyte: logic = (f_i >= f_payoff) && (f_i <: f_total);
+    let f_curb: logic<8> = if f_paybyte ? f_prb : (if f_i <: f_total ? hdr_byte(f_i, tx_st == TxSt::Emit) : 8'h00);
+
+    assign o_tx_valid = (tx_st == TxSt::Emit) && f_warm;
+    assign o_tx_data  = f_curb;
+    assign o_tx_last  = o_tx_valid && (f_i == f_padded - 1);
+
+    let f_adv: logic = if tx_st == TxSt::Sum ? 1'b1 :
+     ((tx_st == TxSt::Emit) && (!f_warm || i_tx_ready));
+    let f_i_n: logic<12> = if f_adv ? f_i + 1 : f_i;
+    // ring prefetch address for the byte that f_i becomes next
+    let f_rseq : logic<32> = f_seq + {20'h0, f_i_n - f_payoff};
+    let f_raddr: logic<12> = {f_c, f_rseq[10:0]};
+
+    assign o_conn_active = {st[1] == ConnSt::Estab, st[0] == ConnSt::Estab};
+
+    // per-connection send requests
+    let unsent0: logic<32> = wr_seq[0] - snd_nxt[0];
+    let unsent1: logic<32> = wr_seq[1] - snd_nxt[1];
+    let fin_ok0: logic = fin_rcvd[0] && !fin_sent[0] && (unsent0 == 32'h0) && (snd_una[0] == snd_nxt[0]);
+    let fin_ok1: logic = fin_rcvd[1] && !fin_sent[1] && (unsent1 == 32'h0) && (snd_una[1] == snd_nxt[1]);
+    let data_ok0: logic = (st[0] == ConnSt::Estab) && (unsent0 != 32'h0) &&
+     ((unsent0 >= 32'd1024) || (idle_cnt[0] >= 16'd512));
+    let data_ok1: logic = (st[1] == ConnSt::Estab) && (unsent1 != 32'h0) &&
+     ((unsent1 >= 32'd1024) || (idle_cnt[1] >= 16'd512));
+    let req0: logic = synack_p[0] || ack_p[0] || fin_ok0 || data_ok0;
+    let req1: logic = synack_p[1] || ack_p[1] || fin_ok1 || data_ok1;
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            for c in 0..2 {
+                st[c]       = ConnSt::Closed;
+                rip[c]      = 0;
+                rport[c]    = 0;
+                rcv_nxt[c]  = 0;
+                snd_una[c]  = 0;
+                snd_nxt[c]  = 0;
+                wr_seq[c]   = 0;
+                iss[c]      = 0;
+                win_adv[c]  = 0;
+                rto_cnt[c]  = 0;
+                idle_cnt[c] = 0;
+                rxf_wr[c]   = 0;
+                rxf_rd[c]   = 0;
+            }
+            synack_p = 0;
+            ack_p    = 0;
+            fin_rcvd = 0;
+            fin_sent = 0;
+            rmac0    = 0;
+            rmac1    = 0;
+            p_smac   = 0;
+            rx_pos   = 0;
+            p_ethok  = 0;
+            p_type   = 0;
+            p_vihl   = 0;
+            p_iplen  = 0;
+            p_proto  = 0;
+            p_sip    = 0;
+            p_dip    = 0;
+            p_sport  = 0;
+            p_dport  = 0;
+            p_seq    = 0;
+            p_ack    = 0;
+            p_doff   = 0;
+            p_flags  = 0;
+            p_conn   = 2;
+            p_accept = 0;
+            p_trunc  = 0;
+            p_wr_t   = 0;
+            p_plen   = 0;
+            ar_st = ArSt::Idle;
+            ar_c  = 0;
+            ar_b  = 0;
+            ar_rr = 0;
+            aw_take = 0;
+            aw_c    = 0;
+            aw_rr   = 0;
+            tx_st    = TxSt::Idle;
+            tx_rr    = 0;
+            f_c      = 0;
+            f_kind   = 0;
+            f_seq    = 0;
+            f_ack    = 0;
+            f_win    = 0;
+            f_plen   = 0;
+            f_tcpo   = 0;
+            f_flags  = 0;
+            f_i      = 0;
+            f_ipsum  = 0;
+            f_tcpsum = 0;
+            f_ipck   = 0;
+            f_tcpck  = 0;
+            f_prb    = 0;
+            f_warm   = 0;
+            ip_id    = 0;
+        } else {
+            // =========================================================
+            // RX parser
+            // =========================================================
+            if i_rx_valid {
+                case rx_pos {
+                    12'd0: {
+                        p_ethok = i_rx_data == mac_byte(0);
+                        p_conn  = 2;
+                    }
+                    12'd1: p_ethok = p_ethok && (i_rx_data == mac_byte(1));
+                    12'd2: p_ethok = p_ethok && (i_rx_data == mac_byte(2));
+                    12'd3: p_ethok = p_ethok && (i_rx_data == mac_byte(3));
+                    12'd4: p_ethok = p_ethok && (i_rx_data == mac_byte(4));
+                    12'd5: p_ethok = p_ethok && (i_rx_data == mac_byte(5));
+                    12'd6 : p_smac[47:40] = i_rx_data;
+                    12'd7 : p_smac[39:32] = i_rx_data;
+                    12'd8 : p_smac[31:24] = i_rx_data;
+                    12'd9 : p_smac[23:16] = i_rx_data;
+                    12'd10: p_smac[15:8] = i_rx_data;
+                    12'd11: p_smac[7:0] = i_rx_data;
+                    12'd12: p_type[15:8] = i_rx_data;
+                    12'd13: p_type[7:0] = i_rx_data;
+                    12'd14: p_vihl = i_rx_data;
+                    12'd16: p_iplen[15:8] = i_rx_data;
+                    12'd17: p_iplen[7:0] = i_rx_data;
+                    12'd23: p_proto = i_rx_data;
+                    12'd26: p_sip[31:24] = i_rx_data;
+                    12'd27: p_sip[23:16] = i_rx_data;
+                    12'd28: p_sip[15:8] = i_rx_data;
+                    12'd29: p_sip[7:0] = i_rx_data;
+                    12'd30: p_dip[31:24] = i_rx_data;
+                    12'd31: p_dip[23:16] = i_rx_data;
+                    12'd32: p_dip[15:8] = i_rx_data;
+                    12'd33: p_dip[7:0] = i_rx_data;
+                    12'd34: p_sport[15:8] = i_rx_data;
+                    12'd35: p_sport[7:0] = i_rx_data;
+                    12'd36: p_dport[15:8] = i_rx_data;
+                    12'd37: {
+                        p_dport[7:0] = i_rx_data;
+                        // connection match (source port low byte races
+                        // one position later; resolved at pos 38)
+                    }
+                    12'd38: {
+                        p_seq[31:24] = i_rx_data;
+                        if (st[0] != ConnSt::Closed) && (rip[0] == p_sip) && (rport[0] == p_sport) {
+                            p_conn = 0;
+                        } else if (st[1] != ConnSt::Closed) && (rip[1] == p_sip) && (rport[1] == p_sport) {
+                            p_conn = 1;
+                        } else {
+                            p_conn = 2;
+                        }
+                    }
+                    12'd39: p_seq[23:16] = i_rx_data;
+                    12'd40: p_seq[15:8] = i_rx_data;
+                    12'd41: p_seq[7:0] = i_rx_data;
+                    12'd42: p_ack[31:24] = i_rx_data;
+                    12'd43: p_ack[23:16] = i_rx_data;
+                    12'd44: p_ack[15:8] = i_rx_data;
+                    12'd45: p_ack[7:0] = i_rx_data;
+                    12'd46: p_doff = i_rx_data[7:4];
+                    12'd47: {
+                        p_flags = i_rx_data;
+                        // payload acceptance decided before the payload
+                        p_plen   = 0;
+                        p_trunc  = 0;
+                        p_accept = (p_conn <: 2'd2) && p_is_tcp &&
+                         (p_seq == rcv_nxt[p_conn[0]]) && !i_rx_data[1] && // no SYN
+                         ((st[p_conn[0]] == ConnSt::Estab) || (st[p_conn[0]] == ConnSt::SynRcvd));
+                        p_wr_t = rxf_wr[p_conn[0]];
+                    }
+                    default: {}
+                }
+                // payload bytes into the tentative FIFO region
+                if pay_ok {
+                    rxf_ram[{p_conn[0], p_wr_t[10:0]}] = i_rx_data;
+                    p_wr_t = p_wr_t + 1;
+                    p_plen = p_plen + 1;
+                } else if pay_now {
+                    p_trunc = 1;
+                }
+                rx_pos = rx_pos + 1;
+                if i_rx_last {
+                    rx_pos = 0;
+                    if !i_rx_user && p_is_tcp && (p_dport == LOCAL_PORT) {
+                        if p_flags[2] { // RST
+                            if p_conn <: 2'd2 {
+                                st[p_conn[0]] = ConnSt::Closed;
+                            }
+                        } else if p_flags[1] { // SYN
+                            if p_conn <: 2'd2 {
+                                // retransmitted SYN: answer again (only
+                                // while still in the handshake)
+                                if st[p_conn[0]] == ConnSt::SynRcvd {
+                                    synack_p[p_conn[0]] = 1;
+                                }
+                            } else {
+                                for c in 0..2 {
+                                    // open the first free slot only
+                                    if (st[c] == ConnSt::Closed) &&
+                                     ((c == 0) || (st[0] != ConnSt::Closed)) {
+                                        st[c]       = ConnSt::SynRcvd;
+                                        rip[c]      = p_sip;
+                                        rport[c]    = p_sport;
+                                        rcv_nxt[c]  = p_seq + 1;
+                                        iss[c]      = 32'h1000_0000 + (if c == 1 ? 32'h0100_0000 : 32'h0);
+                                        snd_una[c]  = 32'h1000_0000 + (if c == 1 ? 32'h0100_0000 : 32'h0);
+                                        snd_nxt[c]  = 32'h1000_0000 + (if c == 1 ? 32'h0100_0000 : 32'h0);
+                                        wr_seq[c]   = 32'h1000_0000 + (if c == 1 ? 32'h0100_0000 : 32'h0);
+                                        rxf_wr[c]   = 0;
+                                        rxf_rd[c]   = 0;
+                                        synack_p[c] = 1;
+                                        ack_p[c]    = 0;
+                                        fin_rcvd[c] = 0;
+                                        fin_sent[c] = 0;
+                                        win_adv[c]  = 16'd2048;
+                                        if c == 0 {
+                                            rmac0 = p_smac;
+                                        } else {
+                                            rmac1 = p_smac;
+                                        }
+                                    }
+                                }
+                            }
+                        } else if p_conn <: 2'd2 {
+                            // ACK processing
+                            if (p_flags[4]) && ((p_ack - snd_una[p_conn[0]]) <= (snd_nxt[p_conn[0]] - snd_una[p_conn[0]])) {
+                                if p_ack != snd_una[p_conn[0]] {
+                                    rto_cnt[p_conn[0]] = 0;
+                                }
+                                snd_una[p_conn[0]] = p_ack;
+                                if st[p_conn[0]] == ConnSt::SynRcvd {
+                                    st[p_conn[0]] = ConnSt::Estab;
+                                }
+                                if (st[p_conn[0]] == ConnSt::LastAck) && fin_sent[p_conn[0]] &&
+                                 (p_ack == snd_nxt[p_conn[0]]) {
+                                    st[p_conn[0]] = ConnSt::Closed;
+                                }
+                            }
+                            // data / FIN (in-order FIN needs the whole
+                            // payload accepted so the sequence adds up)
+                            if p_flags[0] && p_all_ok {
+                                rcv_nxt[p_conn[0]]  = rcv_nxt[p_conn[0]] + {20'h0, p_len_e} + 1;
+                                fin_rcvd[p_conn[0]] = 1;
+                                ack_p[p_conn[0]]    = 1;
+                                st[p_conn[0]]       = ConnSt::LastAck;
+                                if p_len_e != 12'h0 {
+                                    rxf_wr[p_conn[0]] = p_wr_e;
+                                }
+                            } else if p_len_e != 12'h0 {
+                                rxf_wr[p_conn[0]]  = p_wr_e;
+                                rcv_nxt[p_conn[0]] = rcv_nxt[p_conn[0]] + {20'h0, p_len_e};
+                                ack_p[p_conn[0]]   = 1;
+                            } else if (p_seq != rcv_nxt[p_conn[0]]) &&
+                             (st[p_conn[0]] == ConnSt::Estab) {
+                                ack_p[p_conn[0]] = 1; // duplicate ACK
+                            }
+                        }
+                    }
+                }
+            }
+
+            // =========================================================
+            // app-side RX reader
+            // =========================================================
+            case ar_st {
+                ArSt::Idle: {
+                    if (rxf_wr[ar_rr] != rxf_rd[ar_rr]) && (st[ar_rr] == ConnSt::Estab) {
+                        ar_c  = ar_rr;
+                        ar_st = ArSt::Wait; // rxf read issued this cycle
+                    } else {
+                        ar_rr = ~ar_rr;
+                    }
+                }
+                ArSt::Wait: {
+                    ar_b  = rxf_ram[{ar_c, rxf_rd[ar_c][10:0]}];
+                    ar_st = ArSt::Present;
+                }
+                ArSt::Present: {
+                    if i_app_rx_ready[ar_c] || (st[ar_c] != ConnSt::Estab) {
+                        // window-update ACK when the FIFO drains
+                        if rx_free(ar_c) >= win_adv[ar_c] + 16'd1024 {
+                            ack_p[ar_c] = 1;
+                        }
+                        rxf_rd[ar_c] = rxf_rd[ar_c] + 1;
+                        ar_rr = ~ar_c;
+                        ar_st = ArSt::Idle;
+                    }
+                }
+                default: ar_st = ArSt::Idle;
+            }
+
+            // =========================================================
+            // app-side TX writer
+            // =========================================================
+            if aw_take {
+                if i_app_tx_valid[aw_c] {
+                    txr_ram[{aw_c, wr_seq[aw_c][10:0]}] = if aw_c ?
+                     i_app_tx_data[15:8] : i_app_tx_data[7:0];
+                    wr_seq[aw_c] = wr_seq[aw_c] + 1;
+                }
+                aw_take = 0;
+                aw_rr   = ~aw_c;
+            } else {
+                if i_app_tx_valid[aw_rr] && !(if aw_rr ? ring_full1 : ring_full0) &&
+                 (st[aw_rr] == ConnSt::Estab) {
+                    aw_c    = aw_rr;
+                    aw_take = 1;
+                } else {
+                    aw_rr = ~aw_rr;
+                }
+            }
+
+            // =========================================================
+            // timers
+            // =========================================================
+            for c in 0..2 {
+                // the flush timer resets while the application writes
+                if aw_take && i_app_tx_valid[aw_c] &&
+                 ((aw_c && (c == 1)) || (!aw_c && (c == 0))) {
+                    idle_cnt[c] = 0;
+                } else if idle_cnt[c] <: 16'hFFFF {
+                    idle_cnt[c] = idle_cnt[c] + 1;
+                }
+                if (st[c] == ConnSt::Estab) && (snd_una[c] != snd_nxt[c]) {
+                    if rto_cnt[c] >= RTO_CYCLES {
+                        snd_nxt[c] = snd_una[c]; // Go-back-N
+                        rto_cnt[c] = 0;
+                    } else {
+                        rto_cnt[c] = rto_cnt[c] + 1;
+                    }
+                } else {
+                    rto_cnt[c] = 0;
+                }
+            }
+
+            // =========================================================
+            // TX frame scheduler
+            // =========================================================
+            f_prb = txr_ram[f_raddr]; // single sync read port
+            case tx_st {
+                TxSt::Idle: {
+                    if req0 || req1 {
+                        f_c   = if req0 && req1 ? tx_rr : req1;
+                        tx_st = TxSt::Latch;
+                    }
+                }
+                TxSt::Latch: {
+                    f_ack  = rcv_nxt[f_c];
+                    f_win  = rx_free(f_c);
+                    f_plen = 0;
+                    f_tcpo = 12'd20;
+                    if synack_p[f_c] {
+                        f_kind  = 1;
+                        f_flags = 8'h12; // SYN|ACK
+                        f_seq   = iss[f_c];
+                        f_tcpo  = 12'd24;
+                    } else if (if f_c ? fin_ok1 : fin_ok0) {
+                        f_kind  = 3;
+                        f_flags = 8'h11; // FIN|ACK
+                        f_seq   = snd_nxt[f_c];
+                    } else if (if f_c ? data_ok1 : data_ok0) {
+                        f_kind  = 2;
+                        f_flags = 8'h18; // PSH|ACK
+                        f_seq   = snd_nxt[f_c];
+                        f_plen  = if (if f_c ? unsent1 : unsent0) >= 32'd1024 ?
+                         12'd1024 : (if f_c ? unsent1[11:0] : unsent0[11:0]);
+                    } else {
+                        f_kind  = 0;
+                        f_flags = 8'h10; // ACK
+                        f_seq   = snd_nxt[f_c];
+                    }
+                    tx_st = TxSt::PreSum;
+                }
+                TxSt::PreSum: {
+                    // TCP pseudo header into the running sum (the
+                    // latched f_tcpo/f_plen are stable in this state)
+                    f_tcpsum = {16'h0, LOCAL_IP[31:16]} + {16'h0, LOCAL_IP[15:0]} +
+                     {16'h0, rip[f_c][31:16]} + {16'h0, rip[f_c][15:0]} +
+                     32'h6 + {16'h0, 4'h0, f_tcpo + f_plen};
+                    f_ipsum = 0;
+                    f_i     = 14;
+                    tx_st   = TxSt::Sum;
+                }
+                TxSt::Sum: {
+                    if f_i <: 12'd34 {
+                        // IP header word accumulation
+                        if f_i[0] {
+                            f_ipsum = f_ipsum + {24'h0, f_curb};
+                        } else {
+                            f_ipsum = f_ipsum + {16'h0, f_curb, 8'h0};
+                        }
+                    } else {
+                        if f_i[0] {
+                            f_tcpsum = f_tcpsum + {24'h0, f_curb};
+                        } else {
+                            f_tcpsum = f_tcpsum + {16'h0, f_curb, 8'h0};
+                        }
+                    }
+                    f_i = f_i + 1;
+                    if f_i == f_total - 1 {
+                        f_ipck  = fold_sum(f_ipsum);
+                        // note: f_tcpsum still misses this cycle's add;
+                        // handled because this branch runs after the add above
+                        tx_st  = TxSt::Done;
+                    }
+                }
+                TxSt::Done: {
+                    // one settling cycle: fold the TCP sum, restart cursor
+                    f_tcpck = fold_sum(f_tcpsum);
+                    f_i     = 0;
+                    f_warm  = 0;
+                    tx_st   = TxSt::Emit;
+                }
+                TxSt::Emit: {
+                    if !f_warm {
+                        f_warm = 1;
+                        f_i    = 0;
+                    } else if i_tx_ready {
+                        if f_i == f_padded - 1 {
+                            // frame done: apply effects
+                            ack_p[f_c] = 0;
+                            win_adv[f_c] = f_win;
+                            if f_kind == 2'd1 {
+                                synack_p[f_c] = 0;
+                                if st[f_c] == ConnSt::SynRcvd {
+                                    snd_una[f_c] = iss[f_c] + 1;
+                                    snd_nxt[f_c] = iss[f_c] + 1;
+                                    wr_seq[f_c]  = iss[f_c] + 1;
+                                }
+                            }
+                            if f_kind == 2'd2 {
+                                snd_nxt[f_c] = snd_nxt[f_c] + {20'h0, f_plen};
+                            }
+                            if f_kind == 2'd3 {
+                                snd_nxt[f_c]  = snd_nxt[f_c] + 1;
+                                fin_sent[f_c] = 1;
+                            }
+                            ip_id  = ip_id + 1;
+                            f_warm = 0;
+                            tx_rr  = ~f_c;
+                            tx_st  = TxSt::Idle;
+                        } else {
+                            f_i = f_i + 1;
+                        }
+                    }
+                }
+                default: tx_st = TxSt::Idle;
+            }
+        }
+    }
+
+}

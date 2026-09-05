@@ -411,6 +411,7 @@ pub module NvmeTcpTarget #(
                 rx_plen[c]   = 0;
                 rx_shift[c]  = 0;
                 cur_slot[c]  = 0;
+                sqe_wi[c]    = 0;
                 conn_qid[c]  = 16'hFFFF;
                 conn_sqsz[c] = 0;
                 sqhd[c]      = 0;

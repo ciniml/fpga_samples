@@ -46,6 +46,23 @@ ETH_BRIDGE = obj_eth/eth_tap_bridge
 
 eth: $(ETH_BRIDGE)
 
+# full chain: MAC + ARP/ICMP + TCP + NVMe/TCP target (same pins/bridge)
+ETH_NVME_BRIDGE = obj_ethnvme/eth_tap_bridge
+eth_nvme: $(ETH_NVME_BRIDGE)
+
+$(ETH_NVME_BRIDGE): ../eth_ip.sv ../eth_tx_mux.sv ../tcp_engine.sv ../nvme_tcp_target.sv $(ETH_SV) eth_nvme_top.sv eth_tap_bridge.cpp
+	verilator --cc --exe --build -j 8 -O2 --top-module eth_nvme_top --Mdir obj_ethnvme \
+	  --prefix Veth_sim_top \
+	  -GLBA_COUNT=$(LBA_COUNT) \
+	  -CFLAGS "-O2 -DDBG_APP" \
+	  -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEINCOMPLETE \
+	  -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-PINMISSING -Wno-TIMESCALEMOD \
+	  -Wno-COMBDLY -Wno-UNOPTFLAT \
+	  ../nvme_pkg.sv ../nvme_tcp_pkg.sv ../nvme_core.sv ../nvme_tcp_target.sv \
+	  ../eth_ip.sv ../eth_tx_mux.sv ../tcp_engine.sv \
+	  $(ETH_SV) eth_nvme_top.sv eth_tap_bridge.cpp \
+	  -o eth_tap_bridge
+
 $(ETH_BRIDGE): ../eth_ip.sv $(ETH_SV) eth_sim_top.sv eth_tap_bridge.cpp
 	verilator --cc --exe --build -j 8 -O2 --top-module eth_sim_top --Mdir obj_eth \
 	  -CFLAGS "-O2" \

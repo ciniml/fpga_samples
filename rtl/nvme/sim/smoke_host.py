@@ -13,6 +13,7 @@ import struct
 import sys
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 4420
+HOST = sys.argv[2] if len(sys.argv) > 2 else '127.0.0.1'
 SUBNQN = "nqn.2026-09.org.fugafuga:nvme:veryl-sim"
 HOSTNQN = "nqn.2026-09.org.fugafuga:host:smoke"
 
@@ -33,7 +34,7 @@ class Queue:
         self.qid = qid
         self.sqsize = sqsize
         self.cid = 0
-        self.sock = socket.create_connection(("127.0.0.1", PORT))
+        self.sock = socket.create_connection((HOST, PORT))
         self.buf = b""
         # ICReq: pfv=0, hpda=0, no digests, maxr2t=0
         icreq = struct.pack("<BBBBIHBBI", 0x00, 0, 128, 0, 128, 0, 0, 0, 0)
