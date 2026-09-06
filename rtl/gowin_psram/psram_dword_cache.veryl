@@ -25,7 +25,8 @@
  * whole LBAs); random accesses across lines would thrash.
  */
 pub module PsramDwordCache #(
-    param ADDR_BITS: u32 = 20, // dword address bits (20 = 4MiB)
+    param ADDR_BITS : u32 = 20  , // dword address bits (20 = 4MiB)
+    param LINE_BYTES: u32 = 512 , // cache line size (512, 1024, 2048 or 4096)
 ) (
     // ---- user side ----
     i_clk  : input  'a clock          ,
@@ -55,7 +56,11 @@ pub module PsramDwordCache #(
     i_rd_data  : input  'b logic<16>,
     i_rd_last  : input  'b logic    ,
 ) {
-    const LINE_BITS: u32 = 7;               // 128 dwords = 512 bytes
+    const LINE_DW  : u32 = LINE_BYTES / 4;   // dwords per line
+    const LINE_BITS: u32 = $clog2(LINE_DW);
+    const BURSTS   : u32 = LINE_BYTES / 128;  // 128-byte (64-word) wrap bursts
+    const BURST_BITS: u32 = $clog2(BURSTS);
+    const LAST_BURST: logic<BURST_BITS> = BURSTS - 1;
     const TAG_BITS : u32 = ADDR_BITS - LINE_BITS;
 
     // ================= user side =================
@@ -142,7 +147,7 @@ pub module PsramDwordCache #(
     }
 
     var pstate  : 'b PState;
-    var burst   : 'b logic<2>;      // 0..3: 64-word bursts of the line
+    var burst   : 'b logic<BURST_BITS>; // 0..BURSTS-1: 64-word bursts of the line
     var wcnt    : 'b logic<7>;      // words handled in this burst
     var cmd_v   : 'b logic;
     var cmd_wr  : 'b logic;
@@ -156,7 +161,7 @@ pub module PsramDwordCache #(
     var f_cnt  : 'b logic<3>;
     var f_rd   : 'b logic<2>;
     var f_wr   : 'b logic<2>;
-    var rb_addr: 'b logic<LINE_BITS>;   // next dword to read for the write stream
+    var rb_addr: 'b logic<LINE_BITS>;   // next dword to read for the write stream (whole line)
     var rb_pend: 'b logic;              // a line-buffer read is in flight
     var rb_left: 'b logic<6>;           // dwords still to read in this burst
 
@@ -290,7 +295,7 @@ pub module PsramDwordCache #(
                     }
                     if i_cmd_ready && !cmd_v && (wcnt == 7'd64) {
                         burst = burst + 1;
-                        if burst == 2'd3 {
+                        if burst == LAST_BURST {
                             pstate = PState::FtCmd;
                         } else {
                             rb_left = 6'd32;
@@ -310,7 +315,7 @@ pub module PsramDwordCache #(
                 PState::FtData: {
                     if (wcnt == 7'd64) && i_cmd_ready && !cmd_v {
                         burst = burst + 1;
-                        if burst == 2'd3 {
+                        if burst == LAST_BURST {
                             pstate = PState::Done;
                         } else {
                             pstate = PState::FtCmd;
@@ -328,7 +333,9 @@ pub module PsramDwordCache #(
 
     // ================= dual-clock line buffer =================
     unsafe (cdc) {
-        inst u_ram: $sv::psram_cache_line_ram (
+        inst u_ram: $sv::psram_cache_line_ram #(
+            ABITS: LINE_BITS,
+        ) (
             clk_a  : i_clk,
             we_a   : i_wen && hit,
             addr_a : i_addr[LINE_BITS - 1:0],
@@ -343,23 +350,25 @@ pub module PsramDwordCache #(
     }
 }
 
-// 128 x 32 true dual-port RAM with independent clocks (Gowin DPB)
+// (2**ABITS) x 32 true dual-port RAM with independent clocks (Gowin DPB)
 embed (inline) sv{{{
-module psram_cache_line_ram (
-    input  wire         clk_a,
-    input  wire         we_a,
-    input  wire  [6:0]  addr_a,
-    input  wire  [31:0] wdata_a,
-    output logic [31:0] rdata_a,
-    input  wire         clk_b,
-    input  wire         we_b,
-    input  wire  [6:0]  addr_b,
-    input  wire  [31:0] wdata_b,
-    output logic [31:0] rdata_b
+module psram_cache_line_ram #(
+    parameter ABITS = 7
+) (
+    input  wire             clk_a,
+    input  wire             we_a,
+    input  wire [ABITS-1:0] addr_a,
+    input  wire  [31:0]     wdata_a,
+    output logic [31:0]     rdata_a,
+    input  wire             clk_b,
+    input  wire             we_b,
+    input  wire [ABITS-1:0] addr_b,
+    input  wire  [31:0]     wdata_b,
+    output logic [31:0]     rdata_b
 );
     // no read during a write on the same port: keeps the Gowin DPB in
     // its "normal" write mode (read-before-write is not supported)
-    logic [31:0] mem [0:127];
+    logic [31:0] mem [0:(1<<ABITS)-1];
     always_ff @(posedge clk_a) begin
         if (we_a) mem[addr_a] <= wdata_a;
         else      rdata_a <= mem[addr_a];

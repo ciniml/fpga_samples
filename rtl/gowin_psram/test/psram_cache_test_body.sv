@@ -9,7 +9,8 @@
 // against a reference array.
 `timescale 1ns/1ps
 module psram_cache_test_body #(
-    parameter RUN = 0
+    parameter RUN = 0,
+    parameter LINE_BYTES = 512
 );
     localparam CLK_HZ = 81_000_000;
     localparam ADDR_BITS = 20;
@@ -41,7 +42,7 @@ module psram_cache_test_body #(
     wire [7:0] psram_dq;
     wire       psram_rwds;
 
-    PsramDwordCache #(.ADDR_BITS(ADDR_BITS)) cache (
+    PsramDwordCache #(.ADDR_BITS(ADDR_BITS), .LINE_BYTES(LINE_BYTES)) cache (
         .i_clk(clk), .i_rst(rst),
         .i_addr(addr), .i_wen(wen), .i_wdata(wdata), .i_ren(ren),
         .o_rdata(rdata), .o_ready(ready), .o_dbg(),
@@ -71,6 +72,17 @@ module psram_cache_test_body #(
     );
 
     int errors = 0;
+    // profiling: stall cycles (request up but not ready) and miss events
+    longint stall_cycles = 0, req_cycles = 0, misses = 0;
+    logic prev_busy = 0;
+    always @(posedge clk) if (RUN) begin
+        if (wen || ren) begin
+            req_cycles++;
+            if (!ready) stall_cycles++;
+        end
+        if (cache.busy && !prev_busy) misses++;
+        prev_busy <= cache.busy;
+    end
     logic [31:0] refmem [0:(1 << ADDR_BITS) - 1];
     bit          written [0:(1 << ADDR_BITS) - 1];
 
@@ -144,6 +156,8 @@ module psram_cache_test_body #(
         for (i = 0; i < 8 * 128; i++) if (written[20'hFFC00 + i]) mem_read("final", 20'hFFC00 + i);
 
         errors += ram.errors;
+        $display("PROF line=%0dB misses=%0d req_cycles=%0d stall_cycles=%0d (%.1f cyc/miss)",
+                 LINE_BYTES, misses, req_cycles, stall_cycles, misses ? real'(stall_cycles) / real'(misses) : 0.0);
         if (errors != 0) $fatal(1, "FAILED: %0d errors", errors);
         $display("PASSED");
         $finish;

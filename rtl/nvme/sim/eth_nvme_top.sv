@@ -61,7 +61,7 @@ module eth_nvme_top #(
     wire [1:0]  conn_active;
     wire [1:0]  app_rxv, app_rxr;
     wire [15:0] app_rxd;
-    wire [1:0]  app_txv, app_txr, app_txf;
+    wire [1:0]  app_txv, app_txr;
     wire [15:0] app_txd;
     TcpEngine tcp (
         .i_clk(clk), .i_rst(rst),
@@ -71,8 +71,7 @@ module eth_nvme_top #(
         .i_tx_ready(tcp_txr), .o_tx_last(tcp_txl),
         .o_conn_active(conn_active),
         .o_app_rx_valid(app_rxv), .i_app_rx_ready(app_rxr), .o_app_rx_data(app_rxd),
-        .i_app_tx_valid(app_txv), .o_app_tx_ready(app_txr), .i_app_tx_data(app_txd),
-        .i_app_tx_flush(app_txf)
+        .i_app_tx_valid(app_txv), .o_app_tx_ready(app_txr), .i_app_tx_data(app_txd)
     );
 
     EthTxMux txmux (
@@ -91,7 +90,7 @@ module eth_nvme_top #(
         .i_clk(clk), .i_rst(rst),
         .i_conn_active(conn_active),
         .i_rx_valid(app_rxv), .o_rx_ready(app_rxr), .i_rx_data(app_rxd),
-        .o_tx_valid(app_txv), .i_tx_ready(app_txr), .o_tx_data(app_txd), .o_tx_flush(app_txf),
+        .o_tx_valid(app_txv), .i_tx_ready(app_txr), .o_tx_data(app_txd),
         .o_mem_addr(mem_addr), .o_mem_wen(mem_wen), .o_mem_wdata(mem_wdata),
         .o_mem_ren(mem_ren), .i_mem_rdata(mem_rdata), .i_mem_ready(1'b1)
     );

@@ -9,7 +9,7 @@ of the Tang Nano 9K / GW1NR-9, Winbond W955D8MBYA) using only the Gowin
 | port | dir | description |
 |---|---|---|
 | `i_clk`, `i_clk_p` | in | controller clock and a +90° copy (PLL `CLKOUTP`, `PSDA_SEL=4`) for CK |
-| params | | `IN_DELAY` (IODELAY steps of 25ps on the DQ/RWDS inputs before the IDDRs; default 100 = 2.5ns) |
+| params | | `IN_DELAY` (input IODELAY, 100 steps = 2.5ns) |
 | `o_ready` | out | init done (tVCS wait + CR0 write) |
 | `i_cmd_valid/o_cmd_ready`, `i_cmd_write`, `i_cmd_reg`, `i_cmd_addr`, `i_cmd_len` | | command: byte address, `len` = words − 1, `reg` = register space |
 | `i_wr_valid/o_wr_ready`, `i_wr_data[15:0]`, `i_wr_mask[1:0]` | | write stream, one word per `o_wr_ready` strobe (source must keep up; `valid=0` masks the word) |
@@ -55,6 +55,16 @@ Byte order: `data[7:0]` is the even address byte, `[15:8]` the odd one
 - `PsramTest` (`psram_test.veryl`) is the board test driver used by
   `eda/psram_test`: reads ID0/CR0, writes/reads 1MiB with 16/32/64-word
   bursts, prints one UART line per pass.
+- `PsramDwordCache` (`psram_dword_cache.veryl`) presents a dword-addressed
+  synchronous-RAM interface (address / wen / ren / rdata + a ready-stall)
+  backed by GowinPsram through a one-line write-back cache; the user and
+  PSRAM sides run on independent clocks (dual-clock line BRAM + toggle
+  synchronisers). `LINE_BYTES` (512..4096) sizes the line. Measured in
+  `test/psram_cache_test_body.sv`: a 512-byte line costs ~444 user cycles
+  per miss (fetch, or write-back + fetch when dirty); a 4096-byte line
+  ~6566 (it always moves the whole line), so a bigger line is only worth
+  it when whole-line accesses dominate. NVMe uses the 512-byte default
+  since one LBA is exactly one line.
 
 ## Simulation
 

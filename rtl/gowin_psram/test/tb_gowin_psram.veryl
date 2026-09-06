@@ -50,3 +50,11 @@ module psram_dword_cache_test;
     psram_cache_test_body #(.RUN(1)) body();
 endmodule
 }}}
+
+// 4KiB cache line (fewer, larger misses)
+#[test(psram_cache_4k)]
+embed (inline) sv{{{
+module psram_cache_4k_test;
+    psram_cache_test_body #(.RUN(1), .LINE_BYTES(4096)) body();
+endmodule
+}}}
