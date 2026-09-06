@@ -38,6 +38,7 @@
 #include <memory>
 #include <vector>
 
+static uint64_t g_cyc = 0;
 static void tcp_log(const char* dir, const uint8_t* f, size_t n) {
     if (n < 54 || f[12] != 0x08 || f[13] != 0x00 || f[23] != 0x06) return;
     uint16_t iplen = (f[16] << 8) | f[17];
@@ -45,13 +46,8 @@ static void tcp_log(const char* dir, const uint8_t* f, size_t n) {
     int plen = iplen - 20 - doff;
     uint32_t seq = (f[38] << 24) | (f[39] << 16) | (f[40] << 8) | f[41];
     uint32_t ack = (f[42] << 24) | (f[43] << 16) | (f[44] << 8) | f[45];
-    printf("[tcp] %s seq=%08x ack=%08x flags=%02x win=%u plen=%d\n",
-           dir, seq, ack, f[47], (f[48] << 8) | f[49], plen);
-    if (dir[0] == 'O') {
-        for (size_t i = 0; i < n && i < 64; i++)
-            printf("%02x%s", f[i], (i % 16 == 15) ? "\n" : " ");
-        printf("\n");
-    }
+    printf("[tcp] cyc=%llu %s seq=%08x ack=%08x flags=%02x win=%u plen=%d\n",
+           (unsigned long long)g_cyc, dir, seq, ack, f[47], (f[48] << 8) | f[49], plen);
     fflush(stdout);
 }
 
@@ -121,6 +117,7 @@ int main(int argc, char** argv) {
     std::vector<uint8_t> rx_frame;
 
     auto tick = [&]() {
+        g_cyc++;
         dut->clk = 0;
         dut->eval();
         dut->clk = 1;

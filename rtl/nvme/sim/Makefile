@@ -53,7 +53,7 @@ eth_nvme: $(ETH_NVME_BRIDGE)
 $(ETH_NVME_BRIDGE): ../eth_ip.sv ../eth_tx_mux.sv ../tcp_engine.sv ../nvme_tcp_target.sv $(ETH_SV) eth_nvme_top.sv eth_tap_bridge.cpp
 	verilator --cc --exe --build -j 8 -O2 --top-module eth_nvme_top --Mdir obj_ethnvme \
 	  --prefix Veth_sim_top \
-	  -GLBA_COUNT=$(LBA_COUNT) \
+	  -GLBA_COUNT=$(LBA_COUNT) +define+DBG_APP \
 	  -CFLAGS "-O2 -DDBG_APP" \
 	  -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEINCOMPLETE \
 	  -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-PINMISSING -Wno-TIMESCALEMOD \
@@ -80,7 +80,7 @@ tcp_rtl: $(TCP_RTL_BRIDGE)
 
 $(TCP_RTL_BRIDGE): $(RTL_TCP) nvme_tcp_rtl_bridge.cpp
 	verilator --cc --exe --build -j 8 -O2 --top-module NvmeTcpTarget --Mdir obj_tcp \
-	  -GLBA_COUNT=$(LBA_COUNT) \
+	  -GLBA_COUNT=$(LBA_COUNT) +define+DBG_APP \
 	  -CFLAGS "-O2 -DSIM_LBA_COUNT=$(LBA_COUNT)" \
 	  -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEINCOMPLETE \
 	  -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM \
@@ -91,7 +91,7 @@ $(BRIDGE): $(RTL) nvme_tcp_bridge.cpp
 
 $(VFIO_BRIDGE): $(RTL_CTRL) nvme_vfio_bridge.cpp
 	verilator --cc --exe --build -j 8 -O2 --top-module NvmeController --Mdir obj_vfio \
-	  -GLBA_COUNT=$(LBA_COUNT) \
+	  -GLBA_COUNT=$(LBA_COUNT) +define+DBG_APP \
 	  -CFLAGS "-O2 -DSIM_LBA_COUNT=$(LBA_COUNT) -I$(VFU_INC)" \
 	  -LDFLAGS "$(VFU_LIB) -ljson-c" \
 	  -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEINCOMPLETE \

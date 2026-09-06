@@ -257,6 +257,25 @@ def main():
     sys.argv = ["smoke_host.py", "4420", "192.168.37.2"]
     import smoke_host
     smoke_host.socket.create_connection = lambda addr, *a, **k: Tcp(link, addr[1])
+
+    if os.environ.get("SIM_BULK"):
+        # sustained read to profile the TX cadence
+        import struct
+        nblk = int(os.environ.get("SIM_BULK", "64"))   # blocks per read (512B each)
+        reps = int(os.environ.get("SIM_BULK_REPS", "4"))
+        aq = smoke_host.Queue(qid=0)
+        smoke_host.fabrics_connect(aq, kato=10000)
+        smoke_host.prop_set(aq, 0x14, 0x00460001)      # CC.EN
+        ioq = smoke_host.Queue(qid=1)
+        smoke_host.fabrics_connect(ioq)
+        for r in range(reps):
+            cid = ioq.next_cid()
+            sqe = smoke_host.sqe_base(0x02, cid, nsid=1)   # Read
+            struct.pack_into("<QI", sqe, 40, 0, nblk - 1)  # SLBA=0, NLB=nblk-1
+            _, _, status, rd = ioq.run(sqe)
+            print(f"[bulk] read {nblk*512}B status={status:#x} got={len(rd)}")
+        link.running = False
+        return
     try:
         for r in range(runs):
             print(f"[sim_host] run {r + 1}/{runs}")

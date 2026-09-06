@@ -116,5 +116,25 @@ module eth_nvme_top #(
         if (tx_tvalid && tx_tready && tx_tlast) dbg_tx_frames <= dbg_tx_frames + 1;
     end
 
+`ifdef DBG_APP
+    // TX cadence profiler: distinguish app-starvation from engine
+    // serialization from window-limit (conn 0 = admin, conn 1 = I/O)
+    longint p_tot = 0, p_dready = 0, p_dready_idle = 0, p_ringfull = 0, p_apptx = 0;
+    wire [13:0] p_unsent = tcp.wr_seq[1][13:0] - tcp.snd_nxt[1][13:0];
+    wire [13:0] p_inflt  = tcp.wr_seq[1][13:0] - tcp.snd_una[1][13:0];
+    always @(posedge clk) begin
+        p_tot <= p_tot + 1;
+        if (app_txv[1] && app_txr[1]) p_apptx <= p_apptx + 1;
+        if (p_unsent >= 1460) begin
+            p_dready <= p_dready + 1;
+            if (tcp.tx_st == 3'd0) p_dready_idle <= p_dready_idle + 1;
+        end
+        if (p_inflt >= 14'd8192) p_ringfull <= p_ringfull + 1;
+        if (p_tot != 0 && (p_tot % 300000) == 0)
+            $display("PROF tot=%0d apptx=%0d dready=%0d dready_idle=%0d ringfull=%0d",
+                     p_tot, p_apptx, p_dready, p_dready_idle, p_ringfull);
+    end
+`endif
+
 endmodule
 `default_nettype wire
