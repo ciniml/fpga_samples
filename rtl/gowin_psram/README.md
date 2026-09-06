@@ -9,6 +9,7 @@ of the Tang Nano 9K / GW1NR-9, Winbond W955D8MBYA) using only the Gowin
 | port | dir | description |
 |---|---|---|
 | `i_clk`, `i_clk_p` | in | controller clock and a +90° copy (PLL `CLKOUTP`, `PSDA_SEL=4`) for CK |
+| params | | `IN_DELAY` (IODELAY steps of 25ps on the DQ/RWDS inputs before the IDDRs; default 100 = 2.5ns) |
 | `o_ready` | out | init done (tVCS wait + CR0 write) |
 | `i_cmd_valid/o_cmd_ready`, `i_cmd_write`, `i_cmd_reg`, `i_cmd_addr`, `i_cmd_len` | | command: byte address, `len` = words − 1, `reg` = register space |
 | `i_wr_valid/o_wr_ready`, `i_wr_data[15:0]`, `i_wr_mask[1:0]` | | write stream, one word per `o_wr_ready` strobe (source must keep up; `valid=0` masks the word) |
@@ -18,7 +19,16 @@ of the Tang Nano 9K / GW1NR-9, Winbond W955D8MBYA) using only the Gowin
 Parameters: `CLK_HZ` (init timer), `LATENCY` (3 ≤ 83MHz, 4 ≤ 104, 5 ≤ 133,
 6 ≤ 166), `ADDR_BITS` (22 = 4MiB), `LEN_BITS` (burst length field, 6 = 64
 words), `WRAP_BYTES` (CR0 burst length, 128 default), `CK_DELAY` (0; extra
-cycles the CK enable lags DQ/CS#, for other boards).
+cycles the CK enable lags DQ/CS#, for other boards), `IN_DELAY` (input
+IODELAY, 100 steps = 2.5ns).
+
+**Read-capture timing**: the IDDRs must share the ODDRs' `i_clk` (Gowin
+pad rule), so they sample 270° after the CK edge that made the die drive a
+byte — only inside the byte while tCKD exceeds a quarter period. An
+IODELAY of `IN_DELAY`×25ps on each input widens that margin. On the Tang
+Nano 9K the on-package PSRAM reads cleanly at ~54MHz; at 81MHz a single DQ
+bit shows sporadic placement-dependent errors under a fully-loaded clock
+tree (the standalone `psram_test` still passes at 81MHz).
 
 **Burst rule**: a burst must not cross a `WRAP_BYTES` boundary. The Tang
 Nano 9K die wraps at the CR0 burst length even for linear CAs (measured),

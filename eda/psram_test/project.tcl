@@ -19,13 +19,15 @@ set_option -top_module top
 set_option -place_option 1
 set_option -route_option 2
 
-if {${TARGET} == "tangnano9k"} {
+if {${TARGET} == "tangnano9k" || ${TARGET} == "tangnano9k_cache"} {
     set_option -use_sspi_as_gpio 1
 }
 
 # generated from Veryl (veryl build in rtl/gowin_psram)
 add_file -type verilog [file normalize ${PSRAM_DIR}/gowin_psram.sv]
 add_file -type verilog [file normalize ${PSRAM_DIR}/psram_test.sv]
+add_file -type verilog [file normalize ${PSRAM_DIR}/psram_dword_cache.sv]
+add_file -type verilog [file normalize ${PSRAM_DIR}/cache_test.sv]
 add_file -type verilog [file normalize ${UART_DIR}/uart_tx.sv]
 
 add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_rpll_psram/gowin_rpll_psram.v]

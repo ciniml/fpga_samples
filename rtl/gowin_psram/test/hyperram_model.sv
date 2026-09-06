@@ -69,6 +69,15 @@ module hyperram_model #(
         end
     end
 
+    // level-polled edge waits: an edge that lands on the same time step
+    // as a #delay expiry would be missed by an @(edge) wait
+    task automatic wait_rise;
+        wait (cs_n || ck);
+    endtask
+    task automatic wait_fall;
+        wait (cs_n || !ck);
+    endtask
+
     reg [47:0] ca;
     reg        rw, reg_space, linear;
     reg [31:0] waddr;
@@ -93,6 +102,9 @@ module hyperram_model #(
     endfunction
 
     always @(negedge cs_n) begin
+`ifdef HYPERRAM_TRACE
+        $display("model: CS# low at %0t", $realtime);
+`endif
         // additional latency flag: always in fixed mode, random otherwise
         extra = cr0[3] ? 1'b1 : ($urandom_range(0, 19) == 0);
         rwds_drv = extra;
@@ -100,7 +112,7 @@ module hyperram_model #(
         // ---- CA: 6 bytes on 6 consecutive CK edges ----
         ca = 48'h0;
         for (k = 0; k < 6; k++) begin
-            if (k[0] == 0) @(posedge ck); else @(negedge ck);
+            if (k[0] == 0) wait_rise(); else wait_fall();
             if (cs_n) begin
                 $display("ERROR: hyperram_model: CS# rose during CA");
                 errors++;
@@ -132,8 +144,8 @@ module hyperram_model #(
         if (!rw && reg_space) begin
             // register write: data word right after the CA, no latency
             rwds_oe = 0;
-            @(posedge ck or posedge cs_n); w[15:8] = dq;
-            @(negedge ck or posedge cs_n); w[7:0]  = dq;
+            wait_rise(); w[15:8] = dq;
+            wait_fall(); w[7:0]  = dq;
             $display("model: reg write CA=%h waddr=%h data=%h at %0t", ca, waddr, w, $realtime);
             case (waddr)
                 32'h800: cr0 = w;
@@ -148,8 +160,9 @@ module hyperram_model #(
             // read: RWDS low after the CA until data, then strobes with data
             rwds_drv = 0;
             for (k = 3; k < lat_total; k++) begin
-                @(posedge ck or posedge cs_n);
+                wait_rise();
                 if (cs_n) break;
+                wait_fall();
             end
             while (!cs_n) begin
                 if (reg_space) begin
@@ -163,29 +176,40 @@ module hyperram_model #(
                 end else begin
                     w = mem[waddr % WORDS];
                 end
-                @(posedge ck or posedge cs_n);
+                // (check the CS# level before every wait: a rising edge that
+                // lands inside a tCKD delay would otherwise be missed and
+                // the loop would wake up in the next transaction's CA)
+                wait_rise();
                 if (cs_n) break;
-                #(T_CKD) dq_drv = w[15:8]; rwds_drv = 1; dq_oe = 1;
-                @(negedge ck or posedge cs_n);
+                #(T_CKD);
                 if (cs_n) break;
-                #(T_CKD) dq_drv = w[7:0]; rwds_drv = 0;
+                dq_drv = w[15:8]; rwds_drv = 1; dq_oe = 1;
+                wait_fall();
+                if (cs_n) break;
+                #(T_CKD);
+                if (cs_n) break;
+                dq_drv = w[7:0]; rwds_drv = 0;
                 waddr = reg_space ? waddr + 1 : next_addr(waddr, wrap_words);
                 n_reads++;
             end
+`ifdef HYPERRAM_TRACE
+            $display("model: read loop exit at %0t (cs_n=%b)", $realtime, cs_n);
+`endif
             dq_oe = 0;
             rwds_oe = 0;
         end else begin
             // memory write: master drives RWDS as byte mask with the data
             rwds_oe = 0;
             for (k = 3; k < lat_total; k++) begin
-                @(posedge ck or posedge cs_n);
+                wait_rise();
                 if (cs_n) break;
+                wait_fall();
             end
             while (!cs_n) begin
-                @(posedge ck or posedge cs_n);
+                wait_rise();
                 if (cs_n) break;
                 w[15:8] = dq; m_hi = rwds;
-                @(negedge ck or posedge cs_n);
+                wait_fall();
                 if (cs_n) break;
                 w[7:0]  = dq; m_lo = rwds;
                 if (!m_hi) mem[waddr % WORDS][15:8] = w[15:8];
@@ -204,6 +228,9 @@ module hyperram_model #(
     end
 
     always @(posedge cs_n) begin
+`ifdef HYPERRAM_TRACE
+        $display("model: CS# high at %0t", $realtime);
+`endif
         dq_oe   = 0;
         rwds_oe = 0;
     end

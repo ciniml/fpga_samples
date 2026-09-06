@@ -1,0 +1,372 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file psram_dword_cache.veryl
+ * @brief Dword-addressed synchronous RAM interface (with a ready/stall)
+ *        backed by GowinPsram through a one-line write-back cache.
+ *
+ * The user side looks like a plain single-port synchronous RAM (address,
+ * write enable/data, read enable, read data one cycle later) plus
+ * o_ready: an access only takes place in a cycle where o_ready is high,
+ * so the user holds i_addr/i_wen/i_ren until then. o_ready is high while
+ * the addressed line (LINE_DWORDS dwords, 512 bytes) sits in the cache.
+ * On a miss the dirty line is written back and the new one fetched with
+ * 64-word PSRAM bursts (one 128-byte wrap group each).
+ *
+ * The user side and the PSRAM side run on independent clocks: the line
+ * buffer is a dual-clock BRAM and the miss request / acknowledge cross
+ * through toggle synchronizers (the request parameters are held stable
+ * while a request is in flight).
+ *
+ * Meant for sequential block traffic (the NVMe core reads and writes
+ * whole LBAs); random accesses across lines would thrash.
+ */
+pub module PsramDwordCache #(
+    param ADDR_BITS: u32 = 20, // dword address bits (20 = 4MiB)
+) (
+    // ---- user side ----
+    i_clk  : input  'a clock          ,
+    i_rst  : input  'a reset          ,
+    i_addr : input  'a logic<ADDR_BITS>,
+    i_wen  : input  'a logic          ,
+    i_wdata: input  'a logic<32>      ,
+    i_ren  : input  'a logic          ,
+    o_rdata: output 'a logic<32>      ,
+    o_ready: output 'a logic          ,
+    o_dbg  : output 'a logic<3>       , // {valid, dirty, busy} (board debug)
+
+    // ---- PSRAM side (GowinPsram command / data ports) ----
+    i_pclk     : input  'b clock    ,
+    i_prst     : input  'b reset    ,
+    i_pready   : input  'b logic    , // controller initialized
+    o_cmd_valid: output 'b logic    ,
+    i_cmd_ready: input  'b logic    ,
+    o_cmd_write: output 'b logic    ,
+    o_cmd_addr : output 'b logic<ADDR_BITS + 2>,
+    o_cmd_len  : output 'b logic<6> ,
+    o_wr_valid : output 'b logic    ,
+    i_wr_ready : input  'b logic    ,
+    o_wr_data  : output 'b logic<16>,
+    o_wr_mask  : output 'b logic<2> ,
+    i_rd_valid : input  'b logic    ,
+    i_rd_data  : input  'b logic<16>,
+    i_rd_last  : input  'b logic    ,
+) {
+    const LINE_BITS: u32 = 7;               // 128 dwords = 512 bytes
+    const TAG_BITS : u32 = ADDR_BITS - LINE_BITS;
+
+    // ================= user side =================
+    var valid  : 'a logic;
+    var dirty  : 'a logic;
+    var tag    : 'a logic<TAG_BITS>;
+    var req_t  : 'a logic;               // toggles per miss request
+    var ack_s1 : 'a logic;
+    var ack_s2 : 'a logic;
+    var busy_r : 'a logic;
+    var rq_dirty  : 'a logic;            // request parameters (stable while busy)
+    var rq_old_tag: 'a logic<TAG_BITS>;
+    var rq_new_tag: 'a logic<TAG_BITS>;
+
+    let busy: 'a logic = req_t != ack_s2;
+    let hit : 'a logic = valid && (tag == i_addr[ADDR_BITS - 1:LINE_BITS]) && !busy;
+    assign o_ready = hit;
+    assign o_dbg   = {valid, dirty, busy};
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            valid      = 0;
+            dirty      = 0;
+            tag        = 0;
+            req_t      = 0;
+            busy_r     = 0;
+            rq_dirty   = 0;
+            rq_old_tag = 0;
+            rq_new_tag = 0;
+        } else {
+            busy_r = busy;
+            if (i_ren || i_wen) && !hit && !busy && !busy_r {
+                // miss: hand the line swap to the PSRAM side
+                rq_dirty   = valid && dirty;
+                rq_old_tag = tag;
+                rq_new_tag = i_addr[ADDR_BITS - 1:LINE_BITS];
+                valid      = 0;
+                req_t      = ~req_t;
+            }
+            if busy_r && !busy {
+                valid = 1;
+                dirty = 0;
+                tag   = rq_new_tag;
+            }
+            if i_wen && hit {
+                dirty = 1;
+            }
+        }
+    }
+
+    // ================= PSRAM side =================
+    var req_s1: 'b logic;
+    var req_s2: 'b logic;
+    var ack_t : 'b logic;
+    var pready_r: 'b logic;   // registered copy of the controller's ready
+    // request parameters, stable from before req_t toggles until ack
+    var rq_dirty_b  : 'b logic;
+    var rq_old_tag_b: 'b logic<TAG_BITS>;
+    var rq_new_tag_b: 'b logic<TAG_BITS>;
+
+    unsafe (cdc) {
+        always_ff (i_clk) {
+            ack_s1 = ack_t;
+            ack_s2 = ack_s1;
+        }
+        always_ff (i_pclk) {
+            req_s1       = req_t;
+            req_s2       = req_s1;
+            pready_r     = i_pready;
+            rq_dirty_b   = rq_dirty;
+            rq_old_tag_b = rq_old_tag;
+            rq_new_tag_b = rq_new_tag;
+        }
+    }
+
+    enum PState: logic<3> {
+        Idle,
+        WbFill,   // prime the word FIFO from the line buffer
+        WbCmd,
+        WbData,
+        FtCmd,
+        FtData,
+        Done,
+    }
+
+    var pstate  : 'b PState;
+    var burst   : 'b logic<2>;      // 0..3: 64-word bursts of the line
+    var wcnt    : 'b logic<7>;      // words handled in this burst
+    var cmd_v   : 'b logic;
+    var cmd_wr  : 'b logic;
+    var cmd_addr: 'b logic<ADDR_BITS + 2>;
+    var p_dirty : 'b logic;
+    var p_old   : 'b logic<TAG_BITS>;
+    var p_new   : 'b logic<TAG_BITS>;
+
+    // write-side word FIFO (4 x 16), fed two words per line-buffer read
+    var fifo   : 'b logic<16>[4];
+    var f_cnt  : 'b logic<3>;
+    var f_rd   : 'b logic<2>;
+    var f_wr   : 'b logic<2>;
+    var rb_addr: 'b logic<LINE_BITS>;   // next dword to read for the write stream
+    var rb_pend: 'b logic;              // a line-buffer read is in flight
+    var rb_left: 'b logic<6>;           // dwords still to read in this burst
+
+    // read-side pairing
+    var rd_lo  : 'b logic<16>;
+    var rd_half: 'b logic;
+    var wb_addr: 'b logic<LINE_BITS>;   // next dword to write from the read stream
+    var wb_we  : 'b logic;
+    var wb_data: 'b logic<32>;
+
+    var ramb_rdata: 'b logic<32>;
+    let ramb_addr : 'b logic<LINE_BITS> = if wb_we ? wb_addr : rb_addr;
+
+    assign o_cmd_valid = cmd_v;
+    assign o_cmd_write = cmd_wr;
+    assign o_cmd_addr  = cmd_addr;
+    assign o_cmd_len   = 6'd63;
+    assign o_wr_valid  = f_cnt != 3'd0;
+    assign o_wr_data   = fifo[f_rd];
+    assign o_wr_mask   = 2'b00;
+
+    let pop : 'b logic = i_wr_ready && (f_cnt != 3'd0);
+    // issue a line-buffer read when at most two words are queued/arriving
+    let fill: 'b logic = (pstate == PState::WbFill || pstate == PState::WbCmd || pstate == PState::WbData) &&
+     !rb_pend && (f_cnt <= 3'd2) && (rb_left != 6'd0);
+
+    always_ff (i_pclk, i_prst) {
+        if_reset {
+            pstate   = PState::Idle;
+            burst    = 0;
+            wcnt     = 0;
+            cmd_v    = 0;
+            cmd_wr   = 0;
+            cmd_addr = 0;
+            p_dirty  = 0;
+            p_old    = 0;
+            p_new    = 0;
+            ack_t    = 0;
+            f_cnt    = 0;
+            f_rd     = 0;
+            f_wr     = 0;
+            rb_addr  = 0;
+            rb_pend  = 0;
+            rb_left  = 0;
+            rd_lo    = 0;
+            rd_half  = 0;
+            wb_addr  = 0;
+            wb_we    = 0;
+            wb_data  = 0;
+            for i in 0..4 {
+                fifo[i] = 0;
+            }
+        } else {
+            wb_we = 0;
+            if cmd_v && i_cmd_ready {
+                cmd_v = 0;
+            }
+
+            // ---- word FIFO ----
+            rb_pend = fill;
+            if fill {
+                rb_addr = rb_addr + 1;
+                rb_left = rb_left - 1;
+            }
+            if rb_pend {
+                fifo[f_wr]              = ramb_rdata[15:0];
+                fifo[f_wr + 2'd1]       = ramb_rdata[31:16];
+                f_wr                    = f_wr + 2'd2;
+            }
+            if pop {
+                f_rd = f_rd + 1;
+            }
+            f_cnt = f_cnt + (if rb_pend ? 3'd2 : 3'd0) - (if pop ? 3'd1 : 3'd0);
+
+            // ---- read stream -> line buffer ----
+            if i_rd_valid && (pstate == PState::FtData) {
+                if !rd_half {
+                    rd_lo   = i_rd_data;
+                    rd_half = 1;
+                } else {
+                    wb_we   = 1;
+                    wb_data = {i_rd_data, rd_lo};
+                    rd_half = 0;
+                }
+                wcnt = wcnt + 1;
+            }
+            if wb_we {
+                wb_addr = wb_addr + 1;
+            }
+
+            case pstate {
+                PState::Idle: {
+                    if (req_s2 != ack_t) && pready_r {
+                        p_dirty = rq_dirty_b;
+                        p_old   = rq_old_tag_b;
+                        p_new   = rq_new_tag_b;
+                        burst   = 0;
+                        rb_addr = 0;
+                        wb_addr = 0;
+                        rd_half = 0;
+                        f_cnt   = 0;
+                        f_rd    = 0;
+                        f_wr    = 0;
+                        rb_pend = 0;
+                        if rq_dirty_b {
+                            rb_left = 6'd32;
+                            pstate  = PState::WbFill;
+                        } else {
+                            pstate = PState::FtCmd;
+                        }
+                    }
+                }
+                PState::WbFill: {
+                    // first two dwords queued before the burst starts
+                    if f_cnt >= 3'd3 {
+                        cmd_v    = 1;
+                        cmd_wr   = 1;
+                        cmd_addr = {p_old, burst, 7'h0};
+                        wcnt     = 0;
+                        pstate   = PState::WbCmd;
+                    }
+                }
+                PState::WbCmd: {
+                    if !cmd_v && !i_cmd_ready {
+                        pstate = PState::WbData;
+                    }
+                }
+                PState::WbData: {
+                    if pop {
+                        wcnt = wcnt + 1;
+                    }
+                    if i_cmd_ready && !cmd_v && (wcnt == 7'd64) {
+                        burst = burst + 1;
+                        if burst == 2'd3 {
+                            pstate = PState::FtCmd;
+                        } else {
+                            rb_left = 6'd32;
+                            pstate  = PState::WbFill;
+                        }
+                    }
+                }
+                PState::FtCmd: {
+                    if i_cmd_ready && !cmd_v {
+                        cmd_v    = 1;
+                        cmd_wr   = 0;
+                        cmd_addr = {p_new, burst, 7'h0};
+                        wcnt     = 0;
+                        pstate   = PState::FtData;
+                    }
+                }
+                PState::FtData: {
+                    if (wcnt == 7'd64) && i_cmd_ready && !cmd_v {
+                        burst = burst + 1;
+                        if burst == 2'd3 {
+                            pstate = PState::Done;
+                        } else {
+                            pstate = PState::FtCmd;
+                        }
+                    }
+                }
+                PState::Done: {
+                    ack_t  = ~ack_t;
+                    pstate = PState::Idle;
+                }
+                default: pstate = PState::Idle;
+            }
+        }
+    }
+
+    // ================= dual-clock line buffer =================
+    unsafe (cdc) {
+        inst u_ram: $sv::psram_cache_line_ram (
+            clk_a  : i_clk,
+            we_a   : i_wen && hit,
+            addr_a : i_addr[LINE_BITS - 1:0],
+            wdata_a: i_wdata,
+            rdata_a: o_rdata,
+            clk_b  : i_pclk,
+            we_b   : wb_we,
+            addr_b : ramb_addr,
+            wdata_b: wb_data,
+            rdata_b: ramb_rdata,
+        );
+    }
+}
+
+// 128 x 32 true dual-port RAM with independent clocks (Gowin DPB)
+embed (inline) sv{{{
+module psram_cache_line_ram (
+    input  wire         clk_a,
+    input  wire         we_a,
+    input  wire  [6:0]  addr_a,
+    input  wire  [31:0] wdata_a,
+    output logic [31:0] rdata_a,
+    input  wire         clk_b,
+    input  wire         we_b,
+    input  wire  [6:0]  addr_b,
+    input  wire  [31:0] wdata_b,
+    output logic [31:0] rdata_b
+);
+    // no read during a write on the same port: keeps the Gowin DPB in
+    // its "normal" write mode (read-before-write is not supported)
+    logic [31:0] mem [0:127];
+    always_ff @(posedge clk_a) begin
+        if (we_a) mem[addr_a] <= wdata_a;
+        else      rdata_a <= mem[addr_a];
+    end
+    always_ff @(posedge clk_b) begin
+        if (we_b) mem[addr_b] <= wdata_b;
+        else      rdata_b <= mem[addr_b];
+    end
+endmodule
+}}}

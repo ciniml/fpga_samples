@@ -16,8 +16,11 @@ $(PRIM_SV): $(GOWIN_SIMLIB)
 	{ echo '// Extracted from $(GOWIN_SIMLIB) by rtl/gowin_psram/Makefile; not for redistribution.'; \
 	  echo '`timescale 1ns/1ps'; \
 	  sed -n '/^module IDDR(/,/^endmodule/p' $(GOWIN_SIMLIB); \
-	  sed -n '/^module ODDR (/,/^endmodule/p' $(GOWIN_SIMLIB); } \
+	  sed -n '/^module ODDR (/,/^endmodule/p' $(GOWIN_SIMLIB); \
+	  sed -n '/^module IODELAY (/,/^endmodule/p' $(GOWIN_SIMLIB); } \
 	| sed 's/GSR\.GSRO/1'"'"'b1/' \
+	| sed 's/^assign #(0.025\*delay_data) delay_out = DI;/always @(DI) begin #(0.025 * delay_data) delay_out = DI; end \/\/ (rewritten for Verilator: assign delays are ignored)/' \
+	| sed 's/^wire delay_out;/reg delay_out;\ninitial delay_data = C_STATIC_DLY; \/\/ (added: the static value is only loaded on an SDTAP\/VALUE event in the original)/' \
 	| awk '/always @\(gsrt\)/ {skip=1} skip==0 {print} skip==1 && /^end$$/ {skip=0}' > $@
 
 test: prim

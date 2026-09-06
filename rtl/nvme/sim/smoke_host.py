@@ -194,6 +194,13 @@ def main():
     _, _, status, rdata = ioq.run(sqe)
     check("read status", status == 0, f"{status:#x}")
     check("read data", rdata == wdata, f"len={len(rdata)}")
+    if rdata != wdata:
+        diffs = [i for i in range(min(len(rdata), len(wdata))) if rdata[i] != wdata[i]]
+        print(f"  {len(diffs)} differing bytes; first at {diffs[0] if diffs else '-'}:")
+        if diffs:
+            o = diffs[0] & ~0xF
+            print(f"   exp {wdata[o:o+16].hex()}\n   got {rdata[o:o+16].hex()}")
+        print(f"   differing offsets (first 16): {diffs[:16]}")
 
     cid = ioq.next_cid()
     sqe = sqe_base(0x02, cid, nsid=1)  # Read out of range

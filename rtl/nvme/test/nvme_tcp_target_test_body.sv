@@ -36,7 +36,7 @@ module nvme_tcp_target_test_body #(
         .i_rx_valid(rx_valid), .o_rx_ready(rx_ready), .i_rx_data(rx_data),
         .o_tx_valid(tx_valid), .i_tx_ready(2'b11), .o_tx_data(tx_data),
         .o_mem_addr(mem_addr), .o_mem_wen(mem_wen), .o_mem_wdata(mem_wdata),
-        .o_mem_ren(mem_ren), .i_mem_rdata(mem_rdata)
+        .o_mem_ren(mem_ren), .i_mem_rdata(mem_rdata), .i_mem_ready(1'b1)
     );
 
     logic [31:0] bmem [0:LBA_COUNT*128-1];

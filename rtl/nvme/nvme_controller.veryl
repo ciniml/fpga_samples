@@ -73,6 +73,7 @@ pub module NvmeController #(
     o_mem_wdata: output logic<32>           ,
     o_mem_ren  : output logic               ,
     i_mem_rdata: input  logic<32>           ,
+    i_mem_ready: input  logic               ,
 ) {
     // -----------------------------------------------------------------
     // Register file
@@ -138,6 +139,7 @@ pub module NvmeController #(
     var core_c2h_data : logic<32>;
     var core_c2h_last : logic    ;
 
+    var _core_dbg: logic<4>;
     inst core: NvmeCore #(
         LBA_COUNT: LBA_COUNT,
     ) (
@@ -164,6 +166,8 @@ pub module NvmeController #(
         o_mem_wdata: o_mem_wdata,
         o_mem_ren  : o_mem_ren  ,
         i_mem_rdata: i_mem_rdata,
+        i_mem_ready: i_mem_ready,
+        o_dbg_state: _core_dbg,
     );
 
     // -----------------------------------------------------------------

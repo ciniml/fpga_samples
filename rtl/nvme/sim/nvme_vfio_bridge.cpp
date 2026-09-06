@@ -94,6 +94,7 @@ public:
         dut->i_hm_rvalid = 0;
         dut->i_hm_rdata = 0;
         dut->i_mem_rdata = 0;
+    dut->i_mem_ready = 1;
         for (int i = 0; i < 10; i++) tick();
         dut->i_rst = 0;
         for (int i = 0; i < 10; i++) tick();

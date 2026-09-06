@@ -78,6 +78,8 @@ pub module NvmeCore #(
     o_mem_wdata: output logic<32>           ,
     o_mem_ren  : output logic               ,
     i_mem_rdata: input  logic<32>           ,
+    i_mem_ready: input  logic               , // the access presented on ren/wen is performed this cycle (1 for plain RAM)
+    o_dbg_state: output logic<4>            , // FSM state (board debug)
 ) {
     enum State: logic<3> {
         Collect, // gather the 16 SQE dwords
@@ -253,8 +255,12 @@ pub module NvmeCore #(
     // Outputs
     // ---------------------------------------------------------------
     assign o_sq_ready  = state == State::Collect;
-    assign o_h2c_ready = state == State::WrData;
+    assign o_dbg_state = state;
+    assign o_h2c_ready = (state == State::WrData) && i_mem_ready;
 
+    // ren/wen present the request even while the memory stalls (a cache
+    // needs to see the address to fetch the line); the memory acts on
+    // them only in cycles where it drives i_mem_ready high.
     assign o_mem_wen   = (state == State::WrData) && i_h2c_valid;
     assign o_mem_wdata = i_h2c_data;
     assign o_mem_ren   = state == State::RdIssue;
@@ -434,8 +440,11 @@ pub module NvmeCore #(
                     }
                 }
                 State::RdIssue: {
-                    from_mem = 1;
-                    state    = State::RdSend;
+                    // o_mem_ren is asserted here; wait for the memory
+                    if i_mem_ready {
+                        from_mem = 1;
+                        state    = State::RdSend;
+                    }
                 }
                 State::RdSend: {
                     if i_c2h_ready {
@@ -454,7 +463,7 @@ pub module NvmeCore #(
                     }
                 }
                 State::WrData: {
-                    if i_h2c_valid {
+                    if i_h2c_valid && i_mem_ready {
                         daddr    = daddr + 1;
                         xfer_cnt = xfer_cnt + 1;
                         if xfer_cnt == xfer_len - 24'd1 {

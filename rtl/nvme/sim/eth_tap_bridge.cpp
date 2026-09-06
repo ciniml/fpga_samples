@@ -27,6 +27,8 @@
 #include <linux/if_tun.h>
 #include <poll.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 #include <cstdint>
@@ -64,22 +66,46 @@ int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     const char* tap_name = (argc > 1) ? argv[1] : "tap-nvme";
 
-    int tap = open("/dev/net/tun", O_RDWR | O_NONBLOCK);
-    if (tap < 0) { perror("open /dev/net/tun"); return 1; }
-    struct ifreq ifr {};
-    ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
-    strncpy(ifr.ifr_name, tap_name, IFNAMSIZ - 1);
-    if (ioctl(tap, TUNSETIFF, &ifr) < 0) {
-        fprintf(stderr, "TUNSETIFF %s failed: %s\n", tap_name, strerror(errno));
-        fprintf(stderr, "one-time setup:\n"
-                        "  sudo ip tuntap add dev %s mode tap user $USER\n"
-                        "  sudo ip addr add 192.168.37.1/24 dev %s\n"
-                        "  sudo ip link set %s up\n",
-                tap_name, tap_name, tap_name);
-        return 1;
+    int tap;
+    if (strncmp(tap_name, "unix:", 5) == 0) {
+        // no-root transport: a SOCK_SEQPACKET Unix socket, one message
+        // per Ethernet frame (see sim_host.py, which speaks TCP/IP itself)
+        const char* path = tap_name + 5;
+        int ls = socket(AF_UNIX, SOCK_SEQPACKET, 0);
+        if (ls < 0) { perror("socket"); return 1; }
+        struct sockaddr_un sa {};
+        sa.sun_family = AF_UNIX;
+        strncpy(sa.sun_path, path, sizeof(sa.sun_path) - 1);
+        unlink(path);
+        if (bind(ls, (struct sockaddr*)&sa, sizeof(sa)) < 0 || listen(ls, 1) < 0) {
+            perror("bind/listen"); return 1;
+        }
+        printf("[eth] waiting for a frame client on %s\n", path);
+        fflush(stdout);
+        tap = accept(ls, nullptr, nullptr);
+        if (tap < 0) { perror("accept"); return 1; }
+        close(ls);
+        fcntl(tap, F_SETFL, fcntl(tap, F_GETFL) | O_NONBLOCK);
+        printf("[eth] bridging %s <-> RMII RTL (RTL is 192.168.37.2)\n", path);
+        fflush(stdout);
+    } else {
+        tap = open("/dev/net/tun", O_RDWR | O_NONBLOCK);
+        if (tap < 0) { perror("open /dev/net/tun"); return 1; }
+        struct ifreq ifr {};
+        ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
+        strncpy(ifr.ifr_name, tap_name, IFNAMSIZ - 1);
+        if (ioctl(tap, TUNSETIFF, &ifr) < 0) {
+            fprintf(stderr, "TUNSETIFF %s failed: %s\n", tap_name, strerror(errno));
+            fprintf(stderr, "one-time setup:\n"
+                            "  sudo ip tuntap add dev %s mode tap user $USER\n"
+                            "  sudo ip addr add 192.168.37.1/24 dev %s\n"
+                            "  sudo ip link set %s up\n",
+                    tap_name, tap_name, tap_name);
+            return 1;
+        }
+        printf("[eth] bridging %s <-> RMII RTL (RTL is 192.168.37.2)\n", tap_name);
+        fflush(stdout);
     }
-    printf("[eth] bridging %s <-> RMII RTL (RTL is 192.168.37.2)\n", tap_name);
-    fflush(stdout);
 
     auto dut = std::make_unique<Veth_sim_top>();
     dut->rst = 1;

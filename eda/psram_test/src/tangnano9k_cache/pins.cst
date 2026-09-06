@@ -1,0 +1,23 @@
+// Tang Nano 9K (GW1NR-LV9QN88PC6/I5). The PSRAM ports are mapped by the
+// tools and must not be constrained here.
+IO_LOC  "clock" 52;
+IO_PORT "clock" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+IO_LOC  "uart_tx" 17;
+IO_PORT "uart_tx" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+
+IO_LOC  "led[0]" 10;
+IO_LOC  "led[1]" 11;
+IO_LOC  "led[2]" 13;
+IO_LOC  "led[3]" 14;
+IO_LOC  "led[4]" 15;
+IO_LOC  "led[5]" 16;
+IO_PORT "led[0]" IO_TYPE=LVCMOS18;
+IO_PORT "led[1]" IO_TYPE=LVCMOS18;
+IO_PORT "led[2]" IO_TYPE=LVCMOS18;
+IO_PORT "led[3]" IO_TYPE=LVCMOS18;
+IO_PORT "led[4]" IO_TYPE=LVCMOS18;
+IO_PORT "led[5]" IO_TYPE=LVCMOS18;
+
+IO_LOC  "rmii_txclk" 32;
+IO_PORT "rmii_txclk" IO_TYPE=LVCMOS33 PULL_MODE=NONE;

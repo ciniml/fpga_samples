@@ -8,7 +8,7 @@ RTL_DIR ?= $(ROOT_DIR)/rtl
 PSRAM_DIR := $(RTL_DIR)/gowin_psram
 UART_DIR := $(RTL_DIR)/uart
 
-PSRAM_SV := $(PSRAM_DIR)/gowin_psram.sv $(PSRAM_DIR)/psram_test.sv
+PSRAM_SV := $(PSRAM_DIR)/gowin_psram.sv $(PSRAM_DIR)/psram_test.sv $(PSRAM_DIR)/psram_dword_cache.sv $(PSRAM_DIR)/cache_test.sv
 
 PROJECT_ADDITIONAL_ARGS := $(abspath $(PSRAM_DIR)) $(abspath $(UART_DIR))
 

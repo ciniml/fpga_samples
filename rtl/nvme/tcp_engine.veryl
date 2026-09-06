@@ -208,8 +208,11 @@ pub module TcpEngine #(
 
     assign o_app_tx_ready = {aw_take && aw_c, aw_take && !aw_c};
 
-    let ring_full0: logic = (wr_seq[0] - snd_una[0]) >= 32'd2048;
-    let ring_full1: logic = (wr_seq[1] - snd_una[1]) >= 32'd2048;
+    // (the ring holds at most 2048 unacknowledged bytes, so these
+    // sequence differences are bounded and 12 bits are enough; this keeps
+    // the compares off the 32-bit sequence arithmetic paths)
+    let ring_full0: logic = (wr_seq[0][11:0] - snd_una[0][11:0]) >= 12'd2048;
+    let ring_full1: logic = (wr_seq[1][11:0] - snd_una[1][11:0]) >= 12'd2048;
 
     // ---- TX frame scheduler ----
     enum TxSt: logic<3> {
@@ -380,8 +383,8 @@ pub module TcpEngine #(
     // per-connection send requests. The unsent/drained tests are
     // registered (updated every cycle) so the scheduler's state paths
     // stay shallow; one cycle of staleness only delays scheduling.
-    let unsent0: logic<32> = wr_seq[0] - snd_nxt[0];
-    let unsent1: logic<32> = wr_seq[1] - snd_nxt[1];
+    let unsent0: logic<12> = wr_seq[0][11:0] - snd_nxt[0][11:0];
+    let unsent1: logic<12> = wr_seq[1][11:0] - snd_nxt[1][11:0];
     var r_winupd : logic<2>; // window-update ACK due
     var r_has_uns: logic<2>; // unsent != 0
     var r_big_uns: logic<2>; // unsent >= 1024
@@ -694,11 +697,11 @@ pub module TcpEngine #(
                 rx_free(1) >= win_adv[1] + 16'd1024,
                 rx_free(0) >= win_adv[0] + 16'd1024
             };
-            r_has_uns = {unsent1 != 32'h0, unsent0 != 32'h0};
-            r_big_uns = {unsent1 >= 32'd1024, unsent0 >= 32'd1024};
+            r_has_uns = {unsent1 != 12'h0, unsent0 != 12'h0};
+            r_big_uns = {unsent1 >= 12'd1024, unsent0 >= 12'd1024};
             r_drained = {
-                (unsent1 == 32'h0) && (snd_una[1] == snd_nxt[1]),
-                (unsent0 == 32'h0) && (snd_una[0] == snd_nxt[0])
+                (unsent1 == 12'h0) && (snd_una[1][11:0] == snd_nxt[1][11:0]),
+                (unsent0 == 12'h0) && (snd_una[0][11:0] == snd_nxt[0][11:0])
             };
             // output register drain (an Emit push below overrides)
             if otx_v && i_tx_ready {
@@ -737,8 +740,8 @@ pub module TcpEngine #(
                         f_kind  = 2;
                         f_flags = 8'h18; // PSH|ACK
                         f_seq   = snd_nxt[f_c];
-                        f_plen  = if (if f_c ? unsent1 : unsent0) >= 32'd1024 ?
-                         12'd1024 : (if f_c ? unsent1[11:0] : unsent0[11:0]);
+                        f_plen  = if (if f_c ? unsent1 : unsent0) >= 12'd1024 ?
+                         12'd1024 : (if f_c ? unsent1 : unsent0);
                     } else {
                         f_kind  = 0;
                         f_flags = 8'h10; // ACK

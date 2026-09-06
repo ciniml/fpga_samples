@@ -64,6 +64,7 @@ pub module NvmeTcpTarget #(
     o_mem_wdata: output logic<32>           ,
     o_mem_ren  : output logic               ,
     i_mem_rdata: input  logic<32>           ,
+    i_mem_ready: input  logic               ,
 ) {
     // -----------------------------------------------------------------
     // NvmeCore instance
@@ -111,6 +112,7 @@ pub module NvmeTcpTarget #(
         o_mem_wdata: o_mem_wdata,
         o_mem_ren  : o_mem_ren  ,
         i_mem_rdata: i_mem_rdata,
+        i_mem_ready: i_mem_ready,
     );
 
     // -----------------------------------------------------------------

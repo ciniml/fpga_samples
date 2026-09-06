@@ -21,6 +21,13 @@ module gowin_psram_ckd_fast_test;
 endmodule
 }}}
 
+#[test(gowin_psram_ckd_mid)]
+embed (inline) sv{{{
+module gowin_psram_ckd_mid_test;
+    gowin_psram_test_body #(.RUN(1), .T_CKD(3.0)) body();
+endmodule
+}}}
+
 #[test(gowin_psram_ckd_slow)]
 embed (inline) sv{{{
 module gowin_psram_ckd_slow_test;
@@ -33,5 +40,13 @@ endmodule
 embed (inline) sv{{{
 module psram_test_driver_test;
     psram_test_body #(.RUN(1)) body();
+endmodule
+}}}
+
+// dword cache in front of the controller (two clock domains)
+#[test(psram_dword_cache)]
+embed (inline) sv{{{
+module psram_dword_cache_test;
+    psram_cache_test_body #(.RUN(1)) body();
 endmodule
 }}}

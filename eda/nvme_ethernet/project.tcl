@@ -9,6 +9,7 @@ set PROJECT_NAME  [lindex $argv 5]
 # Additional args
 set ETHERNET_DIR  [lindex $argv 6]
 set NVME_DIR      [lindex $argv 7]
+set PSRAM_DIR     [lindex $argv 8]
 
 set_option -output_base_name ${PROJECT_NAME}
 set_device -name $DEVICE_FAMILY $DEVICE_PART
@@ -50,6 +51,13 @@ add_file -type verilog [file normalize ${NVME_DIR}/eth_ip.sv]
 add_file -type verilog [file normalize ${NVME_DIR}/eth_tx_mux.sv]
 add_file -type verilog [file normalize ${NVME_DIR}/tcp_engine.sv]
 
+if {${TARGET} == "tangnano9k_pmod"} {
+    # PSRAM namespace (generated from Veryl: veryl build in rtl/gowin_psram)
+    add_file -type verilog [file normalize ${PSRAM_DIR}/gowin_psram.sv]
+    add_file -type verilog [file normalize ${PSRAM_DIR}/psram_dword_cache.sv]
+    add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_rpll_psram/gowin_rpll_psram.v]
+    add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_tx.sv]
+}
 add_file -type verilog [file normalize ${SRC_DIR}/top.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/reset_seq.sv]
 add_file -type cst [file normalize ${SRC_DIR}/pins.cst]

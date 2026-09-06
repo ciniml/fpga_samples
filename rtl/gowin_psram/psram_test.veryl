@@ -126,7 +126,14 @@ pub module PsramTest #(
 
     // address- and pass-dependent test pattern
     function pat(wa: input logic<22>, s: input logic<8>) -> logic<16> {
-        return wa[15:0] ^ {wa[7:0], wa[15:8]} ^ {wa[20:16], wa[20:16], wa[20:16], 1'b0} ^ {s, s} ^ 16'hA5C3;
+        // even passes: the byte-incrementing pattern of probe_host.py
+        // (byte n = n & 0xFF, i.e. word = {2wa+1, 2wa}); odd passes: the
+        // address hash
+        if s[0] == 1'b0 {
+            return {wa[6:0], 1'b1, wa[6:0], 1'b0} ^ {s[7:1], 1'b0, s[7:1], 1'b0};
+        } else {
+            return wa[15:0] ^ {wa[7:0], wa[15:8]} ^ {wa[20:16], wa[20:16], wa[20:16], 1'b0} ^ {s, s} ^ 16'hA5C3;
+        }
     }
     assign o_wr_data = pat(wcur, seed);
 

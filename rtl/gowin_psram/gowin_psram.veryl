@@ -23,6 +23,16 @@
  * according to the Gowin primitive models and on the Tang Nano 9K;
  * CK_DELAY adds whole cycles for other boards.
  *
+ * Read capture: the IDDRs must share the ODDRs' clock (i_clk, a Gowin
+ * pad rule), i.e. they sample 270 degrees after the CK edge that made
+ * the die drive a byte, which is only inside the byte while tCKD exceeds
+ * a quarter period (~3ns at 81MHz; the die's typical value, seen as
+ * sporadic single-bit errors on the Tang Nano 9K). An IODELAY of
+ * IN_DELAY x 25ps on every input (2.5ns by default) moves the byte onto
+ * the sample edge: hold then needs tCKD > 0.55ns and setup holds up to
+ * tCKD = 6.7ns at 81MHz. The RWDS pairing logic accepts either
+ * alignment of a word to the sample edges.
+ *
  * Protocol choices:
  *  - Fixed (2x) initial latency: CR0 is written at init so the additional
  *    latency indication on RWDS never has to be sampled. Cost: LATENCY
@@ -51,6 +61,7 @@ pub module GowinPsram #(
     param LEN_BITS  : u32 = 6         , // burst length field width (words - 1)
     param WRAP_BYTES: u32 = 128       , // CR0 burst length: 16, 32, 64 or 128 bytes
     param CK_DELAY  : u32 = 0         , // extra cycles CK enable lags DQ/CS# (0..2, board calibration)
+    param IN_DELAY  : u32 = 100       , // IODELAY steps (25ps) on DQ/RWDS inputs before the IDDRs
 ) (
     i_clk     : input 'a clock  ,
     i_clk_p   : input 'b clock  , // i_clk shifted ~90 degrees, drives CK
@@ -112,6 +123,7 @@ pub module GowinPsram #(
 
     var state  : 'a State;
     var timer  : 'a logic<32>;
+    var init_hit: 'a logic;      // timer reached INIT_CYCLES (registered compare)
     var init_wr: 'a logic;          // the CR0 write is in flight (init)
 
     // ---- physical-side registers (all go through ODDR, same latency) ----
@@ -144,6 +156,8 @@ pub module GowinPsram #(
     var words   : 'a logic<LEN_BITS>; // words remaining - 1
 
     // ---- read capture ----
+    var dq_dly     : 'a logic<8>;   // pad -> IODELAY -> IDDR
+    var rwds_dly   : 'a logic;
     var dq_in_ris  : 'a logic<8>;
     var dq_in_fal  : 'a logic<8>;
     var rwds_in_ris: 'a logic;
@@ -185,6 +199,7 @@ pub module GowinPsram #(
         if_reset {
             state    = State::Reset;
             timer    = 0;
+            init_hit = 0;
             init_wr  = 0;
             dq_ris   = 0;
             dq_fal   = 0;
@@ -259,8 +274,9 @@ pub module GowinPsram #(
                     }
                 }
                 State::InitWait: {
-                    timer = timer + 1;
-                    if timer == INIT_CYCLES {
+                    timer    = timer + 1;
+                    init_hit = timer == INIT_CYCLES - 1;
+                    if init_hit {
                         // configuration register write (no latency)
                         init_wr = 1;
                         ca      = make_ca(1, 1, CR0_ADDR);
@@ -386,9 +402,19 @@ pub module GowinPsram #(
             Q0 : dq_o[i],
             Q1 : dq_t[i],
         );
+        inst u_idly: $sv::IODELAY #(
+            C_STATIC_DLY: IN_DELAY,
+        ) (
+            DI   : io_psram_dq[i],
+            DO   : dq_dly[i],
+            DF   : _,
+            SDTAP: 1'b0,
+            VALUE: 1'b0,
+            SETN : 1'b0,
+        );
         inst u_iddr: $sv::IDDR (
             CLK: i_clk,
-            D  : io_psram_dq[i],
+            D  : dq_dly[i],
             Q0 : dq_in_ris[i],
             Q1 : dq_in_fal[i],
         );
@@ -403,9 +429,19 @@ pub module GowinPsram #(
         Q0 : rwds_o,
         Q1 : rwds_t,
     );
+    inst u_idly_rwds: $sv::IODELAY #(
+        C_STATIC_DLY: IN_DELAY,
+    ) (
+        DI   : io_psram_rwds,
+        DO   : rwds_dly,
+        DF   : _,
+        SDTAP: 1'b0,
+        VALUE: 1'b0,
+        SETN : 1'b0,
+    );
     inst u_iddr_rwds: $sv::IDDR (
         CLK: i_clk,
-        D  : io_psram_rwds,
+        D  : rwds_dly,
         Q0 : rwds_in_ris,
         Q1 : rwds_in_fal,
     );

@@ -3,6 +3,12 @@
 // eda/ethernet_video tangnano9k_pmod (pin values taken from its
 // generated pins.cst / eda/targets/tangnano9k_pmod/pmod_ports.csv).
 
+IO_LOC  "clock" 52;
+IO_PORT "clock" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+IO_LOC  "uart_tx" 17;
+IO_PORT "uart_tx" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+
 IO_LOC "button_s2" 84;
 IO_PORT "button_s2" IO_TYPE=LVCMOS15;
 
@@ -40,3 +46,9 @@ IO_PORT "rmii_txd[1]" IO_TYPE=LVCMOS33;
 IO_PORT "rmii_txen"   IO_TYPE=LVCMOS33;
 IO_PORT "rmii_mdio"   IO_TYPE=LVCMOS33;
 IO_PORT "rmii_mdc"    IO_TYPE=LVCMOS33;
+
+
+// Pin the cache line buffer to a fixed BSRAM pair (placement of
+// these blocks affects the 54MHz PSRAM read-capture margin).
+INS_LOC "cache/u_ram/mem_mem_0_0_s" BSRAM_R28[0];
+INS_LOC "cache/u_ram/mem_mem_0_1_s" BSRAM_R28[1];

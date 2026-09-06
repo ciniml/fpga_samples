@@ -59,6 +59,7 @@ int main(int argc, char** argv) {
     dut->i_rx_data = 0;
     dut->i_tx_ready = 3;
     dut->i_mem_rdata = 0;
+    dut->i_mem_ready = 1;
 
     Conn conns[2];
 

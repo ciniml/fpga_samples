@@ -70,6 +70,7 @@ public:
         dut->i_c2h_ready = 0;
         dut->i_cpl_ready = 0;
         dut->i_mem_rdata = 0;
+    dut->i_mem_ready = 1;
         for (int i = 0; i < 10; i++) tick();
         dut->i_rst = 0;
         for (int i = 0; i < 10; i++) tick();

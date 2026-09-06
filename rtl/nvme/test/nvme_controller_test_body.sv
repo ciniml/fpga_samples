@@ -45,7 +45,7 @@ module nvme_controller_test_body #(
         .o_hm_wdata(hm_wdata), .i_hm_ready(hm_ready),
         .i_hm_rvalid(hm_rvalid), .i_hm_rdata(hm_rdata),
         .o_mem_addr(mem_addr), .o_mem_wen(mem_wen), .o_mem_wdata(mem_wdata),
-        .o_mem_ren(mem_ren), .i_mem_rdata(mem_rdata)
+        .o_mem_ren(mem_ren), .i_mem_rdata(mem_rdata), .i_mem_ready(1'b1)
     );
 
     // Backing RAM model (1-cycle read latency)

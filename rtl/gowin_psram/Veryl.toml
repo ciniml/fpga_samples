@@ -13,6 +13,7 @@ include_files = [
     "test/hyperram_model.sv",
     "test/gen/gowin_prim_sim.sv",
     "test/psram_test_body.sv",
+    "test/psram_cache_test_body.sv",
     "../uart/uart_tx.sv",
 ]
 
@@ -22,6 +23,8 @@ compile_args = [
     "hyperram_model.sv",
     "gowin_prim_sim.sv",
     "psram_test_body.sv",
+    "psram_cache_test_body.sv",
+    "-Wno-MULTIDRIVEN",
     "uart_tx.sv",
     "-Wno-WIDTHEXPAND",
     "-Wno-WIDTHTRUNC",

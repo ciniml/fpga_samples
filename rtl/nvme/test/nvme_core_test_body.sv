@@ -51,14 +51,17 @@ module nvme_core_test_body #(
         .o_c2h_valid(c2h_valid), .i_c2h_ready(c2h_ready),
         .o_c2h_data(c2h_data), .o_c2h_last(c2h_last),
         .o_mem_addr(mem_addr), .o_mem_wen(mem_wen), .o_mem_wdata(mem_wdata),
-        .o_mem_ren(mem_ren), .i_mem_rdata(mem_rdata)
+        .o_mem_ren(mem_ren), .i_mem_rdata(mem_rdata), .i_mem_ready(mem_ready)
     );
 
-    // Backing RAM model: dword-wide, 1-cycle read latency
+    // Backing RAM model: dword-wide, 1-cycle read latency, random stalls
+    // (i_mem_ready low: the core must hold off reads and h2c data)
     logic [31:0] mem [0:LBA_COUNT*128-1];
+    logic        mem_ready = 1;
+    always @(posedge clk) mem_ready <= ($urandom_range(0, 2) != 0);
     always @(posedge clk) begin
-        if (mem_wen) mem[mem_addr] <= mem_wdata;
-        if (mem_ren) mem_rdata <= mem[mem_addr];
+        if (mem_wen && mem_ready) mem[mem_addr] <= mem_wdata;
+        if (mem_ren && mem_ready) mem_rdata <= mem[mem_addr];
     end
 
     int errors = 0;
