@@ -1,0 +1,416 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file psram_test.veryl
+ * @brief Board bring-up test driver for GowinPsram.
+ *
+ * Repeats forever, for i_ck_delay = 0, 1, 2:
+ *  1. resets the controller (re-running its init / CR0 write),
+ *  2. reads ID0 and CR0 from the register space,
+ *  3. writes TEST_WORDS words of an address-dependent pattern (seeded
+ *     with the pass number so stale data is detected) in bursts,
+ *  4. reads them back and counts mismatches,
+ *  5. prints one line on the UART:
+ *     "ckd=1 id0=0c81 cr0=8fef err=00000000 first=000000 got=0000 exp=0000"
+ *
+ * On a correctly clocked board exactly one ck_delay value should report
+ * err=00000000 (0 for a +90 degree CK clock, per the primitive models).
+ */
+pub module PsramTest #(
+    param CLK_HZ    : u32 = 81_000_000,
+    param TEST_WORDS: u32 = 1 << 19, // words per pass (1MiB)
+    param BURST     : u32 = 128    , // words per burst (<= 2**LEN_BITS)
+    param ADDR_BITS : u32 = 22     ,
+    param LEN_BITS  : u32 = 7      ,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    // controller
+    o_ctrl_rst : output logic          ,
+    o_ck_delay : output logic<2>       ,
+    i_ready    : input  logic          ,
+    o_cmd_valid: output logic          ,
+    i_cmd_ready: input  logic          ,
+    o_cmd_write: output logic          ,
+    o_cmd_reg  : output logic          ,
+    o_cmd_addr : output logic<ADDR_BITS>,
+    o_cmd_len  : output logic<LEN_BITS>,
+    o_wr_valid : output logic          ,
+    i_wr_ready : input  logic          ,
+    o_wr_data  : output logic<16>      ,
+    o_wr_mask  : output logic<2>       ,
+    i_rd_valid : input  logic          ,
+    i_rd_data  : input  logic<16>      ,
+    i_rd_last  : input  logic          ,
+
+    // UART byte stream
+    o_tx_valid: output logic   ,
+    i_tx_ready: input  logic   ,
+    o_tx_data : output logic<8>,
+
+    // [0] ready [1] last pass clean [2] pass running [4:3] ck_delay
+    o_status: output logic<5>,
+) {
+    const READY_TIMEOUT: u32 = CLK_HZ / 2;   // 0.5s
+    const NBURST       : u32 = TEST_WORDS / BURST;
+    const LINE_LEN     : u32 = 69;
+
+    enum State: logic<4> {
+        RstCtrl,
+        WaitReady,
+        IdCmd,
+        IdWait,
+        Cr0Cmd,
+        Cr0Wait,
+        WrCmd,
+        WrWait,
+        RdCmd,
+        RdWait,
+        Finish,
+        Print,
+        Next,
+    }
+
+    var state    : State;
+    var ck_delay : logic<2>;
+    var seed     : logic<8>;
+    var timer    : logic<32>;
+    var burst    : logic<32>;   // burst index
+    var wcur     : logic<22>;   // next word to write / expect
+    var errors   : logic<32>;
+    var rcnt     : logic<32>;   // words received in the read pass
+    var missing  : logic<32>;   // TEST_WORDS - rcnt (registered)
+    var cmp_v    : logic;       // read compare pipeline
+    var cmp_got  : logic<16>;
+    var cmp_exp  : logic<16>;
+    var cmp_adr  : logic<22>;
+    var cmd_ready_r: logic;     // registered copy for the completion waits
+    var first_adr: logic<22>;
+    var first_got: logic<16>;
+    var first_exp: logic<16>;
+    var id0      : logic<16>;
+    var cr0      : logic<16>;
+    var clean    : logic;
+    var pidx     : logic<8>;
+
+    var cmd_valid: logic;
+    var cmd_write: logic;
+    var cmd_reg  : logic;
+    var cmd_addr : logic<ADDR_BITS>;
+    var cmd_len  : logic<LEN_BITS>;
+    var wr_valid : logic;
+    var ctrl_rst : logic;
+
+    assign o_ctrl_rst  = ctrl_rst;
+    assign o_ck_delay  = ck_delay;
+    assign o_cmd_valid = cmd_valid;
+    assign o_cmd_write = cmd_write;
+    assign o_cmd_reg   = cmd_reg;
+    assign o_cmd_addr  = cmd_addr;
+    assign o_cmd_len   = cmd_len;
+    assign o_wr_valid  = wr_valid;
+    assign o_wr_mask   = 2'b00;
+    assign o_status    = {ck_delay, state == State::WrWait || state == State::RdWait, clean, i_ready};
+
+    // address- and pass-dependent test pattern
+    function pat(wa: input logic<22>, s: input logic<8>) -> logic<16> {
+        return wa[15:0] ^ {wa[7:0], wa[15:8]} ^ {wa[20:16], wa[20:16], wa[20:16], 1'b0} ^ {s, s} ^ 16'hA5C3;
+    }
+    assign o_wr_data = pat(wcur, seed);
+
+    function hex(n: input logic<4>) -> logic<8> {
+        return if n <: 4'd10 ? 8'h30 + {4'h0, n} : 8'h57 + {4'h0, n};
+    }
+
+    // "ckd=1 id0=0c81 cr0=8fef err=00000000 first=000000 got=0000 exp=0000\r\n"
+    // Stage 1 picks either a literal character or a hex nibble (lit[8]
+    // set), stage 2 converts the nibble; keeps the mux off one clock.
+    function line_char(i: input logic<8>) -> logic<9> {
+        var c: logic<9>;
+        c = 9'h020;
+        case i {
+            8'd0 : c = 9'h063; // c
+            8'd1 : c = 9'h06B; // k
+            8'd2 : c = 9'h064; // d
+            8'd3 : c = 9'h03D; // =
+            8'd4 : c = {1'b1, 6'h0, ck_delay};
+            8'd6 : c = 9'h069; // i
+            8'd7 : c = 9'h064; // d
+            8'd8 : c = 9'h030; // 0
+            8'd9 : c = 9'h03D;
+            8'd10: c = {1'b1, 4'h0, id0[15:12]};
+            8'd11: c = {1'b1, 4'h0, id0[11:8]};
+            8'd12: c = {1'b1, 4'h0, id0[7:4]};
+            8'd13: c = {1'b1, 4'h0, id0[3:0]};
+            8'd15: c = 9'h063; // c
+            8'd16: c = 9'h072; // r
+            8'd17: c = 9'h030; // 0
+            8'd18: c = 9'h03D;
+            8'd19: c = {1'b1, 4'h0, cr0[15:12]};
+            8'd20: c = {1'b1, 4'h0, cr0[11:8]};
+            8'd21: c = {1'b1, 4'h0, cr0[7:4]};
+            8'd22: c = {1'b1, 4'h0, cr0[3:0]};
+            8'd24: c = 9'h065; // e
+            8'd25: c = 9'h072; // r
+            8'd26: c = 9'h072; // r
+            8'd27: c = 9'h03D;
+            8'd28: c = {1'b1, 4'h0, errors[31:28]};
+            8'd29: c = {1'b1, 4'h0, errors[27:24]};
+            8'd30: c = {1'b1, 4'h0, errors[23:20]};
+            8'd31: c = {1'b1, 4'h0, errors[19:16]};
+            8'd32: c = {1'b1, 4'h0, errors[15:12]};
+            8'd33: c = {1'b1, 4'h0, errors[11:8]};
+            8'd34: c = {1'b1, 4'h0, errors[7:4]};
+            8'd35: c = {1'b1, 4'h0, errors[3:0]};
+            8'd37: c = 9'h066; // f
+            8'd38: c = 9'h069; // i
+            8'd39: c = 9'h072; // r
+            8'd40: c = 9'h073; // s
+            8'd41: c = 9'h074; // t
+            8'd42: c = 9'h03D;
+            8'd43: c = {1'b1, 4'h0, {2'b00, first_adr[21:20]}};
+            8'd44: c = {1'b1, 4'h0, first_adr[19:16]};
+            8'd45: c = {1'b1, 4'h0, first_adr[15:12]};
+            8'd46: c = {1'b1, 4'h0, first_adr[11:8]};
+            8'd47: c = {1'b1, 4'h0, first_adr[7:4]};
+            8'd48: c = {1'b1, 4'h0, first_adr[3:0]};
+            8'd50: c = 9'h067; // g
+            8'd51: c = 9'h06F; // o
+            8'd52: c = 9'h074; // t
+            8'd53: c = 9'h03D;
+            8'd54: c = {1'b1, 4'h0, first_got[15:12]};
+            8'd55: c = {1'b1, 4'h0, first_got[11:8]};
+            8'd56: c = {1'b1, 4'h0, first_got[7:4]};
+            8'd57: c = {1'b1, 4'h0, first_got[3:0]};
+            8'd59: c = 9'h065; // e
+            8'd60: c = 9'h078; // x
+            8'd61: c = 9'h070; // p
+            8'd62: c = 9'h03D;
+            8'd63: c = {1'b1, 4'h0, first_exp[15:12]};
+            8'd64: c = {1'b1, 4'h0, first_exp[11:8]};
+            8'd65: c = {1'b1, 4'h0, first_exp[7:4]};
+            8'd66: c = {1'b1, 4'h0, first_exp[3:0]};
+            8'd67: c = 9'h00D;
+            8'd68: c = 9'h00A;
+            default: c = 9'h020;
+        }
+        return c;
+    }
+    // the character mux is deep: register the byte before offering it
+    var tx_sel : logic<9>;
+    var tx_ph  : logic;
+    var tx_byte: logic<8>;
+    var tx_pend: logic;
+    assign o_tx_valid = tx_pend;
+    assign o_tx_data  = tx_byte;
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            state     = State::RstCtrl;
+            ck_delay  = 0;
+            seed      = 0;
+            timer     = 0;
+            burst     = 0;
+            wcur      = 0;
+            errors    = 0;
+            rcnt      = 0;
+            missing   = 0;
+            cmp_v     = 0;
+            cmp_got   = 0;
+            cmp_exp   = 0;
+            cmp_adr   = 0;
+            cmd_ready_r = 0;
+            first_adr = 0;
+            first_got = 0;
+            first_exp = 0;
+            id0       = 0;
+            cr0       = 0;
+            clean     = 0;
+            pidx      = 0;
+            tx_sel    = 0;
+            tx_ph     = 0;
+            tx_byte   = 0;
+            tx_pend   = 0;
+            cmd_valid = 0;
+            cmd_write = 0;
+            cmd_reg   = 0;
+            cmd_addr  = 0;
+            cmd_len   = 0;
+            wr_valid  = 0;
+            ctrl_rst  = 1;
+        } else {
+            // write data pointer follows the controller's strobe
+            if i_wr_ready {
+                wcur = wcur + 1;
+            }
+            // read compare (memory read passes only), two stages
+            cmp_v = 0;
+            if i_rd_valid && (state == State::RdWait) {
+                rcnt    = rcnt + 1;
+                cmp_v   = 1;
+                cmp_got = i_rd_data;
+                cmp_exp = pat(wcur, seed);
+                cmp_adr = wcur;
+                wcur    = wcur + 1;
+            }
+            if cmp_v && (cmp_got != cmp_exp) {
+                if errors == 0 {
+                    first_adr = cmp_adr;
+                    first_got = cmp_got;
+                    first_exp = cmp_exp;
+                }
+                errors = errors + 1;
+            }
+            // command handshake (the completion waits below use the
+            // registered ready so the controller state does not feed the
+            // driver's wide counters directly)
+            if cmd_valid && i_cmd_ready {
+                cmd_valid = 0;
+            }
+            cmd_ready_r = i_cmd_ready && !cmd_valid;
+            missing     = TEST_WORDS - rcnt;
+
+            case state {
+                State::RstCtrl: {
+                    ctrl_rst = 1;
+                    timer    = timer + 1;
+                    if timer == 32'd16 {
+                        ctrl_rst = 0;
+                        timer    = 0;
+                        id0      = 0;
+                        cr0      = 0;
+                        state    = State::WaitReady;
+                    }
+                }
+                State::WaitReady: {
+                    timer = timer + 1;
+                    if i_ready {
+                        timer = 0;
+                        state = State::IdCmd;
+                    } else if timer == READY_TIMEOUT {
+                        // report the timeout as an error line
+                        id0    = 16'hFFFF;
+                        cr0    = 16'hFFFF;
+                        errors = 32'hFFFF_FFFF;
+                        timer  = 0;
+                        pidx   = 0;
+                        state  = State::Print;
+                    }
+                }
+                State::IdCmd: {
+                    cmd_valid = 1;
+                    cmd_write = 0;
+                    cmd_reg   = 1;
+                    cmd_addr  = 0;
+                    cmd_len   = 0;
+                    state     = State::IdWait;
+                }
+                State::IdWait: {
+                    if i_rd_valid {
+                        id0 = i_rd_data;
+                    }
+                    if !cmd_valid && cmd_ready_r {
+                        state = State::Cr0Cmd;
+                    }
+                }
+                State::Cr0Cmd: {
+                    cmd_valid = 1;
+                    cmd_write = 0;
+                    cmd_reg   = 1;
+                    cmd_addr  = 'h1000;
+                    cmd_len   = 0;
+                    state     = State::Cr0Wait;
+                }
+                State::Cr0Wait: {
+                    if i_rd_valid {
+                        cr0 = i_rd_data;
+                    }
+                    if !cmd_valid && cmd_ready_r {
+                        burst     = 0;
+                        wcur      = 0;
+                        errors    = 0;
+                        rcnt      = 0;
+                        first_adr = 0;
+                        first_got = 0;
+                        first_exp = 0;
+                        state     = State::WrCmd;
+                    }
+                }
+                State::WrCmd: {
+                    cmd_valid = 1;
+                    cmd_write = 1;
+                    cmd_reg   = 0;
+                    cmd_addr  = {wcur[ADDR_BITS - 2:0], 1'b0};
+                    cmd_len   = BURST - 1;
+                    wr_valid  = 1;
+                    state     = State::WrWait;
+                }
+                State::WrWait: {
+                    if !cmd_valid && cmd_ready_r {
+                        wr_valid = 0;
+                        burst    = burst + 1;
+                        if burst == NBURST - 1 {
+                            burst = 0;
+                            wcur  = 0;
+                            state = State::RdCmd;
+                        } else {
+                            state = State::WrCmd;
+                        }
+                    }
+                }
+                State::RdCmd: {
+                    cmd_valid = 1;
+                    cmd_write = 0;
+                    cmd_reg   = 0;
+                    cmd_addr  = {wcur[ADDR_BITS - 2:0], 1'b0};
+                    cmd_len   = BURST - 1;
+                    state     = State::RdWait;
+                }
+                State::RdWait: {
+                    if !cmd_valid && cmd_ready_r {
+                        burst = burst + 1;
+                        if burst == NBURST - 1 {
+                            state = State::Finish;
+                        } else {
+                            state = State::RdCmd;
+                        }
+                    }
+                }
+                State::Finish: {
+                    // words that never arrived count as errors too
+                    errors = errors + missing;
+                    pidx   = 0;
+                    state  = State::Print;
+                }
+                State::Print: {
+                    if !tx_pend && !tx_ph {
+                        tx_sel = line_char(pidx);
+                        tx_ph  = 1;
+                    } else if !tx_pend {
+                        tx_byte = if tx_sel[8] ? hex(tx_sel[3:0]) : tx_sel[7:0];
+                        tx_pend = 1;
+                        tx_ph   = 0;
+                    } else if i_tx_ready {
+                        tx_pend = 0;
+                        pidx    = pidx + 1;
+                        if pidx == LINE_LEN - 1 {
+                            state = State::Next;
+                        }
+                    }
+                }
+                State::Next: {
+                    clean    = errors == 0;
+                    seed     = seed + 1;
+                    ck_delay = if ck_delay == 2'd2 ? 2'd0 : ck_delay + 1;
+                    timer    = 0;
+                    state    = State::RstCtrl;
+                }
+                default: state = State::RstCtrl;
+            }
+        }
+    }
+}

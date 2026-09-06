@@ -1,0 +1,36 @@
+[project]
+name    = "gowin_psram"
+version = "0.1.0"
+
+[build]
+clock_type          = "posedge"
+reset_type          = "sync_high"
+omit_project_prefix = true
+
+[test]
+include_files = [
+    "test/gowin_psram_test_body.sv",
+    "test/hyperram_model.sv",
+    "test/gen/gowin_prim_sim.sv",
+    "test/psram_test_body.sv",
+    "../uart/uart_tx.sv",
+]
+
+[test.verilator]
+compile_args = [
+    "gowin_psram_test_body.sv",
+    "hyperram_model.sv",
+    "gowin_prim_sim.sv",
+    "psram_test_body.sv",
+    "uart_tx.sv",
+    "-Wno-WIDTHEXPAND",
+    "-Wno-WIDTHTRUNC",
+    "-Wno-CASEINCOMPLETE",
+    "-Wno-UNUSEDSIGNAL",
+    "-Wno-UNDRIVEN",
+    "-Wno-PINMISSING",
+    "-Wno-INITIALDLY",
+    "-Wno-TIMESCALEMOD",
+    "-Wno-UNUSEDPARAM",
+    "-Wno-fatal",
+]

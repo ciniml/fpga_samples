@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+module TbGowinPsram {}
+
+#[test(gowin_psram)]
+embed (inline) sv{{{
+module gowin_psram_test;
+    gowin_psram_test_body #(.RUN(1)) body();
+endmodule
+}}}
+
+// RAM output delay corner cases: fast (word straddles the sample edges
+// differently) and slow parts (the model needs T_CKD below half a period)
+#[test(gowin_psram_ckd_fast)]
+embed (inline) sv{{{
+module gowin_psram_ckd_fast_test;
+    gowin_psram_test_body #(.RUN(1), .T_CKD(1.0)) body();
+endmodule
+}}}
+
+#[test(gowin_psram_ckd_slow)]
+embed (inline) sv{{{
+module gowin_psram_ckd_slow_test;
+    gowin_psram_test_body #(.RUN(1), .T_CKD(5.9)) body();
+endmodule
+}}}
+
+// the board bring-up driver end to end (small region, fast UART)
+#[test(psram_test_driver)]
+embed (inline) sv{{{
+module psram_test_driver_test;
+    psram_test_body #(.RUN(1)) body();
+endmodule
+}}}
