@@ -16,8 +16,8 @@
  *    application drains it. Writes commit only when the frame's FCS
  *    was good.
  *  - TX: application bytes go into a 2KiB ring that doubles as the
- *    Go-back-N retransmission buffer (snd_una..wr_seq). Segments are
- *    cut at 1024 bytes, or flushed after the application stream idles;
+ *    Go-back-N retransmission buffer (snd_una..wr_seq, 8KiB). Segments are
+ *    cut at the MSS (1460 bytes), or flushed after the app stream idles;
  *    on retransmission timeout snd_nxt falls back to snd_una.
  *  - Frames are built in two passes over a byte-source function:
  *    pass 1 accumulates the IPv4 and TCP checksums (pseudo header
@@ -31,7 +31,8 @@
  * Lean by design: no TCP checksum verification on RX (frames are
  * already FCS-checked by the MAC), no out-of-order reassembly, no
  * congestion control, options ignored (header length honoured). The
- * peer's window is not tracked - at most 2KiB (the ring) is in flight.
+ * peer's window is not tracked - at most 8KiB (the ring) is in flight,
+ * which stays well under any real peer receive window.
  */
 import nvme_tcp_pkg::*;
 
@@ -91,14 +92,14 @@ pub module TcpEngine #(
     var idle_cnt: logic<16>[2]; // app-TX flush timer
 
     // RX FIFO (app-bound payload): 2KiB per connection
-    var rxf_ram : logic<8>[4096];
-    var rxf_wr  : logic<12>[2]; // committed (11-bit ring + wrap bit)
-    var rxf_rd  : logic<12>[2];
+    var rxf_ram : logic<8>[16384]; // 8KiB per connection (raised from 2KiB)
+    var rxf_wr  : logic<14>[2]; // committed (13-bit ring + wrap bit)
+    var rxf_rd  : logic<14>[2];
 
     // TX ring (retransmission buffer): 2KiB per connection
-    var txr_ram: logic<8>[4096];
+    var txr_ram: logic<8>[16384]; // 8KiB per connection (raised from 2KiB)
 
-    function occ12(wr: input logic<12>, rd: input logic<12>) -> logic<12> {
+    function occ14(wr: input logic<14>, rd: input logic<14>) -> logic<14> {
         return wr - rd;
     }
 
@@ -120,7 +121,7 @@ pub module TcpEngine #(
     var p_conn   : logic<2> ; // 0/1 = match, 2 = none
     var p_accept : logic    ; // payload accepted into the FIFO
     var p_trunc  : logic    ; // payload byte dropped (FIFO full)
-    var p_wr_t   : logic<12>; // tentative FIFO write pointer
+    var p_wr_t   : logic<14>; // tentative FIFO write pointer
     var p_plen   : logic<12>; // accepted payload bytes
     var p_istcp_r: logic    ; // p_is_tcp registered at pos 47 (0 for shorter frames)
     var p_payoff_r: logic<12>; // registered p_payoff (valid from pos 48)
@@ -141,8 +142,8 @@ pub module TcpEngine #(
     // the header compare chain off the per-byte FIFO write path)
     let pay_now: logic = i_rx_valid && p_accept &&
      (rx_pos >= p_payoff_r) && (rx_pos <: p_ipend_r);
-    let pay_ok : logic     = pay_now && (occ12(p_wr_t, rxf_rd[p_conn[0]]) <: 12'd2048);
-    let p_wr_e : logic<12> = p_wr_t + (if pay_ok ? 12'd1 : 12'd0);
+    let pay_ok : logic     = pay_now && (occ14(p_wr_t, rxf_rd[p_conn[0]]) <: 14'd8192);
+    let p_wr_e : logic<14> = p_wr_t + (if pay_ok ? 14'd1 : 14'd0);
     let p_len_e: logic<12> = p_plen + (if pay_ok ? 12'd1 : 12'd0);
     // whole payload (if any) accepted, including this cycle's byte
     let p_all_ok: logic = p_accept && !p_trunc && !(pay_now && !pay_ok);
@@ -156,7 +157,8 @@ pub module TcpEngine #(
     var cm_seq  : logic<32>;
     var cm_ack  : logic<32>;
     var cm_len  : logic<12>;
-    var cm_wr   : logic<12>;
+    var cm_rcv  : logic<32>; // rcv_nxt of the matched conn (pre-muxed for stage A)
+    var cm_wr   : logic<14>;
     var cm_ok   : logic    ;
     var cm_acc  : logic    ;
     var cm_sip  : logic<32>;
@@ -208,11 +210,11 @@ pub module TcpEngine #(
 
     assign o_app_tx_ready = {aw_take && aw_c, aw_take && !aw_c};
 
-    // (the ring holds at most 2048 unacknowledged bytes, so these
-    // sequence differences are bounded and 12 bits are enough; this keeps
+    // (the ring holds at most 8192 unacknowledged bytes, so these
+    // sequence differences are bounded and 13 bits are enough; this keeps
     // the compares off the 32-bit sequence arithmetic paths)
-    let ring_full0: logic = (wr_seq[0][11:0] - snd_una[0][11:0]) >= 12'd2048;
-    let ring_full1: logic = (wr_seq[1][11:0] - snd_una[1][11:0]) >= 12'd2048;
+    let ring_full0: logic = (wr_seq[0][13:0] - snd_una[0][13:0]) >= 14'd8192;
+    let ring_full1: logic = (wr_seq[1][13:0] - snd_una[1][13:0]) >= 14'd8192;
 
     // ---- TX frame scheduler ----
     enum TxSt: logic<3> {
@@ -253,7 +255,7 @@ pub module TcpEngine #(
     var sum_first: logic    ; // no byte latched yet
     var f_padlast: logic<12>; // last byte index incl. padding
     var f_last_r : logic    ; // current Emit byte is the last one
-    var pf_pa    : logic<11>; // ring address of the next payload byte
+    var pf_pa    : logic<13>; // ring address of the next payload byte
 
     // frame geometry, registered in PreSum (keeps the byte-mux paths
     // that feed the MAC free of adders)
@@ -264,7 +266,7 @@ pub module TcpEngine #(
 
     // free receive window of a connection (used for advertisement)
     function rx_free(c: input logic) -> logic<16> {
-        return 16'd2048 - {4'h0, occ12(rxf_wr[c], rxf_rd[c])};
+        return 16'd8192 - {2'h0, occ14(rxf_wr[c], rxf_rd[c])};
     }
 
     function fold_sum(s: input logic<32>) -> logic<16> {
@@ -375,7 +377,7 @@ pub module TcpEngine #(
      ((tx_st == TxSt::Emit) && (!f_warm || out_room));
     let f_i_n: logic<12> = if f_adv ? f_i + 1 : f_i;
     // ring prefetch address (registered running pointer)
-    let f_raddr: logic<12> = {f_c, pf_pa};
+    let f_raddr: logic<14> = {f_c, pf_pa};
 
     var conn_act_r: logic<2>;
     assign o_conn_active = conn_act_r;
@@ -383,8 +385,8 @@ pub module TcpEngine #(
     // per-connection send requests. The unsent/drained tests are
     // registered (updated every cycle) so the scheduler's state paths
     // stay shallow; one cycle of staleness only delays scheduling.
-    let unsent0: logic<12> = wr_seq[0][11:0] - snd_nxt[0][11:0];
-    let unsent1: logic<12> = wr_seq[1][11:0] - snd_nxt[1][11:0];
+    let unsent0: logic<13> = wr_seq[0][12:0] - snd_nxt[0][12:0];
+    let unsent1: logic<13> = wr_seq[1][12:0] - snd_nxt[1][12:0];
     var r_winupd : logic<2>; // window-update ACK due
     var r_has_uns: logic<2>; // unsent != 0
     var r_big_uns: logic<2>; // unsent >= 1024
@@ -432,6 +434,7 @@ pub module TcpEngine #(
             cm_sport = 0;
             cm_smac  = 0;
             cm2_v      = 0;
+            cm_rcv     = 0;
             cm2_rcv_pl = 0;
             cm2_rcv_fn = 0;
             cm2_ack_ok = 0;
@@ -589,7 +592,7 @@ pub module TcpEngine #(
                 }
                 // payload bytes into the tentative FIFO region
                 if pay_ok {
-                    rxf_ram[{p_conn[0], p_wr_t[10:0]}] = i_rx_data;
+                    rxf_ram[{p_conn[0], p_wr_t[12:0]}] = i_rx_data;
                     p_wr_t = p_wr_t + 1;
                     p_plen = p_plen + 1;
                 } else if pay_now {
@@ -605,6 +608,7 @@ pub module TcpEngine #(
                     cm_seq   = p_seq;
                     cm_ack   = p_ack;
                     cm_len   = p_len_e;
+                    cm_rcv   = rcv_nxt[p_conn[0]];
                     cm_wr    = p_wr_e;
                     cm_ok    = p_all_ok;
                     cm_acc   = p_accept;
@@ -627,7 +631,7 @@ pub module TcpEngine #(
                     }
                 }
                 ArSt::Wait: {
-                    ar_b  = rxf_ram[{ar_c, rxf_rd[ar_c][10:0]}];
+                    ar_b  = rxf_ram[{ar_c, rxf_rd[ar_c][12:0]}];
                     ar_st = ArSt::Present;
                 }
                 ArSt::Present: {
@@ -650,7 +654,7 @@ pub module TcpEngine #(
             // =========================================================
             if aw_take {
                 if i_app_tx_valid[aw_c] {
-                    txr_ram[{aw_c, wr_seq[aw_c][10:0]}] = if aw_c ?
+                    txr_ram[{aw_c, wr_seq[aw_c][12:0]}] = if aw_c ?
                      i_app_tx_data[15:8] : i_app_tx_data[7:0];
                     wr_seq[aw_c] = wr_seq[aw_c] + 1;
                 }
@@ -697,11 +701,11 @@ pub module TcpEngine #(
                 rx_free(1) >= win_adv[1] + 16'd1024,
                 rx_free(0) >= win_adv[0] + 16'd1024
             };
-            r_has_uns = {unsent1 != 12'h0, unsent0 != 12'h0};
-            r_big_uns = {unsent1 >= 12'd1024, unsent0 >= 12'd1024};
+            r_has_uns = {unsent1 != 13'h0, unsent0 != 13'h0};
+            r_big_uns = {unsent1 >= 13'd1460, unsent0 >= 13'd1460};
             r_drained = {
-                (unsent1 == 12'h0) && (snd_una[1][11:0] == snd_nxt[1][11:0]),
-                (unsent0 == 12'h0) && (snd_una[0][11:0] == snd_nxt[0][11:0])
+                (unsent1 == 13'h0) && (snd_una[1][12:0] == snd_nxt[1][12:0]),
+                (unsent0 == 13'h0) && (snd_una[0][12:0] == snd_nxt[0][12:0])
             };
             // output register drain (an Emit push below overrides)
             if otx_v && i_tx_ready {
@@ -740,8 +744,8 @@ pub module TcpEngine #(
                         f_kind  = 2;
                         f_flags = 8'h18; // PSH|ACK
                         f_seq   = snd_nxt[f_c];
-                        f_plen  = if (if f_c ? unsent1 : unsent0) >= 12'd1024 ?
-                         12'd1024 : (if f_c ? unsent1 : unsent0);
+                        f_plen  = if (if f_c ? unsent1 : unsent0) >= 13'd1460 ?
+                         12'd1460 : (if f_c ? unsent1[11:0] : unsent0[11:0]);
                     } else {
                         f_kind  = 0;
                         f_flags = 8'h10; // ACK
@@ -763,7 +767,7 @@ pub module TcpEngine #(
                      12'd60 : 12'd34 + f_tcpo + f_plen;
                     f_padlast = (if (12'd34 + f_tcpo + f_plen) <: 12'd60 ?
                      12'd60 : 12'd34 + f_tcpo + f_plen) - 1;
-                    pf_pa     = f_seq[10:0];
+                    pf_pa     = f_seq[12:0];
                     sum_first = 1;
                     f_i     = 14;
                     // pseudo header, local half (peer IP added in PreSum2)
@@ -809,7 +813,7 @@ pub module TcpEngine #(
                     f_i      = 0;
                     f_warm   = 0;
                     f_last_r = 0;
-                    pf_pa    = f_seq[10:0];
+                    pf_pa    = f_seq[12:0];
                     tx_st    = TxSt::Emit;
                 }
                 TxSt::Emit: {
@@ -860,8 +864,8 @@ pub module TcpEngine #(
                 cm_v  = 0;
                 cm2_v = 1;
                 if cm_conn <: 2'd2 {
-                    cm2_rcv_pl = rcv_nxt[cm_conn[0]] + {20'h0, cm_len};
-                    cm2_rcv_fn = rcv_nxt[cm_conn[0]] + {20'h0, cm_len} + 1;
+                    cm2_rcv_pl = cm_rcv + {20'h0, cm_len};
+                    cm2_rcv_fn = cm_rcv + {20'h0, cm_len} + 1;
                     cm2_ack_ok = (cm_ack - snd_una[cm_conn[0]]) <=
                      (snd_nxt[cm_conn[0]] - snd_una[cm_conn[0]]);
                     cm2_ack_nw = cm_ack != snd_una[cm_conn[0]];
@@ -905,7 +909,7 @@ pub module TcpEngine #(
                                 ack_p[c]    = 0;
                                 fin_rcvd[c] = 0;
                                 fin_sent[c] = 0;
-                                win_adv[c]  = 16'd2048;
+                                win_adv[c]  = 16'd8192;
                                 if c == 0 {
                                     rmac0 = cm_smac;
                                 } else {
