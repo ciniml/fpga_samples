@@ -38,7 +38,7 @@ module gowin_psram_test_body #(
 
     GowinPsram #(.CLK_HZ(CLK_HZ), .LATENCY(LATENCY)) dut (
         .i_clk(clk), .i_clk_p(clk_p), .i_rst(rst),
-        .i_ck_delay(ck_delay), .o_ready(ready),
+        .i_ck_delay(ck_delay), .i_lat_extra(2'd0), .o_ready(ready),
         .i_cmd_valid(cmd_valid), .o_cmd_ready(cmd_ready),
         .i_cmd_write(cmd_write), .i_cmd_reg(cmd_reg),
         .i_cmd_addr(cmd_addr), .i_cmd_len(cmd_len),

@@ -52,6 +52,7 @@ pub module GowinPsram #(
     i_clk_p   : input 'b clock  , // i_clk shifted ~90 degrees, drives CK
     i_rst     : input 'a reset  ,
     i_ck_delay: input 'a logic<2>, // extra cycles CK enable lags DQ/CS# (0..2)
+    i_lat_extra: input 'a logic<2>, // extra CK cycles before the write data phase (bring-up knob)
     o_ready   : output 'a logic , // initialization done
 
     // command
@@ -306,7 +307,7 @@ pub module GowinPsram #(
                     // LAT_TOTAL + i_ck_delay + 5).
                     dq_oe = 0;
                     cnt   = cnt + 1;
-                    if cmd_wr && (cnt == lat_total - 8'd4 + {6'h0, i_ck_delay}) {
+                    if cmd_wr && (cnt == lat_total - 8'd4 + {6'h0, i_ck_delay} + {6'h0, i_lat_extra}) {
                         cnt   = 0;
                         state = State::WrData;
                     }

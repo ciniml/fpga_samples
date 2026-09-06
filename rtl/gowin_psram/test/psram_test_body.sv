@@ -23,7 +23,7 @@ module psram_test_body #(
     always @(clk) clk_p <= #(PHASE) clk;
 
     logic        ctrl_rst;
-    logic [1:0]  ck_delay;
+    logic [1:0]  ck_delay, lat_extra;
     logic        ready;
     logic        cmd_valid, cmd_ready, cmd_write, cmd_reg;
     logic [21:0] cmd_addr;
@@ -44,7 +44,7 @@ module psram_test_body #(
 
     PsramTest #(.CLK_HZ(CLK_HZ), .TEST_WORDS(TEST_WORDS)) drv (
         .i_clk(clk), .i_rst(rst),
-        .o_ctrl_rst(ctrl_rst), .o_ck_delay(ck_delay), .i_ready(ready),
+        .o_ctrl_rst(ctrl_rst), .o_ck_delay(ck_delay), .o_lat_extra(lat_extra), .i_ready(ready),
         .o_cmd_valid(cmd_valid), .i_cmd_ready(cmd_ready),
         .o_cmd_write(cmd_write), .o_cmd_reg(cmd_reg),
         .o_cmd_addr(cmd_addr), .o_cmd_len(cmd_len),
@@ -57,7 +57,7 @@ module psram_test_body #(
 
     GowinPsram #(.CLK_HZ(CLK_HZ), .LATENCY(3)) dut (
         .i_clk(clk), .i_clk_p(clk_p), .i_rst(rst | ctrl_rst),
-        .i_ck_delay(ck_delay), .o_ready(ready),
+        .i_ck_delay(ck_delay), .i_lat_extra(lat_extra), .o_ready(ready),
         .i_cmd_valid(cmd_valid), .o_cmd_ready(cmd_ready),
         .i_cmd_write(cmd_write), .i_cmd_reg(cmd_reg),
         .i_cmd_addr(cmd_addr), .i_cmd_len(cmd_len),
@@ -131,15 +131,15 @@ module psram_test_body #(
     initial if (RUN) begin
         repeat (5) @(negedge clk);
         rst = 0;
-        // three passes: ck_delay 0, 1, 2
-        while (lines.size() < 3) @(posedge clk);
-        expect_sub("pass0", lines[0], "ckd=0 id0=0c81 cr0=8fef err=00000000 first=000000 got=0000 exp=0000");
-        // misaligned CK: the model rejects the shifted CAs, no data comes
-        // back, and the driver must report that as errors (not a clean pass)
-        expect_sub("pass1", lines[1], "ckd=1 ");
-        expect_not_sub("pass1 clean", lines[1], "err=00000000");
-        expect_sub("pass2", lines[2], "ckd=2 ");
-        expect_not_sub("pass2 clean", lines[2], "err=00000000");
+        // ck_delay 0..2 x lat_extra 0..3; only (0, 0) is clean with the model
+        while (lines.size() < 12) @(posedge clk);
+        expect_sub("pass0", lines[0], "ckd=0 lx=0 id0=0c81 cr0=8fef err=00000000 first=000000 got=0000 exp=0000");
+        for (int i = 1; i < 12; i++) begin
+            expect_sub($sformatf("pass%0d", i), lines[i], $sformatf("ckd=%0d lx=%0d ", i / 4, i % 4));
+            // misaligned CK: the model rejects the shifted CAs; late write
+            // data: wrong words. Neither may be reported clean.
+            expect_not_sub($sformatf("pass%0d clean", i), lines[i], "err=00000000");
+        end
         // (ram.errors is not added: the misaligned ck_delay passes feed the
         // model malformed CAs by design, which it reports as errors)
         if (errors != 0) $fatal(1, "FAILED: %0d errors", errors);
