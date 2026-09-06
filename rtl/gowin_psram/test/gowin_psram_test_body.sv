@@ -21,11 +21,10 @@ module gowin_psram_test_body #(
     always #(PERIOD / 2) clk = ~clk;
     always @(clk) clk_p <= #(PHASE) clk;
 
-    logic [1:0]  ck_delay = 0;   // nominal (see GowinPsram header)
     logic        ready;
     logic        cmd_valid = 0, cmd_ready, cmd_write = 0, cmd_reg = 0;
     logic [21:0] cmd_addr = 0;
-    logic [6:0]  cmd_len = 0;
+    logic [5:0]  cmd_len = 0;
     logic        wr_valid = 0, wr_ready;
     logic [15:0] wr_data = 0;
     logic [1:0]  wr_mask = 0;
@@ -38,7 +37,7 @@ module gowin_psram_test_body #(
 
     GowinPsram #(.CLK_HZ(CLK_HZ), .LATENCY(LATENCY)) dut (
         .i_clk(clk), .i_clk_p(clk_p), .i_rst(rst),
-        .i_ck_delay(ck_delay), .i_lat_extra(2'd0), .o_ready(ready),
+        .o_ready(ready),
         .i_cmd_valid(cmd_valid), .o_cmd_ready(cmd_ready),
         .i_cmd_write(cmd_write), .i_cmd_reg(cmd_reg),
         .i_cmd_addr(cmd_addr), .i_cmd_len(cmd_len),
@@ -100,7 +99,7 @@ module gowin_psram_test_body #(
         end
     endtask
 
-    task automatic issue(input bit write, input bit regsp, input [21:0] addr, input [6:0] len);
+    task automatic issue(input bit write, input bit regsp, input [21:0] addr, input [5:0] len);
         @(negedge clk);
         cmd_valid = 1; cmd_write = write; cmd_reg = regsp; cmd_addr = addr; cmd_len = len;
         forever begin
@@ -159,7 +158,7 @@ module gowin_psram_test_body #(
             @(posedge clk);
             if (ready) break;
         end
-        check16("CR0 after init", ram.cr0, 16'h8FEF);   // latency 3, fixed
+        check16("CR0 after init", ram.cr0, 16'h8FEC);   // latency 3, fixed, 128-byte wrap
         $display("init done at %0t, CR0=%h", $time, ram.cr0);
 
         // ---- register reads: ID0, CR0 ----
@@ -167,7 +166,7 @@ module gowin_psram_test_body #(
         check16("ID0", rbuf[0], 16'h0C81);
         if (ridx != 1) begin $display("ERROR: ID0 read count %0d", ridx); errors++; end
         issue(0, 1, 22'h1000, 0);
-        check16("CR0 readback", rbuf[0], 16'h8FEF);
+        check16("CR0 readback", rbuf[0], 16'h8FEC);
 
         // ---- single word write / read ----
         wbuf[0] = 16'h1234; mbuf[0] = 2'b00;
@@ -186,32 +185,40 @@ module gowin_psram_test_body #(
         do_read("masked", 22'h00_0100, 1);
         check16("masked rd", rbuf[0], 16'hCCBB);
 
-        // ---- 64-word burst write and read back ----
-        a = 22'h12_3450;
+        // ---- 64-word burst write and read back (128-byte aligned) ----
+        a = 22'h12_3480;
         for (i = 0; i < 64; i++) begin wbuf[i] = pat(a, i, 1); mbuf[i] = 2'b00; end
         do_write(a, 64);
         do_read("burst64", a, 64);
         for (i = 0; i < 64; i++) check16($sformatf("burst64[%0d]", i), rbuf[i], pat(a, i, 1));
 
-        // ---- max burst (128 words) ----
-        a = 22'h3F_FF00;   // crosses nothing special, near the top
-        for (i = 0; i < 128; i++) begin wbuf[i] = pat(a, i, 2); mbuf[i] = 2'b00; end
-        do_write(a, 128);
-        do_read("burst128", a, 128);
-        for (i = 0; i < 128; i++) check16($sformatf("burst128[%0d]", i), rbuf[i], pat(a, i, 2));
+        // ---- max burst (64 words, one wrap group) near the top ----
+        a = 22'h3F_FF80;
+        for (i = 0; i < 64; i++) begin wbuf[i] = pat(a, i, 2); mbuf[i] = 2'b00; end
+        do_write(a, 64);
+        do_read("burst64b", a, 64);
+        for (i = 0; i < 64; i++) check16($sformatf("burst64b[%0d]", i), rbuf[i], pat(a, i, 2));
 
-        // ---- wr_valid low -> word masked ----
+        // ---- a burst crossing the wrap boundary wraps (documented limit):
+        // the last 8 words land at the start of the group instead ----
+        a = 22'h00_2070;   // 8 words before a 128-byte boundary
+        for (i = 0; i < 16; i++) begin wbuf[i] = pat(a, i, 3); mbuf[i] = 2'b00; end
+        do_write(a, 16);
+        for (i = 0; i < 8; i++) check16($sformatf("wrap[%0d]", i), ram.mem[22'h1038 + i], pat(a, i, 3));
+        for (i = 8; i < 16; i++) check16($sformatf("wrap[%0d]", i), ram.mem[22'h1000 + i - 8], pat(a, i, 3));
+
+        // ---- wr_valid low -> word masked (the seed-2 burst stays intact) ----
+        a = 22'h3F_FF80;
         for (i = 0; i < 4; i++) begin wbuf[i] = 16'hFFFF; mbuf[i] = 2'b00; end
         wr_valid = 0;
         issue(1, 0, a, 3);     // all four words skipped
         do_read("skip", a, 4);
         for (i = 0; i < 4; i++) check16($sformatf("skip[%0d]", i), rbuf[i], pat(a, i, 2));
 
-        // ---- random bursts ----
+        // ---- random bursts inside a 64-word wrap group ----
         for (t = 0; t < 40; t++) begin
-            n = $urandom_range(1, 128);
             a = {$urandom_range(0, (1 << 21) - 1), 1'b0};
-            if (a[21:1] + n > (1 << 21)) a = 0;
+            n = $urandom_range(1, 64 - a[6:1]);
             for (i = 0; i < n; i++) begin wbuf[i] = pat(a, i, t + 10); mbuf[i] = 2'b00; end
             do_write(a, n);
             do_read($sformatf("rand%0d", t), a, n);

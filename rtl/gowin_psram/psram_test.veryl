@@ -5,34 +5,32 @@
 //          https://www.boost.org/LICENSE_1_0.txt)
 /**
  * @file psram_test.veryl
- * @brief Board bring-up test driver for GowinPsram.
+ * @brief Board test driver for GowinPsram.
  *
- * Repeats forever, for i_ck_delay = 0, 1, 2 and i_lat_extra = 0..3:
+ * Repeats forever, for burst lengths of 16, 32 and 64 words:
  *  1. resets the controller (re-running its init / CR0 write),
  *  2. reads ID0 and CR0 from the register space,
  *  3. writes TEST_WORDS words of an address-dependent pattern (seeded
  *     with the pass number so stale data is detected) in bursts,
- *  4. reads them back and counts mismatches,
+ *  4. reads them back and counts mismatches (words that never arrived
+ *     count too),
  *  5. prints one line on the UART:
- *     "ckd=0 lx=0 id0=0c81 cr0=8fef err=00000000 first=000000 got=0000 exp=0000"
+ *     "bl=064 id0=005f cr0=8fec err=00000000 first=000000 got=0000 exp=0000"
  *
- * On a correctly clocked board exactly one ck_delay value should report
- * err=00000000 (0 for a +90 degree CK clock, per the primitive models).
+ * (id0 = 005f and cr0 = 8fec are what the Tang Nano 9K die reports.)
  */
 pub module PsramTest #(
     param CLK_HZ    : u32 = 81_000_000,
     param TEST_WORDS: u32 = 1 << 19, // words per pass (1MiB)
-    param BURST     : u32 = 128    , // words per burst (<= 2**LEN_BITS)
+    param BURST     : u32 = 64     , // largest burst (words)
     param ADDR_BITS : u32 = 22     ,
-    param LEN_BITS  : u32 = 7      ,
+    param LEN_BITS  : u32 = 6      ,
 ) (
     i_clk: input clock,
     i_rst: input reset,
 
     // controller
     o_ctrl_rst : output logic          ,
-    o_ck_delay : output logic<2>       ,
-    o_lat_extra: output logic<2>       ,
     i_ready    : input  logic          ,
     o_cmd_valid: output logic          ,
     i_cmd_ready: input  logic          ,
@@ -53,12 +51,12 @@ pub module PsramTest #(
     i_tx_ready: input  logic   ,
     o_tx_data : output logic<8>,
 
-    // [0] ready [1] last pass clean [2] pass running [4:3] ck_delay
+    // [0] ready [1] last pass clean [2] pass running [4:3] burst length select
     o_status: output logic<5>,
 ) {
     const READY_TIMEOUT: u32 = CLK_HZ / 2;   // 0.5s
     const NBURST       : u32 = TEST_WORDS / BURST;
-    const LINE_LEN     : u32 = 74;
+    const LINE_LEN     : u32 = 70;
 
     enum State: logic<4> {
         RstCtrl,
@@ -77,8 +75,7 @@ pub module PsramTest #(
     }
 
     var state    : State;
-    var ck_delay : logic<2>;
-    var lat_extra: logic<2>;
+    var blsel    : logic<2>;    // burst length 16 << blsel words
     var seed     : logic<8>;
     var timer    : logic<32>;
     var burst    : logic<32>;   // burst index
@@ -108,8 +105,16 @@ pub module PsramTest #(
     var ctrl_rst : logic;
 
     assign o_ctrl_rst  = ctrl_rst;
-    assign o_ck_delay  = ck_delay;
-    assign o_lat_extra = lat_extra;
+    let blen: logic<LEN_BITS> = case blsel {
+        2'd0   : 6'd15,
+        2'd1   : 6'd31,
+        default: 6'd63,
+    };
+    let nburst: logic<32> = case blsel {
+        2'd0   : TEST_WORDS / 16,
+        2'd1   : TEST_WORDS / 32,
+        default: TEST_WORDS / 64,
+    };
     assign o_cmd_valid = cmd_valid;
     assign o_cmd_write = cmd_write;
     assign o_cmd_reg   = cmd_reg;
@@ -117,7 +122,7 @@ pub module PsramTest #(
     assign o_cmd_len   = cmd_len;
     assign o_wr_valid  = wr_valid;
     assign o_wr_mask   = 2'b00;
-    assign o_status    = {ck_delay, state == State::WrWait || state == State::RdWait, clean, i_ready};
+    assign o_status    = {blsel, state == State::WrWait || state == State::RdWait, clean, i_ready};
 
     // address- and pass-dependent test pattern
     function pat(wa: input logic<22>, s: input logic<8>) -> logic<16> {
@@ -129,80 +134,82 @@ pub module PsramTest #(
         return if n <: 4'd10 ? 8'h30 + {4'h0, n} : 8'h57 + {4'h0, n};
     }
 
-    // "ckd=0 lx=0 id0=0c81 cr0=8fef err=00000000 first=000000 got=0000 exp=0000\r\n"
+    // "bl=### id0=#### cr0=#### err=######## first=###### got=#### exp=####\r\n"
     // Stage 1 picks either a literal character or a hex nibble (lit[8]
     // set), stage 2 converts the nibble; keeps the mux off one clock.
+    let bl_dig: logic<12> = case blsel {
+        2'd0   : 12'h016,
+        2'd1   : 12'h032,
+        default: 12'h064,
+    };
     function line_char(i: input logic<8>) -> logic<9> {
         var c: logic<9>;
         c = 9'h020;
         case i {
-            8'd0: c = 9'h063; // c
-            8'd1: c = 9'h06B; // k
-            8'd2: c = 9'h064; // d
-            8'd3: c = 9'h03D; // =
-            8'd4: c = {1'b1, 6'h0, ck_delay};
-            8'd6: c = 9'h06C; // l
-            8'd7: c = 9'h078; // x
-            8'd8: c = 9'h03D; // =
-            8'd9: c = {1'b1, 6'h0, lat_extra};
-            8'd11: c = 9'h069; // i
-            8'd12: c = 9'h064; // d
-            8'd13: c = 9'h030; // 0
-            8'd14: c = 9'h03D;
-            8'd15: c = {1'b1, 4'h0, id0[15:12]};
-            8'd16: c = {1'b1, 4'h0, id0[11:8]};
-            8'd17: c = {1'b1, 4'h0, id0[7:4]};
-            8'd18: c = {1'b1, 4'h0, id0[3:0]};
-            8'd20: c = 9'h063; // c
-            8'd21: c = 9'h072; // r
-            8'd22: c = 9'h030; // 0
-            8'd23: c = 9'h03D;
-            8'd24: c = {1'b1, 4'h0, cr0[15:12]};
-            8'd25: c = {1'b1, 4'h0, cr0[11:8]};
-            8'd26: c = {1'b1, 4'h0, cr0[7:4]};
-            8'd27: c = {1'b1, 4'h0, cr0[3:0]};
-            8'd29: c = 9'h065; // e
-            8'd30: c = 9'h072; // r
-            8'd31: c = 9'h072; // r
-            8'd32: c = 9'h03D;
-            8'd33: c = {1'b1, 4'h0, errors[31:28]};
-            8'd34: c = {1'b1, 4'h0, errors[27:24]};
-            8'd35: c = {1'b1, 4'h0, errors[23:20]};
-            8'd36: c = {1'b1, 4'h0, errors[19:16]};
-            8'd37: c = {1'b1, 4'h0, errors[15:12]};
-            8'd38: c = {1'b1, 4'h0, errors[11:8]};
-            8'd39: c = {1'b1, 4'h0, errors[7:4]};
-            8'd40: c = {1'b1, 4'h0, errors[3:0]};
-            8'd42: c = 9'h066; // f
-            8'd43: c = 9'h069; // i
-            8'd44: c = 9'h072; // r
-            8'd45: c = 9'h073; // s
-            8'd46: c = 9'h074; // t
-            8'd47: c = 9'h03D;
-            8'd48: c = {1'b1, 4'h0, {2'b00, first_adr[21:20]}};
-            8'd49: c = {1'b1, 4'h0, first_adr[19:16]};
-            8'd50: c = {1'b1, 4'h0, first_adr[15:12]};
-            8'd51: c = {1'b1, 4'h0, first_adr[11:8]};
-            8'd52: c = {1'b1, 4'h0, first_adr[7:4]};
-            8'd53: c = {1'b1, 4'h0, first_adr[3:0]};
-            8'd55: c = 9'h067; // g
-            8'd56: c = 9'h06F; // o
-            8'd57: c = 9'h074; // t
-            8'd58: c = 9'h03D;
-            8'd59: c = {1'b1, 4'h0, first_got[15:12]};
-            8'd60: c = {1'b1, 4'h0, first_got[11:8]};
-            8'd61: c = {1'b1, 4'h0, first_got[7:4]};
-            8'd62: c = {1'b1, 4'h0, first_got[3:0]};
-            8'd64: c = 9'h065; // e
-            8'd65: c = 9'h078; // x
-            8'd66: c = 9'h070; // p
-            8'd67: c = 9'h03D;
-            8'd68: c = {1'b1, 4'h0, first_exp[15:12]};
-            8'd69: c = {1'b1, 4'h0, first_exp[11:8]};
-            8'd70: c = {1'b1, 4'h0, first_exp[7:4]};
-            8'd71: c = {1'b1, 4'h0, first_exp[3:0]};
-            8'd72: c = 9'h00D;
-            8'd73: c = 9'h00A;
+            8'd0: c = 9'h062; // b
+            8'd1: c = 9'h06C; // l
+            8'd2: c = 9'h03D; // =
+            8'd3: c = {1'b1, 4'h0, bl_dig[11:8]};
+            8'd4: c = {1'b1, 4'h0, bl_dig[7:4]};
+            8'd5: c = {1'b1, 4'h0, bl_dig[3:0]};
+            8'd7: c = 9'h069; // i
+            8'd8: c = 9'h064; // d
+            8'd9: c = 9'h030; // 0
+            8'd10: c = 9'h03D; // =
+            8'd11: c = {1'b1, 4'h0, id0[15:12]};
+            8'd12: c = {1'b1, 4'h0, id0[11:8]};
+            8'd13: c = {1'b1, 4'h0, id0[7:4]};
+            8'd14: c = {1'b1, 4'h0, id0[3:0]};
+            8'd16: c = 9'h063; // c
+            8'd17: c = 9'h072; // r
+            8'd18: c = 9'h030; // 0
+            8'd19: c = 9'h03D; // =
+            8'd20: c = {1'b1, 4'h0, cr0[15:12]};
+            8'd21: c = {1'b1, 4'h0, cr0[11:8]};
+            8'd22: c = {1'b1, 4'h0, cr0[7:4]};
+            8'd23: c = {1'b1, 4'h0, cr0[3:0]};
+            8'd25: c = 9'h065; // e
+            8'd26: c = 9'h072; // r
+            8'd27: c = 9'h072; // r
+            8'd28: c = 9'h03D; // =
+            8'd29: c = {1'b1, 4'h0, errors[31:28]};
+            8'd30: c = {1'b1, 4'h0, errors[27:24]};
+            8'd31: c = {1'b1, 4'h0, errors[23:20]};
+            8'd32: c = {1'b1, 4'h0, errors[19:16]};
+            8'd33: c = {1'b1, 4'h0, errors[15:12]};
+            8'd34: c = {1'b1, 4'h0, errors[11:8]};
+            8'd35: c = {1'b1, 4'h0, errors[7:4]};
+            8'd36: c = {1'b1, 4'h0, errors[3:0]};
+            8'd38: c = 9'h066; // f
+            8'd39: c = 9'h069; // i
+            8'd40: c = 9'h072; // r
+            8'd41: c = 9'h073; // s
+            8'd42: c = 9'h074; // t
+            8'd43: c = 9'h03D; // =
+            8'd44: c = {1'b1, 4'h0, 2'b00, first_adr[21:20]};
+            8'd45: c = {1'b1, 4'h0, first_adr[19:16]};
+            8'd46: c = {1'b1, 4'h0, first_adr[15:12]};
+            8'd47: c = {1'b1, 4'h0, first_adr[11:8]};
+            8'd48: c = {1'b1, 4'h0, first_adr[7:4]};
+            8'd49: c = {1'b1, 4'h0, first_adr[3:0]};
+            8'd51: c = 9'h067; // g
+            8'd52: c = 9'h06F; // o
+            8'd53: c = 9'h074; // t
+            8'd54: c = 9'h03D; // =
+            8'd55: c = {1'b1, 4'h0, first_got[15:12]};
+            8'd56: c = {1'b1, 4'h0, first_got[11:8]};
+            8'd57: c = {1'b1, 4'h0, first_got[7:4]};
+            8'd58: c = {1'b1, 4'h0, first_got[3:0]};
+            8'd60: c = 9'h065; // e
+            8'd61: c = 9'h078; // x
+            8'd62: c = 9'h070; // p
+            8'd63: c = 9'h03D; // =
+            8'd64: c = {1'b1, 4'h0, first_exp[15:12]};
+            8'd65: c = {1'b1, 4'h0, first_exp[11:8]};
+            8'd66: c = {1'b1, 4'h0, first_exp[7:4]};
+            8'd67: c = {1'b1, 4'h0, first_exp[3:0]};
+            8'd68: c = 9'h00D; // \r
+            8'd69: c = 9'h00A; // \n
             default: c = 9'h020;
         }
         return c;
@@ -218,8 +225,7 @@ pub module PsramTest #(
     always_ff (i_clk, i_rst) {
         if_reset {
             state     = State::RstCtrl;
-            ck_delay  = 0;
-            lat_extra = 0;
+            blsel     = 0;
             seed      = 0;
             timer     = 0;
             burst     = 0;
@@ -353,7 +359,7 @@ pub module PsramTest #(
                     cmd_write = 1;
                     cmd_reg   = 0;
                     cmd_addr  = {wcur[ADDR_BITS - 2:0], 1'b0};
-                    cmd_len   = BURST - 1;
+                    cmd_len   = blen;
                     wr_valid  = 1;
                     state     = State::WrWait;
                 }
@@ -361,7 +367,7 @@ pub module PsramTest #(
                     if !cmd_valid && cmd_ready_r {
                         wr_valid = 0;
                         burst    = burst + 1;
-                        if burst == NBURST - 1 {
+                        if burst == nburst - 1 {
                             burst = 0;
                             wcur  = 0;
                             state = State::RdCmd;
@@ -375,13 +381,13 @@ pub module PsramTest #(
                     cmd_write = 0;
                     cmd_reg   = 0;
                     cmd_addr  = {wcur[ADDR_BITS - 2:0], 1'b0};
-                    cmd_len   = BURST - 1;
+                    cmd_len   = blen;
                     state     = State::RdWait;
                 }
                 State::RdWait: {
                     if !cmd_valid && cmd_ready_r {
                         burst = burst + 1;
-                        if burst == NBURST - 1 {
+                        if burst == nburst - 1 {
                             state = State::Finish;
                         } else {
                             state = State::RdCmd;
@@ -413,10 +419,8 @@ pub module PsramTest #(
                 State::Next: {
                     clean    = errors == 0;
                     seed     = seed + 1;
-                    lat_extra = lat_extra + 1;
-                    if lat_extra == 2'd3 {
-                        ck_delay = if ck_delay == 2'd2 ? 2'd0 : ck_delay + 1;
-                    }
+                    // next burst length: 16 -> 32 -> 64 -> 16 ...
+                    blsel = if blsel == 2'd2 ? 2'd0 : blsel + 1;
                     timer    = 0;
                     state    = State::RstCtrl;
                 }

@@ -19,16 +19,18 @@
  * land in the middle of the DQ/RWDS data eyes. The CK enable is
  * re-registered on the falling edge of i_clk before it enters the
  * i_clk_p ODDR (a quarter period would otherwise be all the budget that
- * path gets), which makes CK line up with DQ/CS# for i_ck_delay = 0
- * according to the Gowin primitive models; i_ck_delay adds whole cycles
- * and is a runtime input so it can be swept during board bring-up.
+ * path gets), which makes CK line up with DQ/CS# for CKD = 0
+ * according to the Gowin primitive models and on the Tang Nano 9K;
+ * CK_DELAY adds whole cycles for other boards.
  *
  * Protocol choices:
  *  - Fixed (2x) initial latency: CR0 is written at init so the additional
  *    latency indication on RWDS never has to be sampled. Cost: LATENCY
  *    extra cycles per burst.
- *  - Linear bursts of 1..2**LEN_BITS words (16 bits). Keep CS# low time
- *    under tCSM (4us): at 81MHz that is about 120 words per burst.
+ *  - Bursts of 1..2**LEN_BITS words (16 bits). The Tang Nano 9K die wraps
+ *    every burst at the CR0 burst length even with a linear CA, so a burst
+ *    must not cross a WRAP_BYTES boundary (WRAP_BYTES = 128 is the largest
+ *    the chip offers: 64 words). Keep CS# low under tCSM (4us) as well.
  *  - Reads are self-timed: data words are captured whenever the RWDS
  *    strobe toggles, so the read side tolerates phase differences.
  *  - Writes stream one word per cycle after the latency; the data source
@@ -43,16 +45,16 @@
  * 0x1000 CR0, 0x1002 CR1 (one word, i_cmd_len must be 0).
  */
 pub module GowinPsram #(
-    param CLK_HZ   : u32 = 81_000_000, // i_clk frequency (init timer)
-    param LATENCY  : u32 = 3         , // initial latency clocks: 3 (<=83MHz), 4 (<=104), 5 (<=133), 6 (<=166)
-    param ADDR_BITS: u32 = 22        , // byte address width (22 = 4MiB die)
-    param LEN_BITS : u32 = 7         , // burst length field width (words - 1)
+    param CLK_HZ    : u32 = 81_000_000, // i_clk frequency (init timer)
+    param LATENCY   : u32 = 3         , // initial latency clocks: 3 (<=83MHz), 4 (<=104), 5 (<=133), 6 (<=166)
+    param ADDR_BITS : u32 = 22        , // byte address width (22 = 4MiB die)
+    param LEN_BITS  : u32 = 6         , // burst length field width (words - 1)
+    param WRAP_BYTES: u32 = 128       , // CR0 burst length: 16, 32, 64 or 128 bytes
+    param CK_DELAY  : u32 = 0         , // extra cycles CK enable lags DQ/CS# (0..2, board calibration)
 ) (
     i_clk     : input 'a clock  ,
     i_clk_p   : input 'b clock  , // i_clk shifted ~90 degrees, drives CK
     i_rst     : input 'a reset  ,
-    i_ck_delay: input 'a logic<2>, // extra cycles CK enable lags DQ/CS# (0..2)
-    i_lat_extra: input 'a logic<2>, // extra CK cycles before the write data phase (bring-up knob)
     o_ready   : output 'a logic , // initialization done
 
     // command
@@ -88,9 +90,13 @@ pub module GowinPsram #(
     const LAT_CODE    : logic<4> = if LATENCY == 3 ? 4'b1110 :
                                   if LATENCY == 4 ? 4'b1111 :
                                   if LATENCY == 5 ? 4'b0000 : 4'b0001;
+    const WRAP_CODE: logic<2>  = if WRAP_BYTES == 16 ? 2'b10 :
+                                 if WRAP_BYTES == 32 ? 2'b11 :
+                                 if WRAP_BYTES == 64 ? 2'b01 : 2'b00;
     // CR0: normal operation, 34ohm drive, reserved 1111, latency, fixed
-    // latency, hybrid burst (unused), 32-byte wrap length (unused)
-    const CR0_VALUE: logic<16> = {1'b1, 3'b000, 4'b1111, LAT_CODE, 1'b1, 1'b1, 2'b11};
+    // latency, [2] reserved (reads as 1), burst length
+    const CR0_VALUE: logic<16> = {1'b1, 3'b000, 4'b1111, LAT_CODE, 1'b1, 1'b1, WRAP_CODE};
+    const CKD      : logic<2>  = CK_DELAY;
     const CR0_ADDR : logic<ADDR_BITS> = 'h1000;
 
     enum State: logic<4> {
@@ -123,8 +129,8 @@ pub module GowinPsram #(
     var ck_e_d2 : 'a logic;
     var reset_n : 'a logic;
 
-    let cs_active: 'a logic = busy_r | (busy_d1 & (i_ck_delay != 2'd0)) | (busy_d2 & (i_ck_delay == 2'd2));
-    let ck_e_sel : 'a logic = case i_ck_delay {
+    let cs_active: 'a logic = busy_r | (busy_d1 & (CKD != 2'd0)) | (busy_d2 & (CKD == 2'd2));
+    let ck_e_sel : 'a logic = case CKD {
         2'd0   : ck_e_r,
         2'd1   : ck_e_d1,
         default: ck_e_d2,
@@ -170,7 +176,10 @@ pub module GowinPsram #(
     // word source for the data phase (init writes CR0 itself)
     let src_data : 'a logic<16> = if init_wr ? CR0_VALUE : i_wr_data;
     let src_mask : 'a logic<2>  = if init_wr ? 2'b00 : (if i_wr_valid ? i_wr_mask : 2'b11);
-    let lat_total: 'a logic<8>  = 2 * LATENCY;
+    // Fixed (2x) latency. Measured on the W955D8MBYA (Tang Nano 9K):
+    // with latency code 3 the data phase starts at CK rising edge 8,
+    // i.e. the count runs from the third CA clock (edge 2), not edge 0.
+    let lat_total: 'a logic<8>  = 2 * LATENCY + 2;
 
     always_ff (i_clk, i_rst) {
         if_reset {
@@ -296,22 +305,22 @@ pub module GowinPsram #(
                 }
                 State::Lat: {
                     // Fixed 2x latency: the data phase starts LAT_TOTAL CK
-                    // cycles after CK cycle 0. Relative to the edge where CA
+                    // cycles after CK cycle 0 (see lat_total). Relative to the edge where CA
                     // word 0 was registered (cycle 0): DQ reaches the pins 3
-                    // cycles later and so does CK cycle 0 (+ i_ck_delay), so
+                    // cycles later and so does CK cycle 0 (+ CKD), so
                     // the first data word is registered at cycle
-                    // LAT_TOTAL + i_ck_delay; this state runs from cycle 3
+                    // LAT_TOTAL + CKD; this state runs from cycle 3
                     // and cnt is compared before its increment.
                     // Reads open the capture window just before the first
                     // word can appear (its IDDR output is visible from cycle
-                    // LAT_TOTAL + i_ck_delay + 5).
+                    // LAT_TOTAL + CKD + 5).
                     dq_oe = 0;
                     cnt   = cnt + 1;
-                    if cmd_wr && (cnt == lat_total - 8'd4 + {6'h0, i_ck_delay} + {6'h0, i_lat_extra}) {
+                    if cmd_wr && (cnt == lat_total - 8'd4 + {6'h0, CKD}) {
                         cnt   = 0;
                         state = State::WrData;
                     }
-                    if !cmd_wr && (cnt == lat_total + {6'h0, i_ck_delay}) {
+                    if !cmd_wr && (cnt == lat_total + {6'h0, CKD}) {
                         cnt   = 0;
                         rd_en = 1;
                         state = State::RdData;

@@ -38,11 +38,10 @@ module top (
 
     // ---- controller <-> test driver ----
     logic        ctrl_rst;
-    logic [1:0]  ck_delay, lat_extra;
     logic        ready;
     logic        cmd_valid, cmd_ready, cmd_write, cmd_reg;
     logic [21:0] cmd_addr;
-    logic [6:0]  cmd_len;
+    logic [5:0]  cmd_len;
     logic        wr_valid, wr_ready;
     logic [15:0] wr_data;
     logic [1:0]  wr_mask;
@@ -54,7 +53,7 @@ module top (
 
     PsramTest #(.CLK_HZ(CLK_HZ)) drv (
         .i_clk(clk), .i_rst(reset),
-        .o_ctrl_rst(ctrl_rst), .o_ck_delay(ck_delay), .o_lat_extra(lat_extra), .i_ready(ready),
+        .o_ctrl_rst(ctrl_rst), .i_ready(ready),
         .o_cmd_valid(cmd_valid), .i_cmd_ready(cmd_ready),
         .o_cmd_write(cmd_write), .o_cmd_reg(cmd_reg),
         .o_cmd_addr(cmd_addr), .o_cmd_len(cmd_len),
@@ -68,7 +67,7 @@ module top (
     // die 0 only; die 1 is held idle
     GowinPsram #(.CLK_HZ(CLK_HZ), .LATENCY(3)) psram (
         .i_clk(clk), .i_clk_p(clk_p), .i_rst(reset | ctrl_rst),
-        .i_ck_delay(ck_delay), .i_lat_extra(lat_extra), .o_ready(ready),
+        .o_ready(ready),
         .i_cmd_valid(cmd_valid), .o_cmd_ready(cmd_ready),
         .i_cmd_write(cmd_write), .i_cmd_reg(cmd_reg),
         .i_cmd_addr(cmd_addr), .i_cmd_len(cmd_len),
@@ -92,7 +91,7 @@ module top (
         .tx(uart_tx)
     );
 
-    // LEDs are active low: [5] heartbeat, [4:3] ck_delay, [2] pass
+    // LEDs are active low: [5] heartbeat, [4:3] burst length, [2] pass
     // running, [1] last pass clean, [0] controller ready
     logic [25:0] hb = 0;
     always_ff @(posedge clk) hb <= hb + 1;

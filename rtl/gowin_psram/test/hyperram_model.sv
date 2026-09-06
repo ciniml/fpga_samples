@@ -7,9 +7,10 @@
 // GowinPsram tests. Implements: CA capture on CK edges, linear bursts,
 // register space (ID0/ID1/CR0/CR1), fixed/variable initial latency with
 // the RWDS additional-latency indication, RWDS data mask on writes,
-// RWDS-strobed read data with tCKD output delay. Not modeled: wrapped
-// bursts, deep power down, refresh collisions beyond a random "additional
-// latency" flag in variable-latency mode.
+// RWDS-strobed read data with tCKD output delay, wrapping at the CR0 burst
+// length (which the real die does even for linear CAs). Not modeled: deep
+// power down, refresh collisions beyond a random "additional latency"
+// flag in variable-latency mode.
 `timescale 1ns/1ps
 module hyperram_model #(
     parameter WORDS  = 1 << 21,   // 4MiB die
@@ -75,6 +76,21 @@ module hyperram_model #(
     reg        extra;
     reg [15:0] w;
     reg        m_hi, m_lo;
+    integer    wrap_words;
+
+    // The die wraps every burst (linear CA included, as observed on the
+    // Tang Nano 9K W955D8MBYA) at the CR0 burst length.
+    function integer wrap_len(input [1:0] code);
+        case (code)
+            2'b00: wrap_len = 64;
+            2'b01: wrap_len = 32;
+            2'b10: wrap_len = 8;
+            default: wrap_len = 16;
+        endcase
+    endfunction
+    function [31:0] next_addr(input [31:0] a, input integer ww);
+        next_addr = (a & ~(ww - 1)) | ((a + 1) & (ww - 1));
+    endfunction
 
     always @(negedge cs_n) begin
         // additional latency flag: always in fixed mode, random otherwise
@@ -106,8 +122,12 @@ module hyperram_model #(
 `ifdef HYPERRAM_TRACE
         $display("model: CA=%h rw=%b reg=%b linear=%b waddr=%h at %0t", ca, rw, reg_space, linear, waddr, $realtime);
 `endif
+        wrap_words = wrap_len(cr0[1:0]);
         lat       = lat_clocks(cr0[7:4]);
-        lat_total = extra ? 2 * lat : lat;
+        // data phase begins at CK rising edge (2 + latency count): the
+        // count runs from the third CA clock (measured on the W955D8MBYA
+        // with fixed latency; the variable-latency case is assumed alike)
+        lat_total = 2 + (extra ? 2 * lat : lat);
 
         if (!rw && reg_space) begin
             // register write: data word right after the CA, no latency
@@ -149,7 +169,7 @@ module hyperram_model #(
                 @(negedge ck or posedge cs_n);
                 if (cs_n) break;
                 #(T_CKD) dq_drv = w[7:0]; rwds_drv = 0;
-                waddr++;
+                waddr = reg_space ? waddr + 1 : next_addr(waddr, wrap_words);
                 n_reads++;
             end
             dq_oe = 0;
@@ -171,7 +191,7 @@ module hyperram_model #(
                 if (!m_hi) mem[waddr % WORDS][15:8] = w[15:8];
                 if (!m_lo) mem[waddr % WORDS][7:0]  = w[7:0];
                 if (m_hi || m_lo) n_masked++;
-                waddr++;
+                waddr = next_addr(waddr, wrap_words);
                 n_writes++;
             end
         end
