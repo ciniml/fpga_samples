@@ -14,12 +14,18 @@ EthIpStack) を Tang Nano 9K + LAN8720 (RMII) に載せる実機プロジェク�
   アダプタを PMOD2 に挿す場合は `PINS_CST=pins_pmod2.cst`。
   書き込み直後は PHY のリンク再交渉で数秒不安定なので、ping が通ってから計測。
 
-- **`tangnano9k_pmod` (推奨・現行配線)**: Tang Nano 9K Pmod ベース
+- **`tangnano9k_pmod`**: Tang Nano 9K Pmod ベース
   ボード + Pmod Ethernet アダプタ。Ethernet Pmod は右端の PORT2 に
   挿す (`eda/ethernet_video` の tangnano9k_pmod と同一配線):
   txclk=32, crs_dv=31, rxd0=57, rxd1=56, txd0=54, txd1=53, txen=55
   (MDIO/MDC 68/69 はジャンパ線用・本デザイン未使用)。
-  リセットは button_s2 (ピン 84)
+  リセットは button_s2 (ピン 84)。
+  **注意**: HEAD の `TcpEngine` (1 バイト/サイクル書き込み器) を 9K で合成すると
+  Logic 83% / BSRAM 81% で Fmax 50.18MHz と余裕がほぼ無く、この領域では STA が
+  通っても Gowin 実機が誤動作した実績がある (未検証)。9K で検証済みなのは
+  第1段エンジン (コミット 58bf4d6) のビットストリーム。9K 向けに作り直す場合は
+  `git show 58bf4d6:rtl/nvme/tcp_engine.veryl > rtl/nvme/tcp_engine.veryl` で
+  当時のエンジンに戻して合成する。
 - `tangnano9k`: 旧・直配線 (eda/ethernet_icmp tangnano9k と同一)
 
 - IP: **192.168.37.2** (ARP/ICMP echo 応答)
