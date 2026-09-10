@@ -127,6 +127,10 @@ class Tcp:
         self.snd_una = self.iss
         self.snd_nxt = self.iss
         self.rcv_nxt = 0
+        # Linux-like ACK cadence: ACK every N in-order data segments, else after 40ms
+        self.ack_every = int(os.environ.get("SIM_ACK_EVERY", "1"))
+        self.unacked_segs = 0
+        self.last_data_t = 0.0
         self.peer_win = 0
         self.state = "CLOSED"
         self.rxbuf = bytearray()
@@ -185,8 +189,13 @@ class Tcp:
                     self.rxbuf += payload
                     self.rcv_nxt = (self.rcv_nxt + len(payload)) & 0xFFFFFFFF
                     self.cv.notify_all()
-                # ACK (also duplicate ACK for out-of-order data)
-                self.seg(0x10)
+                    self.unacked_segs += 1
+                    self.last_data_t = time.time()
+                    if self.unacked_segs >= self.ack_every:
+                        self.seg(0x10)
+                        self.unacked_segs = 0
+                else:
+                    self.seg(0x10)  # duplicate ACK for out-of-order data
             if flags & 0x01 and seq == self.rcv_nxt:   # FIN
                 self.rcv_nxt = (self.rcv_nxt + 1) & 0xFFFFFFFF
                 self.seg(0x10)
@@ -209,6 +218,9 @@ class Tcp:
                 self.snd_nxt = (self.snd_una + self.sent) & 0xFFFFFFFF
 
     def timer(self):
+        if self.unacked_segs and time.time() - self.last_data_t > 0.04:
+            self.seg(0x10)
+            self.unacked_segs = 0
         with self.cv:
             if self.sent and time.time() - self.last_tx > 0.5:
                 # go-back-N: resend everything from snd_una

@@ -10,6 +10,8 @@ set PROJECT_NAME  [lindex $argv 5]
 set ETHERNET_DIR  [lindex $argv 6]
 set NVME_DIR      [lindex $argv 7]
 set PSRAM_DIR     [lindex $argv 8]
+set PINS_CST      [lindex $argv 9]
+if {${PINS_CST} == ""} { set PINS_CST pins.cst }
 
 set_option -output_base_name ${PROJECT_NAME}
 set_device -name $DEVICE_FAMILY $DEVICE_PART
@@ -25,6 +27,13 @@ if {${TARGET} == "tangnano9k"} {
 }
 if {${TARGET} == "tangnano9k_pmod"} {
     set_option -use_sspi_as_gpio 1
+}
+if {${TARGET} == "tangprimer20k"} {
+    # same dual-purpose pin options as eda/ethernet_icmp tangprimer20k:
+    # led[0]/led[1] are the DONE / READY pins, and some PHY pins are SSPI
+    set_option -use_sspi_as_gpio 1
+    set_option -use_done_as_gpio 1
+    set_option -use_ready_as_gpio 1
 }
 
 # verified RMII MAC (rtl/ethernet, mii_mac/crc_mac.sv is the 8-bit CRC)
@@ -58,9 +67,12 @@ if {${TARGET} == "tangnano9k_pmod"} {
     add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_rpll_psram/gowin_rpll_psram.v]
     add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_tx.sv]
 }
+if {${TARGET} == "tangprimer20k"} {
+    add_file -type verilog [file normalize ${SRC_DIR}/rtl8201_init.sv]
+}
 add_file -type verilog [file normalize ${SRC_DIR}/top.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/reset_seq.sv]
-add_file -type cst [file normalize ${SRC_DIR}/pins.cst]
+add_file -type cst [file normalize ${SRC_DIR}/${PINS_CST}]
 add_file -type sdc [file normalize ${SRC_DIR}/timing.sdc]
 
 run all

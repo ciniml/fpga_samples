@@ -4,7 +4,15 @@
 EthIpStack) を Tang Nano 9K + LAN8720 (RMII) に載せる実機プロジェクト。
 全ロジックが PHY の 50MHz RMII クロックで動作します。
 
-ターゲットは 2 種:
+ターゲットは 3 種:
+
+- **`tangprimer20k`**: Tang Primer 20K Dock (GW2A-18) のドック搭載 RTL8201
+  PHY を使用。TCP バッファ 16KiB/8KiB、BRAM ネームスペース 16KiB (32 ブロック)。
+  最速 (100BASE-TX の約 69%)。`make TARGET=tangprimer20k ... synthesis`、
+  書き込みは `openFPGALoader --busdev-num <bus:dev> --board tangprimer20k
+  --write-sram build/tangprimer20k/impl/pnr/nvme_ethernet.fs`。Pmod Ethernet
+  アダプタを PMOD2 に挿す場合は `PINS_CST=pins_pmod2.cst`。
+  書き込み直後は PHY のリンク再交渉で数秒不安定なので、ping が通ってから計測。
 
 - **`tangnano9k_pmod` (推奨・現行配線)**: Tang Nano 9K Pmod ベース
   ボード + Pmod Ethernet アダプタ。Ethernet Pmod は右端の PORT2 に
@@ -51,6 +59,25 @@ $ spdk_nvme_identify --no-huge -s 512 \
 $ spdk_nvme_perf --no-huge -s 512 -o 4096 -q 4 -w randrw -M 50 -t 10 \
     -r 'trtype:TCP adrfam:IPv4 traddr:192.168.37.2 trsvcid:4420 subnqn:nqn.2026-09.org.fugafuga:nvme:veryl-sim'
 ```
+
+## 実機結果: Tang Primer 20K (2026-09-11)
+
+1 バイト/サイクルのアプリ書き込み器 + 明示 2 ポート RAM の `TcpEngine`
+(`rtl/nvme/TCP_ENGINE.md` 第2段)。smoke 3/3、`probe_host.py` TOTAL diffs 0。
+
+| 条件 | IOPS | MiB/s | 平均レイテンシ |
+|---|---|---|---|
+| 4KiB read QD1 | 1558 | 6.08 | 0.64 ms |
+| 4KiB read QD8 | 2061 | 8.05 | 3.9 ms |
+| 4KiB randread QD4 | 2025 | 7.91 | 2.0 ms |
+| 16KiB read QD4 | 521 | 8.14 | 7.7 ms |
+| 4KiB write QD1 | 1106 | 4.32 | 0.90 ms |
+| 16KiB write QD4 | 438 | 6.84 | 9.1 ms |
+| 4KiB randrw QD4 | 1664 | 6.50 | 2.4 ms |
+
+RTL8201 は MDIO で CRS ピンを CRS_DV に切り替える必要がある
+(`src/tangprimer20k/rtl8201_init.sv`)。これを忘れると link up でもフレームが
+1 つも届かない。
 
 ## 実機結果: PSRAM ネームスペース (2026-09-06)
 

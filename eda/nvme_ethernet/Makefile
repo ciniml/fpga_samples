@@ -20,9 +20,12 @@ NVME_SV := $(NVME_DIR)/nvme_pkg.sv $(NVME_DIR)/nvme_tcp_pkg.sv \
 
 PSRAM_SV := $(PSRAM_DIR)/gowin_psram.sv $(PSRAM_DIR)/psram_dword_cache.sv
 
-PROJECT_ADDITIONAL_ARGS := $(abspath $(ETHERNET_DIR)) $(abspath $(NVME_DIR)) $(abspath $(PSRAM_DIR))
+# constraint file inside src/$(TARGET) (tangprimer20k: pins.cst = LAN8720 wired
+# directly, pins_pmod2.cst = Pmod Ethernet adapter on PMOD2)
+PINS_CST ?= pins.cst
+PROJECT_ADDITIONAL_ARGS := $(abspath $(ETHERNET_DIR)) $(abspath $(NVME_DIR)) $(abspath $(PSRAM_DIR)) $(PINS_CST)
 
-SRCS := src/$(TARGET)/pins.cst $(wildcard src/$(TARGET)/*.sdc) \
+SRCS := src/$(TARGET)/$(PINS_CST) $(wildcard src/$(TARGET)/*.sdc) \
 	$(wildcard src/$(TARGET)/*.sv) $(wildcard src/$(TARGET)/ip/*/*.v) project.tcl $(MAC_SRC) $(NVME_SV) $(PSRAM_SV) $(RTL_DIR)/uart/uart_tx.sv
 
 include ../build_gowin.mk
