@@ -7,8 +7,12 @@ EthIpStack) を Tang Nano 9K + LAN8720 (RMII) に載せる実機プロジェク�
 ターゲットは 3 種:
 
 - **`tangprimer20k`**: Tang Primer 20K Dock (GW2A-18) のドック搭載 RTL8201
-  PHY を使用。TCP バッファ 16KiB/8KiB、BRAM ネームスペース 16KiB (32 ブロック)。
-  最速 (100BASE-TX の約 69%)。`make TARGET=tangprimer20k ... synthesis`、
+  PHY を使用。TCP バッファ 16KiB/8KiB。ネームスペースは SOM の **DDR3 128MiB**
+  (`rtl/ddr3`: riscv-veryl の Veryl DDR3 コントローラ + GW2A IOLOGIC PHY、
+  512B ライトバックラインキャッシュ `LineDwordCache`、262143 ブロック)。
+  最速 (100BASE-TX の約 69%、BRAM ネームスペース時の実測)。DDR3 版は合成
+  済み (RMII 58MHz / pclk 85MHz、Logic 56%、BSRAM 68%) で**実機未検証**
+  (シムでは 512B ミスあたり 723 サイクル)。`make TARGET=tangprimer20k ... synthesis`、
   書き込みは `openFPGALoader --busdev-num <bus:dev> --board tangprimer20k
   --write-sram build/tangprimer20k/impl/pnr/nvme_ethernet.fs`。Pmod Ethernet
   アダプタを PMOD2 に挿す場合は `PINS_CST=pins_pmod2.cst`。

@@ -1,0 +1,212 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file line_dword_cache.veryl
+ * @brief Dword-addressed synchronous RAM interface (with a ready/stall)
+ *        backed by a 16-byte LineBusIf (Ddr3Ctrl) through a one-line
+ *        write-back cache.
+ *
+ * Same user-side contract as PsramDwordCache: a plain single-port
+ * synchronous RAM (address, write enable/data, read enable, read data
+ * one cycle later) plus o_ready. An access only takes place in a cycle
+ * where o_ready is high, so the user holds i_addr/i_wen/i_ren until
+ * then. o_ready is high while the addressed line (LINE_BYTES) sits in
+ * the cache; on a miss the dirty line is written back and the new one
+ * fetched as LINE_BYTES/16 line-bus transactions (one BL8 burst each).
+ *
+ * Single clock: the line bus master runs on i_clk, so i_clk is
+ * Ddr3Ctrl's i_clk_cpu and the controller does the crossing into the
+ * DRAM clock. The line is held in four 32-bit lane RAMs (lane = dword
+ * index mod 4) so a user access touches one lane and the miss engine
+ * moves a whole 16-byte bus beat per cycle.
+ *
+ * Meant for sequential block traffic (the NVMe core reads and writes
+ * whole LBAs); random accesses across lines would thrash.
+ */
+pub module LineDwordCache #(
+    param ADDR_BITS : u32 = 25 , // dword address bits (25 = 128MiB)
+    param LINE_BYTES: u32 = 512, // cache line size (power of two, >= 64)
+) (
+    i_clk  : input  clock          ,
+    i_rst  : input  reset          ,
+    // ---- user side ----
+    i_addr : input  logic<ADDR_BITS>,
+    i_wen  : input  logic          ,
+    i_wdata: input  logic<32>      ,
+    i_ren  : input  logic          ,
+    o_rdata: output logic<32>      ,
+    o_ready: output logic          ,
+    o_dbg  : output logic<3>       , // {valid, dirty, busy}
+    // ---- memory side ----
+    line: modport LineBusIf::master,
+) {
+    const LINE_DW   : u32 = LINE_BYTES / 4;   // dwords per line
+    const LINE_BITS : u32 = $clog2(LINE_DW);  // dword index bits within a line
+    const BEATS     : u32 = LINE_BYTES / 16;  // 16-byte bus beats per line
+    const BEAT_BITS : u32 = $clog2(BEATS);
+    const LAST_BEAT : logic<BEAT_BITS> = BEATS - 1;
+    const TAG_BITS  : u32 = ADDR_BITS - LINE_BITS;
+    const LANE_ABITS: u32 = LINE_BITS - 2;    // entries per lane RAM
+
+    // ================= state =================
+    enum St: logic<3> {
+        Idle  , // serving hits
+        WbAddr, // present beat's address to the lane RAMs (read latency 1)
+        WbRead, // capture the beat (4 lanes) of the old line
+        WbReq , // present the beat as a bus write until accepted
+        FtReq , // present a bus read until accepted
+        FtWait, // wait for the read data, write it into the buffer
+        Done  , // install the new tag
+    }
+    var st   : St;
+    var valid: logic;
+    var dirty: logic;
+    var tag  : logic<TAG_BITS>;
+    var beat : logic<BEAT_BITS>;
+    var rq_dirty  : logic;
+    var rq_old_tag: logic<TAG_BITS>;
+    var rq_new_tag: logic<TAG_BITS>;
+    var wb_data   : logic<128>;
+
+    let busy: logic = st != St::Idle;
+    let hit : logic = valid && (tag == i_addr[ADDR_BITS - 1:LINE_BITS]) && !busy;
+    assign o_ready = hit;
+    assign o_dbg   = {valid, dirty, busy};
+
+    // ================= line buffer: 4 lane RAMs =================
+    // user access: entry = i_addr[LINE_BITS-1:2], lane = i_addr[1:0]
+    // engine    : entry = beat, all four lanes
+    let u_entry: logic<LANE_ABITS> = i_addr[LINE_BITS - 1:2];
+    let u_lane : logic<2>          = i_addr[1:0];
+    let eng    : logic             = busy;
+
+    var lane_we : logic<4>;
+    var lane_wa : logic<LANE_ABITS>;
+    var lane_wd : logic<32> [4];
+    var lane_ra : logic<LANE_ABITS>;
+    var lane_rd : logic<32> [4];
+    var u_lane_r: logic<2>; // lane of the read presented last cycle
+
+    always_comb {
+        lane_wa = if eng ? beat : u_entry;
+        lane_ra = if eng ? beat : u_entry;
+        for k in 0..4 {
+            lane_wd[k] = if eng ? line.rdata[32 * k+:32] : i_wdata;
+            lane_we[k] = if eng ? (st == St::FtWait && line.rvalid) :
+                                  (i_wen && hit && (u_lane == k));
+        }
+    }
+    assign o_rdata = lane_rd[u_lane_r];
+
+    inst u_l0: $sv::line_lane_ram #( ABITS: LANE_ABITS, ) (clk: i_clk, we: lane_we[0], wa: lane_wa, wd: lane_wd[0], ra: lane_ra, rd: lane_rd[0],);
+    inst u_l1: $sv::line_lane_ram #( ABITS: LANE_ABITS, ) (clk: i_clk, we: lane_we[1], wa: lane_wa, wd: lane_wd[1], ra: lane_ra, rd: lane_rd[1],);
+    inst u_l2: $sv::line_lane_ram #( ABITS: LANE_ABITS, ) (clk: i_clk, we: lane_we[2], wa: lane_wa, wd: lane_wd[2], ra: lane_ra, rd: lane_rd[2],);
+    inst u_l3: $sv::line_lane_ram #( ABITS: LANE_ABITS, ) (clk: i_clk, we: lane_we[3], wa: lane_wa, wd: lane_wd[3], ra: lane_ra, rd: lane_rd[3],);
+
+    // ================= line bus master =================
+    // byte address of a beat: {tag, beat, 4'b0}
+    let wb_addr: logic<32> = {rq_old_tag, beat, 4'b0};
+    let ft_addr: logic<32> = {rq_new_tag, beat, 4'b0};
+    assign line.valid = (st == St::WbReq) || (st == St::FtReq);
+    assign line.we    = st == St::WbReq;
+    assign line.wstrb = 16'hFFFF;
+    assign line.wdata = wb_data;
+    assign line.addr  = if (st == St::WbReq) ? wb_addr : ft_addr;
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            st         = St::Idle;
+            valid      = 0;
+            dirty      = 0;
+            tag        = 0;
+            beat       = 0;
+            rq_dirty   = 0;
+            rq_old_tag = 0;
+            rq_new_tag = 0;
+            wb_data    = 0;
+            u_lane_r   = 0;
+        } else {
+            u_lane_r = u_lane;
+            case st {
+                St::Idle: {
+                    if i_wen && hit {
+                        dirty = 1;
+                    }
+                    if (i_ren || i_wen) && !hit {
+                        rq_dirty   = valid && dirty;
+                        rq_old_tag = tag;
+                        rq_new_tag = i_addr[ADDR_BITS - 1:LINE_BITS];
+                        valid      = 0;
+                        beat       = 0;
+                        st         = if (valid && dirty) ? St::WbAddr : St::FtReq;
+                    }
+                }
+                St::WbAddr: {
+                    // lane_ra = beat is presented this cycle (busy), the
+                    // registered lane outputs are valid in the next one
+                    st = St::WbRead;
+                }
+                St::WbRead: {
+                    wb_data = {lane_rd[3], lane_rd[2], lane_rd[1], lane_rd[0]};
+                    st      = St::WbReq;
+                }
+                St::WbReq: {
+                    if line.ready {
+                        if beat == LAST_BEAT {
+                            beat = 0;
+                            st   = St::FtReq;
+                        } else {
+                            beat = beat + 1;
+                            st   = St::WbAddr;
+                        }
+                    }
+                }
+                St::FtReq: {
+                    if line.ready {
+                        st = St::FtWait;
+                    }
+                }
+                St::FtWait: {
+                    if line.rvalid {
+                        if beat == LAST_BEAT {
+                            st = St::Done;
+                        } else {
+                            beat = beat + 1;
+                            st   = St::FtReq;
+                        }
+                    }
+                }
+                St::Done: {
+                    valid = 1;
+                    dirty = 0;
+                    tag   = rq_new_tag;
+                    beat  = 0;
+                    st    = St::Idle;
+                }
+                default: st = St::Idle;
+            }
+        }
+    }
+}
+
+embed (inline) sv{{{
+// simple two-port 32-bit RAM: write port A, synchronous read port B
+// (latency 1, unconditional read so the tool cannot pick a pipelined mode)
+module line_lane_ram #(parameter ABITS = 5) (
+    input  logic             clk,
+    input  logic             we,
+    input  logic [ABITS-1:0] wa,
+    input  logic [31:0]      wd,
+    input  logic [ABITS-1:0] ra,
+    output logic [31:0]      rd
+);
+    logic [31:0] mem [0:(1<<ABITS)-1];
+    always_ff @(posedge clk) begin
+        if (we) mem[wa] <= wd;
+        rd <= mem[ra];
+    end
+endmodule
+}}}

@@ -11,6 +11,7 @@ set ETHERNET_DIR  [lindex $argv 6]
 set NVME_DIR      [lindex $argv 7]
 set PSRAM_DIR     [lindex $argv 8]
 set PINS_CST      [lindex $argv 9]
+set DDR3_DIR      [lindex $argv 10]
 if {${PINS_CST} == ""} { set PINS_CST pins.cst }
 
 set_option -output_base_name ${PROJECT_NAME}
@@ -69,6 +70,12 @@ if {${TARGET} == "tangnano9k_pmod"} {
 }
 if {${TARGET} == "tangprimer20k"} {
     add_file -type verilog [file normalize ${SRC_DIR}/rtl8201_init.sv]
+    # DDR3 namespace (rtl/ddr3, generated from Veryl; controller/PHY from riscv-veryl)
+    add_file -type verilog [file normalize ${DDR3_DIR}/bus_if.sv]
+    add_file -type verilog [file normalize ${DDR3_DIR}/line_bus_if.sv]
+    add_file -type verilog [file normalize ${DDR3_DIR}/ddr3_ctrl.sv]
+    add_file -type verilog [file normalize ${DDR3_DIR}/ddr3_phy_gw2a.sv]
+    add_file -type verilog [file normalize ${DDR3_DIR}/line_dword_cache.sv]
 }
 add_file -type verilog [file normalize ${SRC_DIR}/top.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/reset_seq.sv]

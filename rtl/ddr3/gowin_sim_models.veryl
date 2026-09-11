@@ -1,0 +1,79 @@
+// Copied from ~/repos/riscv-veryl/src/gowin_sim_models.veryl (commit 78e2537): behavioural stand-ins for the Gowin
+// IOLOGIC primitives so Verilator can elaborate Ddr3PhyGw2a (never used for synthesis).
+// Behavioural models of the Gowin GW2A IOLOGIC primitives used by
+// Ddr3PhyGw2a, so Verilator can elaborate that module (it is not
+// instantiated by any simulation top, but every source in the filelist
+// must resolve). NOT part of the Gowin project — the real primitives come
+// from the vendor library there (eda/cpu_riscv_ddr3/project.tcl does not
+// add gowin_sim_models.sv).
+//
+// The models keep the documented bit order (OSER8 sends D0 first, TX0
+// covers D0/D1; IDES8's Q0 is the oldest sample) with a fixed one-pclk
+// latency; they are not timing-accurate.
+embed (inline) sv{{{
+module OSER8 #(
+    parameter GSREN = "false",
+    parameter LSREN = "true",
+    parameter HWL = "false",
+    parameter TXCLK_POL = 1'b0
+) (
+    output logic Q0,
+    output logic Q1,
+    input  logic D0, D1, D2, D3, D4, D5, D6, D7,
+    input  logic TX0, TX1, TX2, TX3,
+    input  logic PCLK,
+    input  logic FCLK,
+    input  logic RESET
+);
+    logic [7:0] d_q, d_sh;
+    logic [3:0] t_q, t_sh;
+    logic [2:0] cnt;
+    always_ff @(posedge PCLK) begin
+        d_q <= {D7, D6, D5, D4, D3, D2, D1, D0};
+        t_q <= {TX3, TX2, TX1, TX0};
+    end
+    always_ff @(posedge FCLK or negedge FCLK) begin
+        if (RESET) begin
+            cnt <= 3'd0;
+        end else begin
+            if (cnt == 3'd0) begin
+                d_sh <= d_q;
+                t_sh <= t_q;
+            end
+            cnt <= cnt + 3'd1;
+        end
+    end
+    assign Q0 = (cnt == 3'd0) ? d_q[0] : d_sh[cnt];
+    assign Q1 = (cnt == 3'd0) ? t_q[0] : t_sh[cnt[2:1]];
+endmodule
+
+module IDES8 #(
+    parameter GSREN = "false",
+    parameter LSREN = "true"
+) (
+    output logic Q0, Q1, Q2, Q3, Q4, Q5, Q6, Q7,
+    input  logic D,
+    input  logic CALIB,
+    input  logic PCLK,
+    input  logic FCLK,
+    input  logic RESET
+);
+    logic [7:0] sh, q;
+    always_ff @(posedge FCLK or negedge FCLK) begin
+        if (RESET) sh <= 8'b0;
+        else       sh <= {D, sh[7:1]};
+    end
+    always_ff @(posedge PCLK) q <= sh;
+    assign {Q7, Q6, Q5, Q4, Q3, Q2, Q1, Q0} = q;
+endmodule
+
+module IOBUF (
+    output logic O,
+    inout  wire  IO,
+    input  logic I,
+    input  logic OEN
+);
+    assign IO = OEN ? 1'bz : I;
+    assign O  = IO;
+endmodule
+}}}

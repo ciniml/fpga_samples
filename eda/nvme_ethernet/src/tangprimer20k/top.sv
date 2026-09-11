@@ -11,7 +11,11 @@
  * reference clock domain. The GW2A-18 has room for the larger TCP
  * buffers the 9K could not hold (TX ring 16KiB / RX FIFO 8KiB per
  * connection), which is what this target exists to measure. The
- * namespace is 16KiB of BRAM (32 blocks x 512B); DDR3 is a later step.
+ * namespace is the SOM's 128MiB DDR3 (H5TQ1G63EFR, x16) through a 512-byte
+ * write-back line cache (LineDwordCache) and the Veryl DDR3 controller +
+ * GW2A IOLOGIC PHY from riscv-veryl (rtl/ddr3). The last 512B block is
+ * left out of the namespace: the controller's read calibration scratches
+ * the last 16 bytes of the device.
  *
  * PHY wiring is selected by the constraint file (see Makefile PINS_CST):
  *  - pins.cst        LAN8720 module wired directly (ethernet_icmp layout)
@@ -34,9 +38,24 @@ module top(
     output logic       rmii_txen,
     inout  wire        rmii_mdio,
     output logic       rmii_mdc,
-    output logic       rmii_rstn
+    output logic       rmii_rstn,
+
+    // DDR3 (SOM)
+    output logic        ddr_ck,     // SSTL15D pair, P side
+    output logic        ddr_cke,
+    output logic        ddr_odt,
+    output logic        ddr_reset_n,
+    output logic        ddr_cs_n,
+    output logic        ddr_ras_n,
+    output logic        ddr_cas_n,
+    output logic        ddr_we_n,
+    output logic [2:0]  ddr_ba,
+    output logic [13:0] ddr_a,
+    output logic [1:0]  ddr_dm,
+    inout  wire  [15:0] ddr_dq,
+    inout  wire  [1:0]  ddr_dqs     // SSTL15D pairs, P side
 );
-    localparam LBA_COUNT     = 32;                  // 16KiB BRAM namespace
+    localparam LBA_COUNT     = 262143;              // 128MiB DDR3 minus the calibration scratch block
     localparam MEM_ADDR_BITS = $clog2(LBA_COUNT) + 7;
     localparam TX_RING_BYTES = 16384;
     localparam RX_FIFO_BYTES = 8192;
@@ -117,29 +136,134 @@ module top(
         .o_m_data(tx_tdata), .o_m_valid(tx_tvalid), .i_m_ready(tx_tready), .o_m_last(tx_tlast)
     );
 
-    // NVMe/TCP target + BRAM namespace
+    // ---- DDR3 clocks: rPLL 27MHz x 11 = 297MHz fclk, CLKDIV /4 = 74.25MHz pclk ----
+    logic fclk, pclk, pll_lock;
+    rPLL #(
+        .FCLKIN          ("27"),
+        .DYN_IDIV_SEL    ("false"),
+        .IDIV_SEL        (0),        // /1
+        .DYN_FBDIV_SEL   ("false"),
+        .FBDIV_SEL       (10),       // x11
+        .DYN_ODIV_SEL    ("false"),
+        .ODIV_SEL        (2),        // VCO 594 MHz
+        .PSDA_SEL        ("0000"),
+        .DYN_DA_EN       ("false"),
+        .DUTYDA_SEL      ("1000"),
+        .CLKOUT_FT_DIR   (1'b1),
+        .CLKOUTP_FT_DIR  (1'b1),
+        .CLKOUT_DLY_STEP (0),
+        .CLKOUTP_DLY_STEP(0),
+        .CLKFB_SEL       ("internal"),
+        .CLKOUT_BYPASS   ("false"),
+        .CLKOUTP_BYPASS  ("false"),
+        .CLKOUTD_BYPASS  ("false"),
+        .DYN_SDIV_SEL    (2),
+        .CLKOUTD_SRC     ("CLKOUT"),
+        .CLKOUTD3_SRC    ("CLKOUT"),
+        .DEVICE          ("GW2A-18C")
+    ) u_rpll (
+        .CLKOUT  (fclk),
+        .LOCK    (pll_lock),
+        .CLKOUTP (),
+        .CLKOUTD (),
+        .CLKOUTD3(),
+        .RESET   (1'b0),
+        .RESET_P (1'b0),
+        .CLKIN   (clock),
+        .CLKFB   (1'b0),
+        .FBDSEL  (6'b0),
+        .IDSEL   (6'b0),
+        .ODSEL   (6'b0),
+        .PSDA    (4'b0),
+        .DUTYDA  (4'b0),
+        .FDLY    (4'b0)
+    );
+    CLKDIV #(.DIV_MODE("4"), .GSREN("false")) u_clkdiv (
+        .CLKOUT(pclk), .HCLKIN(fclk), .RESETN(pll_lock), .CALIB(1'b0)
+    );
+
+    // DDR3-side reset (pclk domain): held until the PLL locks
+    logic [2:0] rst_mem_q = '1;
+    always_ff @(posedge pclk) begin
+        rst_mem_q <= {(reset || !pll_lock), rst_mem_q[2:1]};
+    end
+    logic reset_mem;
+    reset_seq #(.RESET_DELAY_CYCLES(32)) u_reset_seq_mem (
+        .clock(pclk), .reset_in(rst_mem_q[0]), .reset_out(reset_mem)
+    );
+
+    // ---- DDR3 controller (CPU side = RMII clock) + PHY ----
+    LineBusIf mline();
+    BusIf     ctl_bus();
+    assign ctl_bus.valid = 1'b0;
+    assign ctl_bus.addr  = 32'b0;
+    assign ctl_bus.we    = 1'b0;
+    assign ctl_bus.wstrb = 4'b0;
+    assign ctl_bus.wdata = 32'b0;
+
+    logic         phy_reset_n, phy_cke, phy_odt, phy_cs_n, phy_ras_n, phy_cas_n, phy_we_n;
+    logic [2:0]   phy_ba;
+    logic [13:0]  phy_a;
+    logic [127:0] phy_dq_out, phy_dq_in;
+    logic [3:0]   phy_dq_oe, phy_dqs_oe;
+    logic [15:0]  phy_dm_out, phy_dqs_out, phy_dqs_in;
+    logic         ddr3_init_done;
+
+    Ddr3Ctrl #(
+        .PCLK_PS       (13468),  // 74.25 MHz
+        .RD_SEL_DEFAULT(44),     // board-measured fallbacks (riscv-veryl cpu_riscv_ddr3)
+        .RD_LAT_DEFAULT(12),
+        .RECAL_ENABLE  (1)
+    ) ddr3 (
+        .i_clk_cpu(rmii_txclk), .i_rst_cpu(reset),
+        .i_clk_mem(pclk),       .i_rst_mem(reset_mem),
+        .bus(mline), .ctl(ctl_bus),
+        .o_reset_n(phy_reset_n), .o_cke(phy_cke), .o_odt(phy_odt),
+        .o_cs_n(phy_cs_n), .o_ras_n(phy_ras_n), .o_cas_n(phy_cas_n), .o_we_n(phy_we_n),
+        .o_ba(phy_ba), .o_a(phy_a),
+        .o_dq_out(phy_dq_out), .o_dq_oe(phy_dq_oe), .o_dm_out(phy_dm_out),
+        .o_dqs_out(phy_dqs_out), .o_dqs_oe(phy_dqs_oe),
+        .i_dq_in(phy_dq_in), .i_dqs_in(phy_dqs_in),
+        .o_init_done(ddr3_init_done)
+    );
+
+    Ddr3PhyGw2a u_phy (
+        .i_pclk(pclk), .i_fclk(fclk), .i_rst(reset_mem),
+        .i_reset_n(phy_reset_n), .i_cke(phy_cke), .i_odt(phy_odt),
+        .i_cs_n(phy_cs_n), .i_ras_n(phy_ras_n), .i_cas_n(phy_cas_n), .i_we_n(phy_we_n),
+        .i_ba(phy_ba), .i_a(phy_a),
+        .i_dq_out(phy_dq_out), .i_dq_oe(phy_dq_oe), .i_dm_out(phy_dm_out),
+        .i_dqs_out(phy_dqs_out), .i_dqs_oe(phy_dqs_oe),
+        .o_dq_in(phy_dq_in), .o_dqs_in(phy_dqs_in),
+        .o_ddr_ck(ddr_ck), .o_ddr_cke(ddr_cke), .o_ddr_odt(ddr_odt), .o_ddr_reset_n(ddr_reset_n),
+        .o_ddr_cs_n(ddr_cs_n), .o_ddr_ras_n(ddr_ras_n), .o_ddr_cas_n(ddr_cas_n), .o_ddr_we_n(ddr_we_n),
+        .o_ddr_ba(ddr_ba), .o_ddr_a(ddr_a), .o_ddr_dm(ddr_dm),
+        .io_ddr_dq(ddr_dq), .io_ddr_dqs(ddr_dqs)
+    );
+
+    // NVMe/TCP target + DDR3 namespace behind a 512-byte line cache
     wire [MEM_ADDR_BITS-1:0] mem_addr;
-    wire        mem_wen, mem_ren;
-    wire [31:0] mem_wdata;
-    logic [31:0] mem_rdata;
+    wire        mem_wen, mem_ren, mem_ready;
+    wire [31:0] mem_wdata, mem_rdata;
     NvmeTcpTarget #(.LBA_COUNT(LBA_COUNT)) nvme (
         .i_clk(rmii_txclk), .i_rst(reset),
         .i_conn_active(conn_active),
         .i_rx_valid(app_rxv), .o_rx_ready(app_rxr), .i_rx_data(app_rxd),
         .o_tx_valid(app_txv), .i_tx_ready(app_txr), .o_tx_data(app_txd),
         .o_mem_addr(mem_addr), .o_mem_wen(mem_wen), .o_mem_wdata(mem_wdata),
-        .o_mem_ren(mem_ren), .i_mem_rdata(mem_rdata), .i_mem_ready(1'b1)
+        .o_mem_ren(mem_ren), .i_mem_rdata(mem_rdata), .i_mem_ready(mem_ready)
     );
 
-    logic [31:0] bmem [0:LBA_COUNT*128-1];
-    always_ff @(posedge rmii_txclk) begin
-        if (mem_wen) bmem[mem_addr] <= mem_wdata;
-        if (mem_ren) mem_rdata <= bmem[mem_addr];
-    end
+    LineDwordCache #(.ADDR_BITS(MEM_ADDR_BITS), .LINE_BYTES(512)) cache (
+        .i_clk(rmii_txclk), .i_rst(reset),
+        .i_addr(mem_addr), .i_wen(mem_wen), .i_wdata(mem_wdata), .i_ren(mem_ren),
+        .o_rdata(mem_rdata), .o_ready(mem_ready), .o_dbg(),
+        .line(mline)
+    );
 
     // LEDs (active low):
     //  [5] heartbeat  [4] MAC RX frame  [3] TX frame
-    //  [2:1] TCP connections (I/O, admin)  [0] PHY initialised (MDIO done)
+    //  [2:1] TCP connections (I/O, admin)  [0] PHY initialised and DDR3 init done
     logic [24:0] hb = 0;
     logic [20:0] rx_hold = 0, tx_hold = 0;
     always_ff @(posedge rmii_txclk) begin
@@ -149,7 +273,7 @@ module top(
         if (tx_tvalid && tx_tready && tx_tlast) tx_hold <= '1;
         else if (tx_hold != 0) tx_hold <= tx_hold - 1;
     end
-    assign led = ~{hb[24], rx_hold != 0, tx_hold != 0, conn_active, phy_ready};
+    assign led = ~{hb[24], rx_hold != 0, tx_hold != 0, conn_active, phy_ready && ddr3_init_done};
 
 endmodule
 `default_nettype wire

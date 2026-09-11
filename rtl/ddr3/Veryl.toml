@@ -1,0 +1,30 @@
+[project]
+name    = "ddr3"
+version = "0.1.0"
+
+[build]
+clock_type          = "posedge"
+reset_type          = "sync_high"
+omit_project_prefix = true
+
+[test]
+include_files = [
+    "test/ddr3_model.sv",
+    "test/line_dword_cache_tb.sv",
+]
+
+[test.verilator]
+compile_args = [
+    "ddr3_model.sv",
+    "line_dword_cache_tb.sv",
+    "-Wno-PINMISSING",
+    "-Wno-UNSIGNED",
+    "-Wno-WIDTHEXPAND",
+    "-Wno-WIDTHTRUNC",
+    "-Wno-CASEINCOMPLETE",
+    "-Wno-UNUSEDSIGNAL",
+    "-Wno-UNUSEDPARAM",
+    "-Wno-INITIALDLY",
+    "-Wno-TIMESCALEMOD",
+    "-Wno-fatal",
+]

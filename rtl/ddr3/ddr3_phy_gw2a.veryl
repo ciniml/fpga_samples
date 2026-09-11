@@ -1,0 +1,375 @@
+// Copied from ~/repos/riscv-veryl/src/ddr3_phy_gw2a.veryl (commit 78e2537, 2026-09-10) for the NVMe DDR3 namespace.
+// Keep in sync with the RISC-V project; local changes should be upstreamed there.
+// DDR3 PHY for Gowin GW2A (Tang Primer 20K) built from the public
+// IOLOGIC primitives — no Gowin DDR3 IP. Turns the slot vectors of
+// `Ddr3Ctrl` into pins:
+//
+//   fclk = 2 x CK (DDR: one slot per fclk edge), pclk = fclk / 4 = CK / 2.
+//   pclk must come from a CLKDIV (DIV_MODE = "4") fed by fclk so the two
+//   are phase aligned, as Gowin requires for OSER8 / IDES8.
+//
+//   OSER8  serialises D0..D7 (D0 first) at DDR on fclk; TX0..TX3 are the
+//          tristate controls, one per two slots, appearing on Q1.
+//   IDES8  samples the pin at every fclk edge; Q0 is the oldest of the
+//          eight samples per pclk.
+//   CK and DQS are differential pairs, but on Gowin that is a property of
+//   the pin (IO_TYPE=SSTL15D on the P pin in the .cst, the N pin follows),
+//   so they use the ordinary OBUF / IOBUF like DQ. CKE / ODT / RESET# are
+//   slow and leave through ordinary registers.
+//
+// Slot s of every controller vector maps to D[s] / Q[s]. CK is the
+// constant pattern {0,0,1,1,0,0,1,1} (rising edges at slots 2 and 6).
+// Commands are held for one CK (slots 0..3) and DESELECT for the second
+// CK of the pclk cycle (slots 4..7), see Ddr3Ctrl.
+//
+// Read capture: DQ and DQS are simply sampled by IDES8; the controller
+// picks the beats out of its sample history (RD_SEL / RD_LAT registers).
+// IODELAY is not used in this first version — the quarter-CK slot grid
+// plus the on-board sweep (doc/ddr3_controller.md) is the calibration.
+//
+// This module only makes sense on the Gowin tool chain; Verilator never
+// elaborates it (it is not instantiated by any simulation top).
+module Ddr3PhyGw2a (
+    i_pclk: input '_ clock,
+    i_fclk: input '_ clock,
+    i_rst : input    logic, // active high, pclk domain
+
+    // from / to Ddr3Ctrl (pclk domain)
+    i_reset_n: input  logic     ,
+    i_cke    : input  logic     ,
+    i_odt    : input  logic     ,
+    i_cs_n   : input  logic     ,
+    i_ras_n  : input  logic     ,
+    i_cas_n  : input  logic     ,
+    i_we_n   : input  logic     ,
+    i_ba     : input  logic<3>  ,
+    i_a      : input  logic<14> ,
+    i_dq_out : input  logic<128>,
+    i_dq_oe  : input  logic<4>  ,
+    i_dm_out : input  logic<16> ,
+    i_dqs_out: input  logic<16> ,
+    i_dqs_oe : input  logic<4>  ,
+    o_dq_in  : output logic<128>,
+    o_dqs_in : output logic<16> ,
+
+    // DDR3 pins
+    o_ddr_ck     : output logic        , // P side of the pair (SSTL15D)
+    o_ddr_cke    : output logic        ,
+    o_ddr_odt    : output logic        ,
+    o_ddr_reset_n: output logic        ,
+    o_ddr_cs_n   : output logic        ,
+    o_ddr_ras_n  : output logic        ,
+    o_ddr_cas_n  : output logic        ,
+    o_ddr_we_n   : output logic        ,
+    o_ddr_ba     : output logic    <3> ,
+    o_ddr_a      : output logic    <14>,
+    o_ddr_dm     : output logic    <2> ,
+    io_ddr_dq    : inout  tri logic<16>,
+    io_ddr_dqs   : inout  tri logic<2> , // P side of the pairs (SSTL15D)
+) {
+    // Slow control pins: plain registers in the pclk domain.
+    always_ff (i_pclk) {
+        o_ddr_cke     = i_cke;
+        o_ddr_odt     = i_odt;
+        o_ddr_reset_n = i_reset_n;
+    }
+
+    // Command / address: one command per pclk in CK 0, DESELECT in CK 1.
+    // 8 slots per pin: {4{CK1 value}, 4{CK0 value}}.
+    let cs_n_slots : logic<8> = {4'b1111, {i_cs_n repeat 4}};
+    let ras_n_slots: logic<8> = {{i_ras_n repeat 4}, {i_ras_n repeat 4}};
+    let cas_n_slots: logic<8> = {{i_cas_n repeat 4}, {i_cas_n repeat 4}};
+    let we_n_slots : logic<8> = {{i_we_n repeat 4}, {i_we_n repeat 4}};
+
+    var ba_slots: logic<8> [3] ;
+    var a_slots : logic<8> [14];
+    always_comb {
+        for i in 0..3 {
+            ba_slots[i] = {i_ba[i] repeat 8};
+        }
+        for i in 0..14 {
+            a_slots[i] = {i_a[i] repeat 8};
+        }
+    }
+
+    // DQ / DM / DQS per-pin slot bytes (bit s = slot s).
+    var dq_slots : logic<8> [16];
+    var dm_slots : logic<8> [2] ;
+    var dqs_slots: logic<8> [2] ;
+    var dq_q     : logic<8> [16];
+    var dqs_q    : logic<8> [2] ;
+    always_comb {
+        for i in 0..16 {
+            for s in 0..8 {
+                dq_slots[i][s]      = i_dq_out[16 * s + i];
+                o_dq_in[16 * s + i] = dq_q[i][s];
+            }
+        }
+        for i in 0..2 {
+            for s in 0..8 {
+                dm_slots[i][s]      = i_dm_out[2 * s + i];
+                dqs_slots[i][s]     = i_dqs_out[2 * s + i];
+                o_dqs_in[2 * s + i] = dqs_q[i][s];
+            }
+        }
+    }
+
+    // OSER8 TX inputs are "output disabled" (1 = tristate).
+    let dq_tx : logic<4> = ~i_dq_oe;
+    let dqs_tx: logic<4> = ~i_dqs_oe;
+
+    // ---- CK: constant pattern through OSER8 and a true-LVDS buffer ----
+    inst u_oser_ck: $sv::OSER8 (
+        Q0   : o_ddr_ck,
+        Q1   : _       ,
+        D0   : 1'b0    ,
+        D1   : 1'b0    ,
+        D2   : 1'b1    ,
+        D3   : 1'b1    ,
+        D4   : 1'b0    ,
+        D5   : 1'b0    ,
+        D6   : 1'b1    ,
+        D7   : 1'b1    ,
+        TX0  : 1'b0    ,
+        TX1  : 1'b0    ,
+        TX2  : 1'b0    ,
+        TX3  : 1'b0    ,
+        PCLK : i_pclk  ,
+        FCLK : i_fclk  ,
+        RESET: i_rst   ,
+    );
+    // ---- command / address (output only) ----
+    inst u_oser_cs: $sv::OSER8 (
+        Q0   : o_ddr_cs_n   ,
+        Q1   : _            ,
+        D0   : cs_n_slots[0],
+        D1   : cs_n_slots[1],
+        D2   : cs_n_slots[2],
+        D3   : cs_n_slots[3],
+        D4   : cs_n_slots[4],
+        D5   : cs_n_slots[5],
+        D6   : cs_n_slots[6],
+        D7   : cs_n_slots[7],
+        TX0  : 1'b0         ,
+        TX1  : 1'b0         ,
+        TX2  : 1'b0         ,
+        TX3  : 1'b0         ,
+        PCLK : i_pclk       ,
+        FCLK : i_fclk       ,
+        RESET: i_rst        ,
+    );
+    inst u_oser_ras: $sv::OSER8 (
+        Q0   : o_ddr_ras_n   ,
+        Q1   : _             ,
+        D0   : ras_n_slots[0],
+        D1   : ras_n_slots[1],
+        D2   : ras_n_slots[2],
+        D3   : ras_n_slots[3],
+        D4   : ras_n_slots[4],
+        D5   : ras_n_slots[5],
+        D6   : ras_n_slots[6],
+        D7   : ras_n_slots[7],
+        TX0  : 1'b0          ,
+        TX1  : 1'b0          ,
+        TX2  : 1'b0          ,
+        TX3  : 1'b0          ,
+        PCLK : i_pclk        ,
+        FCLK : i_fclk        ,
+        RESET: i_rst         ,
+    );
+    inst u_oser_cas: $sv::OSER8 (
+        Q0   : o_ddr_cas_n   ,
+        Q1   : _             ,
+        D0   : cas_n_slots[0],
+        D1   : cas_n_slots[1],
+        D2   : cas_n_slots[2],
+        D3   : cas_n_slots[3],
+        D4   : cas_n_slots[4],
+        D5   : cas_n_slots[5],
+        D6   : cas_n_slots[6],
+        D7   : cas_n_slots[7],
+        TX0  : 1'b0          ,
+        TX1  : 1'b0          ,
+        TX2  : 1'b0          ,
+        TX3  : 1'b0          ,
+        PCLK : i_pclk        ,
+        FCLK : i_fclk        ,
+        RESET: i_rst         ,
+    );
+    inst u_oser_we: $sv::OSER8 (
+        Q0   : o_ddr_we_n   ,
+        Q1   : _            ,
+        D0   : we_n_slots[0],
+        D1   : we_n_slots[1],
+        D2   : we_n_slots[2],
+        D3   : we_n_slots[3],
+        D4   : we_n_slots[4],
+        D5   : we_n_slots[5],
+        D6   : we_n_slots[6],
+        D7   : we_n_slots[7],
+        TX0  : 1'b0         ,
+        TX1  : 1'b0         ,
+        TX2  : 1'b0         ,
+        TX3  : 1'b0         ,
+        PCLK : i_pclk       ,
+        FCLK : i_fclk       ,
+        RESET: i_rst        ,
+    );
+    for i in 0..3 :g_ba {
+        inst u_oser: $sv::OSER8 (
+            Q0   : o_ddr_ba[i]   ,
+            Q1   : _             ,
+            D0   : ba_slots[i][0],
+            D1   : ba_slots[i][1],
+            D2   : ba_slots[i][2],
+            D3   : ba_slots[i][3],
+            D4   : ba_slots[i][4],
+            D5   : ba_slots[i][5],
+            D6   : ba_slots[i][6],
+            D7   : ba_slots[i][7],
+            TX0  : 1'b0          ,
+            TX1  : 1'b0          ,
+            TX2  : 1'b0          ,
+            TX3  : 1'b0          ,
+            PCLK : i_pclk        ,
+            FCLK : i_fclk        ,
+            RESET: i_rst         ,
+        );
+    }
+    for i in 0..14 :g_a {
+        inst u_oser: $sv::OSER8 (
+            Q0   : o_ddr_a[i]   ,
+            Q1   : _            ,
+            D0   : a_slots[i][0],
+            D1   : a_slots[i][1],
+            D2   : a_slots[i][2],
+            D3   : a_slots[i][3],
+            D4   : a_slots[i][4],
+            D5   : a_slots[i][5],
+            D6   : a_slots[i][6],
+            D7   : a_slots[i][7],
+            TX0  : 1'b0         ,
+            TX1  : 1'b0         ,
+            TX2  : 1'b0         ,
+            TX3  : 1'b0         ,
+            PCLK : i_pclk       ,
+            FCLK : i_fclk       ,
+            RESET: i_rst        ,
+        );
+    }
+    for i in 0..2 :g_dm {
+        inst u_oser: $sv::OSER8 (
+            Q0   : o_ddr_dm[i]   ,
+            Q1   : _             ,
+            D0   : dm_slots[i][0],
+            D1   : dm_slots[i][1],
+            D2   : dm_slots[i][2],
+            D3   : dm_slots[i][3],
+            D4   : dm_slots[i][4],
+            D5   : dm_slots[i][5],
+            D6   : dm_slots[i][6],
+            D7   : dm_slots[i][7],
+            TX0  : 1'b0          ,
+            TX1  : 1'b0          ,
+            TX2  : 1'b0          ,
+            TX3  : 1'b0          ,
+            PCLK : i_pclk        ,
+            FCLK : i_fclk        ,
+            RESET: i_rst         ,
+        );
+    }
+
+    // ---- DQ: OSER8 -> IOBUF -> IDES8 ----
+    var dq_o  : logic<16>;
+    var dq_oen: logic<16>;
+    var dq_i  : logic<16>;
+    for i in 0..16 :g_dq {
+        inst u_oser: $sv::OSER8 (
+            Q0   : dq_o[i]       ,
+            Q1   : dq_oen[i]     ,
+            D0   : dq_slots[i][0],
+            D1   : dq_slots[i][1],
+            D2   : dq_slots[i][2],
+            D3   : dq_slots[i][3],
+            D4   : dq_slots[i][4],
+            D5   : dq_slots[i][5],
+            D6   : dq_slots[i][6],
+            D7   : dq_slots[i][7],
+            TX0  : dq_tx[0]      ,
+            TX1  : dq_tx[1]      ,
+            TX2  : dq_tx[2]      ,
+            TX3  : dq_tx[3]      ,
+            PCLK : i_pclk        ,
+            FCLK : i_fclk        ,
+            RESET: i_rst         ,
+        );
+        inst u_iobuf: $sv::IOBUF (
+            O  : dq_i[i]     ,
+            IO : io_ddr_dq[i],
+            I  : dq_o[i]     ,
+            OEN: dq_oen[i]   ,
+        );
+        inst u_ides: $sv::IDES8 (
+            Q0   : dq_q[i][0],
+            Q1   : dq_q[i][1],
+            Q2   : dq_q[i][2],
+            Q3   : dq_q[i][3],
+            Q4   : dq_q[i][4],
+            Q5   : dq_q[i][5],
+            Q6   : dq_q[i][6],
+            Q7   : dq_q[i][7],
+            D    : dq_i[i]   ,
+            CALIB: 1'b0      ,
+            PCLK : i_pclk    ,
+            FCLK : i_fclk    ,
+            RESET: i_rst     ,
+        );
+    }
+
+    // ---- DQS: OSER8 -> IOBUF -> IDES8 ----
+    var dqs_o  : logic<2>;
+    var dqs_oen: logic<2>;
+    var dqs_i  : logic<2>;
+    for i in 0..2 :g_dqs {
+        inst u_oser: $sv::OSER8 (
+            Q0   : dqs_o[i]       ,
+            Q1   : dqs_oen[i]     ,
+            D0   : dqs_slots[i][0],
+            D1   : dqs_slots[i][1],
+            D2   : dqs_slots[i][2],
+            D3   : dqs_slots[i][3],
+            D4   : dqs_slots[i][4],
+            D5   : dqs_slots[i][5],
+            D6   : dqs_slots[i][6],
+            D7   : dqs_slots[i][7],
+            TX0  : dqs_tx[0]      ,
+            TX1  : dqs_tx[1]      ,
+            TX2  : dqs_tx[2]      ,
+            TX3  : dqs_tx[3]      ,
+            PCLK : i_pclk         ,
+            FCLK : i_fclk         ,
+            RESET: i_rst          ,
+        );
+        inst u_iobuf: $sv::IOBUF (
+            O  : dqs_i[i]     ,
+            IO : io_ddr_dqs[i],
+            I  : dqs_o[i]     ,
+            OEN: dqs_oen[i]   ,
+        );
+        inst u_ides: $sv::IDES8 (
+            Q0   : dqs_q[i][0],
+            Q1   : dqs_q[i][1],
+            Q2   : dqs_q[i][2],
+            Q3   : dqs_q[i][3],
+            Q4   : dqs_q[i][4],
+            Q5   : dqs_q[i][5],
+            Q6   : dqs_q[i][6],
+            Q7   : dqs_q[i][7],
+            D    : dqs_i[i]   ,
+            CALIB: 1'b0       ,
+            PCLK : i_pclk     ,
+            FCLK : i_fclk     ,
+            RESET: i_rst      ,
+        );
+    }
+}
