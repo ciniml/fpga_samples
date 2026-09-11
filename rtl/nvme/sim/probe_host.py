@@ -1,3 +1,5 @@
+import os
+import json
 #!/usr/bin/env python3
 # Data-path probe: write/read patterns of several sizes at several LBAs
 # over NVMe/TCP and list every mismatch (offset, expected, got).
@@ -31,7 +33,7 @@ patterns = {
 total = 0
 for name, gen in patterns.items():
     for size in (2048, 4096):
-        for lba in (5, 0, 1000):
+        for lba in json.loads(os.environ.get("PROBE_LBAS", "[5, 0, 1000]")):
             wd = gen(size)
             st, _ = xfer(0x01, lba, data=wd)
             st2, rd = xfer(0x02, lba, nbytes=size)

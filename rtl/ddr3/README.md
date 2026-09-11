@@ -31,3 +31,10 @@ controller does the only clock crossing. The namespace is 262143 blocks
 (128 MiB minus the last block, whose last 16 bytes are the controller's
 calibration scratch). DDR3 pins follow Sipeed's DDR-test constraints.
 Synthesis: RMII clock Fmax 58 MHz, pclk 85 MHz, Logic 56 %, BSRAM 68 %.
+
+Verified on the board (2026-09-12): smoke 7/7, data-integrity probe clean at
+low, middle and top-of-namespace LBAs (out-of-range LBA rejected), a 20 s
+mixed-load soak, SPDK reads 8.0-8.2 MiB/s (same as the BRAM namespace),
+writes 3.7-5.6 MiB/s (dirty-line swap per 512-byte block). The upstream
+board-measured read-capture fallbacks (RD_SEL 44 / RD_LAT 12) and the
+auto-calibration worked first time.

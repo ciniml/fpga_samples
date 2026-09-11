@@ -10,9 +10,8 @@ EthIpStack) を Tang Nano 9K + LAN8720 (RMII) に載せる実機プロジェク�
   PHY を使用。TCP バッファ 16KiB/8KiB。ネームスペースは SOM の **DDR3 128MiB**
   (`rtl/ddr3`: riscv-veryl の Veryl DDR3 コントローラ + GW2A IOLOGIC PHY、
   512B ライトバックラインキャッシュ `LineDwordCache`、262143 ブロック)。
-  最速 (100BASE-TX の約 69%、BRAM ネームスペース時の実測)。DDR3 版は合成
-  済み (RMII 58MHz / pclk 85MHz、Logic 56%、BSRAM 68%) で**実機未検証**
-  (シムでは 512B ミスあたり 723 サイクル)。`make TARGET=tangprimer20k ... synthesis`、
+  最速 (100BASE-TX の約 69%)。合成: RMII 58MHz / pclk 85MHz、Logic 56%、
+  BSRAM 68%。実機検証済み (下表)。`make TARGET=tangprimer20k ... synthesis`、
   書き込みは `openFPGALoader --busdev-num <bus:dev> --board tangprimer20k
   --write-sram build/tangprimer20k/impl/pnr/nvme_ethernet.fs`。Pmod Ethernet
   アダプタを PMOD2 に挿す場合は `PINS_CST=pins_pmod2.cst`。
@@ -70,7 +69,31 @@ $ spdk_nvme_perf --no-huge -s 512 -o 4096 -q 4 -w randrw -M 50 -t 10 \
     -r 'trtype:TCP adrfam:IPv4 traddr:192.168.37.2 trsvcid:4420 subnqn:nqn.2026-09.org.fugafuga:nvme:veryl-sim'
 ```
 
-## 実機結果: Tang Primer 20K (2026-09-11)
+## 実機結果: Tang Primer 20K + DDR3 ネームスペース (2026-09-12)
+
+`rtl/ddr3` (riscv-veryl の DDR3 コントローラ + `LineDwordCache`)、128MiB
+(262143 ブロック)。smoke 7/7、`probe_host.py` は LBA 0/5/1000 と
+131072/262100/262134 で TOTAL diffs 0 (262143 は範囲外として拒否)、
+20 秒の randrw ソーク後も diffs 0。
+
+| 条件 | IOPS | MiB/s | 平均レイテンシ | BRAM ns 比 |
+|---|---|---|---|---|
+| 4KiB read QD1 | 1498 | 5.85 | 0.67 ms | 0.96x |
+| 4KiB read QD8 | 2064 | 8.06 | 3.9 ms | 1.00x |
+| 4KiB randread QD4 | 2018 | 7.88 | 2.0 ms | 1.00x |
+| 16KiB read QD4 | 522 | 8.15 | 7.7 ms | 1.00x |
+| 128KiB read QD1 / QD4 | 64 / 66 | 8.00 / 8.22 | 15.6 / 61 ms | (BRAM 版は不可) |
+| 4KiB write QD1 | 938 | 3.66 | 1.07 ms | 0.85x |
+| 16KiB write QD4 | 348 | 5.44 | 11.5 ms | 0.80x |
+| 128KiB write QD1 / QD4 | 43 / 45 | 5.41 / 5.56 | 23 / 91 ms | – |
+| 4KiB randrw QD4 | 1457 | 5.69 | 2.7 ms | 0.88x |
+| 4KiB randwrite QD4 | 1127 | 4.40 | 3.6 ms | – |
+
+リードは BRAM 版と同じ (DRAM は律速でない)。ライトは 512B ごとに
+ダーティラインの書き戻し + フェッチ (シム実測 723 サイクル ≈ 14.5µs) が
+入る分だけ 1〜2 割落ちる。DDR3 の初期化 (≈ 1ms) は LED[0] で確認できる。
+
+## 実機結果: Tang Primer 20K + BRAM ネームスペース (2026-09-11)
 
 1 バイト/サイクルのアプリ書き込み器 + 明示 2 ポート RAM の `TcpEngine`
 (`rtl/nvme/TCP_ENGINE.md` 第2段)。smoke 3/3、`probe_host.py` TOTAL diffs 0。
