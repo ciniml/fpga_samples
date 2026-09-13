@@ -125,6 +125,9 @@ ELVDS_OBUF u_ob(.I(ser), .O(txp), .OB(txn));   // 3.3Vバンクはエミュレ�
   配線されている場合(Tang Nano 9K pmod0など)は **OSER10のD入力で全ビット反転**して
   補正する。8b10bは極性反転に非耐性なので、逆極性ではロックしない
 - **GW1N**: OSER出力はOBUFに直結必須(間にロジック不可)。よって反転はD入力側で行う
+- **レコード FIFO のメモリ**: `trace_afifo` は同期読出 (プリフェッチ) + `syn_ramstyle="block_ram"` で BSRAM に載る
+  (GW1N: 1 個、GW5A: 2 個)。GW5A には分散 RAM が無く、非同期読出の配列は FF に展開される。GW1N で BSRAM を
+  節約したければ属性を `distributed_ram` にすると SSRAM (RAM16) 9 個になる
 - **GW1N タイミング**: 変化検出はパイプライン化済み。100MHzで
   タイミングクリーン(パイプラインなしでは16bit比較+FIFO WREで13.4nsとなり違反)
 
