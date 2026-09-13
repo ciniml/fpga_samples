@@ -202,6 +202,7 @@ ENABLE 0/1、RESET でタイムスタンプ再始動、`Z` アボート — ALL 
   は Nano9K の受信側を `PulseResetRx` だけにする (レジスタ無し、トレースは常時有効・変化検出のみ)。
   25K は常に `PulseResetTx` を持ち、ホストコマンド `P` (返信 `P`) で 4×20µs のバーストを Manchester
   線に割り込ませる。UI の「Pulse reset (P)」ボタン、`host/ctrl_test.py --pulse` で確認
+- 全体構成図: `doc/system_overview.drawio` (draw.io)
 - 検証: `test/e2e_ctrl_tb.sv` (Verilator, `make -C test test`) がホストコマンド →
   Manchester → 制御レジスタ → トレースTX → 8b10bデコード → キャプチャ → ダンプの
   全周回を検証 (12チェック)。デバイスプリミティブ(PLL/OSER10/IBUF)以外は実RTL
