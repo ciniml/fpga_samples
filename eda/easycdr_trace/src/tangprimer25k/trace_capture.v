@@ -19,7 +19,8 @@
 //   'A' post_hi post_lo         : arm and wait for the trigger, then keep
 //                                 POST entries after it
 //   'D'                         : dump the buffer in chronological order
-//                                 (2 bytes per entry: {7'b0,K} then data)
+//                                 (2 bytes per entry: entry[DATA_BITS-1:8] then
+//                                 entry[7:0]; bit 0 of the first byte = K flag)
 //   '?'                         : reply 4 bytes [VER][WIDTH][TS_BITS][ADDR_BITS].
 //                                 VER/WIDTH/TS_BITS come from the last link
 //                                 descriptor (0 if none seen yet), ADDR_BITS
@@ -33,6 +34,13 @@
 //   'Z'                         : abort - disarm a pending capture and return
 //                                 to idle (also accepted while waiting for
 //                                 the trigger; replies 'Z')
+//   'R' mode                    : raw capture mode (top level: 1 = store every
+//                                 received word as {align, err, dout[9:0]}, no
+//                                 record filtering); replies 'R'
+//   'J' mode len sym0_lo sym0_hi ...: load len raw 10-bit symbols (LSB first, bit 0
+//                                 = first on the wire) into the self-test symbol
+//                                 injector and start it: mode 0 stop, 1 once,
+//                                 2 loop (see trace_sym_inject.v); replies 'J'
 //   'L'                         : link diagnostics: o_diag_req strobe, then the 14
 //                                 bytes of i_diag_data (see trace_link_diag.v)
 //   'P'                         : one-clock o_pulse_req strobe (reset burst for
@@ -73,7 +81,15 @@ module trace_capture #(
     // link diagnostics (trace_link_diag, clk_sys domain)
     output reg                  o_diag_req,
     input  wire                 i_diag_done,
-    input  wire [111:0]         i_diag_data
+    input  wire [111:0]         i_diag_data,
+    // raw capture mode + symbol injector (clk_sys domain)
+    output reg                  o_raw_mode,
+    output reg                  o_inj_wr_valid,
+    output reg  [5:0]           o_inj_wr_idx,
+    output reg  [9:0]           o_inj_wr_data,
+    output reg                  o_inj_set,
+    output reg  [1:0]           o_inj_mode,
+    output reg  [6:0]           o_inj_len
 );
     localparam [ADDR_BITS-1:0] LAST_ADDR = {ADDR_BITS{1'b1}};
 
@@ -197,6 +213,8 @@ module trace_capture #(
     reg                 dump_lo;
     reg [7:0]           fwd_left;
     reg [111:0]         diag_q;
+    reg [7:0]           inj_lo;
+    reg [7:0]           inj_n;
 
     always @(posedge clk_sys or posedge rst_sys) begin
         if (rst_sys) begin
@@ -221,11 +239,22 @@ module trace_capture #(
             o_pulse_req   <= 1'b0;
             o_diag_req    <= 1'b0;
             diag_q        <= 112'd0;
+            o_raw_mode    <= 1'b0;
+            o_inj_wr_valid <= 1'b0;
+            o_inj_wr_idx  <= 6'd0;
+            o_inj_wr_data <= 10'd0;
+            o_inj_set     <= 1'b0;
+            o_inj_mode    <= 2'd0;
+            o_inj_len     <= 7'd0;
+            inj_lo        <= 8'd0;
+            inj_n         <= 8'd0;
             fwd_left      <= 8'd0;
         end else begin
             o_fwd_valid <= 1'b0;
             o_pulse_req <= 1'b0;
             o_diag_req  <= 1'b0;
+            o_inj_wr_valid <= 1'b0;
+            o_inj_set   <= 1'b0;
             if (tx_valid && tx_ready) tx_valid <= 1'b0;
             rdata      <= buffer[raddr];
             rd_pending <= 1'b0;
@@ -241,7 +270,7 @@ module trace_capture #(
                     arm_tgl_sys   <= ~arm_tgl_sys;
                     state         <= ST_WAIT;
                 end
-                "T", "A": state <= ST_ARGS;
+                "T", "A", "R", "J": state <= ST_ARGS;
                 "?": begin
                     arg_idx <= 8'd0;
                     state   <= ST_INFO;
@@ -280,11 +309,13 @@ module trace_capture #(
             end
             ST_ARGS: if (rx_valid) begin
                 arg_idx <= arg_idx + 1'b1;
-                if (cmd == "T") begin
+                case (cmd)
+                "T": begin
                     if (arg_idx < db) trig_mask [arg_idx*8 +: 8]      <= rx_data;
                     else              trig_value[(arg_idx-db)*8 +: 8] <= rx_data;
                     if (arg_idx == 2*db-1) state <= ST_IDLE;
-                end else begin // "A": post count, big-endian 16 bit
+                end
+                "A": begin // post count, big-endian 16 bit
                     if (arg_idx == 0) post_count[ADDR_BITS:8] <= rx_data[ADDR_BITS-8:0];
                     else begin
                         post_count[7:0] <= rx_data;
@@ -293,6 +324,37 @@ module trace_capture #(
                         state           <= ST_WAIT;
                     end
                 end
+                "R": begin
+                    o_raw_mode <= rx_data[0];
+                    tx_data <= "R"; tx_valid <= 1'b1;
+                    state <= ST_IDLE;
+                end
+                "J": begin
+                    if (arg_idx == 8'd0) begin
+                        o_inj_mode <= rx_data[1:0];
+                    end else if (arg_idx == 8'd1) begin
+                        o_inj_len <= rx_data[6:0];
+                        inj_n     <= rx_data;
+                        if (rx_data == 8'd0) begin
+                            o_inj_set <= 1'b1;
+                            tx_data <= "J"; tx_valid <= 1'b1;
+                            state <= ST_IDLE;
+                        end
+                    end else if (!arg_idx[0]) begin        // even: low byte
+                        inj_lo <= rx_data;
+                    end else begin                          // odd: high byte -> write
+                        o_inj_wr_valid <= 1'b1;
+                        o_inj_wr_idx   <= (arg_idx - 8'd3) >> 1;
+                        o_inj_wr_data  <= {rx_data[1:0], inj_lo};
+                        if (((arg_idx - 8'd3) >> 1) == inj_n - 1'b1) begin
+                            o_inj_set <= 1'b1;
+                            tx_data <= "J"; tx_valid <= 1'b1;
+                            state <= ST_IDLE;
+                        end
+                    end
+                end
+                default: state <= ST_IDLE;
+                endcase
             end
             ST_INFO: if (!tx_valid || tx_ready) begin
                 case (arg_idx[1:0])
@@ -332,7 +394,7 @@ module trace_capture #(
             end
             ST_DUMP: if (!tx_valid && tx_ready && !rd_pending) begin
                 if (!dump_lo) begin
-                    tx_data  <= {7'b0, rdata[DATA_BITS-1]};
+                    tx_data  <= rdata[DATA_BITS-1:8];      // bit 0 = K flag; raw mode adds dout[9], err, align
                     tx_valid <= 1'b1;
                     dump_lo  <= 1'b1;
                 end else begin

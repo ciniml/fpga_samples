@@ -222,7 +222,14 @@ module top(
     localparam [7:0] K28_2 = 8'h5c;   // overflow marker
     // descriptor payload bytes must not enter the capture buffer
     wire desc_busy;
-    wire cap_valid = rx_word_en && !desc_busy &&
+    // raw capture mode ('R' 1): every received word, {align, err, dout[9:0]}
+    wire raw_mode;
+    reg  [1:0] raw_sync;
+    always @(posedge pclk_rx) raw_sync <= {raw_sync[0], raw_mode};
+    wire        raw_p     = raw_sync[1];
+    wire        cap_valid = raw_p ? rx_data_en : cap_valid_rec;
+    wire [11:0] cap_data  = raw_p ? {rx_align, rx_decerr, rx_data[9:0]} : {3'b0, rx_data[8:0]};
+    wire cap_valid_rec = rx_word_en && !desc_busy &&
                      (!rx_data[8] ||
                       rx_data[7:0] == K28_1 || rx_data[7:0] == K28_2);
 
@@ -279,6 +286,11 @@ module top(
     // any other board (ctrl_test.py --selftest). Not built in the 742.5Mbps
     // variant (separate TX PLL would be needed).
     wire st_serial;
+    wire       inj_wr_valid, inj_set;      // symbol injector ('J'), driven by trace_capture
+    wire [5:0] inj_wr_idx;
+    wire [9:0] inj_wr_data;
+    wire [1:0] inj_mode;
+    wire [6:0] inj_len;
 `ifndef RATE_742M5
     wire pll_tx_lock;
     wire txclk_500m /* synthesis syn_keep=1 */;
@@ -293,7 +305,12 @@ module top(
     always @(posedge clk_in or posedge reset_in)
         if (reset_in) st_cnt <= 24'd0; else st_cnt <= st_cnt + 1'b1;
 
-    wire [9:0] st_symbol;
+    wire [9:0] st_symbol, st_sym_out;
+    trace_sym_inject #(.AW(6)) u_inject(
+        .clk_sys(clk_in), .rst_sys(reset_in),
+        .i_wr_valid(inj_wr_valid), .i_wr_idx(inj_wr_idx), .i_wr_data(inj_wr_data),
+        .i_set(inj_set), .i_mode(inj_mode), .i_len(inj_len),
+        .txclk(txclk_100m), .txrstn(st_rstn), .i_core_sym(st_symbol), .o_sym(st_sym_out), .o_active());
     easycdr_trace_tx #(.WIDTH(16), .TS_BITS(24), .SYNC_STAGES(0), .HAS_PERIODIC(0), .HAS_TRIGGER(0), .FIFO_RAM("block")) u_st_tx(
         .sclk(clk_in), .srstn(resetn_in), .sig(st_cnt[23:8]),
         .clk(txclk_100m), .rstn(st_rstn),
@@ -302,8 +319,8 @@ module top(
         .o_symbol(st_symbol), .o_overflow(), .o_armed(), .o_triggered(), .o_done());
     OSER10 u_st_oser(
         .Q(st_serial),
-        .D0(st_symbol[0]), .D1(st_symbol[1]), .D2(st_symbol[2]), .D3(st_symbol[3]), .D4(st_symbol[4]),
-        .D5(st_symbol[5]), .D6(st_symbol[6]), .D7(st_symbol[7]), .D8(st_symbol[8]), .D9(st_symbol[9]),
+        .D0(st_sym_out[0]), .D1(st_sym_out[1]), .D2(st_sym_out[2]), .D3(st_sym_out[3]), .D4(st_sym_out[4]),
+        .D5(st_sym_out[5]), .D6(st_sym_out[6]), .D7(st_sym_out[7]), .D8(st_sym_out[8]), .D9(st_sym_out[9]),
         .PCLK(txclk_100m), .FCLK(txclk_500m), .RESET(~st_rstn));
 `else
     assign st_serial = 1'b0;
@@ -312,13 +329,13 @@ module top(
 
     trace_capture #(
         .ADDR_BITS    (14),                 // 16Ki entries ({K,byte})
-        .DATA_BITS    (9),
+        .DATA_BITS    (12),
         .MAX_WIDTH    (64)
     ) u_capture(
         .pclk       (pclk_rx),
         .prst       (rx_reset),
         .in_valid   (cap_valid),
-        .in_data    (rx_data[8:0]),
+        .in_data    (cap_data),
         .rec_valid  (rec_valid),
         .rec_data   (rec_data),
         .i_desc_ver    (desc_ver),
@@ -337,7 +354,14 @@ module top(
         .o_pulse_req (pulse_req),
         .o_diag_req  (diag_req),
         .i_diag_done (diag_done),
-        .i_diag_data (diag_data)
+        .i_diag_data (diag_data),
+        .o_raw_mode  (raw_mode),
+        .o_inj_wr_valid (inj_wr_valid),
+        .o_inj_wr_idx   (inj_wr_idx),
+        .o_inj_wr_data  (inj_wr_data),
+        .o_inj_set      (inj_set),
+        .o_inj_mode     (inj_mode),
+        .o_inj_len      (inj_len)
     );
 
     assign o_dat_lock    = rx_align & act_ok;

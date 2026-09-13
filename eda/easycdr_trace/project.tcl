@@ -56,6 +56,7 @@ if {${TARGET} == "tangprimer25k"} {
     add_file -type verilog [file normalize ${SRC_DIR}/trace_capture.v]
     add_file -type verilog [file normalize ${SRC_DIR}/trace_rx_decoder.v]
     add_file -type verilog [file normalize ${SRC_DIR}/trace_link_diag.v]
+    add_file -type verilog [file normalize ${SRC_DIR}/trace_sym_inject.v]
     add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_tx.sv]
     add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_rx.sv]
     add_file -type verilog [file normalize ${SRC_DIR}/pll_tx_500m/pll_tx_500m.v]
