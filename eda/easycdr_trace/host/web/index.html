@@ -72,6 +72,7 @@
       <label>ignore mask <input type="text" id="ignMask" value="0x0000"></label>
       <button id="btnApply" disabled>Apply</button>
       <button id="btnTxReset" disabled>Reset TX</button>
+      <button id="btnPulse" disabled title="reset burst for a Nano9K built with CTRL_PULSE=1 (no registers)">Pulse reset (P)</button>
       <span id="txInfo" style="color:var(--mut)"></span>
     </div>
     <div class="row">
@@ -421,6 +422,10 @@ $('btnQuery').onclick = () => queryParams().catch(e => log('query: ' + e.message
 $('btnApply').onclick = () => applyTxCtrl().catch(e => log('tx ctrl: ' + e.message));
 $('btnTxReset').onclick = () => sendCtrl(ctrlFrame(CTRL.ADDR, [CTRL.RESET | CTRL.ENABLE]))
   .then(() => { $('txInfo').textContent = 'reset sent'; }).catch(e => log('tx reset: ' + e.message));
+$('btnPulse').onclick = async () => {
+  try { await transport.write(new Uint8Array([0x50])); const r = (await transport.read(1))[0]; $('txInfo').textContent = r === 0x50 ? 'pulse reset sent' : 'pulse: bad reply'; }   // 'P'
+  catch (e) { log('pulse reset: ' + e.message); }
+};
 
 // exports
 function download(name, text, type) {
@@ -443,7 +448,7 @@ async function connect(kind) {
               : await SerialTransport.open(+$('baud').value);
     $('conn').textContent = 'connected: ' + transport.name;
     $('btnSerial').disabled = $('btnUsb').disabled = $('btnServer').disabled = true; $('btnDisc').disabled = $('btnCap').disabled = false;
-    $('btnQuery').disabled = $('btnApply').disabled = $('btnTxReset').disabled = $('btnArm').disabled = $('btnFlags').disabled = false;
+    $('btnQuery').disabled = $('btnApply').disabled = $('btnTxReset').disabled = $('btnPulse').disabled = $('btnArm').disabled = $('btnFlags').disabled = false;
     queryParams().catch(() => {});
   } catch (e) { log('connect failed: ' + e.message); }
 }
@@ -453,7 +458,7 @@ $('btnServer').onclick = () => connect('server');
 initServerUi();
 $('btnDisc').onclick = async () => { if (abortCtl) abortCtl.abort(); await transport.close(); transport = null;
   $('conn').textContent = 'not connected'; $('btnSerial').disabled = $('btnUsb').disabled = $('btnServer').disabled = false; $('btnDisc').disabled = $('btnCap').disabled = true;
-  $('btnQuery').disabled = $('btnApply').disabled = $('btnTxReset').disabled = $('btnArm').disabled = $('btnFlags').disabled = true; };
+  $('btnQuery').disabled = $('btnApply').disabled = $('btnTxReset').disabled = $('btnPulse').disabled = $('btnArm').disabled = $('btnFlags').disabled = true; };
 $('btnCap').onclick = capture;
 $('btnAbort').onclick = () => { if (abortCtl) abortCtl.abort(); if (transport) { transport.flush(); transport.write(new Uint8Array([0x5a])).catch(() => {}); } };   // 'Z' disarms the FPGA
 if (!navigator.serial) { $('btnSerial').disabled = true; log('Web Serial API not available in this browser'); }

@@ -22,6 +22,9 @@
 // Manchester from the host FPGA -> ManchesterRx -> CtrlFrameRx ->
 // TraceCtrlRegs (rtl/manchester). Provides soft reset, trace enable,
 // ignore mask and descriptor request without any extra cable.
+// Built with CTRL_PULSE=1 (make CTRL_PULSE=1 TARGET=tangnano9k_pmod) the
+// receiver is PulseResetRx only: remote reset, no registers (~1/3 of the
+// control-channel logic).
 module top(
     input  wire clk_in,      // 27MHz crystal (pin 52)
     input  wire rst_btn_n,   // S1, active low (pin 4)
@@ -76,6 +79,32 @@ module top(
     wire ctrl_rxd = CTRL_INVERT ? ~ctrl_rxd_raw : ctrl_rxd_raw;
 
     wire ctrl_rst = ~tx_rstn;
+    wire        soft_reset, trace_en, desc_req, arm, periodic_en, change_dis;
+    wire [15:0] ignore_mask, trig_mask, trig_value;
+    wire [23:0] period;
+    wire [15:0] post;
+`ifdef CTRL_PULSE
+    // Reset-only variant (CTRL_PULSE=1): the host sends a burst of 4 x 20us
+    // levels (25K PulseResetTx, host command 'P'); two bounded 15..30us
+    // levels in a row assert soft_reset for 64 clocks. No registers: the
+    // trace runs enabled with change detection only.
+    PulseResetRx #(.HALF_MIN(1500), .HALF_MAX(3000), .COUNT(2), .RESET_CYCLES(64)) u_ctrl_rx(
+        .i_clk   (txclk_par),
+        .i_rst   (ctrl_rst),
+        .i_rxd   (ctrl_rxd),
+        .o_reset (soft_reset)
+    );
+    assign trace_en    = 1'b1;
+    assign desc_req    = 1'b0;
+    assign arm         = 1'b0;
+    assign periodic_en = 1'b0;
+    assign change_dis  = 1'b0;
+    assign ignore_mask = 16'd0;
+    assign trig_mask   = 16'd0;
+    assign trig_value  = 16'd0;
+    assign period      = 24'd0;
+    assign post        = 16'd0;
+`else
     wire       cb_valid, cb_err;
     wire [7:0] cb_data;
     ManchesterRx #(.BIT_CYCLES(50)) u_ctrl_rx(
@@ -102,10 +131,6 @@ module top(
         .o_frame_err()
     );
 
-    wire        soft_reset, trace_en, desc_req, arm, periodic_en, change_dis;
-    wire [15:0] ignore_mask, trig_mask, trig_value;
-    wire [23:0] period;
-    wire [15:0] post;
     TraceCtrlRegs #(.WIDTH(16), .RESET_CYCLES(64)) u_ctrl_regs(
         .i_clk        (txclk_par),
         .i_rst        (ctrl_rst),
@@ -124,6 +149,7 @@ module top(
         .o_trig_value (trig_value),
         .o_post       (post)
     );
+`endif
 
     wire trace_rstn = tx_rstn & ~soft_reset;
 

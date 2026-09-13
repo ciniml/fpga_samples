@@ -1,0 +1,46 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_pulse_reset.veryl
+ * @brief PulseResetTx -> wire model -> PulseResetRx tests (body: test/pulse_reset_body.sv).
+ *
+ * pulse_direct       : plain wire
+ * pulse_inverted     : inverted polarity
+ * pulse_ac_idle_low  : AC-coupled comparator model, idle output 0
+ * pulse_ac_idle_high : AC-coupled comparator model, idle output 1
+ * Each: 5 bursts -> 5 resets of RESET_CYCLES; a single step, Manchester
+ * traffic and random chatter must not trigger; a burst right after
+ * Manchester idle must.
+ */
+module TbPulseReset {}
+
+#[test(pulse_direct)]
+embed (inline) sv{{{
+module pulse_direct;
+    pulse_reset_body #(.MODE(0), .RUN(1)) body();
+endmodule
+}}}
+
+#[test(pulse_inverted)]
+embed (inline) sv{{{
+module pulse_inverted;
+    pulse_reset_body #(.MODE(1), .RUN(1)) body();
+endmodule
+}}}
+
+#[test(pulse_ac_idle_low)]
+embed (inline) sv{{{
+module pulse_ac_idle_low;
+    pulse_reset_body #(.MODE(2), .RUN(1)) body();
+endmodule
+}}}
+
+#[test(pulse_ac_idle_high)]
+embed (inline) sv{{{
+module pulse_ac_idle_high;
+    pulse_reset_body #(.MODE(3), .RUN(1)) body();
+endmodule
+}}}

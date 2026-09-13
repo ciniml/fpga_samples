@@ -49,7 +49,11 @@ pub module ManchesterTx #(
     assign o_ready = unit_end;
 
     // Line level of half-bit `h` of a unit described by (b, w).
-    function level(b: input logic, h: input logic<5>, w: input logic<9>) -> logic {
+    function level (
+        b: input logic   ,
+        h: input logic<5>,
+        w: input logic<9>,
+    ) -> logic {
         var idx: logic<4>;
         idx = (h - 5'd6) >> 1;
         if !b {

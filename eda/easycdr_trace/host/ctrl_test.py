@@ -37,6 +37,7 @@ def main():
     ap.add_argument("--addr-bits", type=int, default=14)
     ap.add_argument("--tick-ns", type=float, default=10.0)
     ap.add_argument("--wait-s2", type=float, default=0.0, help="seconds to wait for an S2 press after arming (0 = skip)")
+    ap.add_argument("--pulse", action="store_true", help="Nano9K built with CTRL_PULSE=1: test the 'P' reset burst only")
     a = ap.parse_args()
     url = a.url
     entries = 1 << a.addr_bits
@@ -70,6 +71,9 @@ def main():
             r = api(url, {"write": [], "read": min(4096, entries * 2 - len(raw)), "timeout_ms": 20000})
             raw += r["data"]
             if r["timeout"]: break
+        return parse(raw)
+
+    def parse(raw):
         recs, i, n = [], 0, len(raw) // 2
         rl = tb + db
         while i < n:
@@ -85,6 +89,33 @@ def main():
     def send_ctrl(frames):
         api(url, {"write": [0x58, len(frames)] + frames, "read": 0})   # 'X'
         time.sleep(0.05)
+
+    if a.pulse:
+        # reset-only reverse channel: 'P' -> 80us burst -> Nano9K soft reset -> timestamps restart
+        recs = capture()
+        check("baseline capture", recs is not None and len(recs) > 0, f"{len(recs) if recs else 0} records")
+        for n in range(3):
+            # 'S' then 'P' in one write: the capture window (~7ms at the demo rate) starts ~90us
+            # before the burst, so the timestamp discontinuity of the reset must be inside it
+            flush(url)
+            r = api(url, {"write": [0x53, 0x50], "read": 2, "timeout_ms": 8000})      # 'S' 'P' -> 'P' 'K'
+            check(f"'P' acknowledged #{n+1}", r["data"] == [0x50, 0x4B], f"reply {r['data']}")
+            recs = None
+            if r["data"] == [0x50, 0x4B]:
+                raw = []
+                api(url, {"write": [0x44], "read": 0})                                # 'D'
+                while len(raw) < entries * 2:
+                    rr = api(url, {"write": [], "read": min(4096, entries * 2 - len(raw)), "timeout_ms": 20000})
+                    raw += rr["data"]
+                    if rr["timeout"]: break
+                recs = parse(raw)
+            # a reset: ts falls to ~0 from a value that is not near the 24-bit wrap (natural wrap: 16777xxx -> 0)
+            drops = [i for i in range(1, len(recs or [])) if recs[i][0] < recs[i-1][0] and recs[i][0] < 100000 and recs[i-1][0] < 16000000]
+            check(f"timestamp restarts inside the window #{n+1}", len(drops) == 1,
+                  f"{len(recs) if recs else 0} records, drops at {drops[:3]}" +
+                  (f": ts {recs[drops[0]-1][0]} -> {recs[drops[0]][0]} ({recs[drops[0]-1][0]*a.tick_ns/1e3:.0f}us after arm)" if len(drops) == 1 else ""))
+        print("ALL OK" if ok_all else "SOME CHECKS FAILED")
+        return
 
     # 2. baseline
     send_ctrl(ctrl_frames(0x04, [0x00] * db))   # mask off

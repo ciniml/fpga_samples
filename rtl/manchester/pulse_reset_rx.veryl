@@ -1,0 +1,97 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file pulse_reset_rx.veryl
+ * @brief Minimal "reset only" reverse channel receiver (see PulseResetTx).
+ *
+ * Counts "long halves": a level that starts with an edge, stays stable for
+ * HALF_MIN..HALF_MAX clocks and ends with an edge. COUNT consecutive long
+ * halves assert o_reset for RESET_CYCLES clocks, once per burst (further
+ * long halves are ignored until a short run or an idle gap). Everything else
+ * resets the count: Manchester traffic (runs of at most 3 half-bits), noise chatter,
+ * a single step (only one edge), or a stuck level (no edges, the comparator
+ * sitting on its offset while the AC-coupled line is idle).
+ *
+ * Polarity does not matter, and the burst is detected whether the idle
+ * comparator output is 0 or 1 (a TX burst of HALVES levels yields at least
+ * HALVES - 2 bounded long halves in either case, so use COUNT <= HALVES - 2).
+ */
+pub module PulseResetRx #(
+    param HALF_MIN    : u32 = 1500, // shortest accepted level [clocks]
+    param HALF_MAX    : u32 = 3000, // longest accepted level [clocks]
+    param COUNT       : u32 = 2   , // consecutive long halves needed (>= 1)
+    param RESET_CYCLES: u32 = 64  , // o_reset hold time [clocks]
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_rxd  : input  logic,
+    o_reset: output logic, // held high for RESET_CYCLES after a burst
+) {
+    const RUN_MAX : u32 = HALF_MAX + 1;
+    const TW      : u32 = $clog2(RUN_MAX + 1);
+    const NW      : u32 = $clog2(COUNT + 1);
+    const RW      : u32 = $clog2(RESET_CYCLES + 1);
+    const CNT_LAST: u32 = COUNT - 1;
+
+    var s0      : logic;
+    var s1      : logic;
+    var s2      : logic;
+    let any_edge: logic = s2 != s1;
+
+    var run    : logic<TW>; // clocks since the last edge, saturating at RUN_MAX
+    var started: logic    ; // the current level began with an edge
+    var cnt    : logic<NW>; // consecutive long halves so far
+    var fired  : logic    ; // burst already reported: ignore its remaining halves
+    var hold   : logic<RW>;
+
+    let long_half: logic = started && run >= HALF_MIN as TW && run <= HALF_MAX as TW;
+    assign o_reset = hold != 0;
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            s0      = 1'b0;
+            s1      = 1'b0;
+            s2      = 1'b0;
+            run     = 0;
+            started = 1'b0;
+            cnt     = 0;
+            fired   = 1'b0;
+            hold    = 0;
+        } else {
+            s0 = i_rxd;
+            s1 = s0;
+            s2 = s1;
+            if hold != 0 {
+                hold = hold - 1;
+            }
+            if any_edge {
+                run     = 0;
+                started = 1'b1;
+                if long_half {
+                    if fired {
+                        // trailing halves of a reported burst
+                    } else if cnt == CNT_LAST as NW {
+                        cnt   = 0;
+                        fired = 1'b1;
+                        hold  = RESET_CYCLES as RW;
+                    } else {
+                        cnt = cnt + 1;
+                    }
+                } else {
+                    cnt   = 0;
+                    fired = 1'b0;
+                }
+            } else if run == RUN_MAX as TW {
+                started = 1'b0;
+                cnt     = 0;
+                fired   = 1'b0;
+            } else {
+                run = run + 1;
+            }
+        }
+    }
+}

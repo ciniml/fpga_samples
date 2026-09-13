@@ -32,6 +32,10 @@
 //   'Z'                         : abort - disarm a pending capture and return
 //                                 to idle (also accepted while waiting for
 //                                 the trigger; replies 'Z')
+//   'P'                         : one-clock o_pulse_req strobe (reset burst for
+//                                 the pulse-only reverse channel); replies 'P'.
+//                                 Also accepted while waiting for the trigger
+//                                 (reset the TX inside the capture window)
 // FPGA -> host: 'K' when the capture has frozen.
 module trace_capture #(
     parameter ADDR_BITS    = 14,
@@ -61,7 +65,8 @@ module trace_capture #(
     input  wire                 h_tx_ready,
     // reverse control channel ('X' payload, clk_sys domain)
     output reg                  o_fwd_valid,
-    output reg  [7:0]           o_fwd_data
+    output reg  [7:0]           o_fwd_data,
+    output reg                  o_pulse_req
 );
     localparam DB = WIDTH / 8;
     localparam [ADDR_BITS-1:0] LAST_ADDR = {ADDR_BITS{1'b1}};
@@ -201,9 +206,11 @@ module trace_capture #(
             dump_lo       <= 1'b0;
             o_fwd_valid   <= 1'b0;
             o_fwd_data    <= 8'h00;
+            o_pulse_req   <= 1'b0;
             fwd_left      <= 8'd0;
         end else begin
             o_fwd_valid <= 1'b0;
+            o_pulse_req <= 1'b0;
             if (tx_valid && tx_ready) tx_valid <= 1'b0;
             rdata      <= buffer[raddr];
             rd_pending <= 1'b0;
@@ -236,6 +243,11 @@ module trace_capture #(
                 "F": begin
                     tx_data  <= desc_s[31:24];
                     tx_valid <= 1'b1;
+                end
+                "P": begin
+                    o_pulse_req <= 1'b1;
+                    tx_data     <= "P";
+                    tx_valid    <= 1'b1;
                 end
                 "D": begin
                     raddr      <= waddr_s;
@@ -294,6 +306,10 @@ module trace_capture #(
                 tx_data       <= "Z";
                 tx_valid      <= 1'b1;
                 state         <= ST_IDLE;
+            end else if (rx_valid && rx_data == "P") begin
+                o_pulse_req <= 1'b1;
+                tx_data     <= "P";
+                tx_valid    <= 1'b1;
             end
             ST_DUMP: if (!tx_valid && tx_ready && !rd_pending) begin
                 if (!dump_lo) begin

@@ -45,13 +45,13 @@ pub module ManchesterRx #(
     const H2_5: u32 = BIT_CYCLES * 5 / 4;
     const H3_5: u32 = BIT_CYCLES * 7 / 4;
     const H4_5: u32 = BIT_CYCLES * 9 / 4;
-    const DEAD: u32 = BIT_CYCLES * 4;      // no edge for 4 bit-times -> link lost
+    const DEAD: u32 = BIT_CYCLES * 4; // no edge for 4 bit-times -> link lost
     const TW  : u32 = $clog2(DEAD + 1);
 
     // input synchroniser + edge detector
-    var s0: logic;
-    var s1: logic;
-    var s2: logic;
+    var s0      : logic;
+    var s1      : logic;
+    var s2      : logic;
     let level   : logic = s1;
     let fall    : logic = s2 && !s1;
     let any_edge: logic = s2 != s1;
@@ -65,10 +65,10 @@ pub module ManchesterRx #(
     var n   : logic<4> ; // accepted bits (0..9)
     var sh  : logic<9> ; // {parity, data}, shifted in LSB first
 
-    let first  : logic = n == 4'd0;
-    let accept : logic = if first ? t >= H3_5 as TW : t >= H1_5 as TW;
+    let first   : logic = n == 4'd0;
+    let accept  : logic = if first ? t >= H3_5 as TW : t >= H1_5 as TW;
     let too_soon: logic = first && t <: H2_5 as TW;
-    let timeout: logic = if first ? t >= H4_5 as TW : t >= H2_5 as TW;
+    let timeout : logic = if first ? t >= H4_5 as TW : t >= H2_5 as TW;
 
     always_ff (i_clk, i_rst) {
         if_reset {

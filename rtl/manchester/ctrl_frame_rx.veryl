@@ -50,9 +50,9 @@ pub module CtrlFrameRx #(
         Crc,
     }
 
-    var state   : State   ;
-    var crc     : logic<8>;
-    var crc_bits: logic<4>;
+    var state   : State    ;
+    var crc     : logic<8> ;
+    var crc_bits: logic<4> ;
     var gap     : logic<GW>;
 
     let in_frame: logic = state != State::Sof;
@@ -71,7 +71,7 @@ pub module CtrlFrameRx #(
         } else {
             o_wr_valid  = 1'b0;
             o_frame_err = 1'b0;
-            gap = if i_valid ? 0 : if gap == GAP_TIMEOUT as GW ? gap : gap + 1;
+            gap         = if i_valid ? 0 : if gap == GAP_TIMEOUT as GW ? gap : gap + 1;
             if crc_bits != 0 {
                 crc      = if crc[7] ? {crc[6:0], 1'b0} ^ 8'h07 : {crc[6:0], 1'b0};
                 crc_bits = crc_bits - 1;
@@ -82,7 +82,7 @@ pub module CtrlFrameRx #(
                 o_frame_err = 1'b1;
             } else if i_valid {
                 case state {
-                    State::Sof: if i_data == SOF {
+                    State::Sof : if i_data == SOF {
                         state = State::Addr;
                         crc   = 0;
                     }

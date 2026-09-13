@@ -4,7 +4,8 @@
 # Please note that the relative path is based on the project directory, not the directory which contains this file.
 
 TARGET ?= tangnano1k
-BITSTREAM := build/$(TARGET)/impl/pnr/$(PROJECT_NAME).fs
+BUILD_SUFFIX ?=
+BITSTREAM := build/$(TARGET)$(BUILD_SUFFIX)/impl/pnr/$(PROJECT_NAME).fs
 SRC_DIR := $(abspath src/$(TARGET))
 RTL_DIR := $(abspath ../../rtl)
 UTIL_DIR := $(abspath ../../util)
@@ -36,7 +37,7 @@ PROJECT_TCL ?= ../../project.tcl
 all: synthesis
 
 $(BITSTREAM): $(SRCS)
-	mkdir -p build/$(TARGET) && cd build/$(TARGET) && $(GW_SH) $(PROJECT_TCL) $(SRC_DIR) $(RTL_DIR) $(TARGET) $(DEVICE_FAMILY) $(DEVICE_PART) $(PROJECT_NAME) $(PROJECT_ADDITIONAL_ARGS)
+	mkdir -p build/$(TARGET)$(BUILD_SUFFIX) && cd build/$(TARGET)$(BUILD_SUFFIX) && $(GW_SH) $(PROJECT_TCL) $(SRC_DIR) $(RTL_DIR) $(TARGET) $(DEVICE_FAMILY) $(DEVICE_PART) $(PROJECT_NAME) $(PROJECT_ADDITIONAL_ARGS)
 
 synthesis: $(BITSTREAM)
 
@@ -63,7 +64,7 @@ else
 endif
 
 clean:
-	-$(RM) -r build/$(TARGET)
+	-$(RM) -r build/$(TARGET)$(BUILD_SUFFIX)
 ifneq ($(PROJECT_ADDITIONAL_CLEAN),)
 	-$(RM) $(PROJECT_ADDITIONAL_CLEAN)
 endif

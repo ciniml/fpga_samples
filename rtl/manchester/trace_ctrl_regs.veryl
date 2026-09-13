@@ -21,8 +21,8 @@
  *  0x0C+2MB..  POST          : 16-bit records to send after the trigger (0 = unlimited)
  */
 pub module TraceCtrlRegs #(
-    param WIDTH         : u32  = 16,
-    param RESET_CYCLES  : u32  = 16,
+    param WIDTH         : u32   = 16  ,
+    param RESET_CYCLES  : u32   = 16  ,
     param ENABLE_DEFAULT: logic = 1'b1,
 ) (
     i_clk: input clock,
@@ -44,8 +44,8 @@ pub module TraceCtrlRegs #(
     o_trig_value : output logic<WIDTH>,
     o_post       : output logic<16>   ,
 ) {
-    const MB: u32 = (WIDTH + 7) / 8;
-    const RW: u32 = if RESET_CYCLES <= 1 ? 1 : $clog2(RESET_CYCLES + 1);
+    const MB     : u32 = (WIDTH + 7) / 8;
+    const RW     : u32 = if RESET_CYCLES <= 1 ? 1 : $clog2(RESET_CYCLES + 1);
     const A_TMASK: u32 = 12;
     const A_TVAL : u32 = 12 + MB;
     const A_POST : u32 = 12 + 2 * MB;

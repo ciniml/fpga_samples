@@ -1,0 +1,79 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file pulse_reset_tx.veryl
+ * @brief Minimal "reset only" reverse channel: slow square-wave burst source.
+ *
+ * Alternative to the Manchester byte link when the target only needs a
+ * remote reset. The line idles as a fast square wave (IDLE_HALF clocks per
+ * level) so the AC-coupled link stays centred, exactly like the Manchester
+ * idle pattern. On i_req the line holds HALVES long levels of HALF_CYCLES
+ * clocks each (starting with the opposite of the current level), then the
+ * idle square wave resumes. The receiver (PulseResetRx) counts long levels
+ * bounded by edges, so polarity and the comparator's idle offset do not
+ * matter. Bursting from a DC idle level does NOT work reliably: after a
+ * long static level the AC-coupled "return" edges only reach ~2 % of the
+ * swing (HALF / tau), inside a typical LVDS receiver threshold.
+ *
+ * HALF_CYCLES must be much longer than IDLE_HALF and any Manchester run
+ * (3 half-bits) and much shorter than the AC-coupling time constant.
+ * Can share the wire with ManchesterTx: mux o_txd in while o_busy is high
+ * (Manchester idles with a square wave as well).
+ */
+pub module PulseResetTx #(
+    param HALF_CYCLES: u32 = 1000, // clocks per long level (>= 2)
+    param HALVES     : u32 = 4   , // long levels per burst (>= 2)
+    param IDLE_HALF  : u32 = 25  , // clocks per idle level (>= 1)
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_req : input  logic, // start a burst (one clock is enough; ignored while busy)
+    o_busy: output logic,
+    o_txd : output logic,
+) {
+    const CW       : u32 = $clog2(HALF_CYCLES);
+    const HW       : u32 = $clog2(HALVES + 1);
+    const CYC_LAST : u32 = HALF_CYCLES - 1;
+    const IDLE_LAST: u32 = IDLE_HALF - 1;
+    const HB_LAST  : u32 = HALVES - 1;
+
+    var cyc : logic<CW>;
+    var hb  : logic<HW>;
+    var pend: logic    ; // request latched until the next idle level boundary
+
+    let half_end: logic = cyc == (if o_busy ? CYC_LAST as CW : IDLE_LAST as CW);
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            cyc    = 0;
+            hb     = 0;
+            pend   = 1'b0;
+            o_busy = 1'b0;
+            o_txd  = 1'b0;
+        } else {
+            if i_req && !o_busy {
+                pend = 1'b1;
+            }
+            cyc = if half_end ? 0 : cyc + 1;
+            if half_end {
+                o_txd = ~o_txd;
+                if !o_busy {
+                    if i_req || pend {
+                        o_busy = 1'b1;
+                        pend   = 1'b0;
+                        hb     = 0;
+                    }
+                } else if hb == HB_LAST as HW {
+                    o_busy = 1'b0;
+                    hb     = 0;
+                } else {
+                    hb = hb + 1;
+                }
+            }
+        }
+    }
+}

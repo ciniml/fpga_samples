@@ -116,20 +116,34 @@ module top(
     end
 
     wire ctrl_tx_ready;
-    wire ctrl_txd;
     always @(posedge clk_in or posedge reset_in) begin
         if (reset_in)                            crp <= 5'd0;
         else if (ctrl_tx_ready && !cf_empty)     crp <= crp + 1'b1;
     end
 
+    wire man_txd;
     ManchesterTx #(.BIT_CYCLES(25)) u_ctrl_tx(   // 50MHz / 25 = 2Mbps
         .i_clk   (clk_in),
         .i_rst   (reset_in),
         .i_valid (!cf_empty),
         .i_data  (cfifo[crp[3:0]]),
         .o_ready (ctrl_tx_ready),
-        .o_txd   (ctrl_txd)
+        .o_txd   (man_txd)
     );
+
+    // Reset burst for the CTRL_PULSE Nano9K variant (host command 'P'):
+    // 4 levels x 20us, takes over the line while busy. Harmless to the
+    // Manchester receiver (it just sees link loss for 80us; frames are
+    // never sent during a burst because the host waits for the 'P' reply).
+    wire pulse_req, pulse_busy, pulse_txd;
+    PulseResetTx #(.HALF_CYCLES(1000), .HALVES(4), .IDLE_HALF(25)) u_pulse_tx(
+        .i_clk  (clk_in),
+        .i_rst  (reset_in),
+        .i_req  (pulse_req),
+        .o_busy (pulse_busy),
+        .o_txd  (pulse_txd)
+    );
+    wire ctrl_txd = pulse_busy ? pulse_txd : man_txd;
 
     ELVDS_OBUF u_tx(
         .I  (ctrl_txd),
@@ -264,7 +278,8 @@ module top(
         .h_tx_data  (h_tx_data),
         .h_tx_ready (h_tx_ready),
         .o_fwd_valid (fwd_valid),
-        .o_fwd_data  (fwd_data)
+        .o_fwd_data  (fwd_data),
+        .o_pulse_req (pulse_req)
     );
 
     assign o_dat_lock    = rx_align & act_ok;

@@ -170,6 +170,10 @@ ENABLE 0/1、RESET でタイムスタンプ再始動、`Z` アボート — ALL 
 - ホストコマンド追加: `?` (上記)、`X len bytes` (バイト列を逆方向チャネルへ転送)、
   `Z` (アボート: アーム解除して IDLE へ、応答 `Z`)。**アーム中 ('S'/'A' 後、'K' 前) は `X`/`?` は
   無視される** — 設定してからアームするか、`Z` (UI の Abort) で解除する
+- リセット専用変種: `make CTRL_PULSE=1 TARGET=tangnano9k_pmod` (出力 `build/tangnano9k_pmod_pulse/`)
+  は Nano9K の受信側を `PulseResetRx` だけにする (レジスタ無し、トレースは常時有効・変化検出のみ)。
+  25K は常に `PulseResetTx` を持ち、ホストコマンド `P` (返信 `P`) で 4×20µs のバーストを Manchester
+  線に割り込ませる。UI の「Pulse reset (P)」ボタン、`host/ctrl_test.py --pulse` で確認
 - 検証: `test/e2e_ctrl_tb.sv` (Verilator, `make -C test test`) がホストコマンド →
   Manchester → 制御レジスタ → トレースTX → 8b10bデコード → キャプチャ → ダンプの
   全周回を検証 (12チェック)。デバイスプリミティブ(PLL/OSER10/IBUF)以外は実RTL

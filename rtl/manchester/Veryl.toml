@@ -11,12 +11,14 @@ omit_project_prefix = true
 include_files = [
     "test/manchester_link_body.sv",
     "test/ctrl_frame_body.sv",
+    "test/pulse_reset_body.sv",
 ]
 
 [test.verilator]
 compile_args = [
     "manchester_link_body.sv",
     "ctrl_frame_body.sv",
+    "pulse_reset_body.sv",
     "-Wno-WIDTHEXPAND",
     "-Wno-WIDTHTRUNC",
     "-Wno-CASEINCOMPLETE",

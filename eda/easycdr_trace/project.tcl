@@ -21,6 +21,11 @@ if {${TARGET} == "tangprimer25k"} {
 }
 
 set COMMON_DIR [file normalize ${SRC_DIR}/../common]
+# CTRL_PULSE=1 in the environment: reverse channel receiver = PulseResetRx only
+set CTRL_PULSE [expr {[info exists ::env(CTRL_PULSE)] && $::env(CTRL_PULSE) == "1"}]
+if {${CTRL_PULSE}} {
+    add_file -type verilog [file normalize ${SRC_DIR}/defines_pulse.v]
+}
 add_file -type verilog [file normalize ${SRC_DIR}/top.v]
 add_file -type verilog [file normalize ${COMMON_DIR}/tx_link_core.v]
 add_file -type verilog [file normalize ${COMMON_DIR}/easycdr_trace_tx.v]
@@ -30,7 +35,9 @@ add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/encoder_8b10b.
 # in rtl/manchester after editing the .veryl sources)
 if {${TARGET} == "tangprimer25k"} {
     add_file -type verilog [file normalize ${RTL_DIR}/manchester/manchester_tx.sv]
+    add_file -type verilog [file normalize ${RTL_DIR}/manchester/pulse_reset_tx.sv]
 } else {
+    add_file -type verilog [file normalize ${RTL_DIR}/manchester/pulse_reset_rx.sv]
     add_file -type verilog [file normalize ${RTL_DIR}/manchester/manchester_rx.sv]
     add_file -type verilog [file normalize ${RTL_DIR}/manchester/ctrl_frame_rx.sv]
     add_file -type verilog [file normalize ${RTL_DIR}/manchester/trace_ctrl_regs.sv]
