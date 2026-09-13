@@ -26,6 +26,9 @@ if {${USE_IP}} { append defs "`define USE_EASYCDR_IP\n" }
 if {[info exists ::env(DYN_DLY1)] && $::env(DYN_DLY1) == "1"} { append defs "`define DYN_DLY1\n" }
 if {[info exists ::env(DYN_DLY0)] && $::env(DYN_DLY0) == "1"} { append defs "`define DYN_DLY0\n" }
 if {[info exists ::env(ADAPT_DLY1)] && $::env(ADAPT_DLY1) == "1"} { append defs "`define ADAPT_DLY1\n" }
+if {[info exists ::env(IODLY_TEST)] && $::env(IODLY_TEST) == "1"} { append defs "`define IODLY_TEST\n" }
+if {[info exists ::env(IODLY_DYN)] && $::env(IODLY_DYN) == "1"} { append defs "`define IODLY_DYN\n" }
+if {[info exists ::env(IODLY_STATIC)]} { append defs "`define IODLY_STATIC $::env(IODLY_STATIC)\n" }
 set fh [open defines_gen.v w]; puts -nonewline $fh $defs; close $fh
 add_file -type verilog [file normalize defines_gen.v]
 add_file -type verilog [file normalize ${SRC_DIR}/top.v]

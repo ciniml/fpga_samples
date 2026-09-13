@@ -19,6 +19,11 @@ IO_PORT "i_serial_p" PULL_MODE=NONE DRIVE=OFF BANK_VCCIO=3.3 CTLE=HIGH;
 // (Direct-wire loopback without the modules used F5,G5 = pmod0 pins 1/7.)
 IO_LOC "o_serial_p" G7,G8;
 IO_PORT "o_serial_p" IO_TYPE=LVPECL33E PULL_MODE=NONE DRIVE=16 BANK_VCCIO=3.3;
+// Standalone IODELAY test: tone out on pmod2 L1 (D10/D11), back in on pmod0 L0 (F5/G5)
+IO_LOC "o_tone_p" D10,D11;
+IO_PORT "o_tone_p" IO_TYPE=LVPECL33E PULL_MODE=NONE DRIVE=16 BANK_VCCIO=3.3;
+IO_LOC "i_tone_p" F5,G5;
+IO_PORT "i_tone_p" PULL_MODE=NONE DRIVE=OFF BANK_VCCIO=3.3;
 IO_LOC "o_dat_lock" B2;
 IO_PORT "o_dat_lock" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
 IO_LOC "o_dat_err" C2;

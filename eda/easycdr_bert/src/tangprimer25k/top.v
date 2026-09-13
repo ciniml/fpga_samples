@@ -20,6 +20,10 @@ module top(
     input            clk_in,          // 50MHz
     input            i_serial_p,
     input            i_serial_n,
+    output           o_tone_p,        // pmod2 L1 (D10/D11): 125MHz tone for the standalone IODELAY test
+    output           o_tone_n,
+    input            i_tone_p,        // pmod0 L0 (F5/G5): tone back through the cable -> IODELAY under test
+    input            i_tone_n,
     output           o_serial_p,
     output           o_serial_n,
     input            reset_in,        // push button, active high
@@ -57,7 +61,7 @@ module top(
     wire [7:0] dbg_data = 8'h00;
 `else
     // ext_ctrl[0] = freeze CDR phase, [1] = TX PLL PSDIR, [2] = TX PLL PSPULSE,
-    // [3] = IODELAY_1 SDTAP, [4] = IODELAY_1 VALUE (host toggles it for edges),
+    // [3] = IODELAY_1 SDTAP, [4] = IODELAY_1 VALUE (host toggles it for edges), [5] = OSIDES32 reset,
     // [14:8] = IODELAY_1 DLYSTEP (DYN_DLY1 build only), [15] = raw sample capture trigger
 `ifdef DYN_DLY1
     localparam PHY_DYN1 = "TRUE";
@@ -81,7 +85,7 @@ module top(
         .clk_in(clk_in), .rstn_in(resetn_in),
         .i_serial_p(i_serial_p), .i_serial_n(i_serial_n),
         .i_freeze(ext_ctrl[0]),
-        .i_sdtap1(ext_ctrl[3]), .i_value1(ext_ctrl[4]), .i_dlystep1({1'b0, ext_ctrl[14:8]}),
+        .i_sdtap1(ext_ctrl[3]), .i_value1(ext_ctrl[4]), .i_dlystep1({1'b0, ext_ctrl[14:8]}), .i_osides_rst(ext_ctrl[5]),
         .o_pclk(pclk), .o_reset(rx_reset), .o_pll_lock(pll_rx_lock),
         .o_dout(rx_data), .o_dout_en(rx_data_en),
         .o_cdr_lock(cdr_lock), .o_cdr_phase(cdr_phase), .o_cdr_slip(cdr_slip), .o_dly_sat(dly_sat),
@@ -115,7 +119,11 @@ module top(
     reg [15:0] slip_cnt;
     always @(posedge pclk or posedge rx_reset)
         if (rx_reset) slip_cnt <= 16'd0; else if (cdr_slip) slip_cnt <= slip_cnt + 1'b1;
+`ifdef IODLY_TEST
+    assign ext_status = ext_status_iodly;
+`else
     assign ext_status = {slip_cnt[3:0], dly_sat, cdr_phase, cdr_lock};
+`endif
 `endif
 
     //------------------------------------------------------------------
@@ -134,6 +142,52 @@ module top(
     CLKDIV u_clkdiv_tx(.HCLKIN(txclk_500m), .RESETN(resetn_in), .CALIB(1'b0), .CLKOUT(txclk_125m));
     defparam u_clkdiv_tx.DIV_MODE = "4";
     wire tx_rst = reset_in | ~pll_tx_lock;
+
+    //------------------------------------------------------------------
+    // Standalone IODELAY test (IODLY_TEST=1): a 500MHz tone straight from the
+    // DPS-shifted TX clock (no divider: CLKDIV re-syncs on phase steps and
+    // breaks the linear phase ramp) goes out on pmod2 L1,
+    // comes back on pmod0 L0, through an IODELAY in dynamic mode, and is
+    // sampled by a flip-flop on the RX pclk (fixed phase). The fraction of
+    // ones over 255 samples (ext_status) locates the tone edge relative to
+    // the sampling instant; moving the IODELAY must move that edge.
+    //------------------------------------------------------------------
+    wire tone_ser;
+`ifdef IODLY_TEST
+    ODDR u_tone_oddr(.Q0(tone_ser), .Q1(), .D0(1'b1), .D1(1'b0), .TX(1'b0), .CLK(txclk_500m));
+    wire tone_in, tone_dly, dly_df;
+    TLVDS_IBUF u_tone_ibuf(.O(tone_in), .I(i_tone_p), .IB(i_tone_n));
+`ifndef IODLY_STATIC
+`define IODLY_STATIC 0
+`endif
+`ifdef IODLY_DYN
+    localparam IODLY_DYN_EN = "TRUE";
+`else
+    localparam IODLY_DYN_EN = "FALSE";
+`endif
+    IODELAY #(.C_STATIC_DLY(`IODLY_STATIC), .DYN_DLY_EN(IODLY_DYN_EN), .ADAPT_EN("FALSE")) u_tone_dly(
+        .DO(tone_dly), .DF(dly_df), .DI(tone_in),
+        .SDTAP(ext_ctrl[3]), .VALUE(ext_ctrl[4]), .DLYSTEP({1'b0, ext_ctrl[14:8]}));
+    reg        tone_s0, tone_s1;
+    reg [7:0]  tone_cnt, tone_ones, tone_acc;
+    always @(posedge pclk) begin
+        tone_s0 <= tone_dly;
+        tone_s1 <= tone_s0;
+        if (tone_cnt == 8'd254) begin
+            tone_ones <= tone_acc + tone_s1;
+            tone_acc  <= 8'd0;
+            tone_cnt  <= 8'd0;
+        end else begin
+            tone_acc <= tone_acc + tone_s1;
+            tone_cnt <= tone_cnt + 1'b1;
+        end
+    end
+    wire [7:0] ext_status_iodly = tone_ones;   // 0..255 = ones per 255 samples
+`else
+    assign tone_ser = 1'b0;
+    wire [7:0] ext_status_iodly = 8'h00;
+`endif
+    ELVDS_OBUF u_tone_obuf(.I(tone_ser), .O(o_tone_p), .OB(o_tone_n));
 
     //------------------------------------------------------------------
     // BERT core (pclk) + host bridge (clk_in)

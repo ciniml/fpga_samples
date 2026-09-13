@@ -20,6 +20,18 @@ ifeq ($(ADAPT_DLY1),1)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_adapt1
 export ADAPT_DLY1
 endif
+ifeq ($(IODLY_TEST),1)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_iodly
+export IODLY_TEST
+ifeq ($(IODLY_DYN),1)
+BUILD_SUFFIX := $(BUILD_SUFFIX)dyn
+export IODLY_DYN
+endif
+ifneq ($(IODLY_STATIC),)
+BUILD_SUFFIX := $(BUILD_SUFFIX)s$(IODLY_STATIC)
+export IODLY_STATIC
+endif
+endif
 
 SRCS := src/$(TARGET)/pins.cst $(wildcard src/$(TARGET)/*.sdc) \
         $(wildcard src/$(TARGET)/*.v) $(wildcard src/$(TARGET)/*/*.v) \

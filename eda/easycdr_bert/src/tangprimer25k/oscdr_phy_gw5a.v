@@ -26,6 +26,7 @@ module oscdr_phy_gw5a #(
     input  wire        i_sdtap1,      // dynamic IODELAY_1 control (DYN1 = "TRUE" only)
     input  wire        i_value1,
     input  wire [7:0]  i_dlystep1,
+    input  wire        i_osides_rst,  // extra OSIDES32-only reset (experiment: re-latch a loaded delay code)
 
     output wire        o_pclk,
     output wire        o_reset,
@@ -119,7 +120,7 @@ module oscdr_phy_gw5a #(
         .D(serial_se),
         .PCLK(pclk),
         .FCLKP(fclkp), .FCLKQP(fclkqp), .FCLKN(fclkn), .FCLKQN(fclkqn),
-        .RESET(reset),
+        .RESET(reset | i_osides_rst),
         .SDTAP0(i_sdtap1), .VALUE0(i_value1), .DLYSTEP0(i_dlystep1),
         .SDTAP1(i_sdtap1), .VALUE1(i_value1), .DLYSTEP1(i_dlystep1));
 

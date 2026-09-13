@@ -27,12 +27,15 @@ class Bert:
         r = api(self.url, {"write": [0x57, ad, d & 0xff], "read": 1}); assert r == [0x6B], f"W {ad:02x} -> {r}"
     def r(self, ad):
         return api(self.url, {"write": [0x52, ad], "read": 1})[0]
-    def ctrl(self, freeze=None, sdtap=None, value=None, dly=None):
+    def ctrl(self, freeze=None, sdtap=None, value=None, dly=None, orst=None):
         if freeze is not None: self.c30 = (self.c30 & ~1) | (1 if freeze else 0)
+        if orst is not None:   self.c30 = (self.c30 & ~32) | (32 if orst else 0)
         if sdtap is not None:  self.c30 = (self.c30 & ~8) | (8 if sdtap else 0)
         if value is not None:  self.c30 = (self.c30 & ~16) | (16 if value else 0)
         if dly is not None:    self.c31 = (self.c31 & 0x80) | (dly & 0x7f)
         self.w(0x30, self.c30); self.w(0x31, self.c31)
+    def osides_reset(self):
+        self.ctrl(orst=True); time.sleep(0.01); self.ctrl(orst=False); time.sleep(0.05)
     def pulse_value(self, n, start_high=False):
         """n VALUE pulses; start_high=False gives rising edges first (low->high->low)"""
         for _ in range(n):
@@ -79,7 +82,13 @@ def main():
     time.sleep(0.05)
     if a.mode == "static":
         measure(b, "static build: DLY0=0 / DLY1=21 (baseline)")
+        b.osides_reset(); measure(b, "static build after OSIDES32 reset pulse")
         return
+    print("E7: load then OSIDES32 reset pulse")
+    for d in (21, 42):
+        b.ctrl(sdtap=False, dly=d); time.sleep(0.02); b.osides_reset(); measure(b, f"  SDTAP1=0 DLYSTEP1={d} + reset")
+        b.ctrl(sdtap=True); time.sleep(0.02); b.osides_reset(); measure(b, f"  SDTAP1=1 DLYSTEP1={d} + reset")
+        b.pulse_value(10); b.osides_reset(); measure(b, f"  +10 VALUE pulses + reset")
     # dynamic build
     print("E2: dynamic mode, SDTAP1=0 (load), DLYSTEP1 = 0 / 21 / 42 / 80")
     for d in (0, 21, 42, 80):
