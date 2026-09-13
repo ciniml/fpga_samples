@@ -1,0 +1,60 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file bit_gearbox.veryl
+ * @brief Variable-count bit input (0..IN_MAX bits per clock, bit 0
+ *        earliest) -> fixed OUT_W-bit words with a valid strobe.
+ *
+ * OUT_W must be >= IN_MAX so at most one word is emitted per clock.
+ * o_word[0] is the earliest bit (matches the EasyCDR raw dout_o order
+ * verified with the BERT).
+ */
+pub module BitGearbox #(
+    param IN_MAX: u32 = 9 ,
+    param OUT_W : u32 = 16,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_bits : input logic<IN_MAX>,
+    i_nbits: input logic<4>     ,
+
+    o_valid: output logic       ,
+    o_word : output logic<OUT_W>,
+) {
+    const ACCW: u32 = OUT_W + IN_MAX;
+    const CNTW: u32 = $clog2(ACCW + 1);
+
+    var acc  : logic<ACCW>;
+    var count: logic<CNTW>;
+
+    var acc_in  : logic<ACCW>;
+    var count_in: logic<CNTW>;
+    always_comb {
+        acc_in   = acc | ((i_bits as ACCW) << count);
+        count_in = count + i_nbits;
+    }
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            acc     = 0;
+            count   = 0;
+            o_valid = 1'b0;
+            o_word  = 0;
+        } else {
+            o_valid = 1'b0;
+            if count_in >= OUT_W as CNTW {
+                o_valid = 1'b1;
+                o_word  = acc_in[OUT_W - 1:0];
+                acc     = acc_in >> OUT_W;
+                count   = count_in - OUT_W as CNTW;
+            } else {
+                acc   = acc_in;
+                count = count_in;
+            }
+        }
+    }
+}

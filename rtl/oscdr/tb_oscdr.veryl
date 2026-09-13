@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_oscdr.veryl
+ * @brief OsCdr loopback tests (body: test/oscdr_link_body.sv).
+ *  oscdr_0ppm / _p1000 / _m1000 / _p5000 / _m5000 : frequency offsets
+ *  oscdr_jitter : 0 ppm with 0.15 UI peak edge jitter
+ *  oscdr_scan   : frozen-phase eye scan printout (informational)
+ */
+module TbOscdr {}
+
+#[test(oscdr_0ppm)]
+embed (inline) sv{{{
+module oscdr_0ppm; oscdr_link_body #(.RUN(1)) body(); endmodule
+}}}
+#[test(oscdr_p1000)]
+embed (inline) sv{{{
+module oscdr_p1000; oscdr_link_body #(.PPM(1000), .PHASE0(0.02), .RUN(1)) body(); endmodule
+}}}
+#[test(oscdr_m1000)]
+embed (inline) sv{{{
+module oscdr_m1000; oscdr_link_body #(.PPM(-1000), .PHASE0(0.20), .RUN(1)) body(); endmodule
+}}}
+#[test(oscdr_p5000)]
+embed (inline) sv{{{
+module oscdr_p5000; oscdr_link_body #(.PPM(5000), .RUN(1)) body(); endmodule
+}}}
+#[test(oscdr_m5000)]
+embed (inline) sv{{{
+module oscdr_m5000; oscdr_link_body #(.PPM(-5000), .RUN(1)) body(); endmodule
+}}}
+#[test(oscdr_jitter)]
+embed (inline) sv{{{
+module oscdr_jitter; oscdr_link_body #(.JITTER(0.15), .RUN(1)) body(); endmodule
+}}}
+#[test(oscdr_scan)]
+embed (inline) sv{{{
+module oscdr_scan; oscdr_link_body #(.JITTER(0.10), .SCAN(1), .NWORDS(2000), .RUN(1)) body(); endmodule
+}}}

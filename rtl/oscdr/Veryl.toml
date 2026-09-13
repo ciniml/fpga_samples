@@ -1,0 +1,28 @@
+[project]
+name    = "oscdr"
+version = "0.1.0"
+
+[build]
+clock_type          = "posedge"
+reset_type          = "sync_high"
+omit_project_prefix = true
+
+[test]
+include_files = [
+    "test/oscdr_link_body.sv",
+]
+
+[test.verilator]
+compile_args = [
+    "oscdr_link_body.sv",
+    "-Wno-WIDTHEXPAND",
+    "-Wno-WIDTHTRUNC",
+    "-Wno-CASEINCOMPLETE",
+    "-Wno-UNUSEDSIGNAL",
+    "-Wno-UNDRIVEN",
+    "-Wno-PINMISSING",
+    "-Wno-INITIALDLY",
+    "-Wno-TIMESCALEMOD",
+    "-Wno-UNUSEDPARAM",
+    "-Wno-REALCVT",
+]
