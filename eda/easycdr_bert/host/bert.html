@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EasyCDR BERT</title>
+<style>
+  :root { --bg:#f7f7f5; --fg:#222; --mut:#666; --line:#ccc; --acc:#2a6fdb; --bad:#d33; --ok:#2a8a3a; --panel:#fff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#151618; --fg:#e6e6e6; --mut:#999; --line:#444; --acc:#5b9cff; --bad:#ff6b6b; --ok:#5fcf6f; --panel:#1f2124; }
+  }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px system-ui,sans-serif; }
+  header { padding:10px 16px; border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0 12px 0 0; }
+  main { padding:12px 16px; display:grid; gap:12px; }
+  fieldset { border:1px solid var(--line); border-radius:6px; background:var(--panel); }
+  legend { color:var(--mut); font-size:12px; }
+  label { display:inline-flex; align-items:center; gap:4px; margin-right:12px; }
+  input[type=number], input[type=text], select { width:7em; font:inherit; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:2px 4px; }
+  button { font:inherit; padding:4px 12px; border:1px solid var(--line); border-radius:4px; background:var(--panel); color:var(--fg); cursor:pointer; }
+  button.primary { background:var(--acc); color:#fff; border-color:var(--acc); }
+  button:disabled { opacity:.4; cursor:default; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px; }
+  .stat { border:1px solid var(--line); border-radius:6px; padding:8px 10px; }
+  .stat .k { color:var(--mut); font-size:12px; }
+  .stat .v { font:600 22px/1.2 ui-monospace,monospace; }
+  .lock { color:var(--ok); } .nolock { color:var(--bad); }
+  #status { color:var(--mut); font-family:monospace; white-space:pre-wrap; }
+  #chart { width:100%; height:220px; display:block; background:var(--panel); border:1px solid var(--line); border-radius:6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>EasyCDR BERT</h1>
+  <button id="btnSerial">Connect (Serial)</button>
+  <button id="btnUsb">Connect (USB)</button>
+  <span id="srvBox" hidden><select id="srvPort"></select> <button id="btnServer">Connect (Server)</button></span>
+  <button id="btnDisc" disabled>Disconnect</button>
+  <label>baud <select id="baud"><option>115200</option><option>921600</option><option>2000000</option></select></label>
+  <span id="conn" style="color:var(--mut)">not connected</span>
+</header>
+<main>
+  <fieldset>
+    <legend>Pattern</legend>
+    <div class="row">
+      <label>TX mode <select id="txMode"><option value="0">PRBS</option><option value="1">fixed word</option><option value="2">clock 0101</option><option value="3">zero</option></select></label>
+      <label>TX PRBS <select id="txSel"><option value="0">PRBS7</option><option value="1">PRBS9</option><option value="2">PRBS15</option><option value="3">PRBS23</option><option value="4">PRBS31</option></select></label>
+      <label>RX PRBS <select id="rxSel"><option value="0">PRBS7</option><option value="1">PRBS9</option><option value="2">PRBS15</option><option value="3">PRBS23</option><option value="4">PRBS31</option></select></label>
+      <label>fixed <input type="text" id="fixed" value="0xec92"></label>
+      <label><input type="checkbox" id="txInv"> TX invert</label>
+      <label><input type="checkbox" id="rxInv"> RX invert</label>
+      <label><input type="checkbox" id="rxRev"> RX bit-reverse</label>
+      <label><input type="checkbox" id="txEn" checked> TX enable</label>
+      <button id="btnApply" class="primary" disabled>Apply</button>
+      <button id="btnInject" disabled>Inject 1 error</button>
+      <button id="btnClear" disabled>Clear counters</button>
+    </div>
+  </fieldset>
+  <fieldset>
+    <legend>Eye scan (own CDR build: RX phase frozen, TX PLL phase stepped 125 ps per point)</legend>
+    <div class="row">
+      <label>steps <input type="number" id="eyeSteps" value="16" min="1" max="64"></label>
+      <label>dwell [ms] <input type="number" id="eyeDwell" value="100" min="10"></label>
+      <button id="btnEye" disabled>Run eye scan</button>
+      <span id="eyeInfo" style="color:var(--mut)"></span>
+    </div>
+    <canvas id="eye" style="width:100%;height:200px;display:block;background:var(--panel);border:1px solid var(--line);border-radius:6px"></canvas>
+  </fieldset>
+  <fieldset>
+    <legend>Measurement <label style="margin-left:12px"><input type="checkbox" id="live" checked> live (1 s)</label> <label>bit rate [Mbps] <input type="number" id="rate" value="1000"></label> <label>link clk [MHz] <input type="number" id="lclk" value="125"></label></legend>
+    <div class="stats">
+      <div class="stat"><div class="k">lock</div><div class="v" id="sLock">-</div></div>
+      <div class="stat"><div class="k">bits</div><div class="v" id="sBits">-</div></div>
+      <div class="stat"><div class="k">errors</div><div class="v" id="sErrs">-</div></div>
+      <div class="stat"><div class="k">BER</div><div class="v" id="sBer">-</div></div>
+      <div class="stat"><div class="k">BER (95% conf. upper)</div><div class="v" id="sBerU">-</div></div>
+      <div class="stat"><div class="k">unlocks</div><div class="v" id="sUnl">-</div></div>
+      <div class="stat"><div class="k">elapsed</div><div class="v" id="sTime">-</div></div>
+      <div class="stat"><div class="k">RX activity / PLLs</div><div class="v" id="sAct">-</div></div>
+    </div>
+    <canvas id="chart"></canvas>
+    <div id="status"></div>
+  </fieldset>
+</main>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const log = s => { $('status').textContent = (s + '\n' + $('status').textContent).split('\n').slice(0, 8).join('\n'); };
+
+class ByteQueue {
+  constructor() { this.chunks = []; this.len = 0; this.waiters = []; this.closed = false; }
+  push(u8) { if (u8.length) { this.chunks.push(u8); this.len += u8.length; } this._wake(); }
+  close() { this.closed = true; this._wake(); }
+  _wake() { const w = this.waiters; this.waiters = []; w.forEach(f => f()); }
+  flush() { this.chunks = []; this.len = 0; }
+  async read(n, onProgress, abort) {
+    while (this.len < n) {
+      if (this.closed) throw new Error('transport closed');
+      if (abort && abort.aborted) throw new Error('aborted');
+      onProgress && onProgress(this.len);
+      await new Promise(r => { this.waiters.push(r); if (abort) abort.addEventListener('abort', r, {once:true}); });
+    }
+    const out = new Uint8Array(n); let o = 0;
+    while (o < n) {
+      const c = this.chunks[0], take = Math.min(c.length, n - o);
+      out.set(c.subarray(0, take), o); o += take;
+      if (take === c.length) this.chunks.shift(); else this.chunks[0] = c.subarray(take);
+    }
+    this.len -= n; onProgress && onProgress(n);
+    return out;
+  }
+}
+
+class SerialTransport {
+  static async open(baud) {
+    if (!navigator.serial) throw new Error('Web Serial API unavailable (Chrome/Edge, https or file:// required)');
+    const port = await navigator.serial.requestPort();
+    await port.open({ baudRate: baud, bufferSize: 65536 });
+    const t = new SerialTransport(); t.port = port; t.q = new ByteQueue();
+    t.writer = port.writable.getWriter();
+    t.reader = port.readable.getReader();
+    (async () => { try { for (;;) { const {value, done} = await t.reader.read(); if (done) break; t.q.push(value); } }
+                  catch (e) { console.warn(e); } finally { t.q.close(); } })();
+    t.name = `serial @${baud}`;
+    return t;
+  }
+  async write(u8) { await this.writer.write(u8); }
+  read(n, p, a) { return this.q.read(n, p, a); }
+  flush() { this.q.flush(); }
+  async close() { try { await this.reader.cancel(); } catch {} try { this.writer.releaseLock(); } catch {} try { await this.port.close(); } catch {} }
+}
+
+// WebUSB: vendor-class device (rtl/usb UsbDevice, VID 0x1209) with EP1 bulk
+// OUT/IN. Each bulk IN transfer requests up to 64 KiB; the device ends a
+// dump with a short packet, so the read loop stops when it gets one.
+class UsbTransport {
+  static async open() {
+    if (!navigator.usb) throw new Error('WebUSB unavailable');
+    const dev = await navigator.usb.requestDevice({ filters: [{ vendorId: 0x1209 }] });
+    await dev.open();
+    if (dev.configuration === null) await dev.selectConfiguration(1);
+    await dev.claimInterface(0);
+    const t = new UsbTransport(); t.dev = dev; t.q = new ByteQueue(); t.epIn = 1; t.epOut = 1;
+    t.name = `usb ${dev.productName || ''} (VID 0x${dev.vendorId.toString(16)})`;
+    return t;
+  }
+  async write(u8) { await this.dev.transferOut(this.epOut, u8); }
+  async read(n, p, a) {
+    while (this.q.len < n) {
+      if (a && a.aborted) throw new Error('aborted');
+      const r = await this.dev.transferIn(this.epIn, Math.min(65536, Math.max(512, n - this.q.len)));
+      if (r.status !== 'ok') throw new Error('usb transferIn: ' + r.status);
+      this.q.push(new Uint8Array(r.data.buffer, r.data.byteOffset, r.data.byteLength));
+      p && p(this.q.len);
+    }
+    return this.q.read(n, p, a);
+  }
+  flush() { this.q.flush(); }
+  async close() { try { await this.dev.close(); } catch {} }
+}
+
+// Served by util/serial_bridge (Rust): the server owns the serial port and
+// exposes it as POST /api/xfer {write, read, timeout_ms}. Works in any
+// browser and from other machines; no Web Serial / WebUSB needed.
+async function api(path, body, signal) {
+  const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}), signal });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+class HttpTransport {
+  static async open(port, baud) {
+    const r = await api('/api/open', { port, baud });
+    const t = new HttpTransport(); t.name = `server ${r.port} @${r.baud}`; return t;
+  }
+  async write(u8) { await api('/api/xfer', { write: Array.from(u8), read: 0 }); }
+  async read(n, onProgress, abort) {
+    const out = new Uint8Array(n); let got = 0;
+    try {
+      while (got < n) {
+        const r = await api('/api/xfer', { write: [], read: Math.min(4096, n - got), timeout_ms: 600000 }, abort);
+        out.set(r.data, got); got += r.data.length; onProgress && onProgress(got);
+        if (r.timeout) throw new Error(`timeout after ${got}/${n} bytes`);
+      }
+    } catch (e) {
+      if (e.name === 'AbortError') { this.flush(); throw new Error('aborted'); }
+      throw e;
+    }
+    return out;
+  }
+  flush() { api('/api/flush').catch(() => {}); }
+  async close() { await api('/api/close'); }
+}
+const SERVED = location.protocol.startsWith('http');
+async function initServerUi() {
+  if (!SERVED) return;
+  try {
+    const ports = await (await fetch('/api/ports')).json(), st = await (await fetch('/api/state')).json();
+    const sel = $('srvPort'); sel.innerHTML = '';
+    for (const p of ports) { const o = document.createElement('option'); o.value = p.name; o.textContent = `${p.name} (${p.kind})`; sel.appendChild(o); }
+    if (st.port) { if (![...sel.options].some(o => o.value === st.port)) { const o = document.createElement('option'); o.value = st.port; o.textContent = st.port; sel.appendChild(o); } sel.value = st.port; }
+    $('srvBox').hidden = false;
+  } catch (e) { log('server: ' + e.message); }
+}
+
+
+// ---------------------------------------------------------------------------
+// BertHost protocol: 'W' a d -> 'k'; 'R' a -> 1 byte; 'B' a n -> n bytes; 'I' -> "BERT"+ver
+// ---------------------------------------------------------------------------
+let transport = null, timer = null, busy = false;
+const REG = { CTRL: 0x00, TX_MODE: 0x01, TX_SEL: 0x02, RX_SEL: 0x03, FIXED_L: 0x04, FIXED_H: 0x05, STATUS: 0x08, SNAP: 0x10 };
+async function wreg(a, d) { await transport.write(new Uint8Array([0x57, a, d])); const r = await transport.read(1); if (r[0] !== 0x6b) throw new Error('write nack'); }
+async function rreg(a) { await transport.write(new Uint8Array([0x52, a])); return (await transport.read(1))[0]; }
+async function burst(a, n) { await transport.write(new Uint8Array([0x42, a, n])); return await transport.read(n); }
+async function ident() { transport.flush(); await transport.write(new Uint8Array([0x49])); const r = await transport.read(5); if (String.fromCharCode(...r.slice(0, 4)) !== 'BERT') throw new Error('no BERT ident'); return r[4]; }
+
+function ctrlByte(extra = 0) {
+  return ($('txEn').checked ? 1 : 0) | 2 | ($('rxInv').checked ? 0x20 : 0) | ($('rxRev').checked ? 0x40 : 0) | ($('txInv').checked ? 0x80 : 0) | extra;
+}
+async function apply() {
+  const f = Number(BigInt($('fixed').value) & 0xffffn);
+  await wreg(REG.TX_MODE, +$('txMode').value); await wreg(REG.TX_SEL, +$('txSel').value); await wreg(REG.RX_SEL, +$('rxSel').value);
+  await wreg(REG.FIXED_L, f & 0xff); await wreg(REG.FIXED_H, f >> 8);
+  await wreg(REG.CTRL, ctrlByte(0x04));   // + CLEAR
+  history.length = 0; log('applied, counters cleared');
+}
+const history = [];   // {t, ber, errs, locked}
+async function poll() {
+  if (busy || !transport) return; busy = true;
+  try {
+    await wreg(REG.CTRL, ctrlByte(0x08));               // SNAP
+    const s = await burst(REG.SNAP, 24), st = await rreg(REG.STATUS);
+    const le = (o, n) => { let v = 0n; for (let i = n - 1; i >= 0; i--) v = (v << 8n) | BigInt(s[o + i]); return v; };
+    const bits = le(0, 8), errs = le(8, 8), unl = Number(le(16, 4)), tcyc = Number(le(20, 4));
+    const locked = !!(st & 1), act = !!(st & 2), pll = !!(st & 4);
+    const ber = bits > 0n ? Number(errs) / Number(bits) : NaN;
+    // 95% upper bound (Poisson): 3/N for 0 errors, else (errs + 1.96*sqrt(errs))/N approx
+    const berU = bits > 0n ? (errs === 0n ? 3 / Number(bits) : (Number(errs) + 1.96 * Math.sqrt(Number(errs))) / Number(bits)) : NaN;
+    const secs = tcyc * 256 / (+$('lclk').value * 1e6);   // SNAP_TIMER counts link clocks / 256
+    $('sLock').textContent = locked ? 'LOCKED' : 'no lock'; $('sLock').className = 'v ' + (locked ? 'lock' : 'nolock');
+    $('sBits').textContent = fmtN(bits); $('sErrs').textContent = errs.toString();
+    $('sBer').textContent = isNaN(ber) ? '-' : ber === 0 ? '0 (< ' + berU.toExponential(1) + ')' : ber.toExponential(2);
+    $('sBerU').textContent = isNaN(berU) ? '-' : berU.toExponential(2);
+    $('sUnl').textContent = unl; $('sTime').textContent = secs.toFixed(1) + ' s';
+    $('sAct').textContent = (act ? 'active' : 'idle') + ' / ' + (pll ? 'ok' : 'unlocked');
+    history.push({ t: secs, ber, errs: Number(errs), locked }); if (history.length > 600) history.shift();
+    drawChart();
+  } catch (e) { log('poll: ' + e.message); }
+  finally { busy = false; }
+}
+// ---- eye scan: EXT_CTRL0 (0x30) bit0 = freeze RX CDR, bit1 = PLL PSDIR (1 = back), bit2 = PSPULSE
+const EXT = { CTRL0: 0x30, FREEZE: 1, DEC: 2, PULSE: 4 };
+const eyePts = [];
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function eyeScan() {
+  const steps = +$('eyeSteps').value, dwell = +$('eyeDwell').value;
+  const st = await rreg(REG.STATUS);
+  if (!(st & 1)) { log('eye scan: PRBS not locked'); return; }
+  busy = true; eyePts.length = 0; $('btnEye').disabled = true;
+  try {
+    await wreg(EXT.CTRL0, EXT.FREEZE);
+    for (let i = 0; i <= steps; i++) {
+      if (i) { await wreg(EXT.CTRL0, EXT.FREEZE | EXT.PULSE); await wreg(EXT.CTRL0, EXT.FREEZE); }
+      await wreg(REG.CTRL, ctrlByte(0x04)); await sleep(dwell); await wreg(REG.CTRL, ctrlByte(0x08));
+      const s = await burst(REG.SNAP, 24);
+      const le = (o, n) => { let v = 0n; for (let k = n - 1; k >= 0; k--) v = (v << 8n) | BigInt(s[o + k]); return v; };
+      const bits = le(0, 8), errs = le(8, 8);
+      eyePts.push({ ps: i * 125, bits: Number(bits), errs: Number(errs), locked: bits > 0n });
+      $('eyeInfo').textContent = `step ${i}/${steps}`; drawEye();
+    }
+  } catch (e) { log('eye scan: ' + e.message); }
+  finally {
+    try { for (let i = 0; i < steps; i++) { await wreg(EXT.CTRL0, EXT.FREEZE | EXT.DEC | EXT.PULSE); await wreg(EXT.CTRL0, EXT.FREEZE | EXT.DEC); }
+          await wreg(EXT.CTRL0, 0); } catch {}
+    busy = false; $('btnEye').disabled = false;
+    // eye width = widest run of error-free locked points
+    let best = 0, cur = 0; for (const p of eyePts) { cur = (p.locked && p.errs === 0) ? cur + 1 : 0; best = Math.max(best, cur); }
+    $('eyeInfo').textContent = `done: eye opening >= ${(best - 1) * 125} ps (${((best - 1) * 125 / 1000).toFixed(2)} UI), ${eyePts.length} points`;
+  }
+}
+function drawEye() {
+  const cv = $('eye'), dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr; const g = cv.getContext('2d'); g.scale(dpr, dpr); g.clearRect(0, 0, W, H);
+  if (!eyePts.length) return;
+  const fg = getComputedStyle(document.body).color, acc = getComputedStyle(document.documentElement).getPropertyValue('--acc'), bad = getComputedStyle(document.documentElement).getPropertyValue('--bad');
+  const L = 56, B = 22, R = 10, T = 14, lo = -12, hi = 0;
+  const psMax = Math.max(1, eyePts[eyePts.length - 1].ps);
+  const xs = ps => L + ps / psMax * (W - L - R), ys = b => T + (hi - Math.log10(b)) / (hi - lo) * (H - T - B);
+  g.font = '11px monospace'; g.fillStyle = fg; g.strokeStyle = fg; g.globalAlpha = .25;
+  for (let e = hi; e >= lo; e -= 2) { const y = ys(Math.pow(10, e)); g.beginPath(); g.moveTo(L, y); g.lineTo(W - R, y); g.stroke(); g.fillText('1e' + e, 4, y + 4); }
+  for (let ui = 0; ui * 1000 <= psMax; ui++) { const x = xs(ui * 1000); g.beginPath(); g.moveTo(x, T); g.lineTo(x, H - B); g.stroke(); g.fillText(ui + ' UI', x + 2, H - 6); }
+  g.globalAlpha = 1; g.strokeStyle = acc; g.lineWidth = 1.5; g.beginPath();
+  eyePts.forEach((p, i) => { const b = !p.locked ? 0.5 : p.errs ? p.errs / p.bits : 3 / p.bits; const x = xs(p.ps), y = ys(Math.max(b, 1e-12)); i ? g.lineTo(x, y) : g.moveTo(x, y); });
+  g.stroke();
+  eyePts.forEach(p => { const b = !p.locked ? 0.5 : p.errs ? p.errs / p.bits : 3 / p.bits; const x = xs(p.ps), y = ys(Math.max(b, 1e-12));
+    g.fillStyle = !p.locked ? bad : acc; g.beginPath(); g.arc(x, y, 3, 0, 6.283); if (p.locked && !p.errs) { g.strokeStyle = acc; g.lineWidth = 1.5; g.stroke(); } else g.fill(); });
+  g.fillStyle = fg; g.fillText('BER vs TX phase offset (hollow = no errors, upper bound; red = PRBS unlocked)', L, 10);
+}
+$('btnEye').onclick = () => eyeScan();
+addEventListener('resize', drawEye);
+
+function fmtN(b) { const n = Number(b); return n >= 1e12 ? (n/1e12).toFixed(2)+'T' : n >= 1e9 ? (n/1e9).toFixed(2)+'G' : n >= 1e6 ? (n/1e6).toFixed(2)+'M' : n.toString(); }
+function drawChart() {
+  const cv = $('chart'), dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr; const g = cv.getContext('2d'); g.scale(dpr, dpr); g.clearRect(0, 0, W, H);
+  if (history.length < 2) return;
+  const fg = getComputedStyle(document.body).color, L = 60, B = 20;
+  // errors per interval (delta), log scale of cumulative BER
+  const t0 = history[0].t, t1 = history[history.length - 1].t, xs = t => L + (t - t0) / Math.max(1e-9, t1 - t0) * (W - L - 8);
+  const bers = history.map(h => h.ber).filter(b => b > 0); const lo = bers.length ? Math.floor(Math.log10(Math.min(...bers))) - 1 : -12, hi = 0;
+  const ys = b => b > 0 ? B + (hi - Math.log10(b)) / (hi - lo) * (H - 2 * B) : H - B;
+  g.font = '11px monospace'; g.fillStyle = fg; g.strokeStyle = fg; g.globalAlpha = .25;
+  for (let e = hi; e >= lo; e -= 2) { const y = ys(Math.pow(10, e)); g.beginPath(); g.moveTo(L, y); g.lineTo(W, y); g.stroke(); g.fillText('1e' + e, 4, y + 4); }
+  g.globalAlpha = 1;
+  g.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--acc'); g.lineWidth = 1.5; g.beginPath();
+  history.forEach((h, i) => { const x = xs(h.t), y = ys(h.ber); i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.stroke();
+  // unlock / no-lock intervals in red, error deltas as ticks
+  g.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--bad');
+  history.forEach((h, i) => { if (!h.locked) { const x = xs(h.t); g.beginPath(); g.moveTo(x, H - B); g.lineTo(x, H - B + 6); g.stroke(); }
+    if (i && h.errs > history[i-1].errs) { const x = xs(h.t); g.beginPath(); g.moveTo(x, B); g.lineTo(x, B + 6); g.stroke(); } });
+  g.fillStyle = fg; g.fillText('cumulative BER (blue), error events (top ticks), no-lock (bottom ticks)', L, 12);
+}
+addEventListener('resize', drawChart);
+
+async function connect(kind) {
+  try {
+    transport = kind === 'usb' ? await UsbTransport.open()
+              : kind === 'server' ? await HttpTransport.open($('srvPort').value, +$('baud').value)
+              : await SerialTransport.open(+$('baud').value);
+    const ver = await ident();
+    $('conn').textContent = `connected: ${transport.name}, BERT v${ver}`;
+    $('btnSerial').disabled = $('btnUsb').disabled = $('btnServer').disabled = true; $('btnDisc').disabled = $('btnApply').disabled = $('btnInject').disabled = $('btnClear').disabled = $('btnEye').disabled = false;
+    await apply();
+    timer = setInterval(() => { if ($('live').checked) poll(); }, 1000);
+  } catch (e) { log('connect failed: ' + e.message); if (transport) { await transport.close(); transport = null; } }
+}
+$('btnSerial').onclick = () => connect('serial');
+$('btnUsb').onclick = () => connect('usb');
+$('btnServer').onclick = () => connect('server');
+initServerUi();
+$('btnDisc').onclick = async () => { clearInterval(timer); await transport.close(); transport = null; $('conn').textContent = 'not connected';
+  $('btnSerial').disabled = $('btnUsb').disabled = $('btnServer').disabled = false; $('btnDisc').disabled = $('btnApply').disabled = $('btnInject').disabled = $('btnClear').disabled = $('btnEye').disabled = true; };
+$('btnApply').onclick = () => apply().catch(e => log('apply: ' + e.message));
+$('btnInject').onclick = () => wreg(REG.CTRL, ctrlByte(0x10)).then(() => log('injected 1 error')).catch(e => log(e.message));
+$('btnClear').onclick = () => wreg(REG.CTRL, ctrlByte(0x04)).then(() => { history.length = 0; log('counters cleared'); }).catch(e => log(e.message));
+if (!navigator.serial) { $('btnSerial').disabled = true; log('Web Serial API not available in this browser'); }
+if (!navigator.usb) { $('btnUsb').disabled = true; }
+</script>
+</body>
+</html>

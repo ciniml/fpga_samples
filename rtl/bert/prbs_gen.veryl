@@ -1,0 +1,93 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file prbs_gen.veryl
+ * @brief Parallel BERT pattern generator: WIDTH bits per clock.
+ *
+ * o_data[0] is the first bit on the wire (OSER D0). Modes:
+ *   Prbs   : selected PRBS (prbs_pkg::PrbsSel)
+ *   Fixed  : i_fixed repeated (16-bit word, low bits first; wraps
+ *            across clocks so any WIDTH works)
+ *   Clock  : 0101... (one transition per bit)
+ *   Zero   : constant 0 (drives the link idle - also the checker's
+ *            "no lock" test vector)
+ * i_inject flips the first bit of the next word once per pulse (exact
+ * single-bit error for checker verification). i_invert inverts the output.
+ */
+import prbs_pkg::*;
+
+pub module PrbsGen #(
+    param WIDTH: u32 = 8,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_enable: input logic    ,
+    i_mode  : input GenMode  ,
+    i_sel   : input PrbsSel  ,
+    i_fixed : input logic<16>,
+    i_invert: input logic    ,
+    i_inject: input logic    ,
+
+    o_data: output logic<WIDTH>,
+) {
+    var hist  : logic<HIST>;
+    var fixpos: logic<4>   ; // bit position inside i_fixed
+    var inj   : logic      ; // pending injection
+
+    var nxt_hist: logic<HIST> ;
+    var prbs_w  : logic<WIDTH>;
+    var word    : logic<WIDTH>;
+    var fixw    : logic<WIDTH>;
+    var fixpos_n: logic<4>    ;
+    var p       : logic<4>    ;
+    var flip    : logic<WIDTH>;
+
+    always_comb {
+        nxt_hist = hist;
+        for i in 0..WIDTH {
+            prbs_w[i] = prbs_next(nxt_hist, i_sel);
+            nxt_hist  = prbs_shift(nxt_hist, i_sel);
+        }
+        p = fixpos;
+        for i in 0..WIDTH {
+            fixw[i] = i_fixed[p];
+            p       = p + 1;
+        }
+        fixpos_n = p;
+        case i_mode {
+            GenMode::Prbs : word = prbs_w;
+            GenMode::Fixed: word = fixw;
+            GenMode::Clock: {
+                for i in 0..WIDTH {
+                    word[i] = i[0];
+                }
+            }
+            default: word = 0;
+        }
+        flip    = 0;
+        flip[0] = inj || i_inject;
+    }
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            hist   = {30'b0, 1'b1} << 1; // any non-zero seed (bit 1)
+            fixpos = 0;
+            inj    = 1'b0;
+            o_data = 0;
+        } else {
+            if i_enable {
+                hist   = nxt_hist;
+                fixpos = fixpos_n;
+                o_data = (word ^ flip) ^ {i_invert repeat WIDTH};
+                inj    = 1'b0;
+            } else {
+                o_data = {i_invert repeat WIDTH};
+                inj    = inj || i_inject; // remember until enabled
+            }
+        }
+    }
+}

@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file prbs_pkg.veryl
+ * @brief PRBS polynomials (ITU-T O.150 style, Fibonacci form) shared by
+ *        the generator and the checker.
+ *
+ * Sequence recurrence: s[n] = s[n-N] ^ s[n-T]
+ *   PRBS7  : x^7  + x^6  + 1   (N=7,  T=6)
+ *   PRBS9  : x^9  + x^5  + 1   (N=9,  T=5)
+ *   PRBS15 : x^15 + x^14 + 1   (N=15, T=14)
+ *   PRBS23 : x^23 + x^18 + 1   (N=23, T=18)
+ *   PRBS31 : x^31 + x^28 + 1   (N=31, T=28)
+ * The history register h holds the last 31 bits, h[0] = newest, so the
+ * next bit is h[N-1] ^ h[T-1]. Non-inverted sequences (the all-zero state
+ * is the fixed point, which the checker refuses to lock on).
+ */
+package prbs_pkg {
+    const HIST: u32 = 31;
+
+    enum GenMode: logic<2> {
+        Prbs  = 0,
+        Fixed = 1,
+        Clock = 2,
+        Zero  = 3,
+    }
+
+    enum PrbsSel: logic<3> {
+        Prbs7  = 0,
+        Prbs9  = 1,
+        Prbs15 = 2,
+        Prbs23 = 3,
+        Prbs31 = 4,
+    }
+
+    function prbs_next(h: input logic<HIST>, sel: input PrbsSel) -> logic {
+        case sel {
+            PrbsSel::Prbs7 : return h[6] ^ h[5];
+            PrbsSel::Prbs9 : return h[8] ^ h[4];
+            PrbsSel::Prbs15: return h[14] ^ h[13];
+            PrbsSel::Prbs23: return h[22] ^ h[17];
+            default        : return h[30] ^ h[27];
+        }
+    }
+
+    // One-bit step: returns the new history (new bit at h[0]).
+    function prbs_shift(h: input logic<HIST>, sel: input PrbsSel) -> logic<HIST> {
+        return {h[HIST - 2:0], prbs_next(h, sel)};
+    }
+}

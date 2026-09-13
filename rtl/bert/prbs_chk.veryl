@@ -1,0 +1,173 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file prbs_chk.veryl
+ * @brief Parallel PRBS checker with acquisition / free-running lock.
+ *
+ * Acquisition: while unlocked the 31-bit history is loaded from the
+ * received bits (self-synchronising), and each word is compared with the
+ * prediction from the previous history; LOCK_WORDS consecutive clean words
+ * -> o_locked. Once locked the LFSR free-runs, so every channel error is
+ * counted exactly once (a self-synchronising comparator would count each
+ * error 2-3 times). Lock is dropped when the errors in one word reach
+ * UNLOCK_BITS (a genuine loss of sync produces ~50 % bit errors); the word
+ * that triggered the unlock is counted, the (up to two) words already in
+ * the pipeline behind it are not. Counting resumes after re-acquisition.
+ *
+ * Three pipeline stages (diff / popcount / FSM) keep the 125MHz link
+ * clock comfortable on GW5A; o_valid lags i_valid by 2 clocks.
+ *
+ * The all-zero history is the LFSR fixed point: a dead link (constant 0
+ * or 1 after inversion) must never report lock, so acquisition refuses
+ * a zero history.
+ *
+ * o_bits / o_errs are per-clock increments (valid for one clock each time
+ * i_valid); a 64-bit accumulator lives outside (BertCounters).
+ */
+import prbs_pkg::*;
+
+pub module PrbsChk #(
+    param WIDTH      : u32 = 16,
+    param LOCK_WORDS : u32 = 32,
+    param UNLOCK_BITS: u32 = WIDTH / 2,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_valid : input logic       ,
+    i_data  : input logic<WIDTH>, // bit 0 = earliest on the wire
+    i_sel   : input PrbsSel     ,
+    i_invert: input logic       ,
+    i_bitrev: input logic       ,
+
+    o_locked: output logic                  ,
+    o_valid : output logic                  , // i_valid delayed, qualifies o_bits/o_errs
+    o_bits  : output logic<$clog2(WIDTH + 1)>, // = WIDTH while locked, 0 otherwise
+    o_errs  : output logic<$clog2(WIDTH + 1)>,
+    o_unlock: output logic                  , // pulse: lock lost
+) {
+    const CNTW: u32 = $clog2(WIDTH + 1);
+    const LW  : u32 = $clog2(LOCK_WORDS + 1);
+
+    var hist  : logic<HIST>;
+    var locked: logic      ;
+    var clean : logic<LW>  ;
+
+    // input conditioning
+    var d: logic<WIDTH>;
+    always_comb {
+        for i in 0..WIDTH {
+            d[i] = if i_bitrev ? i_data[WIDTH - 1 - i] : i_data[i];
+        }
+        d = d ^ {i_invert repeat WIDTH};
+    }
+
+    var v1     : logic       ;
+    var v2     : logic       ;
+    var l1     : logic       ;
+    var l2     : logic       ;
+    var diff_r : logic<WIDTH>;
+    var nerr_r : logic<CNTW> ;
+    var hist_nz: logic       ;
+
+    // prediction from the current history
+    var pred    : logic<WIDTH>;
+    var pred_k  : logic<WIDTH> [5];
+    var hist_k  : logic<HIST>  [5];
+    var hist_run: logic<HIST> ; // history after free-running WIDTH bits
+    var hist_ld : logic<HIST> ; // history loaded from the received bits
+    var diff    : logic<WIDTH>;
+    var nerr    : logic<CNTW> ;
+    always_comb {
+        // prediction chains per polynomial with constant taps, selected at
+        // the end: keeps the i_sel mux out of the unrolled XOR chain
+        for k in 0..5 {
+            var h: logic<HIST>;
+            h = hist;
+            for i in 0..WIDTH {
+                pred_k[k][i] = prbs_next(h, k as PrbsSel);
+                h            = prbs_shift(h, k as PrbsSel);
+            }
+            hist_k[k] = h;
+        }
+        pred     = pred_k[if i_sel >: 4 as PrbsSel ? 4 : i_sel as 3];
+        hist_run = hist_k[if i_sel >: 4 as PrbsSel ? 4 : i_sel as 3];
+        diff = pred ^ d;
+        nerr = 0;
+        for i in 0..WIDTH {
+            nerr = nerr + diff_r[i];
+        }
+        // shift the received bits in (bit 0 oldest of this word)
+        hist_ld = hist;
+        for i in 0..WIDTH {
+            hist_ld = {hist_ld[HIST - 2:0], d[i]};
+        }
+    }
+
+    assign o_locked = locked;
+
+    // Pipeline: stage 0 registers diff (history update depends only on
+    // `locked`), stage 1 counts the errors, stage 2 runs the lock FSM and
+    // emits the counts. l1/l2 carry "was locked when this word arrived".
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            hist     = 0;
+            hist_nz  = 1'b0;
+            locked   = 1'b0;
+            clean    = 0;
+            v1       = 1'b0;
+            v2       = 1'b0;
+            l1       = 1'b0;
+            l2       = 1'b0;
+            diff_r   = 0;
+            nerr_r   = 0;
+            o_valid  = 1'b0;
+            o_bits   = 0;
+            o_errs   = 0;
+            o_unlock = 1'b0;
+        } else {
+            // stage 0
+            v1 = i_valid;
+            l1 = locked;
+            if i_valid {
+                diff_r  = diff;
+                hist    = if locked ? hist_run : hist_ld;
+                hist_nz = hist != 0;
+            }
+            // stage 1
+            v2     = v1;
+            l2     = l1;
+            nerr_r = nerr;
+            // stage 2
+            o_valid  = v2;
+            o_unlock = 1'b0;
+            o_bits   = if v2 && l2 ? WIDTH as CNTW : 0;
+            o_errs   = if v2 && l2 ? nerr_r : 0;
+            if v2 {
+                if l2 {
+                    if nerr_r >= UNLOCK_BITS as CNTW {
+                        locked   = 1'b0;
+                        clean    = 0;
+                        o_unlock = 1'b1;
+                        l1       = 1'b0; // don't count the (up to two) words already in flight
+                        l2       = 1'b0;
+                    }
+                } else if !locked {
+                    if nerr_r == 0 && hist_nz {
+                        if clean == (LOCK_WORDS - 1) as LW {
+                            locked = 1'b1;
+                        } else {
+                            clean = clean + 1;
+                        }
+                    } else {
+                        clean = 0;
+                    }
+                }
+            }
+        }
+    }
+}

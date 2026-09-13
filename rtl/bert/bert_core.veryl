@@ -1,0 +1,243 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file bert_core.veryl
+ * @brief BERT datapath (link clock domain): generator -> o_tx_data,
+ *        i_rx_data -> checker -> counters, plus a byte register file.
+ *
+ * The register file is in the link clock domain; BertHost (clk_sys) talks
+ * to it through a 4-phase request/ack handshake, so no configuration bit
+ * can glitch mid-word. Register map (8-bit address / data):
+ *
+ *  0x00 CTRL    bit0 TX_EN   bit1 RX_EN     bit2 CLEAR (self-clearing)
+ *               bit3 SNAP (self-clearing)   bit4 INJECT (self-clearing)
+ *               bit5 RX_INVERT  bit6 RX_BITREV  bit7 TX_INVERT
+ *  0x01 TX_MODE bit1:0 GenMode (0 PRBS / 1 fixed / 2 clock / 3 zero)
+ *  0x02 TX_SEL  bit2:0 PrbsSel (0 PRBS7 1 PRBS9 2 PRBS15 3 PRBS23 4 PRBS31)
+ *  0x03 RX_SEL  bit2:0 PrbsSel
+ *  0x04 FIXED_L / 0x05 FIXED_H  fixed word (low byte first)
+ *  0x08 STATUS  bit0 locked  bit1 rx activity (i_rx_valid seen in the last
+ *               2^16 clocks)  bit2 i_link_ok (device status, e.g. PLL lock)
+ *  0x10..0x17 SNAP_BITS (64, LSB first)   0x18..0x1F SNAP_ERRS (64)
+ *  0x20..0x23 SNAP_UNLOCKS (32)           0x24..0x27 SNAP_TIMER (32: link
+ *               clocks / 256 since CLEAR - 2.4 h at 125 MHz - for
+ *               BER-over-time even without lock)
+ *  0x30 / 0x31 EXT_CTRL0 / EXT_CTRL1  device-specific control bytes
+ *               (o_ext_ctrl; e.g. CDR freeze + IODELAY scan offset)
+ *  0x32        EXT_STATUS  device-specific status byte (i_ext_status)
+ *  0x80..0xFF  DBG window: reads return i_dbg_data for o_dbg_addr = addr-0x80
+ *               (combinational: the top level answers in the same cycle)
+ * Snapshots are taken with CTRL.SNAP; all SNAP_* bytes then belong to the
+ * same instant.
+ */
+import prbs_pkg::*;
+
+pub module BertCore #(
+    param TX_WIDTH         : u32   = 8   ,
+    param RX_WIDTH         : u32   = 16  ,
+    param RX_BITREV_DEFAULT: logic = 1'b0, // reset value of CTRL.RX_BITREV
+    param RX_INVERT_DEFAULT: logic = 1'b0,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    o_tx_data: output logic<TX_WIDTH>,
+
+    i_rx_valid: input logic          ,
+    i_rx_data : input logic<RX_WIDTH>,
+    i_link_ok : input logic          ,
+
+    // device-specific extension registers
+    o_ext_ctrl  : output logic<16>,
+    i_ext_status: input  logic<8> ,
+    o_dbg_addr  : output logic<7> ,
+    i_dbg_data  : input  logic<8> ,
+
+    // register access (link clock domain, one clock per request)
+    i_reg_req : input  logic   ,
+    i_reg_wr  : input  logic   ,
+    i_reg_addr: input  logic<8>,
+    i_reg_wdat: input  logic<8>,
+    o_reg_rdat: output logic<8>,
+
+    o_locked: output logic,
+) {
+    const RX_CNTW: u32 = $clog2(RX_WIDTH + 1);
+    assign o_dbg_addr = i_reg_addr[6:0];
+
+    // ---- configuration registers ----
+    var tx_en    : logic    ;
+    var rx_en    : logic    ;
+    var rx_invert: logic    ;
+    var rx_bitrev: logic    ;
+    var tx_invert: logic    ;
+    var tx_mode  : logic<2> ;
+    var tx_sel   : logic<3> ;
+    var rx_sel   : logic<3> ;
+    var fixed    : logic<16>;
+    var clear    : logic    ;
+    var snap     : logic    ;
+    var inject   : logic    ;
+
+    // ---- datapath ----
+    inst u_gen: PrbsGen #(WIDTH: TX_WIDTH) (
+        i_clk, i_rst,
+        i_enable: tx_en             ,
+        i_mode  : tx_mode as GenMode,
+        i_sel   : tx_sel as PrbsSel ,
+        i_fixed : fixed             ,
+        i_invert: tx_invert         ,
+        i_inject: inject            ,
+        o_data  : o_tx_data         ,
+    );
+
+    var chk_valid : logic         ;
+    var chk_bits  : logic<RX_CNTW>;
+    var chk_errs  : logic<RX_CNTW>;
+    var chk_unlock: logic         ;
+    inst u_chk: PrbsChk #(WIDTH: RX_WIDTH) (
+        i_clk, i_rst,
+        i_valid : i_rx_valid && rx_en,
+        i_data  : i_rx_data          ,
+        i_sel   : rx_sel as PrbsSel  ,
+        i_invert: rx_invert          ,
+        i_bitrev: rx_bitrev          ,
+        o_locked,
+        o_valid : chk_valid ,
+        o_bits  : chk_bits  ,
+        o_errs  : chk_errs  ,
+        o_unlock: chk_unlock,
+    );
+
+    var snap_bits   : logic<64>;
+    var snap_errs   : logic<64>;
+    var snap_unlocks: logic<32>;
+    inst u_cnt: BertCounters #(INCW: RX_CNTW) (
+        i_clk, i_rst,
+        i_valid : chk_valid ,
+        i_bits  : chk_bits  ,
+        i_errs  : chk_errs  ,
+        i_unlock: chk_unlock,
+        i_clear : clear     ,
+        i_snap  : snap      ,
+        o_snap_bits   : snap_bits   ,
+        o_snap_errs   : snap_errs   ,
+        o_snap_unlocks: snap_unlocks,
+    );
+
+    // elapsed-time counter and RX activity watchdog
+    var timer     : logic<32>;
+    var timer_pre : logic<8> ;
+    var snap_timer: logic<32>;
+    var act_cnt   : logic<16>;
+    var rx_active : logic    ;
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            timer      = 0;
+            timer_pre  = 0;
+            snap_timer = 0;
+            act_cnt    = 0;
+            rx_active  = 1'b0;
+        } else {
+            if clear {
+                timer     = 0;
+                timer_pre = 0;
+            } else {
+                timer_pre = timer_pre + 1;
+                if timer_pre == 8'hff {
+                    timer = timer + 1;
+                }
+            }
+            if snap {
+                snap_timer = timer;
+            }
+            if i_rx_valid {
+                act_cnt   = 0;
+                rx_active = 1'b1;
+            } else if act_cnt == 16'hffff {
+                rx_active = 1'b0;
+            } else {
+                act_cnt = act_cnt + 1;
+            }
+        }
+    }
+
+    // ---- register file ----
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            tx_en      = 1'b1;
+            rx_en      = 1'b1;
+            rx_invert  = RX_INVERT_DEFAULT;
+            rx_bitrev  = RX_BITREV_DEFAULT;
+            tx_invert  = 1'b0;
+            tx_mode    = 0;
+            tx_sel     = 0;
+            rx_sel     = 0;
+            fixed      = 16'hec92;
+            o_ext_ctrl = 0;
+            clear      = 1'b0;
+            snap       = 1'b0;
+            inject     = 1'b0;
+            o_reg_rdat = 0;
+        } else {
+            clear  = 1'b0;
+            snap   = 1'b0;
+            inject = 1'b0;
+            if i_reg_req {
+                if i_reg_wr {
+                    case i_reg_addr {
+                        8'h00: {
+                            tx_en     = i_reg_wdat[0];
+                            rx_en     = i_reg_wdat[1];
+                            clear     = i_reg_wdat[2];
+                            snap      = i_reg_wdat[3];
+                            inject    = i_reg_wdat[4];
+                            rx_invert = i_reg_wdat[5];
+                            rx_bitrev = i_reg_wdat[6];
+                            tx_invert = i_reg_wdat[7];
+                        }
+                        8'h01: tx_mode = i_reg_wdat[1:0];
+                        8'h02: tx_sel  = i_reg_wdat[2:0];
+                        8'h03: rx_sel  = i_reg_wdat[2:0];
+                        8'h04: fixed[7:0]  = i_reg_wdat;
+                        8'h05: fixed[15:8] = i_reg_wdat;
+                        8'h30: o_ext_ctrl[7:0]  = i_reg_wdat;
+                        8'h31: o_ext_ctrl[15:8] = i_reg_wdat;
+                        default: {}
+                    }
+                } else {
+                    case i_reg_addr {
+                        8'h00: o_reg_rdat = {tx_invert, rx_bitrev, rx_invert, 3'b0, rx_en, tx_en};
+                        8'h01: o_reg_rdat = {6'b0, tx_mode};
+                        8'h02: o_reg_rdat = {5'b0, tx_sel};
+                        8'h03: o_reg_rdat = {5'b0, rx_sel};
+                        8'h04: o_reg_rdat = fixed[7:0];
+                        8'h05: o_reg_rdat = fixed[15:8];
+                        8'h08: o_reg_rdat = {5'b0, i_link_ok, rx_active, o_locked};
+                        8'h30: o_reg_rdat = o_ext_ctrl[7:0];
+                        8'h31: o_reg_rdat = o_ext_ctrl[15:8];
+                        8'h32: o_reg_rdat = i_ext_status;
+                        default: {
+                            if i_reg_addr[7] {                         // 0x80..0xff
+                                o_reg_rdat = i_dbg_data;
+                            } else if i_reg_addr[7:3] == 5'b00010 {   // 0x10..0x17
+                                o_reg_rdat = snap_bits[i_reg_addr[2:0] * 8+:8];
+                            } else if i_reg_addr[7:3] == 5'b00011 {   // 0x18..0x1f
+                                o_reg_rdat = snap_errs[i_reg_addr[2:0] * 8+:8];
+                            } else if i_reg_addr[7:2] == 6'b001000 {  // 0x20..0x23
+                                o_reg_rdat = snap_unlocks[i_reg_addr[1:0] * 8+:8];
+                            } else if i_reg_addr[7:2] == 6'b001001 {  // 0x24..0x27
+                                o_reg_rdat = snap_timer[i_reg_addr[1:0] * 8+:8];
+                            } else {
+                                o_reg_rdat = 8'h00;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

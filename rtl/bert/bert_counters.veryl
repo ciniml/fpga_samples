@@ -1,0 +1,64 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file bert_counters.veryl
+ * @brief 64-bit bit / error accumulators with clear and atomic snapshot.
+ *
+ * i_snap copies all counters into the o_snap_* outputs in one clock so a
+ * slow host can read a consistent {bits, errs, unlocks} triple. i_clear
+ * zeroes the live counters (the snapshot is kept until the next i_snap).
+ */
+pub module BertCounters #(
+    param INCW: u32 = 5,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_valid : input logic      ,
+    i_bits  : input logic<INCW>,
+    i_errs  : input logic<INCW>,
+    i_unlock: input logic      ,
+    i_clear : input logic      ,
+    i_snap  : input logic      ,
+
+    o_snap_bits   : output logic<64>,
+    o_snap_errs   : output logic<64>,
+    o_snap_unlocks: output logic<32>,
+) {
+    var bits   : logic<64>;
+    var errs   : logic<64>;
+    var unlocks: logic<32>;
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            bits           = 0;
+            errs           = 0;
+            unlocks        = 0;
+            o_snap_bits    = 0;
+            o_snap_errs    = 0;
+            o_snap_unlocks = 0;
+        } else {
+            if i_clear {
+                bits    = 0;
+                errs    = 0;
+                unlocks = 0;
+            } else {
+                if i_valid {
+                    bits = bits + i_bits;
+                    errs = errs + i_errs;
+                }
+                if i_unlock {
+                    unlocks = unlocks + 1;
+                }
+            }
+            if i_snap {
+                o_snap_bits    = bits;
+                o_snap_errs    = errs;
+                o_snap_unlocks = unlocks;
+            }
+        }
+    }
+}

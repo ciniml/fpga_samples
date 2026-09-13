@@ -1,0 +1,201 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file bert_host.veryl
+ * @brief Host byte-stream bridge to the BertCore register file.
+ *
+ * Commands (host -> FPGA), replies (FPGA -> host):
+ *   'W' addr data      : write register, reply 'k'
+ *   'R' addr           : read register, reply 1 byte
+ *   'B' addr n         : burst read n registers from addr, reply n bytes
+ *   'I'                : identify, reply "BERT" + version byte
+ * Any other byte is ignored. The register access crosses into the link
+ * clock domain with a toggle request / toggle ack handshake.
+ */
+pub module BertHost #(
+    param VERSION: logic<8> = 8'h01,
+) (
+    i_clk: input 'h clock,
+    i_rst: input 'h reset,
+
+    // host byte stream
+    i_rx_valid: input  'h logic   ,
+    i_rx_data : input  'h logic<8>,
+    o_tx_valid: output 'h logic   ,
+    o_tx_data : output 'h logic<8>,
+    i_tx_ready: input  'h logic   ,
+
+    // link clock domain register port
+    i_lclk    : input  'l clock   ,
+    i_lrst    : input  'l reset   ,
+    o_reg_req : output 'l logic   ,
+    o_reg_wr  : output 'l logic   ,
+    o_reg_addr: output 'l logic<8>,
+    o_reg_wdat: output 'l logic<8>,
+    i_reg_rdat: input  'l logic<8>,
+) {
+    enum State: logic<3> {
+        Idle,
+        Addr,
+        Data,
+        Xfer,   // handshake in flight
+        Reply,
+        Ident,
+    }
+
+    var state : 'h State   ;
+    var cmd   : 'h logic<8>;
+    var addr  : 'h logic<8>;
+    var wdat  : 'h logic<8>;
+    var wr    : 'h logic   ;
+    var left  : 'h logic<8>; // burst remaining
+    var ident : 'h logic<3>;
+    var reply : 'h logic<8>;
+
+    // ---- clk_sys -> lclk request (toggle), lclk -> clk_sys ack (toggle) ----
+    // addr / wdat / wr are quasi-static while a request is in flight, so
+    // they cross without synchronisers (the request toggle is delayed by
+    // 2 flops behind them).
+    var req_tgl: 'h logic;
+    var ack_tgl: 'l logic;
+    var ack_s0 : 'h logic;
+    var ack_s1 : 'h logic;
+    var ack_s2 : 'h logic;
+    var rdat_l : 'l logic<8>;
+
+    var req_l0 : 'l logic;
+    var req_l1 : 'l logic;
+    var req_l2 : 'l logic;
+    var req_d  : 'l logic;   // o_reg_req delayed: core's rdat is valid now
+
+    unsafe (cdc) {
+        always_ff (i_lclk, i_lrst) {
+            if_reset {
+                req_l0    = 1'b0;
+                req_l1    = 1'b0;
+                req_l2    = 1'b0;
+                req_d     = 1'b0;
+                ack_tgl   = 1'b0;
+                o_reg_req = 1'b0;
+                rdat_l    = 0;
+            } else {
+                req_l0    = req_tgl;
+                req_l1    = req_l0;
+                req_l2    = req_l1;
+                o_reg_req = req_l1 != req_l2;
+                req_d     = o_reg_req;
+                if req_d {
+                    rdat_l  = i_reg_rdat;
+                    ack_tgl = ~ack_tgl;
+                }
+            }
+        }
+        assign o_reg_addr = addr;
+        assign o_reg_wdat = wdat;
+        assign o_reg_wr   = wr;
+    }
+
+    let ack: 'h logic = ack_s1 != ack_s2;
+
+    unsafe (cdc) {
+        always_ff (i_clk, i_rst) {
+            if_reset {
+                state      = State::Idle;
+                cmd        = 0;
+                addr       = 0;
+                wdat       = 0;
+                wr         = 1'b0;
+                left       = 0;
+                ident      = 0;
+                reply      = 0;
+                req_tgl    = 1'b0;
+                ack_s0     = 1'b0;
+                ack_s1     = 1'b0;
+                ack_s2     = 1'b0;
+                o_tx_valid = 1'b0;
+                o_tx_data  = 0;
+            } else {
+                ack_s0 = ack_tgl;
+                ack_s1 = ack_s0;
+                ack_s2 = ack_s1;
+                if o_tx_valid && i_tx_ready {
+                    o_tx_valid = 1'b0;
+                }
+                case state {
+                    State::Idle: if i_rx_valid {
+                        cmd = i_rx_data;
+                        case i_rx_data {
+                            8'h57, 8'h52, 8'h42: state = State::Addr;   // 'W' 'R' 'B'
+                            8'h49: {                                    // 'I'
+                                ident = 0;
+                                state = State::Ident;
+                            }
+                            default: {}
+                        }
+                    }
+                    State::Addr: if i_rx_valid {
+                        addr = i_rx_data;
+                        if cmd == 8'h52 {           // 'R'
+                            wr      = 1'b0;
+                            left    = 1;
+                            req_tgl = ~req_tgl;
+                            state   = State::Xfer;
+                        } else {
+                            state = State::Data;
+                        }
+                    }
+                    State::Data: if i_rx_valid {
+                        if cmd == 8'h57 {           // 'W'
+                            wdat = i_rx_data;
+                            wr   = 1'b1;
+                            left = 1;
+                        } else {                    // 'B'
+                            wr   = 1'b0;
+                            left = i_rx_data;
+                        }
+                        if left == 0 && cmd == 8'h42 && i_rx_data == 0 {
+                            state = State::Idle;
+                        } else {
+                            req_tgl = ~req_tgl;
+                            state   = State::Xfer;
+                        }
+                    }
+                    State::Xfer: if ack {
+                        reply = if wr ? 8'h6b : rdat_l;   // 'k'
+                        state = State::Reply;
+                    }
+                    State::Reply: if !o_tx_valid {
+                        o_tx_valid = 1'b1;
+                        o_tx_data  = reply;
+                        left       = left - 1;
+                        addr       = addr + 1;
+                        if left == 1 {
+                            state = State::Idle;
+                        } else {
+                            req_tgl = ~req_tgl;
+                            state   = State::Xfer;
+                        }
+                    }
+                    State::Ident: if !o_tx_valid {
+                        o_tx_valid = 1'b1;
+                        case ident {
+                            3'd0: o_tx_data = 8'h42; // B
+                            3'd1: o_tx_data = 8'h45; // E
+                            3'd2: o_tx_data = 8'h52; // R
+                            3'd3: o_tx_data = 8'h54; // T
+                            default: o_tx_data = VERSION;
+                        }
+                        ident = ident + 1;
+                        if ident == 3'd4 {
+                            state = State::Idle;
+                        }
+                    }
+                    default: state = State::Idle;
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_bert.veryl
+ * @brief BERT loopback tests (body: test/bert_link_body.sv).
+ *  bert_basic     : straight wire, word phase offset 3 bits
+ *  bert_inverted  : inverted wire, RX_INVERT compensates
+ *  bert_bitrev    : deserializer packs MSB-first (1.9.12 EasyCDR), RX_BITREV
+ *  bert_offset0   : zero phase offset
+ */
+module TbBert {}
+
+#[test(bert_basic)]
+embed (inline) sv{{{
+module bert_basic;
+    bert_link_body #(.RUN(1)) body();
+endmodule
+}}}
+
+#[test(bert_inverted)]
+embed (inline) sv{{{
+module bert_inverted;
+    bert_link_body #(.WIRE_INVERT(1), .BIT_OFFSET(7), .RUN(1)) body();
+endmodule
+}}}
+
+#[test(bert_bitrev)]
+embed (inline) sv{{{
+module bert_bitrev;
+    bert_link_body #(.WORD_BITREV(1), .BIT_OFFSET(11), .RUN(1)) body();
+endmodule
+}}}
+
+#[test(bert_offset0)]
+embed (inline) sv{{{
+module bert_offset0;
+    bert_link_body #(.BIT_OFFSET(0), .RUN(1)) body();
+endmodule
+}}}
