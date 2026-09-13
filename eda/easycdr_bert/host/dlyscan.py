@@ -100,6 +100,12 @@ def main():
         for n in (10, 20, 40):
             b.pulse_value(10 if n == 10 else 10 if n == 20 else 20, start_high=first)
             measure(b, f"  after {n} pulses")
+    print("E8: adaptive sequence (ADAPT build): SDTAP1=1, target DLYSTEP1 != 0, VALUE rising edge, wait")
+    for target in (21, 42, 80):
+        b.ctrl(sdtap=False, dly=0); time.sleep(0.02)
+        b.ctrl(sdtap=True); b.ctrl(dly=target); b.ctrl(value=False); b.ctrl(value=True); time.sleep(0.5)
+        measure(b, f"  target {target} after VALUE rising + 0.5s")
+        b.ctrl(value=False)
     print("E5: SDTAP1=1 with DLYSTEP1 != 0 (DLYSTEP read as the per-pulse step size)")
     for step in (1, 4, 21):
         for first in (False, True):

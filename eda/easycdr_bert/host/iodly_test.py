@@ -57,7 +57,7 @@ def rising_edge(prof):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://127.0.0.1:8081")
-    ap.add_argument("--mode", choices=["static", "dyn"], required=True)
+    ap.add_argument("--mode", choices=["static", "dyn", "adapt"], required=True)
     a = ap.parse_args()
     d = Dev(a.url)
     print("ident:", bytes(api(a.url, {"write": [0x49], "read": 5})[:4]))
@@ -70,6 +70,17 @@ def main():
     e0 = show("initial")
     if a.mode == "static":
         show("again (repeatability)")
+        return
+    if a.mode == "adapt":
+        print("adaptive IODELAY: SDTAP=0 load, then SDTAP=1 + VALUE rising edge with a new target DLYSTEP")
+        d.ctrl(sdtap=False, dly=0); time.sleep(0.02); show("SDTAP=0 DLYSTEP=0 loaded")
+        for target in (40, 80, 0):
+            d.ctrl(sdtap=True); d.ctrl(dly=target); time.sleep(0.01)
+            d.ctrl(value=False); d.ctrl(value=True); time.sleep(0.05)      # rising edge starts the adaptation
+            show(f"SDTAP=1 target {target}, after VALUE rising (expect edge +{target*12.5/125:.1f} mod 16)")
+            time.sleep(0.5); show(f"  ... 0.5s later")
+            d.ctrl(value=False)
+        d.ctrl(sdtap=False, dly=0)
         return
     print("dynamic IODELAY: SDTAP=0 load DLYSTEP")
     for v in (0, 20, 40, 80):

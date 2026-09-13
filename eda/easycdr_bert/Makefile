@@ -27,6 +27,10 @@ ifeq ($(IODLY_DYN),1)
 BUILD_SUFFIX := $(BUILD_SUFFIX)dyn
 export IODLY_DYN
 endif
+ifeq ($(IODLY_ADAPT),1)
+BUILD_SUFFIX := $(BUILD_SUFFIX)adapt
+export IODLY_ADAPT
+endif
 ifneq ($(IODLY_STATIC),)
 BUILD_SUFFIX := $(BUILD_SUFFIX)s$(IODLY_STATIC)
 export IODLY_STATIC

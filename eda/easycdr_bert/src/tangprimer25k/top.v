@@ -165,7 +165,12 @@ module top(
 `else
     localparam IODLY_DYN_EN = "FALSE";
 `endif
-    IODELAY #(.C_STATIC_DLY(`IODLY_STATIC), .DYN_DLY_EN(IODLY_DYN_EN), .ADAPT_EN("FALSE")) u_tone_dly(
+`ifdef IODLY_ADAPT
+    localparam IODLY_ADAPT_EN = "TRUE";
+`else
+    localparam IODLY_ADAPT_EN = "FALSE";
+`endif
+    IODELAY #(.C_STATIC_DLY(`IODLY_STATIC), .DYN_DLY_EN(IODLY_DYN_EN), .ADAPT_EN(IODLY_ADAPT_EN)) u_tone_dly(
         .DO(tone_dly), .DF(dly_df), .DI(tone_in),
         .SDTAP(ext_ctrl[3]), .VALUE(ext_ctrl[4]), .DLYSTEP({1'b0, ext_ctrl[14:8]}));
     reg        tone_s0, tone_s1;
