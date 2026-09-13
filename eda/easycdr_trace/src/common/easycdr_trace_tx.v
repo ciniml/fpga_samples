@@ -1,307 +1,171 @@
 // easycdr_trace_tx: family-independent trace transmitter IP.
 //
-// Samples a WIDTH-bit signal (asynchronous inputs allowed; 2FF-synchronized
-// into clk), records a timestamped entry whenever it changes, and emits a
-// continuous 10-bit 8b10b symbol stream for an EasyCDR receiver:
+// Samples a WIDTH-bit signal in its own clock domain (sclk), records a
+// timestamped entry whenever it changes (or periodically, or after a
+// TX-side trigger), and emits a continuous 10-bit 8b10b symbol stream on the
+// link clock for an EasyCDR receiver:
 //
 //   frame : every FRAME_LEN-th symbol is a K28.5 comma (word alignment)
 //   record: [K28.1][ts byte0..TS_BYTES-1][data byte0..DATA_BYTES-1]
-//           (all multi-byte fields little-endian)
+//           (all multi-byte fields little-endian; ts counts sclk cycles)
 //   K28.2 : emitted once per overflow event (records were dropped)
 //   K28.3 : idle filler
 //   desc  : [K28.4][VER=0x01][WIDTH][TS_BITS][flags] descriptor record,
-//           sent every DESC_INTERVAL cycles (0 = periodic off) and on
-//           i_desc_req, always at a record boundary. flags bit0 = i_enable.
+//           sent every DESC_INTERVAL link cycles (0 = periodic off) and on
+//           i_desc_req, always at a record boundary. flags bit0 enable,
+//           bit1 armed, bit2 triggered (running), bit3 done, bit4 periodic.
 //
-// Control inputs (tie i_enable=1, i_ignore_mask=0, others 0 when unused):
-//   i_enable      : 0 = suppress records (a record is sent on re-enable)
-//   i_ignore_mask : 1 = exclude that sig bit from change detection
-//   i_desc_req    : one-clock pulse: send a descriptor now
-//   i_periodic_en : also record every i_period clocks (i_change_dis = only that)
-//   i_arm         : one-clock pulse: TX-side trigger. Records are held back
-//                   until (sig & i_trig_mask) == (i_trig_value & i_trig_mask);
-//                   the matching sample is recorded, then i_post more records
-//                   (0 = unlimited) and the transmitter goes quiet until the
-//                   next i_arm. Descriptor flags: bit0 enable, bit1 armed,
-//                   bit2 triggered (running), bit3 done, bit4 periodic.
+// Clocks:
+//   sclk / srstn : sample clock (the traced design's clock, or any clock).
+//                  srstn is an optional extra reset for that domain (tie 1).
+//                  sclk may be the same net as clk.
+//   clk  / rstn  : link parallel clock = line rate / 10; rstn (async) resets
+//                  both domains (the sclk side through a reset synchroniser).
+// All control inputs are in the clk domain; they cross to sclk inside
+// (quasi-static values with a handshake, i_arm as a pulse). Status outputs
+// are in the clk domain. o_overflow is an sclk-domain pulse.
 //
-// The user instantiates this core with the link parallel clock (line rate /
-// 10) and connects o_symbol to an OSER10 (bit 0 = first on the wire) - see
-// the tangprimer25k / tangnano9k_pmod tops for the device-specific PLL,
-// serializer and output buffer.
+// Structure: trace_frontend (sclk) -> trace_afifo -> trace_link_tx (clk).
+// Reconfiguration: WIDTH / TS_BITS / FIFO_AW / SYNC_STAGES / HAS_* are
+// parameters of this wrapper only; the link format follows WIDTH / TS_BITS
+// and is announced to the host by the descriptor.
 module easycdr_trace_tx #(
-    parameter WIDTH     = 16,   // trace width, multiple of 8
-    parameter TS_BITS   = 24,   // timestamp width, multiple of 8
-    parameter FIFO_AW   = 4,    // record FIFO depth = 2^FIFO_AW
-    parameter FRAME_LEN = 16,   // symbols per comma frame
-    parameter DESC_INTERVAL = 131072  // cycles between descriptors (0 = off)
+    parameter WIDTH         = 16,     // trace width, multiple of 8
+    parameter TS_BITS       = 24,     // timestamp width, multiple of 8
+    parameter FIFO_AW       = 4,      // record FIFO depth = 2^FIFO_AW (>= 2)
+    parameter FRAME_LEN     = 16,     // symbols per comma frame
+    parameter DESC_INTERVAL = 131072, // link cycles between descriptors (0 = off)
+    parameter SYNC_STAGES   = 2,      // 0: sig synchronous to sclk, 2: asynchronous
+    parameter HAS_PERIODIC  = 1,
+    parameter HAS_TRIGGER   = 1
 ) (
+    input  wire             sclk,
+    input  wire             srstn,
+    input  wire [WIDTH-1:0] sig,
+
     input  wire             clk,
     input  wire             rstn,
-    input  wire [WIDTH-1:0] sig,
     input  wire             i_enable,
     input  wire [WIDTH-1:0] i_ignore_mask,
     input  wire             i_desc_req,
     input  wire             i_periodic_en,
     input  wire             i_change_dis,
-    input  wire [23:0]      i_period,
+    input  wire [23:0]      i_period,       // sclk cycles
     input  wire             i_arm,
     input  wire [WIDTH-1:0] i_trig_mask,
     input  wire [WIDTH-1:0] i_trig_value,
     input  wire [15:0]      i_post,
     output wire [9:0]       o_symbol,
-    output wire             o_overflow,  // pulses when a record is dropped
+    output wire             o_overflow,     // sclk domain
     output wire             o_armed,
     output wire             o_triggered,
     output wire             o_done
 );
-    localparam TS_BYTES   = TS_BITS / 8;
-    localparam DATA_BYTES = WIDTH / 8;
-    localparam REC_BYTES  = TS_BYTES + DATA_BYTES;
-    localparam REC_BITS   = TS_BITS + WIDTH;
-
-    localparam [7:0] K28_1 = 8'h3c;
-    localparam [7:0] K28_2 = 8'h5c;
-    localparam [7:0] K28_4 = 8'h9c;   // descriptor record marker
+    localparam REC_BITS = TS_BITS + WIDTH;
+    localparam CFG_W    = 1 + WIDTH + 1 + 1 + 24 + WIDTH + WIDTH + 16;
 
     //------------------------------------------------------------------
-    // input synchronizer, change detector, timestamp, record FIFO
+    // sample-domain reset: link reset (async) + user reset, released in sclk
     //------------------------------------------------------------------
-    reg [WIDTH-1:0]   sig_meta, sig_s, sig_prev, sig_d;
-    reg               chg_r;       // registered change flag (pipelined so the
-                                   // WIDTH-bit compare is not in the FIFO
-                                   // write-enable path - GW1N needs this)
-    reg               en_q;
-    reg               init_done;
-    reg [TS_BITS-1:0] ts;
+    wire frstn;
+    trace_reset_sync u_frst(.clk(sclk), .arstn(rstn & srstn), .rstn(frstn));
 
-    always @(posedge clk) begin
-        sig_meta <= sig;
-        sig_s    <= sig_meta;
+    //------------------------------------------------------------------
+    // control crossing clk -> sclk
+    //------------------------------------------------------------------
+    wire [CFG_W-1:0] cfg_l = {i_enable, i_ignore_mask, i_periodic_en, i_change_dis,
+                              i_period, i_trig_mask, i_trig_value, i_post};
+    wire [CFG_W-1:0] cfg_s;
+    trace_cdc_bus #(.W(CFG_W)) u_cfg(
+        .sclk(clk), .srstn(rstn), .i_bus(cfg_l), .dclk(sclk), .drstn(frstn), .o_bus(cfg_s));
+    wire             f_enable      = cfg_s[CFG_W-1];
+    wire [WIDTH-1:0] f_ignore_mask = cfg_s[CFG_W-2 -: WIDTH];
+    wire             f_periodic_en = cfg_s[CFG_W-2-WIDTH];
+    wire             f_change_dis  = cfg_s[CFG_W-3-WIDTH];
+    wire [23:0]      f_period      = cfg_s[CFG_W-4-WIDTH -: 24];
+    wire [WIDTH-1:0] f_trig_mask   = cfg_s[CFG_W-28-WIDTH -: WIDTH];
+    wire [WIDTH-1:0] f_trig_value  = cfg_s[CFG_W-28-2*WIDTH -: WIDTH];
+    wire [15:0]      f_post        = cfg_s[15:0];
+
+    wire f_arm;
+    trace_sync_pulse u_arm(.sclk(clk), .srstn(rstn), .i_pulse(i_arm),
+                           .dclk(sclk), .drstn(frstn), .o_pulse(f_arm));
+
+    //------------------------------------------------------------------
+    // frontend (sclk) -> async FIFO -> link serializer (clk)
+    //------------------------------------------------------------------
+    wire                rec_wr, fifo_full, fifo_empty, fifo_rd, drop;
+    wire [REC_BITS-1:0] rec_data, fifo_data;
+    wire                f_armed, f_triggered, f_done;
+
+    trace_frontend #(
+        .WIDTH(WIDTH), .TS_BITS(TS_BITS), .SYNC_STAGES(SYNC_STAGES),
+        .HAS_PERIODIC(HAS_PERIODIC), .HAS_TRIGGER(HAS_TRIGGER)
+    ) u_fe(
+        .sclk(sclk), .rstn(frstn), .sig(sig),
+        .i_enable(f_enable), .i_ignore_mask(f_ignore_mask),
+        .i_periodic_en(f_periodic_en), .i_change_dis(f_change_dis), .i_period(f_period),
+        .i_arm(f_arm), .i_trig_mask(f_trig_mask), .i_trig_value(f_trig_value), .i_post(f_post),
+        .i_fifo_full(fifo_full), .o_rec_wr(rec_wr), .o_rec_data(rec_data), .o_drop(drop),
+        .o_armed(f_armed), .o_triggered(f_triggered), .o_done(f_done));
+
+    trace_afifo #(.DW(REC_BITS), .AW(FIFO_AW)) u_fifo(
+        .wclk(sclk), .wrstn(frstn), .wr_en(rec_wr), .wr_data(rec_data), .wfull(fifo_full),
+        .rclk(clk), .rrstn(rstn), .rd_en(fifo_rd), .rd_data(fifo_data), .rempty(fifo_empty));
+
+    // overflow: one K28.2 per pending episode (sclk pending flag, ack from clk)
+    reg  ovf_pending;
+    wire ovf_ack_s, ovf_req_l, ovf_ack_l;
+    assign o_overflow = drop;
+    always @(posedge sclk or negedge frstn) begin
+        if (!frstn)         ovf_pending <= 1'b0;
+        else if (ovf_ack_s) ovf_pending <= 1'b0;
+        else if (drop)      ovf_pending <= 1'b1;
     end
+    trace_sync_pulse u_ovf_req(.sclk(sclk), .srstn(frstn), .i_pulse(drop && !ovf_pending),
+                               .dclk(clk), .drstn(rstn), .o_pulse(ovf_req_l));
+    trace_sync_pulse u_ovf_ack(.sclk(clk), .srstn(rstn), .i_pulse(ovf_ack_l),
+                               .dclk(sclk), .drstn(frstn), .o_pulse(ovf_ack_s));
 
-    reg [REC_BITS-1:0] fifo [0:(1<<FIFO_AW)-1];
-    reg [FIFO_AW:0] wp, rp;
-    wire fifo_empty = (wp == rp);
-    wire fifo_full  = (wp[FIFO_AW] != rp[FIFO_AW]) &&
-                      (wp[FIFO_AW-1:0] == rp[FIFO_AW-1:0]);
-    reg  ovf_pending, ovf_pulse;
-    reg  ovf_ack;
-    assign o_overflow = ovf_pulse;
-    assign rec_wr = chg_r && !fifo_full;
-
-    // TX-side trigger: TS_FREE passes everything, TS_ARMED holds records
-    // until the match, TS_RUN counts i_post records, TS_DONE holds until re-arm
-    localparam TS_FREE = 2'd0, TS_ARMED = 2'd1, TS_RUN = 2'd2, TS_DONE = 2'd3;
-    reg [1:0]  tstate;
-    reg [15:0] post_left;
-    reg        match_r;        // registered (sig_s & mask) == value
-    reg [23:0] per_cnt;        // down-counter: hit when it reaches 0
-    reg [23:0] period_m1;      // i_period - 1, registered (quasi-static input)
-    reg        per_over;       // registered per_cnt > period_m1 (period shortened -> reload)
-    reg        per_hit;
-    reg        rec_wr_r;       // rec_wr delayed one cycle (post counting off the critical path)
-    reg        post_last;      // registered post_left <= 1
-    wire       pass = (tstate == TS_FREE) || (tstate == TS_RUN);
-    assign o_armed     = (tstate == TS_ARMED);
-    assign o_triggered = (tstate == TS_RUN);
-    assign o_done      = (tstate == TS_DONE);
-
-    always @(posedge clk or negedge rstn) begin
-        if (!rstn) begin
-            tstate    <= TS_FREE;
-            post_left <= 16'd0;
-            match_r   <= 1'b0;
-            per_cnt   <= 24'd0;
-            period_m1 <= 24'd0;
-            per_over  <= 1'b0;
-            per_hit   <= 1'b0;
-            rec_wr_r  <= 1'b0;
-            post_last <= 1'b0;
+    //------------------------------------------------------------------
+    // status + descriptor request. A descriptor requested together with a
+    // control change (e.g. ARM | DESC_REQ in one frame) must show the new
+    // state, so the request goes to sclk (ordered after i_arm by one link
+    // cycle), waits for the frontend state to settle, and comes back as a
+    // sequence number in the same handshaked word as the status flags.
+    //------------------------------------------------------------------
+    reg  desc_req_d;
+    always @(posedge clk or negedge rstn)
+        if (!rstn) desc_req_d <= 1'b0; else desc_req_d <= i_desc_req;
+    wire f_desc_req;
+    trace_sync_pulse u_dreq(.sclk(clk), .srstn(rstn), .i_pulse(desc_req_d),
+                            .dclk(sclk), .drstn(frstn), .o_pulse(f_desc_req));
+    reg [1:0] f_desc_dly;
+    reg [1:0] f_desc_seq;
+    always @(posedge sclk or negedge frstn) begin
+        if (!frstn) begin
+            f_desc_dly <= 2'b00;
+            f_desc_seq <= 2'b00;
         end else begin
-            match_r   <= ((sig_s ^ i_trig_value) & i_trig_mask) == {WIDTH{1'b0}};
-            period_m1 <= i_period - 1'b1;
-            per_over  <= (per_cnt > period_m1);
-            per_hit   <= 1'b0;
-            rec_wr_r  <= rec_wr;
-            post_last <= (post_left <= 16'd1);
-            if (!i_periodic_en || per_over) per_cnt <= period_m1;
-            else if (per_cnt == 24'd0) begin per_cnt <= period_m1; per_hit <= 1'b1; end
-            else per_cnt <= per_cnt - 1'b1;
-            if (i_arm) begin
-                tstate    <= TS_ARMED;
-                post_left <= i_post;
-            end else case (tstate)
-            TS_ARMED: if (match_r && i_enable) begin
-                tstate    <= TS_RUN;
-                post_left <= i_post + 1'b1;   // the trigger record itself + i_post more
-            end
-            TS_RUN: if (rec_wr_r && i_post != 16'd0) begin
-                if (post_last) tstate <= TS_DONE;
-                post_left <= post_left - 1'b1;
-            end
-            default: ;
-            endcase
+            f_desc_dly <= {f_desc_dly[0], f_desc_req};
+            if (f_desc_dly[1]) f_desc_seq <= f_desc_seq + 1'b1;
         end
     end
-    // the trigger sample itself is recorded: force a record on the ARMED->RUN edge
-    wire trig_fire = (tstate == TS_ARMED) && match_r && i_enable;
-    wire rec_wr;   // a record is written to the FIFO this cycle (see below)
+    wire [4:0] st_l;
+    trace_cdc_bus #(.W(5)) u_st(
+        .sclk(sclk), .srstn(frstn), .i_bus({f_desc_seq, f_done, f_triggered, f_armed}),
+        .dclk(clk), .drstn(rstn), .o_bus(st_l));
+    assign {o_done, o_triggered, o_armed} = st_l[2:0];
+    reg [1:0] desc_seq_q;
+    always @(posedge clk or negedge rstn)
+        if (!rstn) desc_seq_q <= 2'b00; else desc_seq_q <= st_l[4:3];
+    wire desc_evt = (st_l[4:3] != desc_seq_q);
 
-    always @(posedge clk or negedge rstn) begin
-        if (!rstn) begin
-            sig_prev    <= {WIDTH{1'b0}};
-            sig_d       <= {WIDTH{1'b0}};
-            chg_r       <= 1'b0;
-            en_q        <= 1'b0;
-            init_done   <= 1'b0;
-            ts          <= {TS_BITS{1'b0}};
-            wp          <= 0;
-            ovf_pending <= 1'b0;
-            ovf_pulse   <= 1'b0;
-        end else begin
-            ts        <= ts + 1'b1;
-            ovf_pulse <= 1'b0;
-            // stage 1: compare consecutive samples (masked); a record is
-            // also sent on the first sample and when i_enable rises
-            sig_prev  <= sig_s;
-            sig_d     <= sig_s;
-            en_q      <= i_enable;
-            chg_r     <= i_enable && (trig_fire ||
-                         (pass && (!init_done || (i_enable && !en_q) || per_hit ||
-                          (!i_change_dis && (((sig_s ^ sig_prev) & ~i_ignore_mask) != {WIDTH{1'b0}})))));
-            init_done <= 1'b1;
-            // stage 2: record the sample that changed
-            if (chg_r) begin
-                if (!fifo_full) begin
-                    fifo[wp[FIFO_AW-1:0]] <= {ts, sig_d};
-                    wp <= wp + 1'b1;
-                end else begin
-                    ovf_pending <= 1'b1;
-                    ovf_pulse   <= 1'b1;
-                end
-            end
-            if (ovf_ack)
-                ovf_pending <= 1'b0;
-        end
-    end
-
-    //------------------------------------------------------------------
-    // descriptor scheduler: periodic timer + request pulse
-    //------------------------------------------------------------------
-    localparam DIW = (DESC_INTERVAL <= 1) ? 1 : $clog2(DESC_INTERVAL);
-    reg [DIW-1:0] desc_timer;
-    reg           desc_pending;
-    reg           desc_ack;
-    always @(posedge clk or negedge rstn) begin
-        if (!rstn) begin
-            desc_timer   <= {DIW{1'b0}};
-            desc_pending <= 1'b0;
-        end else begin
-            if (DESC_INTERVAL != 0) begin
-                if (desc_timer == DESC_INTERVAL-1) begin
-                    desc_timer   <= {DIW{1'b0}};
-                    desc_pending <= 1'b1;
-                end else begin
-                    desc_timer <= desc_timer + 1'b1;
-                end
-            end
-            if (i_desc_req) desc_pending <= 1'b1;
-            if (desc_ack)   desc_pending <= 1'b0;
-        end
-    end
-
-    // descriptor payload bytes
-    reg [7:0] desc_byte;
-    reg [1:0] desc_idx;
-    always @(*) begin
-        case (desc_idx)
-        2'd0: desc_byte = 8'h01;          // format version
-        2'd1: desc_byte = WIDTH[7:0];
-        2'd2: desc_byte = TS_BITS[7:0];
-        2'd3: desc_byte = {3'b0, i_periodic_en, o_done, o_triggered, o_armed, i_enable};
-        endcase
-    end
-
-    //------------------------------------------------------------------
-    // byte serializer: K28.1, then REC_BYTES bytes of {ts, data} LSB first
-    //------------------------------------------------------------------
-    reg                 sb_active;   // 0: at record boundary
-    reg                 desc_active; // sending descriptor payload
-    reg [7:0]           sb_idx;      // next byte index within the record
-    reg [REC_BITS-1:0]  cur;
-    reg                 b_valid, b_is_k;
-    reg [7:0]           b_data;
-    wire                b_ready;
-    wire can_load = !b_valid || b_ready;
-
-    // byte extraction: bytes 0..TS_BYTES-1 = ts, then data (both LSB first)
-    wire [7:0] cur_byte = cur[sb_idx*8 +: 8];   // cur = {ts, data}: fix order below
-
-    always @(posedge clk or negedge rstn) begin
-        if (!rstn) begin
-            sb_active   <= 1'b0;
-            desc_active <= 1'b0;
-            desc_idx    <= 2'd0;
-            desc_ack    <= 1'b0;
-            sb_idx    <= 8'd0;
-            rp        <= 0;
-            cur       <= {REC_BITS{1'b0}};
-            b_valid   <= 1'b0;
-            b_is_k    <= 1'b0;
-            b_data    <= 8'h00;
-            ovf_ack   <= 1'b0;
-        end else begin
-            ovf_ack  <= 1'b0;
-            desc_ack <= 1'b0;
-            if (can_load) begin
-                if (desc_active) begin
-                    b_valid <= 1'b1; b_is_k <= 1'b0;
-                    b_data  <= desc_byte;
-                    if (desc_idx == 2'd3) desc_active <= 1'b0;
-                    desc_idx <= desc_idx + 1'b1;
-                end else if (!sb_active) begin
-                    if (ovf_pending && !ovf_ack) begin
-                        b_valid <= 1'b1; b_is_k <= 1'b1; b_data <= K28_2;
-                        ovf_ack <= 1'b1;
-                    end else if (desc_pending && !desc_ack) begin
-                        b_valid <= 1'b1; b_is_k <= 1'b1; b_data <= K28_4;
-                        desc_active <= 1'b1;
-                        desc_idx    <= 2'd0;
-                        desc_ack    <= 1'b1;
-                    end else if (!fifo_empty) begin
-                        // reorder to {data, ts} so byte index 0 is ts[7:0]
-                        cur     <= {fifo[rp[FIFO_AW-1:0]][WIDTH-1:0],
-                                    fifo[rp[FIFO_AW-1:0]][REC_BITS-1:WIDTH]};
-                        rp      <= rp + 1'b1;
-                        b_valid <= 1'b1; b_is_k <= 1'b1; b_data <= K28_1;
-                        sb_active <= 1'b1;
-                        sb_idx    <= 8'd0;
-                    end else begin
-                        b_valid <= 1'b0;
-                    end
-                end else begin
-                    b_valid <= 1'b1; b_is_k <= 1'b0;
-                    b_data  <= cur_byte;
-                    if (sb_idx == REC_BYTES-1) begin
-                        sb_active <= 1'b0;
-                    end
-                    sb_idx <= sb_idx + 1'b1;
-                end
-            end
-        end
-    end
-
-    //------------------------------------------------------------------
-    // link core: comma framing + idle filler + 8b10b
-    //------------------------------------------------------------------
-    easycdr_trace_tx_core #(.FRAME_LEN(FRAME_LEN)) u_core(
-        .clk      (clk),
-        .rstn     (rstn),
-        .i_valid  (b_valid),
-        .i_is_k   (b_is_k),
-        .i_data   (b_data),
-        .o_ready  (b_ready),
-        .o_symbol (o_symbol)
-    );
+    trace_link_tx #(.WIDTH(WIDTH), .TS_BITS(TS_BITS), .FRAME_LEN(FRAME_LEN), .DESC_INTERVAL(DESC_INTERVAL)) u_link(
+        .clk(clk), .rstn(rstn),
+        .i_fifo_empty(fifo_empty), .i_fifo_data(fifo_data), .o_fifo_rd(fifo_rd),
+        .i_ovf_req(ovf_req_l), .o_ovf_ack(ovf_ack_l),
+        .i_desc_req(desc_evt),
+        .i_desc_flags({i_periodic_en, o_done, o_triggered, o_armed, i_enable}),
+        .o_symbol(o_symbol));
 endmodule

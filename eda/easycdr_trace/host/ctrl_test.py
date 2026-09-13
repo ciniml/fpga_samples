@@ -35,7 +35,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://127.0.0.1:8081")
     ap.add_argument("--addr-bits", type=int, default=14)
-    ap.add_argument("--tick-ns", type=float, default=10.0)
+    ap.add_argument("--tick-ns", type=float, default=37.037, help="trace sample clock period (Nano9K demo: 27MHz)")
     ap.add_argument("--wait-s2", type=float, default=0.0, help="seconds to wait for an S2 press after arming (0 = skip)")
     ap.add_argument("--pulse", action="store_true", help="Nano9K built with CTRL_PULSE=1: test the 'P' reset burst only")
     a = ap.parse_args()
@@ -148,13 +148,14 @@ def main():
     recs = capture()
     if recs:
         first_ts = recs[0][0]
-        check("RESET restarts timestamp", first_ts * a.tick_ns < 200e6, f"first record ts = {first_ts * a.tick_ns / 1e6:.1f} ms after reset (buffer fill takes ~{entries/6*2.56/1000:.0f} ms at the demo rate)")
+        check("RESET restarts timestamp", first_ts * a.tick_ns < 200e6, f"first record ts = {first_ts * a.tick_ns / 1e6:.1f} ms after reset (buffer fill takes ~{entries/6*256*a.tick_ns/1e6:.0f} ms at the demo rate)")
     else:
         check("RESET restarts timestamp", False, "no capture")
     # 6. flags + periodic sampling: change detection off, period 1e5 clocks (1ms) -> ~1000 rec/s
     def flags():
         flush(url); return api(url, {"write": [0x46], "read": 1, "timeout_ms": 2000})["data"][0]
-    send_ctrl(ctrl_frames(0x08, [0x03]) + ctrl_frames(0x09, [0xa0, 0x86, 0x01]))   # MODE, PERIOD=100000
+    per = round(1e6 / a.tick_ns)                                                    # 1ms in sample clocks
+    send_ctrl(ctrl_frames(0x08, [0x03]) + ctrl_frames(0x09, list(per.to_bytes(3, 'little'))))   # MODE, PERIOD
     time.sleep(0.05)
     f = flags(); check("flags: periodic set", f & 0x10, f"flags=0x{f:02x}")
     t0 = time.time(); recs = capture(timeout_s=8.0); dt = time.time() - t0
@@ -162,7 +163,7 @@ def main():
     if recs:
         gaps = [(recs[i][0] - recs[i-1][0]) & 0xffffff for i in range(1, min(len(recs), 200))]
         med = sorted(gaps)[len(gaps)//2]
-        check("periodic interval ~100000 clocks", 99000 <= med <= 101000, f"median gap {med} clocks")
+        check(f"periodic interval ~{per} sample clocks", abs(med - per) <= per // 100, f"median gap {med} clocks")
     send_ctrl(ctrl_frames(0x08, [0x00]))
     # 7. TX trigger on S2 (bit 8 == 1) with POST=100: armed -> no records until S2 is pressed
     send_ctrl(ctrl_frames(0x0c, [0x00, 0x01]) + ctrl_frames(0x0e, [0x00, 0x01]) + ctrl_frames(0x10, [100, 0]))

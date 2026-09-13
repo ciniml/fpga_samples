@@ -28,6 +28,10 @@ if {${CTRL_PULSE}} {
 }
 add_file -type verilog [file normalize ${SRC_DIR}/top.v]
 add_file -type verilog [file normalize ${COMMON_DIR}/tx_link_core.v]
+add_file -type verilog [file normalize ${COMMON_DIR}/trace_cdc.v]
+add_file -type verilog [file normalize ${COMMON_DIR}/trace_afifo.v]
+add_file -type verilog [file normalize ${COMMON_DIR}/trace_frontend.v]
+add_file -type verilog [file normalize ${COMMON_DIR}/trace_link_tx.v]
 add_file -type verilog [file normalize ${COMMON_DIR}/easycdr_trace_tx.v]
 add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/encoder_8b10b.sv]
 

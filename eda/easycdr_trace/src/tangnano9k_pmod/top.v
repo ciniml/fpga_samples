@@ -15,8 +15,10 @@
 // pad, so the serial data is inverted before the output buffer to restore
 // the wire polarity.
 //
-// Trace inputs of the demo: an 8-bit counter advancing every 2.56us plus
-// button S2, so pressing S2 produces timestamped events on the host.
+// Trace inputs of the demo: an 8-bit counter advancing every 9.5us plus
+// button S2, so pressing S2 produces timestamped events on the host. The
+// demo (and the trace sample clock) runs on the 27MHz crystal, the link on
+// 99.9MHz: the trace core crosses the domains internally.
 //
 // Reverse control channel (pmod0 pins 1/7 = ExtEasyCDR lane L0): 2Mbps
 // Manchester from the host FPGA -> ManchesterRx -> CtrlFrameRx ->
@@ -156,10 +158,13 @@ module top(
     //------------------------------------------------------------------
     // Demo trace source: slow counter + button S2
     //------------------------------------------------------------------
+    // The demo runs on the 27MHz crystal clock = the trace sample clock
+    // (sclk), independent of the 99.9MHz link clock: SYNC_STAGES=0 because
+    // trace_sig is synchronous to sclk. Timestamps count 27MHz cycles.
     reg [7:0] demo_div, demo_cnt;
     reg [1:0] btn_sync;
-    always @(posedge txclk_par or negedge tx_rstn) begin
-        if (!tx_rstn) begin
+    always @(posedge clk_in or negedge rst_btn_n) begin
+        if (!rst_btn_n) begin
             demo_div <= 8'd0;
             demo_cnt <= 8'd0;
             btn_sync <= 2'b11;
@@ -175,10 +180,12 @@ module top(
     // Frontend + link core + serializer
     //------------------------------------------------------------------
     wire [9:0] tx_symbol;
-    easycdr_trace_tx #(.WIDTH(16), .TS_BITS(24)) u_trace_tx(
+    easycdr_trace_tx #(.WIDTH(16), .TS_BITS(24), .SYNC_STAGES(0)) u_trace_tx(
+        .sclk          (clk_in),
+        .srstn         (rst_btn_n),
+        .sig           (trace_sig),
         .clk           (txclk_par),
         .rstn          (trace_rstn),
-        .sig           (trace_sig),
         .i_enable      (trace_en),
         .i_ignore_mask (ignore_mask),
         .i_desc_req    (desc_req),

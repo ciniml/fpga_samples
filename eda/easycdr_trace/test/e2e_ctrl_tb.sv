@@ -8,13 +8,16 @@
 //
 // Everything except the PLL/OSER10/IBUF path of the real designs.
 `timescale 1ns/1ps
-module e2e_ctrl_tb;
+module e2e_ctrl_tb #(
+    parameter real SCLK_PERIOD = 37.037   // sample clock period [ns] (27MHz as on the Nano9K demo)
+) ();
     localparam ADDR_BITS = 8;             // small buffer for fast sim
     localparam ENTRIES   = 1 << ADDR_BITS;
 
-    logic clk100 = 0, clk50 = 0, rst = 1;
+    logic clk100 = 0, clk50 = 0, sclk = 0, rst = 1;
     always #5  clk100 = ~clk100;
     always #10 clk50  = ~clk50;
+    always #(SCLK_PERIOD/2) sclk = ~sclk;
     wire rstn = ~rst;
 
     // ---------------- trace transmitter side (clk100) ----------------
@@ -25,7 +28,8 @@ module e2e_ctrl_tb;
     wire  [9:0]  tx_symbol;
 
     easycdr_trace_tx #(.WIDTH(16), .TS_BITS(24), .DESC_INTERVAL(4096)) u_trace_tx(
-        .clk(clk100), .rstn(trace_rstn), .sig(trace_sig),
+        .sclk(sclk), .srstn(1'b1), .sig(trace_sig),
+        .clk(clk100), .rstn(trace_rstn),
         .i_enable(trace_en), .i_ignore_mask(ignore_mask), .i_desc_req(desc_req),
         .i_periodic_en(periodic_en), .i_change_dis(change_dis), .i_period(period),
         .i_arm(arm), .i_trig_mask(trig_mask), .i_trig_value(trig_value), .i_post(post),
@@ -230,12 +234,12 @@ module e2e_ctrl_tb;
         check("ts restarted after soft reset", last_ts < 24'd3000);
         if (errors) $display("  last_ts = %0d", last_ts);
 
-        // 5b. periodic sampling: change detection off, period 500 clocks -> ~1 record / 5us
+        // 5b. periodic sampling: change detection off, period 100 sample clocks -> 10 records in 1000 sclk
         ctrl_write(8'h08, 8'h03);            // PERIODIC | CHG_DIS
-        ctrl_write(8'h09, 8'hf4); ctrl_write(8'h0a, 8'h01); ctrl_write(8'h0b, 8'h00);   // 500
+        ctrl_write(8'h09, 8'h64); ctrl_write(8'h0a, 8'h00); ctrl_write(8'h0b, 8'h00);   // 100
         #2000; rec_count = 0;
-        #50000;                              // 50us -> ~100 records
-        check($sformatf("periodic records ~10 in 50us at 5us period (got %0d)", rec_count), rec_count >= 9 && rec_count <= 11);
+        #(SCLK_PERIOD * 1000);
+        check($sformatf("periodic records ~10 in 1000 sclk at 100-cycle period (got %0d)", rec_count), rec_count >= 9 && rec_count <= 11);
         @(negedge clk100); trace_sig[3:0] = ~trace_sig[3:0]; #5000;
         ctrl_write(8'h08, 8'h00);            // back to change detection
         // 5c. TX trigger: arm on bit8 == 1, post = 3 records
@@ -270,7 +274,7 @@ module e2e_ctrl_tb;
         #10000;
         check("desc still enabled flag", desc_flags[0] == 1'b1);
 
-        if (errors == 0) $display("PASS"); else $fatal(1, "FAIL: %0d errors", errors);
+        if (errors == 0) $display("PASS (SCLK_PERIOD=%0.3f)", SCLK_PERIOD); else $fatal(1, "FAIL: %0d errors", errors);
         $finish;
     end
 

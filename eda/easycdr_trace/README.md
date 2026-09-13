@@ -170,6 +170,11 @@ ENABLE 0/1、RESET でタイムスタンプ再始動、`Z` アボート — ALL 
 - ホストコマンド追加: `?` (上記)、`X len bytes` (バイト列を逆方向チャネルへ転送)、
   `Z` (アボート: アーム解除して IDLE へ、応答 `Z`)。**アーム中 ('S'/'A' 後、'K' 前) は `X`/`?` は
   無視される** — 設定してからアームするか、`Z` (UI の Abort) で解除する
+- **サンプルクロック分離** (2026-09-13): `easycdr_trace_tx` は `sclk`(監視対象のクロック)と
+  `clk`(リンク 99.9MHz)を持ち、内部の非同期 FIFO とハンドシェイクで分離する。制御入力は
+  `clk` 側のまま。Nano9K デモは 27MHz 水晶をサンプルクロックにしている(タイムスタンプ 37.037ns、
+  UI の sample clk period と `ctrl_test.py --tick-ns` の既定値)。構造と再構成パラメータは
+  `doc/tx_core_spec.md` §4 参照
 - リセット専用変種: `make CTRL_PULSE=1 TARGET=tangnano9k_pmod` (出力 `build/tangnano9k_pmod_pulse/`)
   は Nano9K の受信側を `PulseResetRx` だけにする (レジスタ無し、トレースは常時有効・変化検出のみ)。
   25K は常に `PulseResetTx` を持ち、ホストコマンド `P` (返信 `P`) で 4×20µs のバーストを Manchester
