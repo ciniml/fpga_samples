@@ -1,1 +1,0 @@
-`define USE_EASYCDR_IP

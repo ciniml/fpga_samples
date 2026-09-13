@@ -12,7 +12,10 @@
 // OSIDES32 taps themselves cannot be moved at run time (see below).
 module oscdr_phy_gw5a #(
     parameter DLY0 = 0,    // base tap of delay 0
-    parameter DLY1 = 21    // base tap of delay 1 (= 1/4 UI later, IPUG1040 formula)
+    parameter DLY1 = 21,   // base tap of delay 1 (= 1/4 UI later, IPUG1040 formula)
+    parameter DYN1 = "FALSE",  // "TRUE": IODELAY_1 in dynamic mode (i_sdtap1 / i_value1 / i_dlystep1), experiment
+    parameter DYN0 = "FALSE",  // "TRUE": IODELAY_0 dynamic as well (same controls), experiment
+    parameter ADAPT1 = "FALSE" // "TRUE": IODELAY_1 adaptive mode, experiment
 ) (
     input  wire        clk_in,        // 50MHz reference
     input  wire        rstn_in,       // async, active low
@@ -20,6 +23,9 @@ module oscdr_phy_gw5a #(
     input  wire        i_serial_n,
 
     input  wire        i_freeze,      // pclk domain (quasi-static)
+    input  wire        i_sdtap1,      // dynamic IODELAY_1 control (DYN1 = "TRUE" only)
+    input  wire        i_value1,
+    input  wire [7:0]  i_dlystep1,
 
     output wire        o_pclk,
     output wire        o_reset,
@@ -106,16 +112,16 @@ module oscdr_phy_gw5a #(
     wire [31:0] samples;
     assign o_samples = samples;
     OSIDES32 #(
-        .C_STATIC_DLY_0(DLY0), .DYN_DLY_EN_0("FALSE"), .ADAPT_EN_0("FALSE"),
-        .C_STATIC_DLY_1(DLY1), .DYN_DLY_EN_1("FALSE"), .ADAPT_EN_1("FALSE")
+        .C_STATIC_DLY_0(DLY0), .DYN_DLY_EN_0(DYN0), .ADAPT_EN_0("FALSE"),
+        .C_STATIC_DLY_1(DLY1), .DYN_DLY_EN_1(DYN1), .ADAPT_EN_1(ADAPT1)
     ) u_osides32(
         .Q(samples), .DF0(df0), .DF1(df1),
         .D(serial_se),
         .PCLK(pclk),
         .FCLKP(fclkp), .FCLKQP(fclkqp), .FCLKN(fclkn), .FCLKQN(fclkqn),
         .RESET(reset),
-        .SDTAP0(1'b0), .VALUE0(1'b0), .DLYSTEP0(8'd0),
-        .SDTAP1(1'b0), .VALUE1(1'b0), .DLYSTEP1(8'd0));
+        .SDTAP0(i_sdtap1), .VALUE0(i_value1), .DLYSTEP0(i_dlystep1),
+        .SDTAP1(i_sdtap1), .VALUE1(i_value1), .DLYSTEP1(i_dlystep1));
 
     //------------------------------------------------------------------
     // CDR + gearbox

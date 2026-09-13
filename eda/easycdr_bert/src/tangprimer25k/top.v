@@ -57,14 +57,31 @@ module top(
     wire [7:0] dbg_data = 8'h00;
 `else
     // ext_ctrl[0] = freeze CDR phase, [1] = TX PLL PSDIR, [2] = TX PLL PSPULSE,
-    // [15] = raw sample capture trigger
+    // [3] = IODELAY_1 SDTAP, [4] = IODELAY_1 VALUE (host toggles it for edges),
+    // [14:8] = IODELAY_1 DLYSTEP (DYN_DLY1 build only), [15] = raw sample capture trigger
+`ifdef DYN_DLY1
+    localparam PHY_DYN1 = "TRUE";
+`else
+    localparam PHY_DYN1 = "FALSE";
+`endif
+`ifdef DYN_DLY0
+    localparam PHY_DYN0 = "TRUE";
+`else
+    localparam PHY_DYN0 = "FALSE";
+`endif
+`ifdef ADAPT_DLY1
+    localparam PHY_ADAPT1 = "TRUE";
+`else
+    localparam PHY_ADAPT1 = "FALSE";
+`endif
     wire cdr_lock, cdr_slip, dly_sat;
     wire [1:0] cdr_phase;
     wire [31:0] raw_samples;
-    oscdr_phy_gw5a #(.DLY0(0), .DLY1(21)) u_phy(
+    oscdr_phy_gw5a #(.DLY0(0), .DLY1(21), .DYN1(PHY_DYN1), .DYN0(PHY_DYN0), .ADAPT1(PHY_ADAPT1)) u_phy(
         .clk_in(clk_in), .rstn_in(resetn_in),
         .i_serial_p(i_serial_p), .i_serial_n(i_serial_n),
         .i_freeze(ext_ctrl[0]),
+        .i_sdtap1(ext_ctrl[3]), .i_value1(ext_ctrl[4]), .i_dlystep1({1'b0, ext_ctrl[14:8]}),
         .o_pclk(pclk), .o_reset(rx_reset), .o_pll_lock(pll_rx_lock),
         .o_dout(rx_data), .o_dout_en(rx_data_en),
         .o_cdr_lock(cdr_lock), .o_cdr_phase(cdr_phase), .o_cdr_slip(cdr_slip), .o_dly_sat(dly_sat),
