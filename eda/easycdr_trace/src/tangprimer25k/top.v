@@ -294,7 +294,7 @@ module top(
         if (reset_in) st_cnt <= 24'd0; else st_cnt <= st_cnt + 1'b1;
 
     wire [9:0] st_symbol;
-    easycdr_trace_tx #(.WIDTH(16), .TS_BITS(24), .SYNC_STAGES(0), .HAS_PERIODIC(0), .HAS_TRIGGER(0)) u_st_tx(
+    easycdr_trace_tx #(.WIDTH(16), .TS_BITS(24), .SYNC_STAGES(0), .HAS_PERIODIC(0), .HAS_TRIGGER(0), .FIFO_RAM("block")) u_st_tx(
         .sclk(clk_in), .srstn(resetn_in), .sig(st_cnt[23:8]),
         .clk(txclk_100m), .rstn(st_rstn),
         .i_enable(1'b1), .i_ignore_mask(16'd0), .i_desc_req(1'b0), .i_periodic_en(1'b0), .i_change_dis(1'b0),

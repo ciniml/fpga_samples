@@ -37,7 +37,8 @@ module easycdr_trace_tx #(
     parameter DESC_INTERVAL = 131072, // link cycles between descriptors (0 = off)
     parameter SYNC_STAGES   = 2,      // 0: sig synchronous to sclk, 2: asynchronous
     parameter HAS_PERIODIC  = 1,
-    parameter HAS_TRIGGER   = 1
+    parameter HAS_TRIGGER   = 1,
+    parameter FIFO_RAM      = "distributed" // "block" on GW5A (no distributed RAM)
 ) (
     input  wire             sclk,
     input  wire             srstn,
@@ -109,7 +110,7 @@ module easycdr_trace_tx #(
         .i_fifo_full(fifo_full), .o_rec_wr(rec_wr), .o_rec_data(rec_data), .o_drop(drop),
         .o_armed(f_armed), .o_triggered(f_triggered), .o_done(f_done));
 
-    trace_afifo #(.DW(REC_BITS), .AW(FIFO_AW)) u_fifo(
+    trace_afifo #(.DW(REC_BITS), .AW(FIFO_AW), .RAM_STYLE(FIFO_RAM)) u_fifo(
         .wclk(sclk), .wrstn(frstn), .wr_en(rec_wr), .wr_data(rec_data), .wfull(fifo_full),
         .rclk(clk), .rrstn(rstn), .rd_en(fifo_rd), .rd_data(fifo_data), .rempty(fifo_empty));
 

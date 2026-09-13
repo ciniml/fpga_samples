@@ -5,9 +5,12 @@
 // synchronously into a prefetch register (the only form a block RAM can
 // implement - GW5A has no distributed RAM, an asynchronous read would be
 // built from flip-flops), so it maps to SDPB / RAM16SDP. AW >= 2.
+//   RAM_STYLE "distributed" (default): RAM16SDP on GW1N/GW2A - small and
+//               placeable anywhere; "block": BSRAM (required on GW5A).
 module trace_afifo #(
     parameter DW = 40,
-    parameter AW = 4
+    parameter AW = 4,
+    parameter RAM_STYLE = "distributed"
 ) (
     input  wire          wclk,
     input  wire          wrstn,
@@ -21,8 +24,6 @@ module trace_afifo #(
     output reg  [DW-1:0] rd_data,
     output wire          rempty
 );
-    // small arrays are otherwise flattened into flip-flops on GW5A
-    reg [DW-1:0] mem [0:(1<<AW)-1] /* synthesis syn_ramstyle = "block_ram" */;
 
     // write side. wgray_inc = gray(wbin + 1) is kept in a register so the
     // full flag is a mux + compare (no adder on the path).
@@ -51,8 +52,6 @@ module trace_afifo #(
             wfull    <= (wgray_n == rgray_wf);
         end
     end
-    always @(posedge wclk)
-        if (wr_en & ~wfull) mem[wbin[AW-1:0]] <= wr_data;
 
     // read side (same pointer structure). mempty = memory empty; the entry
     // at the read pointer is fetched into rd_data whenever that register is
@@ -87,7 +86,18 @@ module trace_afifo #(
             mempty   <= (rgray_n == wgray_r2);
         end
     end
-    // synchronous read port (block-RAM friendly, no reset)
-    always @(posedge rclk)
-        if (fetch) rd_data <= mem[rbin[AW-1:0]];
+
+    // memory: the attribute cannot be parameterised, hence two declarations
+    wire wr_go_m = wr_en & ~wfull;
+    generate
+        if (RAM_STYLE == "block") begin : g_bram
+            reg [DW-1:0] mem [0:(1<<AW)-1] /* synthesis syn_ramstyle = "block_ram" */;
+            always @(posedge wclk) if (wr_go_m) mem[wbin[AW-1:0]] <= wr_data;
+            always @(posedge rclk) if (fetch) rd_data <= mem[rbin[AW-1:0]];
+        end else begin : g_dram
+            reg [DW-1:0] mem [0:(1<<AW)-1] /* synthesis syn_ramstyle = "distributed_ram" */;
+            always @(posedge wclk) if (wr_go_m) mem[wbin[AW-1:0]] <= wr_data;
+            always @(posedge rclk) if (fetch) rd_data <= mem[rbin[AW-1:0]];
+        end
+    endgenerate
 endmodule

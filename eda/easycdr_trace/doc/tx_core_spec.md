@@ -33,6 +33,7 @@ EasyCDR受信IP(GW5A、10bit+Word Alignment+8B/10B Decoding構成)が
 | `DESC_INTERVAL` | 131072 | 0=off | デスクリプタの定期送出間隔(`clk` サイクル) |
 | `SYNC_STAGES` | 2 | 0 or ≥2 | `sig` の同期段数。0 = `sclk` 同期入力 |
 | `HAS_PERIODIC` / `HAS_TRIGGER` | 1 | 0/1 | 周期サンプリング / TX トリガの論理を生成するか(0 で削除、入力は無視) |
+| `FIFO_RAM` | "distributed" | "distributed" / "block" | レコード FIFO のメモリ種別(GW5A は "block") |
 
 受信側(`trace_rx_decoder` / `trace_capture`)はレコード形式をデスクリプタから実行時に取る
 (`MAX_WIDTH`=64 / `MAX_TS_BITS`=32 まで)。ホスト (UI / ctrl_test.py) も '?' の値に従うので、
@@ -125,9 +126,8 @@ ELVDS_OBUF u_ob(.I(ser), .O(txp), .OB(txn));   // 3.3Vバンクはエミュレ�
   配線されている場合(Tang Nano 9K pmod0など)は **OSER10のD入力で全ビット反転**して
   補正する。8b10bは極性反転に非耐性なので、逆極性ではロックしない
 - **GW1N**: OSER出力はOBUFに直結必須(間にロジック不可)。よって反転はD入力側で行う
-- **レコード FIFO のメモリ**: `trace_afifo` は同期読出 (プリフェッチ) + `syn_ramstyle="block_ram"` で BSRAM に載る
-  (GW1N: 1 個、GW5A: 2 個)。GW5A には分散 RAM が無く、非同期読出の配列は FF に展開される。GW1N で BSRAM を
-  節約したければ属性を `distributed_ram` にすると SSRAM (RAM16) 9 個になる
+- **レコード FIFO のメモリ**: `FIFO_RAM` パラメータ。既定 `"distributed"` = SSRAM (RAM16、GW1N で 9 個。小さく配置の自由度が高い)、
+  `"block"` = BSRAM (GW5A には分散 RAM が無いので必須、2 個)。読出は同期 (プリフェッチ) なのでどちらにも載る
 - **GW1N タイミング**: 変化検出はパイプライン化済み。100MHzで
   タイミングクリーン(パイプラインなしでは16bit比較+FIFO WREで13.4nsとなり違反)
 
