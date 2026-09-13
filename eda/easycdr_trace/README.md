@@ -71,6 +71,8 @@ easycdr_trace_tx #(.WIDTH(16), .TS_BITS(24)) u_trace_tx(
 | `A` post_hi post_lo | トリガ待ちでアーム。トリガ後 `post` エントリ書いて凍結。
   残り (バッファサイズ − post) が**プリトリガ履歴**になる |
 | `D` | 時系列順 (最古から) に2バイト/エントリでダンプ |
+| `?` / `F` / `X` / `Z` / `P` | デスクリプタ / TX フラグ / 逆方向チャネル転送 / 中止 / パルスリセット (後述) |
+| `L` | **リンク診断** 14 バイト: status (bit0 lock, bit1 align, bit2 desc, bit3 comma 監視, bit4 IP reset, bit7 受信クロック無応答)、VER、前回 `L` 以降の K28.5 / K28.1 / 復号誤り / K28.2 / K28.4 / データ語 の各 u16 (飽和) |
 
 ```sh
 # Nano9KのS2押下 (bit8) をトリガに、前後半分ずつ取得
@@ -147,6 +149,19 @@ make run TARGET=tangnano9k_pmod
 - TX移植: GW1N (Tang Nano 9K) / GW2A (Tang Primer 20K) 用PLLラッパ追加。
   CDRが±5000ppmを許容するため27MHz水晶の999Mbps (-1000ppm) でも
   RX側1Gbps設定のまま受信可能
+
+## 診断と自己試験 (つながらないとき)
+
+順番に確認する。前段が通るまで次へ進まない。
+
+| 手順 | コマンド | 期待 | 通らないとき疑う場所 |
+|---|---|---|---|
+| 1. 25K 単体自己試験 | USB-C ケーブルを 25K の pmod0 ↔ pmod2 に接続し `python3 host/ctrl_test.py --selftest` | ALL OK (自前ストリーム: 16bit カウンタが 5.12µs 毎に +1) | 25K のビットストリーム、ブリッジのポート (`USB_Debugger_*-if01`)、モジュール/ケーブル |
+| 2. リンク診断 | 送信側と接続して `ctrl_test.py` の先頭 (または UI の Link diag) | `[lock align desc commas]`、errors 0、records > 0 | lock 無し: 送信側の PLL/ビットストリーム、レート変種の不一致 (999M と 742.5M)、ケーブルのレーン (TX L1 → RX L0)。commas はあるが desc 無し: 送信側の極性反転 (8b10b は極性非耐性)。records 0 で desc あり: 送信側が ARMED/DONE/無効 → `X` で RESET |
+| 3. 制御チャネル | `ctrl_test.py` 全項目 | ALL OK | Manchester の極性 (`CTRL_INVERT`)、レーン (25K pmod2 L1 → Nano9K pmod0 L0) |
+
+`L` の status bit7 は受信クロック (EasyCDR の share_clk) が止まっている印で、RX PLL がロックしていない
+(ケーブル以前の問題)。ctrl_test.py は `L` を最初に実行し、lock/commas が無ければそこで止まる。
 
 ## 逆方向制御チャネル (ホスト → トレース送信側)
 

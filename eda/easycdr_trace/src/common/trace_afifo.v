@@ -19,6 +19,8 @@ module trace_afifo #(
     output wire [DW-1:0] rd_data,
     output reg           rempty
 );
+    // GW1N maps this to SSRAM (RAM16). GW5A builds it from flip-flops (the
+    // syn_ramstyle hint had no effect there): 16 x 40 = 640 FF, acceptable.
     reg [DW-1:0] mem [0:(1<<AW)-1];
 
     // write side. wgray_inc = gray(wbin + 1) is kept in a register so the

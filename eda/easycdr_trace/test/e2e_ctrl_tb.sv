@@ -77,7 +77,13 @@ module e2e_ctrl_tb #(
         .clk_sys(clk50), .rst_sys(rst),
         .h_rx_valid(h_rx_valid), .h_rx_data(h_rx_data),
         .h_tx_valid(h_tx_valid), .h_tx_data(h_tx_data), .h_tx_ready(1'b1),
-        .o_fwd_valid(fwd_valid), .o_fwd_data(fwd_data));
+        .o_fwd_valid(fwd_valid), .o_fwd_data(fwd_data),
+        .o_diag_req(diag_req), .i_diag_done(diag_done), .i_diag_data(diag_data));
+    wire diag_req, diag_done; wire [111:0] diag_data;
+    trace_link_diag u_diag(
+        .pclk(clk100), .prst(rst), .i_data_en(dec_valid), .i_word(rx_word), .i_decerr(dec_err),
+        .i_status({4'b0, 1'b1, desc_ver != 8'd0, 1'b1, 1'b1}), .i_desc_ver(desc_ver),
+        .clk_sys(clk50), .rst_sys(rst), .i_req(diag_req), .o_done(diag_done), .o_data(diag_data));
 
     // forward FIFO + Manchester TX (as in the 25K top)
     logic [7:0] cfifo [0:15];
@@ -273,6 +279,19 @@ module e2e_ctrl_tb #(
         #2000;
         check($sformatf("post=0: unlimited after trigger (got %0d)", rec_count), rec_count == 6);
         check("flags: triggered", desc_flags[2] == 1'b1);
+
+        // 6. link diagnostics: counters since the previous 'L' (the first 'L' clears the
+        // reset artefacts: the tb decoder flags the encoder's reset-state symbol once per reset)
+        resp.delete(); hsend("L"); wait (resp.size() == 14);
+        resp.delete();
+        for (int i = 0; i < 6; i++) begin @(negedge clk100); trace_sig[3:0] = ~trace_sig[3:0]; #500; end
+        #2000;
+        hsend("L"); wait (resp.size() == 14);
+        check($sformatf("'L' status 0x%02x ver %0d commas %0d recs %0d errs %0d", resp[0], resp[1],
+              {resp[3], resp[2]}, {resp[5], resp[4]}, {resp[7], resp[6]}),
+              resp[0] == 8'h0f && resp[1] == 8'h01 && {resp[3], resp[2]} > 16'd10 && {resp[5], resp[4]} >= 16'd6 && {resp[7], resp[6]} == 16'd0);
+        resp.delete(); hsend("L"); wait (resp.size() == 14);
+        check($sformatf("'L' counters cleared (recs %0d)", {resp[5], resp[4]}), {resp[5], resp[4]} < 16'd6);
 
         // 5. desc_req: descriptor immediately (flags reflect enable)
         ctrl_write(8'h00, 8'h06);            // DESC_REQ | ENABLE

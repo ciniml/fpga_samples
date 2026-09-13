@@ -25,6 +25,8 @@ module top(
     input            clk_in,          // 50MHz
     input            i_serial_p,
     input            i_serial_n,
+    output           o_selftest_p,   // pmod0 lane L1 (G7/G8): own trace stream for the loopback self-test
+    output           o_selftest_n,
     output           o_serial_p,
     output           o_serial_n,
     input            reset_in,        // push button, active high (pull-down)
@@ -258,6 +260,56 @@ module top(
         .data_valid(h_tx_valid), .data_ready(h_tx_ready), .data_bits(h_tx_data),
         .tx(uart_txd));
 
+    //------------------------------------------------------------------
+    // Link diagnostics (host command 'L') and loopback self-test source
+    //------------------------------------------------------------------
+    wire         diag_req, diag_done;
+    wire [111:0] diag_data;
+    trace_link_diag u_diag(
+        .pclk(pclk_rx), .prst(rx_reset),
+        .i_data_en(rx_data_en), .i_word(rx_data[8:0]), .i_decerr(rx_decerr),
+        .i_status({3'b0, rx_reset, act_ok, desc_ver != 8'd0, rx_align, pll_rx_lock}),
+        .i_desc_ver(desc_ver),
+        .clk_sys(clk_in), .rst_sys(reset_in),
+        .i_req(diag_req), .o_done(diag_done), .o_data(diag_data));
+
+    // Self-test transmitter: a second trace core sending a free-running
+    // 16-bit counter (steps every 5.12us) on pmod0 lane L1. Loop a USB-C
+    // cable from pmod0 to pmod2 and the receiver sees this stream without
+    // any other board (ctrl_test.py --selftest). Not built in the 742.5Mbps
+    // variant (separate TX PLL would be needed).
+    wire st_serial;
+`ifndef RATE_742M5
+    wire pll_tx_lock;
+    wire txclk_500m /* synthesis syn_keep=1 */;
+    wire txclk_100m;
+    pll_tx_500m u_pll_tx(
+        .lock(pll_tx_lock), .clkout0(txclk_500m), .clkout1(), .clkout2(), .clkout3(), .clkin(clk_in));
+    CLKDIV u_clkdiv_tx(.HCLKIN(txclk_500m), .RESETN(resetn_in), .CALIB(1'b0), .CLKOUT(txclk_100m));
+    defparam u_clkdiv_tx.DIV_MODE = "5";
+    wire st_rstn = resetn_in & pll_tx_lock;
+
+    reg [23:0] st_cnt;
+    always @(posedge clk_in or posedge reset_in)
+        if (reset_in) st_cnt <= 24'd0; else st_cnt <= st_cnt + 1'b1;
+
+    wire [9:0] st_symbol;
+    easycdr_trace_tx #(.WIDTH(16), .TS_BITS(24), .SYNC_STAGES(0), .HAS_PERIODIC(0), .HAS_TRIGGER(0)) u_st_tx(
+        .sclk(clk_in), .srstn(resetn_in), .sig(st_cnt[23:8]),
+        .clk(txclk_100m), .rstn(st_rstn),
+        .i_enable(1'b1), .i_ignore_mask(16'd0), .i_desc_req(1'b0), .i_periodic_en(1'b0), .i_change_dis(1'b0),
+        .i_period(24'd0), .i_arm(1'b0), .i_trig_mask(16'd0), .i_trig_value(16'd0), .i_post(16'd0),
+        .o_symbol(st_symbol), .o_overflow(), .o_armed(), .o_triggered(), .o_done());
+    OSER10 u_st_oser(
+        .Q(st_serial),
+        .D0(st_symbol[0]), .D1(st_symbol[1]), .D2(st_symbol[2]), .D3(st_symbol[3]), .D4(st_symbol[4]),
+        .D5(st_symbol[5]), .D6(st_symbol[6]), .D7(st_symbol[7]), .D8(st_symbol[8]), .D9(st_symbol[9]),
+        .PCLK(txclk_100m), .FCLK(txclk_500m), .RESET(~st_rstn));
+`else
+    assign st_serial = 1'b0;
+`endif
+    ELVDS_OBUF u_st_obuf(.I(st_serial), .O(o_selftest_p), .OB(o_selftest_n));
+
     trace_capture #(
         .ADDR_BITS    (14),                 // 16Ki entries ({K,byte})
         .DATA_BITS    (9),
@@ -282,7 +334,10 @@ module top(
         .h_tx_ready (h_tx_ready),
         .o_fwd_valid (fwd_valid),
         .o_fwd_data  (fwd_data),
-        .o_pulse_req (pulse_req)
+        .o_pulse_req (pulse_req),
+        .o_diag_req  (diag_req),
+        .i_diag_done (diag_done),
+        .i_diag_data (diag_data)
     );
 
     assign o_dat_lock    = rx_align & act_ok;

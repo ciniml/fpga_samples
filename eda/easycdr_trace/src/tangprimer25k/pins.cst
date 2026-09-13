@@ -23,6 +23,10 @@ IO_PORT "i_serial_p" PULL_MODE=NONE DRIVE=OFF BANK_VCCIO=3.3 CTLE=HIGH;
 // D10,D11 is the one the 1.0G sample used for a straight-polarity link).
 // (The single-board loopback used pmod0 lane L1 = G7,G8.)
 IO_LOC "o_serial_p" D10,D11;
+// Self-test trace stream: pmod0 lane L1 (G7/G8); loop a USB-C cable from
+// pmod0 to pmod2 and it arrives on the RX pair above (ctrl_test.py --selftest).
+IO_LOC "o_selftest_p" G7,G8;
+IO_PORT "o_selftest_p" IO_TYPE=LVPECL33E PULL_MODE=NONE DRIVE=16 BANK_VCCIO=3.3;
 IO_PORT "o_serial_p" IO_TYPE=LVPECL33E PULL_MODE=NONE DRIVE=16 BANK_VCCIO=3.3;
 IO_LOC "o_dat_lock" B2;
 IO_PORT "o_dat_lock" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;

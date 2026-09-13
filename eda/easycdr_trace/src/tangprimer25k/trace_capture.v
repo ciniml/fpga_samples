@@ -33,6 +33,8 @@
 //   'Z'                         : abort - disarm a pending capture and return
 //                                 to idle (also accepted while waiting for
 //                                 the trigger; replies 'Z')
+//   'L'                         : link diagnostics: o_diag_req strobe, then the 14
+//                                 bytes of i_diag_data (see trace_link_diag.v)
 //   'P'                         : one-clock o_pulse_req strobe (reset burst for
 //                                 the pulse-only reverse channel); replies 'P'.
 //                                 Also accepted while waiting for the trigger
@@ -67,7 +69,11 @@ module trace_capture #(
     // reverse control channel ('X' payload, clk_sys domain)
     output reg                  o_fwd_valid,
     output reg  [7:0]           o_fwd_data,
-    output reg                  o_pulse_req
+    output reg                  o_pulse_req,
+    // link diagnostics (trace_link_diag, clk_sys domain)
+    output reg                  o_diag_req,
+    input  wire                 i_diag_done,
+    input  wire [111:0]         i_diag_data
 );
     localparam [ADDR_BITS-1:0] LAST_ADDR = {ADDR_BITS{1'b1}};
 
@@ -178,6 +184,8 @@ module trace_capture #(
     localparam ST_DUMP   = 3'd3;
     localparam ST_INFO   = 3'd4;   // '?' reply
     localparam ST_FWD    = 3'd5;   // 'X' payload forwarding
+    localparam ST_DIAGW  = 3'd6;   // 'L': waiting for the snapshot
+    localparam ST_DIAG   = 3'd7;   // 'L': sending 14 bytes
 
     reg [2:0]           state;
     reg [7:0]           cmd;
@@ -188,6 +196,7 @@ module trace_capture #(
     reg                 rd_pending;
     reg                 dump_lo;
     reg [7:0]           fwd_left;
+    reg [111:0]         diag_q;
 
     always @(posedge clk_sys or posedge rst_sys) begin
         if (rst_sys) begin
@@ -210,10 +219,13 @@ module trace_capture #(
             o_fwd_valid   <= 1'b0;
             o_fwd_data    <= 8'h00;
             o_pulse_req   <= 1'b0;
+            o_diag_req    <= 1'b0;
+            diag_q        <= 112'd0;
             fwd_left      <= 8'd0;
         end else begin
             o_fwd_valid <= 1'b0;
             o_pulse_req <= 1'b0;
+            o_diag_req  <= 1'b0;
             if (tx_valid && tx_ready) tx_valid <= 1'b0;
             rdata      <= buffer[raddr];
             rd_pending <= 1'b0;
@@ -251,6 +263,10 @@ module trace_capture #(
                     o_pulse_req <= 1'b1;
                     tx_data     <= "P";
                     tx_valid    <= 1'b1;
+                end
+                "L": begin
+                    o_diag_req <= 1'b1;
+                    state      <= ST_DIAGW;
                 end
                 "D": begin
                     raddr      <= waddr_s;
@@ -328,6 +344,18 @@ module trace_capture #(
                     dump_left  <= dump_left - 1'b1;
                     if (dump_left == 1) state <= ST_IDLE;
                 end
+            end
+            ST_DIAGW: if (i_diag_done) begin
+                diag_q  <= i_diag_data;
+                arg_idx <= 8'd0;
+                state   <= ST_DIAG;
+            end
+            ST_DIAG: if (!tx_valid || tx_ready) begin
+                tx_data  <= diag_q[7:0];
+                tx_valid <= 1'b1;
+                diag_q   <= {8'd0, diag_q[111:8]};
+                arg_idx  <= arg_idx + 1'b1;
+                if (arg_idx == 8'd13) state <= ST_IDLE;
             end
             default: state <= ST_IDLE;
             endcase

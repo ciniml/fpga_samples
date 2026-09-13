@@ -6,6 +6,7 @@ SRCS := e2e_ctrl_tb.sv \
         ../src/common/trace_frontend.v ../src/common/trace_link_tx.v \
         $(RTL)/manchester/pulse_reset_tx.sv \
         ../src/tangprimer25k/trace_rx_decoder.v ../src/tangprimer25k/trace_capture.v \
+        ../src/tangprimer25k/trace_link_diag.v \
         $(RTL)/displayport/src/encoder_8b10b.sv $(RTL)/displayport/src/decoder_8b10b.sv \
         $(RTL)/manchester/manchester_tx.sv $(RTL)/manchester/manchester_rx.sv \
         $(RTL)/manchester/ctrl_frame_rx.sv $(RTL)/manchester/trace_ctrl_regs.sv

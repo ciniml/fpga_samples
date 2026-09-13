@@ -38,6 +38,7 @@ def main():
     ap.add_argument("--tick-ns", type=float, default=37.037, help="trace sample clock period (Nano9K demo: 27MHz)")
     ap.add_argument("--wait-s2", type=float, default=0.0, help="seconds to wait for an S2 press after arming (0 = skip)")
     ap.add_argument("--pulse", action="store_true", help="Nano9K built with CTRL_PULSE=1: test the 'P' reset burst only")
+    ap.add_argument("--selftest", action="store_true", help="25K alone, USB-C cable pmod0 -> pmod2: check the receiver with its own stream")
     a = ap.parse_args()
     url = a.url
     entries = 1 << a.addr_bits
@@ -48,6 +49,24 @@ def main():
         print(f"[{time.time()-t_start:5.1f}s] " + ("ok:   " if cond else "FAIL: ") + name + (f"  ({detail})" if detail else ""), flush=True)
         ok_all &= bool(cond)
 
+    def link_diag():
+        flush(url)
+        d = api(url, {"write": [0x4C], "read": 14, "timeout_ms": 2000})["data"]           # 'L'
+        if len(d) != 14: return None
+        u16 = lambda i: d[i] | (d[i+1] << 8)
+        return {"status": d[0], "ver": d[1], "commas": u16(2), "records": u16(4), "errors": u16(6),
+                "ovf": u16(8), "desc": u16(10), "data": u16(12)}
+    # 1. link diagnostics: is the receiver locked and are records arriving?
+    link_diag(); time.sleep(0.2); lg = link_diag()
+    if lg is None:
+        check("'L' link diagnostics", False, "no reply: is the 25K programmed / the bridge on the right port?"); return
+    st = lg["status"]
+    bits = [n for i, n in enumerate(["lock", "align", "desc", "commas", "ip_reset"]) if st & (1 << i)] + (["CLOCK_DEAD"] if st & 0x80 else [])
+    check("'L' link: lock+align+commas", (st & 0x0b) == 0x0b and not (st & 0x80),
+          f"status 0x{st:02x} [{' '.join(bits)}] in 0.2s: commas {lg['commas']} records {lg['records']} errors {lg['errors']} ovf {lg['ovf']} desc {lg['desc']}")
+    if (st & 0x0b) != 0x0b:
+        print("      no lock/commas: check the cable (TX lane -> RX lane), the TX board's PLL/bitstream, and the link rate variant"); return
+    check("'L' link: no decode errors", lg["errors"] == 0)
     flush(url)
     r = api(url, {"write": [0x3F], "read": 4, "timeout_ms": 2000})
     d = r["data"]
@@ -90,6 +109,20 @@ def main():
         api(url, {"write": [0x58, len(frames)] + frames, "read": 0})   # 'X'
         time.sleep(0.05)
 
+    if a.selftest:
+        # the 25K's own 16-bit counter stream (steps every 5.12us): consecutive records differ by exactly 1
+        check("self-test descriptor WIDTH=16", width == 16)
+        recs = capture()
+        check("self-test capture", recs is not None and len(recs) > 100, f"{len(recs) if recs else 0} records")
+        if recs:
+            bad = sum(1 for i in range(1, len(recs)) if ((recs[i][1] - recs[i-1][1]) & 0xffff) != 1)
+            gaps = [(recs[i][0] - recs[i-1][0]) & 0xffffff for i in range(1, len(recs))]
+            med = sorted(gaps)[len(gaps)//2]
+            check("self-test counter increments by 1", bad == 0, f"{bad} irregular steps out of {len(recs)-1}")
+            check("self-test interval 256 sample clocks", med == 256, f"median gap {med}")
+        lg = link_diag(); check("self-test no decode errors", lg is not None and lg["errors"] == 0, f"{lg}")
+        print("ALL OK" if ok_all else "SOME CHECKS FAILED")
+        return
     if a.pulse:
         # reset-only reverse channel: 'P' -> 80us burst -> Nano9K soft reset -> timestamps restart
         recs = capture()

@@ -68,6 +68,7 @@
     <legend>TX control (reverse Manchester channel via 'X' frames)</legend>
     <div class="row">
       <button id="btnQuery" disabled>Query params (?)</button>
+      <button id="btnDiag" disabled title="receiver lock/align + event counters since the previous L">Link diag (L)</button>
       <label><input type="checkbox" id="txEnable" checked> trace enable</label>
       <label>ignore mask <input type="text" id="ignMask" value="0x0000"></label>
       <button id="btnApply" disabled>Apply</button>
@@ -418,6 +419,15 @@ async function readFlags() {
 }
 $('btnArm').onclick = () => sendCtrl(ctrlFrame(CTRL.ADDR, [CTRL.ARM | ($('txEnable').checked ? CTRL.ENABLE : 0)])).then(() => { $('txInfo').textContent = 'armed'; return readFlags(); }).catch(e => log('arm: ' + e.message));
 $('btnFlags').onclick = () => readFlags().catch(e => log('flags: ' + e.message));
+async function linkDiag() {
+  transport.flush();
+  await transport.write(new Uint8Array([0x4c]));                                     // 'L'
+  const d = await transport.read(14), u16 = i => d[i] | (d[i + 1] << 8), st = d[0];
+  const bits = ['lock', 'align', 'desc', 'commas', 'ip_reset'].filter((_, i) => st & (1 << i));
+  if (st & 0x80) bits.push('CLOCK_DEAD');
+  $('txInfo').textContent = `link: [${bits.join(' ')}] commas ${u16(2)} records ${u16(4)} errors ${u16(6)} ovf ${u16(8)} desc ${u16(10)} data ${u16(12)}`;
+}
+$('btnDiag').onclick = () => linkDiag().catch(e => log('diag: ' + e.message));
 $('btnQuery').onclick = () => queryParams().catch(e => log('query: ' + e.message));
 $('btnApply').onclick = () => applyTxCtrl().catch(e => log('tx ctrl: ' + e.message));
 $('btnTxReset').onclick = () => sendCtrl(ctrlFrame(CTRL.ADDR, [CTRL.RESET | CTRL.ENABLE]))
@@ -448,7 +458,7 @@ async function connect(kind) {
               : await SerialTransport.open(+$('baud').value);
     $('conn').textContent = 'connected: ' + transport.name;
     $('btnSerial').disabled = $('btnUsb').disabled = $('btnServer').disabled = true; $('btnDisc').disabled = $('btnCap').disabled = false;
-    $('btnQuery').disabled = $('btnApply').disabled = $('btnTxReset').disabled = $('btnPulse').disabled = $('btnArm').disabled = $('btnFlags').disabled = false;
+    $('btnQuery').disabled = $('btnDiag').disabled = $('btnApply').disabled = $('btnTxReset').disabled = $('btnPulse').disabled = $('btnArm').disabled = $('btnFlags').disabled = false;
     queryParams().catch(() => {});
   } catch (e) { log('connect failed: ' + e.message); }
 }
@@ -458,7 +468,7 @@ $('btnServer').onclick = () => connect('server');
 initServerUi();
 $('btnDisc').onclick = async () => { if (abortCtl) abortCtl.abort(); await transport.close(); transport = null;
   $('conn').textContent = 'not connected'; $('btnSerial').disabled = $('btnUsb').disabled = $('btnServer').disabled = false; $('btnDisc').disabled = $('btnCap').disabled = true;
-  $('btnQuery').disabled = $('btnApply').disabled = $('btnTxReset').disabled = $('btnPulse').disabled = $('btnArm').disabled = $('btnFlags').disabled = true; };
+  $('btnQuery').disabled = $('btnDiag').disabled = $('btnApply').disabled = $('btnTxReset').disabled = $('btnPulse').disabled = $('btnArm').disabled = $('btnFlags').disabled = true; };
 $('btnCap').onclick = capture;
 $('btnAbort').onclick = () => { if (abortCtl) abortCtl.abort(); if (transport) { transport.flush(); transport.write(new Uint8Array([0x5a])).catch(() => {}); } };   // 'Z' disarms the FPGA
 if (!navigator.serial) { $('btnSerial').disabled = true; log('Web Serial API not available in this browser'); }
