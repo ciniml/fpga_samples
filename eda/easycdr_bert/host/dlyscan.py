@@ -91,6 +91,17 @@ def main():
         for n in (10, 20, 40):
             b.pulse_value(10 if n == 10 else 10 if n == 20 else 20, start_high=first)
             measure(b, f"  after {n} pulses")
+    print("E5: SDTAP1=1 with DLYSTEP1 != 0 (DLYSTEP read as the per-pulse step size)")
+    for step in (1, 4, 21):
+        for first in (False, True):
+            b.ctrl(sdtap=False, dly=step); time.sleep(0.02); b.ctrl(sdtap=True); time.sleep(0.02)
+            tot = 0
+            for n in (4, 20, 40):
+                b.pulse_value(n - tot, start_high=first); tot = n
+                measure(b, f"  DLYSTEP1={step:2d} after {n:2d} pulses ({'falling' if first else 'rising'} first)")
+    print("E6: DLYSTEP1 set while SDTAP1=0, then one VALUE pulse (load-by-pulse)")
+    for v in (21, 42):
+        b.ctrl(sdtap=False, dly=v); time.sleep(0.02); b.pulse_value(1); measure(b, f"  DLYSTEP1={v} +1 pulse")
     if a.sweep:
         print(f"E4: sweep {a.sweep} pulses one at a time (pair-match / class scores vs. step)")
         b.ctrl(sdtap=False, dly=0); time.sleep(0.02); b.ctrl(sdtap=True)
