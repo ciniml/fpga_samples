@@ -39,6 +39,11 @@ module top(
     output wire led_beat_n   // heartbeat from the demo counter
     );
 
+`ifndef TRACE_WIDTH
+`define TRACE_WIDTH 16
+`endif
+    localparam TRACE_WIDTH = `TRACE_WIDTH;   // make TRACE_WIDTH=32 ... (multiple of 8, >= 16)
+
     //------------------------------------------------------------------
     // TX clocking: 499.5MHz + /5 = 99.9MHz
     //------------------------------------------------------------------
@@ -82,7 +87,7 @@ module top(
 
     wire ctrl_rst = ~tx_rstn;
     wire        soft_reset, trace_en, desc_req, arm, periodic_en, change_dis;
-    wire [15:0] ignore_mask, trig_mask, trig_value;
+    wire [TRACE_WIDTH-1:0] ignore_mask, trig_mask, trig_value;
     wire [23:0] period;
     wire [15:0] post;
 `ifdef CTRL_PULSE
@@ -101,9 +106,9 @@ module top(
     assign arm         = 1'b0;
     assign periodic_en = 1'b0;
     assign change_dis  = 1'b0;
-    assign ignore_mask = 16'd0;
-    assign trig_mask   = 16'd0;
-    assign trig_value  = 16'd0;
+    assign ignore_mask = {TRACE_WIDTH{1'b0}};
+    assign trig_mask   = {TRACE_WIDTH{1'b0}};
+    assign trig_value  = {TRACE_WIDTH{1'b0}};
     assign period      = 24'd0;
     assign post        = 16'd0;
 `else
@@ -133,7 +138,7 @@ module top(
         .o_frame_err()
     );
 
-    TraceCtrlRegs #(.WIDTH(16), .RESET_CYCLES(64)) u_ctrl_regs(
+    TraceCtrlRegs #(.WIDTH(TRACE_WIDTH), .RESET_CYCLES(64)) u_ctrl_regs(
         .i_clk        (txclk_par),
         .i_rst        (ctrl_rst),
         .i_wr_valid   (wr_valid),
@@ -174,13 +179,13 @@ module top(
             btn_sync <= {btn_sync[0], trace_btn_n};
         end
     end
-    wire [15:0] trace_sig = {7'b0, ~btn_sync[1], demo_cnt};
+    wire [TRACE_WIDTH-1:0] trace_sig = {{(TRACE_WIDTH-9){1'b0}}, ~btn_sync[1], demo_cnt};
 
     //------------------------------------------------------------------
     // Frontend + link core + serializer
     //------------------------------------------------------------------
     wire [9:0] tx_symbol;
-    easycdr_trace_tx #(.WIDTH(16), .TS_BITS(24), .SYNC_STAGES(0)) u_trace_tx(
+    easycdr_trace_tx #(.WIDTH(TRACE_WIDTH), .TS_BITS(24), .SYNC_STAGES(0)) u_trace_tx(
         .sclk          (clk_in),
         .srstn         (rst_btn_n),
         .sig           (trace_sig),

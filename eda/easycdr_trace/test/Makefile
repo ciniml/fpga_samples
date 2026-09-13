@@ -21,6 +21,8 @@ test:
 	./obj_dir/simv
 	verilator $(VFLAGS) -GSCLK_PERIOD=10.0 --Mdir obj_dir_s100 -o simv $(SRCS)
 	./obj_dir_s100/simv
+	verilator $(VFLAGS) -GTX_WIDTH=32 --Mdir obj_dir_w32 -o simv $(SRCS)
+	./obj_dir_w32/simv
 
 clean:
-	rm -rf obj_dir obj_dir_s100
+	rm -rf obj_dir obj_dir_s100 obj_dir_w32

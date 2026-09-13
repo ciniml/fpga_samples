@@ -166,7 +166,8 @@ def main():
         check(f"periodic interval ~{per} sample clocks", abs(med - per) <= per // 100, f"median gap {med} clocks")
     send_ctrl(ctrl_frames(0x08, [0x00]))
     # 7. TX trigger on S2 (bit 8 == 1) with POST=100: armed -> no records until S2 is pressed
-    send_ctrl(ctrl_frames(0x0c, [0x00, 0x01]) + ctrl_frames(0x0e, [0x00, 0x01]) + ctrl_frames(0x10, [100, 0]))
+    m = [0x00, 0x01] + [0x00] * (db - 2)                                             # bit 8 (S2), width-relative offsets
+    send_ctrl(ctrl_frames(0x0c, m) + ctrl_frames(0x0c + db, m) + ctrl_frames(0x0c + 2 * db, [100, 0]))
     send_ctrl(ctrl_frames(0x00, [0x0a]))      # ARM | ENABLE
     time.sleep(0.05)
     f = flags(); check("flags: armed", f & 0x02, f"flags=0x{f:02x}")
@@ -180,7 +181,7 @@ def main():
             if f & 0x0c: fired = True; break
             time.sleep(0.2)
         check("S2 press triggers (flags triggered/done)", fired, f"flags=0x{f:02x}")
-        send_ctrl(ctrl_frames(0x10, [0, 0]) + ctrl_frames(0x00, [0x02]))   # POST=0, enable (free running: not armed)
+        send_ctrl(ctrl_frames(0x0c + 2 * db, [0, 0]) + ctrl_frames(0x00, [0x02]))   # POST=0, enable (free running: not armed)
     else:
         print("      (TX left ARMED on S2 with POST=100: press S2, then read flags with 'F' / capture)")
     print("ALL OK" if ok_all else "SOME CHECKS FAILED")

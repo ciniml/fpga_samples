@@ -14,7 +14,8 @@
 //   'S'                         : arm, trigger immediately, fill the whole
 //                                 buffer (POST = buffer size)
 //   'T' mask[0..DB-1] val[0..DB-1]: set trigger mask/value (LSB first,
-//                                 DB = WIDTH/8 bytes each)
+//                                 DB = WIDTH/8 bytes each, WIDTH from the
+//                                 last descriptor - send '?' first)
 //   'A' post_hi post_lo         : arm and wait for the trigger, then keep
 //                                 POST entries after it
 //   'D'                         : dump the buffer in chronological order
@@ -40,15 +41,15 @@
 module trace_capture #(
     parameter ADDR_BITS    = 14,
     parameter DATA_BITS    = 9,
-    parameter WIDTH        = 16,
-    parameter TS_BITS      = 24
+    parameter MAX_WIDTH    = 64,     // trigger compare width (>= any TX WIDTH)
+    parameter DEFAULT_WIDTH = 16     // assumed until a descriptor is seen
 ) (
     input  wire                 pclk,
     input  wire                 prst,
     input  wire                 in_valid,   // entry strobe (buffer content)
     input  wire [DATA_BITS-1:0] in_data,
     input  wire                 rec_valid,  // decoded record (trigger source)
-    input  wire [WIDTH-1:0]     rec_data,
+    input  wire [MAX_WIDTH-1:0] rec_data,
     // link descriptor (pclk domain, quasi-static)
     input  wire [7:0]           i_desc_ver,
     input  wire [7:0]           i_desc_width,
@@ -68,7 +69,6 @@ module trace_capture #(
     output reg  [7:0]           o_fwd_data,
     output reg                  o_pulse_req
 );
-    localparam DB = WIDTH / 8;
     localparam [ADDR_BITS-1:0] LAST_ADDR = {ADDR_BITS{1'b1}};
 
     wire       rx_valid = h_rx_valid;
@@ -82,7 +82,7 @@ module trace_capture #(
     //------------------------------------------------------------------
     // control registers (clk_sys), quasi-static towards pclk
     //------------------------------------------------------------------
-    reg [WIDTH-1:0]     trig_mask, trig_value;
+    reg [MAX_WIDTH-1:0] trig_mask, trig_value;
     reg [ADDR_BITS:0]   post_count;     // entries to keep after the trigger
     reg                 arm_immediate;  // 1: 'S' (trigger at once)
     reg                 arm_tgl_sys;
@@ -165,6 +165,9 @@ module trace_capture #(
         desc_m <= {i_desc_flags, i_desc_tsbits, i_desc_width, i_desc_ver};
         desc_s <= desc_m;
     end
+    // trigger argument byte count = WIDTH/8 from the descriptor (clamped)
+    wire [7:0] db_raw = (desc_s[7:0] == 8'd0) ? DEFAULT_WIDTH / 8 : {3'b0, desc_s[15:11]};
+    wire [7:0] db     = (db_raw > MAX_WIDTH / 8) ? MAX_WIDTH / 8 : db_raw;
 
     //------------------------------------------------------------------
     // command parser / dump FSM (clk_sys)
@@ -191,8 +194,8 @@ module trace_capture #(
             state         <= ST_IDLE;
             cmd           <= 8'h00;
             arg_idx       <= 8'd0;
-            trig_mask     <= {WIDTH{1'b0}};
-            trig_value    <= {WIDTH{1'b0}};
+            trig_mask     <= {MAX_WIDTH{1'b0}};
+            trig_value    <= {MAX_WIDTH{1'b0}};
             post_count    <= 0;
             arm_immediate <= 1'b0;
             arm_tgl_sys   <= 1'b0;
@@ -262,9 +265,9 @@ module trace_capture #(
             ST_ARGS: if (rx_valid) begin
                 arg_idx <= arg_idx + 1'b1;
                 if (cmd == "T") begin
-                    if (arg_idx < DB) trig_mask [arg_idx*8 +: 8]      <= rx_data;
-                    else              trig_value[(arg_idx-DB)*8 +: 8] <= rx_data;
-                    if (arg_idx == 2*DB-1) state <= ST_IDLE;
+                    if (arg_idx < db) trig_mask [arg_idx*8 +: 8]      <= rx_data;
+                    else              trig_value[(arg_idx-db)*8 +: 8] <= rx_data;
+                    if (arg_idx == 2*db-1) state <= ST_IDLE;
                 end else begin // "A": post count, big-endian 16 bit
                     if (arg_idx == 0) post_count[ADDR_BITS:8] <= rx_data[ADDR_BITS-8:0];
                     else begin

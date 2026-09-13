@@ -9,8 +9,11 @@
 // Everything except the PLL/OSER10/IBUF path of the real designs.
 `timescale 1ns/1ps
 module e2e_ctrl_tb #(
-    parameter real SCLK_PERIOD = 37.037   // sample clock period [ns] (27MHz as on the Nano9K demo)
+    parameter real SCLK_PERIOD = 37.037,  // sample clock period [ns] (27MHz as on the Nano9K demo)
+    parameter int  TX_WIDTH    = 16       // transmitter width; the RX side takes it from the descriptor
 ) ();
+    localparam MB = TX_WIDTH / 8;         // control register byte offsets follow the width
+    localparam A_TMASK = 8'h0c, A_TVAL = 8'h0c + MB, A_POST = 8'h0c + 2*MB;
     localparam ADDR_BITS = 8;             // small buffer for fast sim
     localparam ENTRIES   = 1 << ADDR_BITS;
 
@@ -21,20 +24,20 @@ module e2e_ctrl_tb #(
     wire rstn = ~rst;
 
     // ---------------- trace transmitter side (clk100) ----------------
-    logic [15:0] trace_sig = 16'h0000;
+    logic [TX_WIDTH-1:0] trace_sig = '0;
     logic        soft_reset, trace_en, desc_req;
-    logic [15:0] ignore_mask;
+    logic [TX_WIDTH-1:0] ignore_mask;
     wire         trace_rstn = rstn & ~soft_reset;
     wire  [9:0]  tx_symbol;
 
-    easycdr_trace_tx #(.WIDTH(16), .TS_BITS(24), .DESC_INTERVAL(4096)) u_trace_tx(
+    easycdr_trace_tx #(.WIDTH(TX_WIDTH), .TS_BITS(24), .DESC_INTERVAL(4096)) u_trace_tx(
         .sclk(sclk), .srstn(1'b1), .sig(trace_sig),
         .clk(clk100), .rstn(trace_rstn),
         .i_enable(trace_en), .i_ignore_mask(ignore_mask), .i_desc_req(desc_req),
         .i_periodic_en(periodic_en), .i_change_dis(change_dis), .i_period(period),
         .i_arm(arm), .i_trig_mask(trig_mask), .i_trig_value(trig_value), .i_post(post),
         .o_symbol(tx_symbol), .o_overflow(), .o_armed(), .o_triggered(), .o_done());
-    logic arm, periodic_en, change_dis; logic [23:0] period; logic [15:0] trig_mask, trig_value, post;
+    logic arm, periodic_en, change_dis; logic [23:0] period; logic [TX_WIDTH-1:0] trig_mask, trig_value; logic [15:0] post;
 
     // 8b10b decode (same clock domain; symbol-per-cycle)
     wire       dec_valid, dec_is_k, dec_err;
@@ -49,10 +52,10 @@ module e2e_ctrl_tb #(
                      (!dec_is_k || dec_data == K28_1 || dec_data == K28_2);
 
     wire        rec_valid;
-    wire [23:0] rec_ts;
-    wire [15:0] rec_data;
+    wire [31:0] rec_ts;
+    wire [63:0] rec_data;
     wire [7:0]  desc_ver, desc_width, desc_tsbits, desc_flags;
-    trace_rx_decoder #(.WIDTH(16), .TS_BITS(24)) u_rxdec(
+    trace_rx_decoder #(.MAX_WIDTH(64), .MAX_TS_BITS(32)) u_rxdec(
         .clk(clk100), .rst(rst), .in_valid(dec_valid), .in_word(rx_word),
         .rec_valid(rec_valid), .rec_ts(rec_ts), .rec_data(rec_data), .ovf_seen(),
         .o_desc_ver(desc_ver), .o_desc_width(desc_width),
@@ -67,7 +70,7 @@ module e2e_ctrl_tb #(
     wire        fwd_valid;
     wire  [7:0] fwd_data;
 
-    trace_capture #(.ADDR_BITS(ADDR_BITS), .DATA_BITS(9), .WIDTH(16), .TS_BITS(24)) u_cap(
+    trace_capture #(.ADDR_BITS(ADDR_BITS), .DATA_BITS(9), .MAX_WIDTH(64)) u_cap(
         .pclk(clk100), .prst(rst), .in_valid(cap_valid), .in_data(rx_word),
         .rec_valid(rec_valid), .rec_data(rec_data),
         .i_desc_ver(desc_ver), .i_desc_width(desc_width), .i_desc_tsbits(desc_tsbits), .i_desc_flags(desc_flags),
@@ -100,7 +103,7 @@ module e2e_ctrl_tb #(
     CtrlFrameRx #(.GAP_TIMEOUT(65536)) u_cfrx(
         .i_clk(clk100), .i_rst(rst), .i_valid(cb_valid), .i_data(cb_data), .i_err(cb_err),
         .o_wr_valid(wr_valid), .o_wr_addr(wr_addr), .o_wr_data(wr_data), .o_frame_err());
-    TraceCtrlRegs #(.WIDTH(16), .RESET_CYCLES(64)) u_regs(
+    TraceCtrlRegs #(.WIDTH(TX_WIDTH), .RESET_CYCLES(64)) u_regs(
         .i_clk(clk100), .i_rst(rst), .i_wr_valid(wr_valid), .i_wr_addr(wr_addr), .i_wr_data(wr_data),
         .o_soft_reset(soft_reset), .o_enable(trace_en), .o_desc_req(desc_req),
         .o_ignore_mask(ignore_mask), .o_arm(arm), .o_periodic_en(periodic_en), .o_change_dis(change_dis),
@@ -109,7 +112,7 @@ module e2e_ctrl_tb #(
     // ---------------- host driver / scoreboard ----------------
     int errors = 0;
     int rec_count = 0;
-    logic [23:0] last_ts;
+    logic [31:0] last_ts;
     logic [7:0] resp[$];
     always @(posedge clk50) if (h_tx_valid) resp.push_back(h_tx_data);
     always @(posedge clk100) if (rec_valid) begin rec_count++; last_ts = rec_ts; end
@@ -136,7 +139,8 @@ module e2e_ctrl_tb #(
     endtask
 
     // decode a dump into records
-    typedef struct { logic [23:0] ts; logic [15:0] data; } rec_t;
+    typedef struct { logic [23:0] ts; logic [63:0] data; } rec_t;
+    localparam RL = 3 + MB;              // record bytes after K28.1
     rec_t recs[$];
     task automatic dump_and_parse();
         int n0;
@@ -146,14 +150,15 @@ module e2e_ctrl_tb #(
         for (int i = 0; i < ENTRIES; ) begin
             logic k = resp[2*i][0];
             logic [7:0] b = resp[2*i+1];
-            if (k && b == K28_1 && i + 5 < ENTRIES) begin
+            if (k && b == K28_1 && i + RL < ENTRIES) begin
                 automatic bit clean = 1;
-                for (int j = 1; j <= 5; j++) if (resp[2*(i+j)][0]) clean = 0;
+                for (int j = 1; j <= RL; j++) if (resp[2*(i+j)][0]) clean = 0;
                 if (clean) begin
                     automatic rec_t r;
                     r.ts   = {resp[2*(i+3)+1], resp[2*(i+2)+1], resp[2*(i+1)+1]};
-                    r.data = {resp[2*(i+5)+1], resp[2*(i+4)+1]};
-                    recs.push_back(r); i += 6; continue;
+                    r.data = '0;
+                    for (int j = 0; j < MB; j++) r.data[j*8 +: 8] = resp[2*(i+4+j)+1];
+                    recs.push_back(r); i += 1 + RL; continue;
                 end
             end
             i++;
@@ -166,7 +171,7 @@ module e2e_ctrl_tb #(
 
         // 0. descriptor is sent periodically -> latched at the decoder
         wait (desc_ver != 0);
-        check("descriptor latched", desc_ver == 8'h01 && desc_width == 8'd16 && desc_tsbits == 8'd24);
+        check("descriptor latched", desc_ver == 8'h01 && desc_width == TX_WIDTH[7:0] && desc_tsbits == 8'd24);
         check("desc flags: enabled", desc_flags[0] == 1'b1);
 
         // 1. '?' returns descriptor + local ADDR_BITS
@@ -174,12 +179,12 @@ module e2e_ctrl_tb #(
         resp.delete();
         hsend("?");
         wait (resp.size() == 4);
-        check("'?' reply", resp[0] == 8'h01 && resp[1] == 8'd16 && resp[2] == 8'd24 && resp[3] == ADDR_BITS[7:0]);
+        check("'?' reply", resp[0] == 8'h01 && resp[1] == TX_WIDTH[7:0] && resp[2] == 8'd24 && resp[3] == ADDR_BITS[7:0]);
         if (errors) $display("  '?' got: %02x %02x %02x %02x", resp[0], resp[1], resp[2], resp[3]);
 
         // 2. ignore mask: mask off bit 15..8, capture, only low-byte changes
         ctrl_write(8'h05, 8'hff);            // IGNORE_MASK[15:8] = ff
-        check("mask set", ignore_mask == 16'hff00);
+        check("mask set", ignore_mask[15:0] == 16'hff00);
         resp.delete(); hsend("S");
         #2000;
         rec_count = 0;
@@ -243,9 +248,9 @@ module e2e_ctrl_tb #(
         @(negedge clk100); trace_sig[3:0] = ~trace_sig[3:0]; #5000;
         ctrl_write(8'h08, 8'h00);            // back to change detection
         // 5c. TX trigger: arm on bit8 == 1, post = 3 records
-        ctrl_write(8'h0c, 8'h00); ctrl_write(8'h0d, 8'h01);   // TRIG_MASK = 0x0100
-        ctrl_write(8'h0e, 8'h00); ctrl_write(8'h0f, 8'h01);   // TRIG_VALUE = 0x0100
-        ctrl_write(8'h10, 8'h03); ctrl_write(8'h11, 8'h00);   // POST = 3
+        ctrl_write(A_TMASK, 8'h00); ctrl_write(A_TMASK + 1, 8'h01);   // TRIG_MASK = 0x0100
+        ctrl_write(A_TVAL, 8'h00);  ctrl_write(A_TVAL + 1, 8'h01);    // TRIG_VALUE = 0x0100
+        ctrl_write(A_POST, 8'h03);  ctrl_write(A_POST + 1, 8'h00);    // POST = 3
         ctrl_write(8'h00, 8'h0e);                              // ARM | ENABLE | DESC_REQ (flags refresh)
         #3000; rec_count = 0;
         for (int i = 0; i < 4; i++) begin @(negedge clk100); trace_sig[3:0] = ~trace_sig[3:0]; #500; end
@@ -261,7 +266,7 @@ module e2e_ctrl_tb #(
         @(negedge clk100); trace_sig[8] = 1'b0;
         ctrl_write(8'h00, 8'h0e); #2000;                       // re-arm (+ descriptor)
         check("flags: armed again", desc_flags[1] == 1'b1);
-        ctrl_write(8'h10, 8'h00); ctrl_write(8'h11, 8'h00);   // POST = 0 (unlimited)
+        ctrl_write(A_POST, 8'h00); ctrl_write(A_POST + 1, 8'h00);    // POST = 0 (unlimited)
         ctrl_write(8'h00, 8'h0a); @(negedge clk100); trace_sig[8] = 1'b1; #2000; rec_count = 0;
         ctrl_write(8'h00, 8'h06);                              // DESC_REQ for the 'triggered' flag
         for (int i = 0; i < 6; i++) begin @(negedge clk100); trace_sig[3:0] = ~trace_sig[3:0]; #500; end
@@ -274,7 +279,7 @@ module e2e_ctrl_tb #(
         #10000;
         check("desc still enabled flag", desc_flags[0] == 1'b1);
 
-        if (errors == 0) $display("PASS (SCLK_PERIOD=%0.3f)", SCLK_PERIOD); else $fatal(1, "FAIL: %0d errors", errors);
+        if (errors == 0) $display("PASS (SCLK_PERIOD=%0.3f TX_WIDTH=%0d)", SCLK_PERIOD, TX_WIDTH); else $fatal(1, "FAIL: %0d errors", errors);
         $finish;
     end
 

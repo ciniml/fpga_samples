@@ -34,8 +34,9 @@ EasyCDR受信IP(GW5A、10bit+Word Alignment+8B/10B Decoding構成)が
 | `SYNC_STAGES` | 2 | 0 or ≥2 | `sig` の同期段数。0 = `sclk` 同期入力 |
 | `HAS_PERIODIC` / `HAS_TRIGGER` | 1 | 0/1 | 周期サンプリング / TX トリガの論理を生成するか(0 で削除、入力は無視) |
 
-受信側(`trace_rx_decoder` / `trace_capture` / `host/trace_view.py`)の
-`WIDTH` / `TS_BITS` は送信側と一致させること。
+受信側(`trace_rx_decoder` / `trace_capture`)はレコード形式をデスクリプタから実行時に取る
+(`MAX_WIDTH`=64 / `MAX_TS_BITS`=32 まで)。ホスト (UI / ctrl_test.py) も '?' の値に従うので、
+送信側の `WIDTH` / `TS_BITS` を変えても受信側の再合成は不要。
 
 ## 3. リンク層とレコード形式
 

@@ -222,10 +222,10 @@ module top(
 
     // on-the-fly record decoder feeding the trigger comparator
     wire        rec_valid;
-    wire [23:0] rec_ts;
-    wire [15:0] rec_data;
+    wire [31:0] rec_ts;
+    wire [63:0] rec_data;
     wire [7:0]  desc_ver, desc_width, desc_tsbits, desc_flags;
-    trace_rx_decoder #(.WIDTH(16), .TS_BITS(24)) u_decoder(
+    trace_rx_decoder #(.MAX_WIDTH(64), .MAX_TS_BITS(32)) u_decoder(   // layout from the descriptor
         .clk       (pclk_rx),
         .rst       (rx_reset),
         .in_valid  (rx_word_en),
@@ -257,8 +257,7 @@ module top(
     trace_capture #(
         .ADDR_BITS    (14),                 // 16Ki entries ({K,byte})
         .DATA_BITS    (9),
-        .WIDTH        (16),
-        .TS_BITS      (24)
+        .MAX_WIDTH    (64)
     ) u_capture(
         .pclk       (pclk_rx),
         .prst       (rx_reset),

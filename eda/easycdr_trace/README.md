@@ -175,6 +175,9 @@ ENABLE 0/1、RESET でタイムスタンプ再始動、`Z` アボート — ALL 
   `clk` 側のまま。Nano9K デモは 27MHz 水晶をサンプルクロックにしている(タイムスタンプ 37.037ns、
   UI の sample clk period と `ctrl_test.py --tick-ns` の既定値)。構造と再構成パラメータは
   `doc/tx_core_spec.md` §4 参照
+- **受信側は幅可変** (2026-09-13): 25K のデコーダとキャプチャはレコード形式 (WIDTH / TS_BITS) を
+  デスクリプタから実行時に取る (最大 64 / 32 bit)。送信側の幅を変えても 25K の再合成は不要。
+  Nano9K デモの幅は `make TRACE_WIDTH=32 TARGET=tangnano9k_pmod` (出力 `build/tangnano9k_pmod_w32/`)
 - リセット専用変種: `make CTRL_PULSE=1 TARGET=tangnano9k_pmod` (出力 `build/tangnano9k_pmod_pulse/`)
   は Nano9K の受信側を `PulseResetRx` だけにする (レジスタ無し、トレースは常時有効・変化検出のみ)。
   25K は常に `PulseResetTx` を持ち、ホストコマンド `P` (返信 `P`) で 4×20µs のバーストを Manchester

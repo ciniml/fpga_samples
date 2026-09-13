@@ -40,8 +40,9 @@ pub module CtrlFrameRx #(
     o_wr_data  : output logic<8>,
     o_frame_err: output logic   ,
 ) {
-    const SOF: logic<8> = 8'ha5;
-    const GW : u32      = if GAP_TIMEOUT <= 1 ? 1 : $clog2(GAP_TIMEOUT + 1);
+    const SOF   : logic<8> = 8'ha5;
+    const GW    : u32      = if GAP_TIMEOUT <= 1 ? 1 : $clog2(GAP_TIMEOUT + 1);
+    const GAP_M1: u32      = if GAP_TIMEOUT == 0 ? 0 : GAP_TIMEOUT - 1;
 
     enum State: logic<2> {
         Sof,
@@ -50,13 +51,14 @@ pub module CtrlFrameRx #(
         Crc,
     }
 
-    var state   : State    ;
-    var crc     : logic<8> ;
-    var crc_bits: logic<4> ;
-    var gap     : logic<GW>;
+    var state    : State    ;
+    var crc      : logic<8> ;
+    var crc_bits : logic<4> ;
+    var gap      : logic<GW>;
+    var gap_hit_r: logic    ; // registered: gap reaches GAP_TIMEOUT this cycle (short timing path)
 
     let in_frame: logic = state != State::Sof;
-    let gap_hit : logic = GAP_TIMEOUT >: 0 && in_frame && gap == GAP_TIMEOUT as GW;
+    let gap_hit : logic = GAP_TIMEOUT >: 0 && in_frame && gap_hit_r;
 
     always_ff (i_clk, i_rst) {
         if_reset {
@@ -64,6 +66,7 @@ pub module CtrlFrameRx #(
             crc         = 0;
             crc_bits    = 0;
             gap         = 0;
+            gap_hit_r   = 1'b0;
             o_wr_valid  = 1'b0;
             o_wr_addr   = 0;
             o_wr_data   = 0;
@@ -72,6 +75,7 @@ pub module CtrlFrameRx #(
             o_wr_valid  = 1'b0;
             o_frame_err = 1'b0;
             gap         = if i_valid ? 0 : if gap == GAP_TIMEOUT as GW ? gap : gap + 1;
+            gap_hit_r   = !i_valid && gap == GAP_M1 as GW;
             if crc_bits != 0 {
                 crc      = if crc[7] ? {crc[6:0], 1'b0} ^ 8'h07 : {crc[6:0], 1'b0};
                 crc_bits = crc_bits - 1;
