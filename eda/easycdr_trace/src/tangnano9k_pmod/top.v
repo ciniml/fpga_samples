@@ -43,6 +43,13 @@ module top(
 `define TRACE_WIDTH 16
 `endif
     localparam TRACE_WIDTH = `TRACE_WIDTH;   // make TRACE_WIDTH=32 ... (multiple of 8, >= 16)
+`ifdef RATE_742M5
+    localparam CTRL_BIT_CYCLES = 37;         // 74.25MHz / 37 = 2.007Mbps Manchester (+0.34%)
+    localparam PULSE_HALF_MIN = 1114, PULSE_HALF_MAX = 2228;   // 15..30us at 74.25MHz
+`else
+    localparam CTRL_BIT_CYCLES = 50;         // 99.9MHz / 50 = 1.998Mbps
+    localparam PULSE_HALF_MIN = 1500, PULSE_HALF_MAX = 3000;
+`endif
 
     //------------------------------------------------------------------
     // TX clocking: 499.5MHz + /5 = 99.9MHz
@@ -51,7 +58,11 @@ module top(
     wire txclk_ser;   // 499.5MHz
     wire txclk_par;   // 99.9MHz
 
+`ifdef RATE_742M5
+    pll_tx_3712 u_pll(          // 742.5Mbps variant: 371.25MHz serializer, 74.25MHz parallel
+`else
     pll_tx_4995 u_pll(
+`endif
         .clkout (txclk_ser),
         .lock   (pll_lock),
         .clkin  (clk_in)
@@ -95,7 +106,7 @@ module top(
     // levels (25K PulseResetTx, host command 'P'); two bounded 15..30us
     // levels in a row assert soft_reset for 64 clocks. No registers: the
     // trace runs enabled with change detection only.
-    PulseResetRx #(.HALF_MIN(1500), .HALF_MAX(3000), .COUNT(2), .RESET_CYCLES(64)) u_ctrl_rx(
+    PulseResetRx #(.HALF_MIN(PULSE_HALF_MIN), .HALF_MAX(PULSE_HALF_MAX), .COUNT(2), .RESET_CYCLES(64)) u_ctrl_rx(
         .i_clk   (txclk_par),
         .i_rst   (ctrl_rst),
         .i_rxd   (ctrl_rxd),
@@ -114,7 +125,7 @@ module top(
 `else
     wire       cb_valid, cb_err;
     wire [7:0] cb_data;
-    ManchesterRx #(.BIT_CYCLES(50)) u_ctrl_rx(
+    ManchesterRx #(.BIT_CYCLES(CTRL_BIT_CYCLES)) u_ctrl_rx(
         .i_clk   (txclk_par),
         .i_rst   (ctrl_rst),
         .i_rxd   (ctrl_rxd),

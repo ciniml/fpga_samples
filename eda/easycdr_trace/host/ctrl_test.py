@@ -117,7 +117,9 @@ def main():
         print("ALL OK" if ok_all else "SOME CHECKS FAILED")
         return
 
-    # 2. baseline
+    # 2. baseline (soft reset first: a previous run may have left the TX armed / done)
+    send_ctrl(ctrl_frames(0x00, [0x03]))        # RESET | ENABLE
+    time.sleep(0.01)
     send_ctrl(ctrl_frames(0x04, [0x00] * db))   # mask off
     send_ctrl(ctrl_frames(0x00, [0x02]))        # enable
     recs = capture()

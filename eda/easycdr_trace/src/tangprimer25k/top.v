@@ -52,7 +52,11 @@ module top(
     wire rxclk_500m_180;
     wire rxclk_500m_270;
 
+`ifdef RATE_742M5
+    pll_rx_371m_4ph u_pll_rx(     // 742.5Mbps variant (make RATE=742M5)
+`else
     pll_rx_500m_4ph u_pll_rx(
+`endif
         .lock    (pll_rx_lock),
         .clkout0 (rxclk_500m_0),
         .clkout1 (rxclk_500m_90),

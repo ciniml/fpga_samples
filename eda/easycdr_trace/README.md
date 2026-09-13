@@ -178,6 +178,11 @@ ENABLE 0/1、RESET でタイムスタンプ再始動、`Z` アボート — ALL 
 - **受信側は幅可変** (2026-09-13): 25K のデコーダとキャプチャはレコード形式 (WIDTH / TS_BITS) を
   デスクリプタから実行時に取る (最大 64 / 32 bit)。送信側の幅を変えても 25K の再合成は不要。
   Nano9K デモの幅は `make TRACE_WIDTH=32 TARGET=tangnano9k_pmod` (出力 `build/tangnano9k_pmod_w32/`)
+- **リンクレート変種 742.5 Mbps** (2026-09-13、実機 OK): `make RATE=742M5 TARGET=...` で両ボードとも
+  `build/<target>_742m5/`。720p DVI の 371.25 MHz / 74.25 MHz を送信側で流用する構成向け。
+  Nano9K は rPLL 27×55/4 = 371.25 MHz、25K は PLLA 50×(22+2/8)/3 = 370.83 MHz (−1120 ppm、PLLA の
+  制約 PFD 19〜87.5 MHz / VCO 700〜1400 MHz 内で分数 MDIV を使用) と EasyCDR IP の DELAY_1 を 21→28 に
+  スケール (`easycdr_1912_742m5/`)。TRACE_WIDTH / CTRL_PULSE と併用可 (サフィックスが連結される)
 - リセット専用変種: `make CTRL_PULSE=1 TARGET=tangnano9k_pmod` (出力 `build/tangnano9k_pmod_pulse/`)
   は Nano9K の受信側を `PulseResetRx` だけにする (レジスタ無し、トレースは常時有効・変化検出のみ)。
   25K は常に `PulseResetTx` を持ち、ホストコマンド `P` (返信 `P`) で 4×20µs のバーストを Manchester

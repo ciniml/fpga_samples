@@ -13,6 +13,11 @@ ifneq ($(TRACE_WIDTH),)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_w$(TRACE_WIDTH)
 export TRACE_WIDTH
 endif
+# RATE=742M5: 742.5Mbps link (both boards; e.g. to share a 720p DVI clock on the TX)
+ifneq ($(RATE),)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_$(shell echo $(RATE) | tr A-Z a-z)
+export RATE
+endif
 
 SRCS := src/$(TARGET)/pins.cst $(wildcard src/$(TARGET)/*.sdc) \
         $(wildcard src/$(TARGET)/*.v) $(wildcard src/$(TARGET)/*/*.v) $(wildcard src/common/*.v) \
