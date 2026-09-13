@@ -1,0 +1,74 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_manchester.veryl
+ * @brief ManchesterTx -> ManchesterRx loopback tests (body: test/manchester_link_body.sv).
+ *
+ * manchester_same_clock : identical clocks, random bytes / gaps, link-loss
+ *                         detection, parity error and false-SYNC injection
+ * manchester_rx_fast    : receiver clock +1.5 %
+ * manchester_rx_slow    : receiver clock -1.5 %
+ * manchester_rx_fast10 / _slow10 : +/-10 % clock offset (per-edge re-centring)
+ * manchester_bit16 / _bit100     : minimum and a slow BIT_CYCLES configuration
+ * manchester_inverted   : inverted wire polarity must not decode anything
+ */
+module TbManchester {}
+
+#[test(manchester_same_clock)]
+embed (inline) sv{{{
+module manchester_same_clock;
+    manchester_link_body #(.RUN(1)) body();
+endmodule
+}}}
+
+#[test(manchester_rx_fast)]
+embed (inline) sv{{{
+module manchester_rx_fast;
+    manchester_link_body #(.RX_PERIOD(9.85), .RUN(1)) body();
+endmodule
+}}}
+
+#[test(manchester_rx_slow)]
+embed (inline) sv{{{
+module manchester_rx_slow;
+    manchester_link_body #(.RX_PERIOD(10.15), .RUN(1)) body();
+endmodule
+}}}
+
+#[test(manchester_inverted)]
+embed (inline) sv{{{
+module manchester_inverted;
+    manchester_link_body #(.INVERT(1), .RUN(1)) body();
+endmodule
+}}}
+
+#[test(manchester_rx_fast10)]
+embed (inline) sv{{{
+module manchester_rx_fast10;
+    manchester_link_body #(.RX_PERIOD(9.0), .RUN(1)) body();
+endmodule
+}}}
+
+#[test(manchester_rx_slow10)]
+embed (inline) sv{{{
+module manchester_rx_slow10;
+    manchester_link_body #(.RX_PERIOD(11.0), .RUN(1)) body();
+endmodule
+}}}
+
+#[test(manchester_bit16)]
+embed (inline) sv{{{
+module manchester_bit16;
+    manchester_link_body #(.BIT_CYCLES(16), .RX_PERIOD(10.5), .RUN(1)) body();
+endmodule
+}}}
+
+#[test(manchester_bit100)]
+embed (inline) sv{{{
+module manchester_bit100;
+    manchester_link_body #(.BIT_CYCLES(100), .RX_PERIOD(10.3), .NBYTES(60), .RUN(1)) body();
+endmodule
+}}}

@@ -1,0 +1,116 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file trace_ctrl_regs.veryl
+ * @brief Control registers of the trace transmitter, written through
+ *        CtrlFrameRx (byte-addressed, little endian). MB = WIDTH/8.
+ *
+ *  0x00 CTRL   bit0 RESET    : write 1 -> o_soft_reset high for RESET_CYCLES (self-clearing)
+ *              bit1 ENABLE   : trace on/off (o_enable), reset value ENABLE_DEFAULT
+ *              bit2 DESC_REQ : write 1 -> one-clock o_desc_req
+ *              bit3 ARM      : write 1 -> one-clock o_arm (TX-side trigger arm)
+ *  0x04..      IGNORE_MASK   : WIDTH bits, a 1 excludes that bit from change detection
+ *  0x08 MODE   bit0 PERIODIC : also emit a record every PERIOD clocks
+ *              bit1 CHG_DIS  : disable change detection (periodic only)
+ *  0x09..0x0B  PERIOD        : 24-bit, clocks between periodic records
+ *  0x0C..      TRIG_MASK     : WIDTH bits   } TX-side trigger: after ARM, records are
+ *  0x0C+MB..   TRIG_VALUE    : WIDTH bits   } held back until (sig & MASK) == (VALUE & MASK)
+ *  0x0C+2MB..  POST          : 16-bit records to send after the trigger (0 = unlimited)
+ */
+pub module TraceCtrlRegs #(
+    param WIDTH         : u32  = 16,
+    param RESET_CYCLES  : u32  = 16,
+    param ENABLE_DEFAULT: logic = 1'b1,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_wr_valid: input logic   ,
+    i_wr_addr : input logic<8>,
+    i_wr_data : input logic<8>,
+
+    o_soft_reset : output logic       ,
+    o_enable     : output logic       ,
+    o_desc_req   : output logic       ,
+    o_arm        : output logic       ,
+    o_ignore_mask: output logic<WIDTH>,
+    o_periodic_en: output logic       ,
+    o_change_dis : output logic       ,
+    o_period     : output logic<24>   ,
+    o_trig_mask  : output logic<WIDTH>,
+    o_trig_value : output logic<WIDTH>,
+    o_post       : output logic<16>   ,
+) {
+    const MB: u32 = (WIDTH + 7) / 8;
+    const RW: u32 = if RESET_CYCLES <= 1 ? 1 : $clog2(RESET_CYCLES + 1);
+    const A_TMASK: u32 = 12;
+    const A_TVAL : u32 = 12 + MB;
+    const A_POST : u32 = 12 + 2 * MB;
+
+    var rst_cnt: logic<RW>;
+    assign o_soft_reset = rst_cnt != 0;
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            rst_cnt       = 0;
+            o_enable      = ENABLE_DEFAULT;
+            o_desc_req    = 1'b0;
+            o_arm         = 1'b0;
+            o_ignore_mask = 0;
+            o_periodic_en = 1'b0;
+            o_change_dis  = 1'b0;
+            o_period      = 24'd100000;
+            o_trig_mask   = 0;
+            o_trig_value  = 0;
+            o_post        = 0;
+        } else {
+            o_desc_req = 1'b0;
+            o_arm      = 1'b0;
+            if rst_cnt != 0 {
+                rst_cnt = rst_cnt - 1;
+            }
+            if i_wr_valid {
+                if i_wr_addr == 8'h00 {
+                    if i_wr_data[0] {
+                        rst_cnt = RESET_CYCLES as RW;
+                    }
+                    o_enable   = i_wr_data[1];
+                    o_desc_req = i_wr_data[2];
+                    o_arm      = i_wr_data[3];
+                }
+                if i_wr_addr == 8'h08 {
+                    o_periodic_en = i_wr_data[0];
+                    o_change_dis  = i_wr_data[1];
+                }
+                for i in 0..3 {
+                    if i_wr_addr == (8'h09 + i as 8) {
+                        o_period[i * 8+:8] = i_wr_data;
+                    }
+                }
+                for i in 0..2 {
+                    if i_wr_addr == (A_POST as 8 + i as 8) {
+                        o_post[i * 8+:8] = i_wr_data;
+                    }
+                }
+                for i in 0..MB {
+                    for b in 0..8 {
+                        if i * 8 + b <: WIDTH {
+                            if i_wr_addr == (8'h04 + i as 8) {
+                                o_ignore_mask[i * 8 + b] = i_wr_data[b];
+                            }
+                            if i_wr_addr == (A_TMASK as 8 + i as 8) {
+                                o_trig_mask[i * 8 + b] = i_wr_data[b];
+                            }
+                            if i_wr_addr == (A_TVAL as 8 + i as 8) {
+                                o_trig_value[i * 8 + b] = i_wr_data[b];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

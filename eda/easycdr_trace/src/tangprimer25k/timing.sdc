@@ -10,9 +10,12 @@ create_clock -name rxclk_500m_270 -period 2.0 -waveform {0 1.0} [get_nets {rxclk
 // top-level net because the IP-internal CLKDIV pin is not addressable.
 create_generated_clock -name pclk_rx -source [get_ports {clk_in}] -master_clock clk_in -divide_by 2 -multiply_by 5 [get_nets {pclk_rx}]
 
-// TX: 500MHz serializer clock and 100MHz parallel clock
-create_clock -name txclk_500m -period 2.0 -waveform {0 1.0} [get_nets {txclk_500m}]
-create_generated_clock -name txclk_100m -source [get_ports {clk_in}] -master_clock clk_in -divide_by 1 -multiply_by 2 [get_nets {txclk_100m}]
+// Reverse control channel TX (2Mbps Manchester) runs on clk_in directly.
 
 set_false_path -from [get_clocks {clk_in}] -to [get_clocks {rxclk_500m_0 rxclk_500m_90 rxclk_500m_180 rxclk_500m_270}]
-set_false_path -from [get_clocks {clk_in}] -to [get_clocks {pclk_rx txclk_100m}]
+set_false_path -from [get_clocks {clk_in}] -to [get_clocks {pclk_rx}]
+# pclk_rx -> clk_in crossings are all quasi-static or 2FF-synchronized
+# (trace_capture: full_sync_s / waddr_s / desc_m, buffer read after freeze),
+# but STA treats the domains as related because pclk_rx is generated from
+# clk_in - declare them asynchronous to silence bogus hold violations.
+set_false_path -from [get_clocks {pclk_rx}] -to [get_clocks {clk_in}]

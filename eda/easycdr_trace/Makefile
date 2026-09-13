@@ -4,6 +4,6 @@ TARGET ?= tangprimer25k
 
 SRCS := src/$(TARGET)/pins.cst $(wildcard src/$(TARGET)/*.sdc) \
         $(wildcard src/$(TARGET)/*.v) $(wildcard src/$(TARGET)/*/*.v) $(wildcard src/common/*.v) \
-        ../../rtl/displayport/src/encoder_8b10b.sv project.tcl
+        ../../rtl/displayport/src/encoder_8b10b.sv $(wildcard ../../rtl/manchester/*.sv) project.tcl
 
 include ../build_gowin.mk

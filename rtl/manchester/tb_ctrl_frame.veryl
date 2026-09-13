@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_ctrl_frame.veryl
+ * @brief Control-channel end-to-end test (body: test/ctrl_frame_body.sv):
+ *        host frames -> ManchesterTx -> ManchesterRx -> CtrlFrameRx ->
+ *        TraceCtrlRegs. Good frames, bad CRC, SOF inside payload, LEN out
+ *        of range, byte loss + gap timeout recovery, back-to-back frames.
+ */
+module TbCtrlFrame {}
+
+#[test(ctrl_frame_e2e)]
+embed (inline) sv{{{
+module ctrl_frame_e2e;
+    ctrl_frame_body #(.RUN(1)) body();
+endmodule
+}}}

@@ -147,3 +147,35 @@ make run TARGET=tangnano9k_pmod
 - TX移植: GW1N (Tang Nano 9K) / GW2A (Tang Primer 20K) 用PLLラッパ追加。
   CDRが±5000ppmを許容するため27MHz水晶の999Mbps (-1000ppm) でも
   RX側1Gbps設定のまま受信可能
+
+## 逆方向制御チャネル (ホスト → トレース送信側)
+
+追加ケーブル無しで、25K 側の **pmod2 モジュールの L1 レーン (pmod2 ピン 2/8 = D10/D11)** →
+USB-C クロス → Nano9K の空き RX レーン (pmod0 ピン1/7 = L0 = FPGA 28/27, IOB11 真性ペア) に
+2Mbps Manchester (`rtl/manchester`) を通し、トレース送信側を制御する (往路と同じケーブルを
+逆向きに使う。単板ループバック時代の G7/G8 = pmod0 L1 では別モジュールに出てしまうので注意)。
+**2026-09-13 実機確認済み** (`host/ctrl_test.py`: `?` デスクリプタ、IGNORE_MASK でレコード停止、
+ENABLE 0/1、RESET でタイムスタンプ再始動、`Z` アボート — ALL OK)。
+
+- Nano9K 側: `TLVDS_IBUF` (LVDS25) → `ManchesterRx` → `CtrlFrameRx` →
+  `TraceCtrlRegs`。ツールが i_ctrl_p を A パッド (pin27 = L0_N) に置くため
+  **CTRL_INVERT=1** で受信極性を反転している
+- 制御内容: ソフトリセット / トレース有効 / 無視マスク / デスクリプタ要求 /
+  **周期サンプリング (PERIOD 毎のレコード、変化検出 OFF 可) / TX 側トリガ (ARM → 条件一致まで
+  抑止 → 一致サンプル + POST 個を送って停止)** (レジスタマップは `rtl/manchester/README.md`)。
+  TX 状態 (armed/triggered/done/periodic) はデスクリプタ flags → ホストコマンド `F`
+- TX コアは K28.4 デスクリプタ `[VER][WIDTH][TS_BITS][flags]` を約1.3ms毎に送出。
+  25K のデコーダがラッチし、ホストコマンド `?` で
+  `[VER][WIDTH][TS_BITS][ADDR_BITS]` を返す (ブラウザUIのパラメータ自動設定用)
+- ホストコマンド追加: `?` (上記)、`X len bytes` (バイト列を逆方向チャネルへ転送)、
+  `Z` (アボート: アーム解除して IDLE へ、応答 `Z`)。**アーム中 ('S'/'A' 後、'K' 前) は `X`/`?` は
+  無視される** — 設定してからアームするか、`Z` (UI の Abort) で解除する
+- 検証: `test/e2e_ctrl_tb.sv` (Verilator, `make -C test test`) がホストコマンド →
+  Manchester → 制御レジスタ → トレースTX → 8b10bデコード → キャプチャ → ダンプの
+  全周回を検証 (12チェック)。デバイスプリミティブ(PLL/OSER10/IBUF)以外は実RTL
+- ビルド前に `rtl/manchester` で `veryl build` を実行しておくこと (生成 .sv を参照)
+
+## ブラウザ版ホストツール
+
+`host/web/index.html` を Chrome/Edge で開くと Web Serial (UART) / WebUSB (ベンダクラス USB) 経由で
+キャプチャ・波形表示・CSV/VCD 出力ができる (Python/pyserial 不要)。設計は `doc/web_host_design.md`。

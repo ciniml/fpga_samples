@@ -5,8 +5,11 @@
 // RX: records ({K flag, byte} entries) are captured into the buffer and
 //     dumped over UART; host/trace_view.py reconstructs the events.
 //
-// TX: easycdr_trace_tx_core (K28.5 comma every 16 words + incrementing
-//     counter payload, 8b10b encoded) -> OSER10 (FCLK 500MHz, PCLK 100MHz)
+// TX (pmod2 lane L1, D10/D11): reverse control channel - 2Mbps Manchester
+//     (rtl/manchester ManchesterTx). Host 'X' frames are forwarded to the
+//     trace transmitter FPGA (reset / enable / ignore mask, see
+//     rtl/manchester/README.md). The old 8b10b demo TX was replaced; its
+//     PLL (pll_tx_500m) is gone.
 // RX: EasyCDR in the 10-bit + Word Alignment + 8B/10B Decoding
 //     configuration (line rate 1Gbps, HCLK 500MHz x4 phases, PCLK 125MHz):
 //       dout_o[8]   = K-character flag
@@ -91,80 +94,45 @@ module top(
     );
 
     //------------------------------------------------------------------
-    // TX clocking: 500MHz serializer clock + 100MHz (/5) parallel clock.
-    // Separate PLL because TX lives in the BANK0/BANK1 HCLK group.
+    // Reverse control channel TX: 2Mbps Manchester on lane L1 (G7/G8).
+    // Bytes come from the host 'X' command (trace_capture o_fwd_*) through
+    // a small elastic FIFO (the UART can outpace the 2Mbps link at high
+    // baud rates; frames are 4 bytes, so 16 entries are plenty).
     //------------------------------------------------------------------
-    wire pll_tx_lock;
-    wire txclk_500m /* synthesis syn_keep=1 */;
-    wire txclk_100m;
+    wire       fwd_valid;
+    wire [7:0] fwd_data;
 
-    pll_tx_500m u_pll_tx(
-        .lock    (pll_tx_lock),
-        .clkout0 (txclk_500m),
-        .clkout1 (),
-        .clkout2 (),
-        .clkout3 (),
-        .clkin   (clk_in)
-    );
-
-    CLKDIV u_clkdiv_tx(
-        .HCLKIN (txclk_500m),
-        .RESETN (resetn_in),
-        .CALIB  (1'b0),
-        .CLKOUT (txclk_100m)
-    );
-    defparam u_clkdiv_tx.DIV_MODE = "5";
-
-    wire tx_rstn = resetn_in & pll_tx_lock;
-    wire [9:0] tx_symbol;
-
-    // Demo trace source: an 8-bit counter advancing every 256 cycles
-    // (2.56us) plus the raw UART RX line, so the host's own dump command
-    // shows up in the trace with 10ns-resolution timestamps.
-    reg [7:0] demo_div, demo_cnt;
-    reg [1:0] urx_sync;
-    always @(posedge txclk_100m or negedge tx_rstn) begin
-        if (!tx_rstn) begin
-            demo_div <= 8'd0;
-            demo_cnt <= 8'd0;
-            urx_sync <= 2'b11;
-        end else begin
-            demo_div <= demo_div + 1'b1;
-            if (&demo_div) demo_cnt <= demo_cnt + 1'b1;
-            urx_sync <= {urx_sync[0], uart_rxd};
+    reg [7:0] cfifo [0:15];
+    reg [4:0] cwp, crp;
+    wire cf_empty = (cwp == crp);
+    wire cf_full  = (cwp[4] != crp[4]) && (cwp[3:0] == crp[3:0]);
+    always @(posedge clk_in or posedge reset_in) begin
+        if (reset_in) begin
+            cwp <= 5'd0;
+        end else if (fwd_valid && !cf_full) begin
+            cfifo[cwp[3:0]] <= fwd_data;
+            cwp <= cwp + 1'b1;
         end
     end
-    wire [15:0] trace_sig = {7'b0, urx_sync[1], demo_cnt};
 
-    // Trace transmitter IP (frontend + record framing + 8b10b link core)
-    easycdr_trace_tx #(.WIDTH(16), .TS_BITS(24)) u_trace_tx(
-        .clk        (txclk_100m),
-        .rstn       (tx_rstn),
-        .sig        (trace_sig),
-        .o_symbol   (tx_symbol),
-        .o_overflow ()
-    );
+    wire ctrl_tx_ready;
+    wire ctrl_txd;
+    always @(posedge clk_in or posedge reset_in) begin
+        if (reset_in)                            crp <= 5'd0;
+        else if (ctrl_tx_ready && !cf_empty)     crp <= crp + 1'b1;
+    end
 
-    wire o_serial_data;
-    OSER10 u_OSER10(
-        .Q     (o_serial_data),
-        .D0    (tx_symbol[0]),
-        .D1    (tx_symbol[1]),
-        .D2    (tx_symbol[2]),
-        .D3    (tx_symbol[3]),
-        .D4    (tx_symbol[4]),
-        .D5    (tx_symbol[5]),
-        .D6    (tx_symbol[6]),
-        .D7    (tx_symbol[7]),
-        .D8    (tx_symbol[8]),
-        .D9    (tx_symbol[9]),
-        .PCLK  (txclk_100m),
-        .FCLK  (txclk_500m),
-        .RESET (~tx_rstn)
+    ManchesterTx #(.BIT_CYCLES(25)) u_ctrl_tx(   // 50MHz / 25 = 2Mbps
+        .i_clk   (clk_in),
+        .i_rst   (reset_in),
+        .i_valid (!cf_empty),
+        .i_data  (cfifo[crp[3:0]]),
+        .o_ready (ctrl_tx_ready),
+        .o_txd   (ctrl_txd)
     );
 
     ELVDS_OBUF u_tx(
-        .I  (o_serial_data),
+        .I  (ctrl_txd),
         .O  (o_serial_p),
         .OB (o_serial_n)
     );
@@ -232,7 +200,9 @@ module top(
     //------------------------------------------------------------------
     localparam [7:0] K28_1 = 8'h3c;   // start of record
     localparam [7:0] K28_2 = 8'h5c;   // overflow marker
-    wire cap_valid = rx_word_en &&
+    // descriptor payload bytes must not enter the capture buffer
+    wire desc_busy;
+    wire cap_valid = rx_word_en && !desc_busy &&
                      (!rx_data[8] ||
                       rx_data[7:0] == K28_1 || rx_data[7:0] == K28_2);
 
@@ -240,6 +210,7 @@ module top(
     wire        rec_valid;
     wire [23:0] rec_ts;
     wire [15:0] rec_data;
+    wire [7:0]  desc_ver, desc_width, desc_tsbits, desc_flags;
     trace_rx_decoder #(.WIDTH(16), .TS_BITS(24)) u_decoder(
         .clk       (pclk_rx),
         .rst       (rx_reset),
@@ -248,7 +219,12 @@ module top(
         .rec_valid (rec_valid),
         .rec_ts    (rec_ts),
         .rec_data  (rec_data),
-        .ovf_seen  ()
+        .ovf_seen  (),
+        .o_desc_ver    (desc_ver),
+        .o_desc_width  (desc_width),
+        .o_desc_tsbits (desc_tsbits),
+        .o_desc_flags  (desc_flags),
+        .o_desc_busy   (desc_busy)
     );
 
     // Host transport: UART today; a USB CDC core can replace this block by
@@ -276,13 +252,19 @@ module top(
         .in_data    (rx_data[8:0]),
         .rec_valid  (rec_valid),
         .rec_data   (rec_data),
+        .i_desc_ver    (desc_ver),
+        .i_desc_width  (desc_width),
+        .i_desc_tsbits (desc_tsbits),
+        .i_desc_flags  (desc_flags),
         .clk_sys    (clk_in),
         .rst_sys    (reset_in),
         .h_rx_valid (h_rx_valid),
         .h_rx_data  (h_rx_data),
         .h_tx_valid (h_tx_valid),
         .h_tx_data  (h_tx_data),
-        .h_tx_ready (h_tx_ready)
+        .h_tx_ready (h_tx_ready),
+        .o_fwd_valid (fwd_valid),
+        .o_fwd_data  (fwd_data)
     );
 
     assign o_dat_lock    = rx_align & act_ok;

@@ -17,12 +17,19 @@
 //
 // Trace inputs of the demo: an 8-bit counter advancing every 2.56us plus
 // button S2, so pressing S2 produces timestamped events on the host.
+//
+// Reverse control channel (pmod0 pins 1/7 = ExtEasyCDR lane L0): 2Mbps
+// Manchester from the host FPGA -> ManchesterRx -> CtrlFrameRx ->
+// TraceCtrlRegs (rtl/manchester). Provides soft reset, trace enable,
+// ignore mask and descriptor request without any extra cable.
 module top(
     input  wire clk_in,      // 27MHz crystal (pin 52)
     input  wire rst_btn_n,   // S1, active low (pin 4)
     input  wire trace_btn_n, // S2, active low (pin 3) - demo trace input
     output wire o_serial_p,  // pmod0 pin 2 (lane L1_P)
     output wire o_serial_n,  // pmod0 pin 8 (lane L1_N)
+    input  wire i_ctrl_p,    // pmod0 pin 1 (lane L0_P) - reverse control channel
+    input  wire i_ctrl_n,    // pmod0 pin 7 (lane L0_N)
     output wire led_lock_n,  // PLL locked (LED, active low)
     output wire led_beat_n   // heartbeat from the demo counter
     );
@@ -51,6 +58,76 @@ module top(
     wire tx_rstn = rst_btn_n & pll_lock;
 
     //------------------------------------------------------------------
+    // Reverse control channel: TLVDS input -> Manchester RX -> frame
+    // parser -> control registers (all in the txclk_par domain).
+    // TX side sends 2Mbps; BIT_CYCLES=50 @99.9MHz = 1.998Mbps (-0.1%),
+    // well inside the receiver's tolerance.
+    //------------------------------------------------------------------
+    // PnR places i_ctrl_p on the pair's A pad = FPGA pin 27 = pmod0 pin 7 =
+    // lane L0_N (see build pin report), so the received line is inverted.
+    localparam CTRL_INVERT = 1'b1;
+
+    wire ctrl_rxd_raw;
+    TLVDS_IBUF u_ctrl_ibuf(
+        .O  (ctrl_rxd_raw),
+        .I  (i_ctrl_p),
+        .IB (i_ctrl_n)
+    );
+    wire ctrl_rxd = CTRL_INVERT ? ~ctrl_rxd_raw : ctrl_rxd_raw;
+
+    wire ctrl_rst = ~tx_rstn;
+    wire       cb_valid, cb_err;
+    wire [7:0] cb_data;
+    ManchesterRx #(.BIT_CYCLES(50)) u_ctrl_rx(
+        .i_clk   (txclk_par),
+        .i_rst   (ctrl_rst),
+        .i_rxd   (ctrl_rxd),
+        .o_valid (cb_valid),
+        .o_data  (cb_data),
+        .o_err   (cb_err),
+        .o_link  ()
+    );
+
+    wire       wr_valid;
+    wire [7:0] wr_addr, wr_data;
+    CtrlFrameRx #(.GAP_TIMEOUT(65536)) u_ctrl_frame(   // ~0.66ms byte gap
+        .i_clk      (txclk_par),
+        .i_rst      (ctrl_rst),
+        .i_valid    (cb_valid),
+        .i_data     (cb_data),
+        .i_err      (cb_err),
+        .o_wr_valid (wr_valid),
+        .o_wr_addr  (wr_addr),
+        .o_wr_data  (wr_data),
+        .o_frame_err()
+    );
+
+    wire        soft_reset, trace_en, desc_req, arm, periodic_en, change_dis;
+    wire [15:0] ignore_mask, trig_mask, trig_value;
+    wire [23:0] period;
+    wire [15:0] post;
+    TraceCtrlRegs #(.WIDTH(16), .RESET_CYCLES(64)) u_ctrl_regs(
+        .i_clk        (txclk_par),
+        .i_rst        (ctrl_rst),
+        .i_wr_valid   (wr_valid),
+        .i_wr_addr    (wr_addr),
+        .i_wr_data    (wr_data),
+        .o_soft_reset (soft_reset),
+        .o_enable     (trace_en),
+        .o_desc_req   (desc_req),
+        .o_arm        (arm),
+        .o_ignore_mask(ignore_mask),
+        .o_periodic_en(periodic_en),
+        .o_change_dis (change_dis),
+        .o_period     (period),
+        .o_trig_mask  (trig_mask),
+        .o_trig_value (trig_value),
+        .o_post       (post)
+    );
+
+    wire trace_rstn = tx_rstn & ~soft_reset;
+
+    //------------------------------------------------------------------
     // Demo trace source: slow counter + button S2
     //------------------------------------------------------------------
     reg [7:0] demo_div, demo_cnt;
@@ -73,11 +150,24 @@ module top(
     //------------------------------------------------------------------
     wire [9:0] tx_symbol;
     easycdr_trace_tx #(.WIDTH(16), .TS_BITS(24)) u_trace_tx(
-        .clk        (txclk_par),
-        .rstn       (tx_rstn),
-        .sig        (trace_sig),
-        .o_symbol   (tx_symbol),
-        .o_overflow ()
+        .clk           (txclk_par),
+        .rstn          (trace_rstn),
+        .sig           (trace_sig),
+        .i_enable      (trace_en),
+        .i_ignore_mask (ignore_mask),
+        .i_desc_req    (desc_req),
+        .i_periodic_en (periodic_en),
+        .i_change_dis  (change_dis),
+        .i_period      (period),
+        .i_arm         (arm),
+        .i_trig_mask   (trig_mask),
+        .i_trig_value  (trig_value),
+        .i_post        (post),
+        .o_symbol      (tx_symbol),
+        .o_overflow    (),
+        .o_armed       (),
+        .o_triggered   (),
+        .o_done        ()
     );
 
     wire o_serial_data;

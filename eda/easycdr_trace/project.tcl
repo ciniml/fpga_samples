@@ -26,6 +26,16 @@ add_file -type verilog [file normalize ${COMMON_DIR}/tx_link_core.v]
 add_file -type verilog [file normalize ${COMMON_DIR}/easycdr_trace_tx.v]
 add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/encoder_8b10b.sv]
 
+# Reverse control channel (rtl/manchester, Veryl output - run `veryl build`
+# in rtl/manchester after editing the .veryl sources)
+if {${TARGET} == "tangprimer25k"} {
+    add_file -type verilog [file normalize ${RTL_DIR}/manchester/manchester_tx.sv]
+} else {
+    add_file -type verilog [file normalize ${RTL_DIR}/manchester/manchester_rx.sv]
+    add_file -type verilog [file normalize ${RTL_DIR}/manchester/ctrl_frame_rx.sv]
+    add_file -type verilog [file normalize ${RTL_DIR}/manchester/trace_ctrl_regs.sv]
+}
+
 if {${TARGET} == "tangprimer25k"} {
     # host side: EasyCDR RX + capture buffer + UART dump
     add_file -type verilog [file normalize ${SRC_DIR}/trace_capture.v]

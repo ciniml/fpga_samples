@@ -1,0 +1,128 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file manchester_rx.veryl
+ * @brief Family-independent Manchester byte receiver (see manchester_tx).
+ *
+ * Edge-driven, no clock recovery. Half-bit H = BIT_CYCLES/2 clocks.
+ *  1. Hunt: a falling edge that ends a high run of >= 2.5H is the SYNC.
+ *     Any edge within the next 2.5H means the low part is broken
+ *     (noise, or an inverted link) -> o_err, back to hunting.
+ *  2. First data bit: the SYNC low run ends 3H after the fall with either
+ *     the bit-boundary edge (b0 = 0) at 3H or the mid-bit edge (b0 = 1)
+ *     at 4H; edges before 3.5H are ignored, the first edge at/after 3.5H
+ *     is the mid-bit edge of bit 0.
+ *  3. Following bits: after an accepted mid-bit edge, edges earlier than
+ *     1.5H are bit-boundary edges and ignored; the next edge at/after
+ *     1.5H is the mid-bit edge of the next bit. The bit value is the
+ *     level after the edge (rising = 1). No edge within 2.5H -> o_err.
+ *  4. After 9 bits (8 data LSB first + even parity) the byte is checked
+ *     and emitted.
+ * Timing is relative to the previous edge, so the tolerated clock
+ * offset is about +/-25 % per bit (+/-12 % for the SYNC-to-bit-0 step).
+ * BIT_CYCLES >= 8 recommended.
+ *
+ * o_link is high while transitions keep arriving (the transmitter idles
+ * with a square wave), and drops after 4 bit-times without an edge.
+ */
+pub module ManchesterRx #(
+    param BIT_CYCLES: u32 = 50, // clocks per bit-time at the receiver clock
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_rxd: input logic,
+
+    o_valid: output logic   , // one clock per good byte
+    o_data : output logic<8>,
+    o_err  : output logic   , // one clock: framing / parity error
+    o_link : output logic   ,
+) {
+    const H1_5: u32 = BIT_CYCLES * 3 / 4;
+    const H2_5: u32 = BIT_CYCLES * 5 / 4;
+    const H3_5: u32 = BIT_CYCLES * 7 / 4;
+    const H4_5: u32 = BIT_CYCLES * 9 / 4;
+    const DEAD: u32 = BIT_CYCLES * 4;      // no edge for 4 bit-times -> link lost
+    const TW  : u32 = $clog2(DEAD + 1);
+
+    // input synchroniser + edge detector
+    var s0: logic;
+    var s1: logic;
+    var s2: logic;
+    let level   : logic = s1;
+    let fall    : logic = s2 && !s1;
+    let any_edge: logic = s2 != s1;
+
+    // clocks since the last edge (saturating) - SYNC hunt and link detect
+    var run: logic<TW>;
+    assign o_link = run <: DEAD as TW;
+
+    var busy: logic    ; // receiving a byte
+    var t   : logic<TW>; // clocks since the SYNC fall / last accepted mid-bit edge
+    var n   : logic<4> ; // accepted bits (0..9)
+    var sh  : logic<9> ; // {parity, data}, shifted in LSB first
+
+    let first  : logic = n == 4'd0;
+    let accept : logic = if first ? t >= H3_5 as TW : t >= H1_5 as TW;
+    let too_soon: logic = first && t <: H2_5 as TW;
+    let timeout: logic = if first ? t >= H4_5 as TW : t >= H2_5 as TW;
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            s0      = 0;
+            s1      = 0;
+            s2      = 0;
+            run     = 0;
+            busy    = 1'b0;
+            t       = 0;
+            n       = 0;
+            sh      = 0;
+            o_valid = 1'b0;
+            o_data  = 0;
+            o_err   = 1'b0;
+        } else {
+            s0  = i_rxd;
+            s1  = s0;
+            s2  = s1;
+            run = if any_edge ? 0 : if run == DEAD as TW ? run : run + 1;
+
+            o_valid = 1'b0;
+            o_err   = 1'b0;
+            if !busy {
+                if fall && run >= H2_5 as TW {
+                    busy = 1'b1;
+                    t    = 0;
+                    n    = 0;
+                }
+            } else {
+                t = t + 1;
+                if any_edge {
+                    if too_soon {
+                        busy  = 1'b0; // SYNC low part broken / inverted link
+                        o_err = 1'b1;
+                    } else if accept {
+                        t  = 0;
+                        n  = n + 1;
+                        sh = {level, sh[8:1]};
+                        if n == 4'd8 {
+                            busy = 1'b0;
+                            // level = parity bit, sh[8:1] = data
+                            if (^sh[8:1]) == level {
+                                o_valid = 1'b1;
+                                o_data  = sh[8:1];
+                            } else {
+                                o_err = 1'b1;
+                            }
+                        }
+                    }
+                } else if timeout {
+                    busy  = 1'b0;
+                    o_err = 1'b1;
+                }
+            }
+        }
+    }
+}

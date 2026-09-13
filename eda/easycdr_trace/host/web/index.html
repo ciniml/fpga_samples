@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EasyCDR Trace Viewer</title>
+<style>
+  :root { --bg:#f7f7f5; --fg:#222; --mut:#666; --line:#ccc; --acc:#2a6fdb; --trig:#d33; --panel:#fff; --k:#e9a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#151618; --fg:#e6e6e6; --mut:#999; --line:#444; --acc:#5b9cff; --trig:#ff6b6b; --panel:#1f2124; }
+  }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px system-ui,sans-serif; }
+  header { padding:10px 16px; border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0 12px 0 0; }
+  main { padding:12px 16px; display:grid; gap:12px; }
+  fieldset { border:1px solid var(--line); border-radius:6px; background:var(--panel); }
+  legend { color:var(--mut); font-size:12px; }
+  label { display:inline-flex; align-items:center; gap:4px; margin-right:12px; }
+  input[type=number], input[type=text], select { width:7em; font:inherit; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:2px 4px; }
+  button { font:inherit; padding:4px 12px; border:1px solid var(--line); border-radius:4px; background:var(--panel); color:var(--fg); cursor:pointer; }
+  button.primary { background:var(--acc); color:#fff; border-color:var(--acc); }
+  button:disabled { opacity:.4; cursor:default; }
+  #status { color:var(--mut); font-family:monospace; white-space:pre-wrap; }
+  #wave { width:100%; height:320px; display:block; background:var(--panel); border:1px solid var(--line); border-radius:6px; touch-action:none; }
+  .tbl { max-height:320px; overflow:auto; border:1px solid var(--line); border-radius:6px; background:var(--panel); }
+  table { border-collapse:collapse; font-family:monospace; font-size:13px; width:100%; }
+  th, td { padding:2px 8px; text-align:right; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { position:sticky; top:0; background:var(--panel); color:var(--mut); }
+  tr.trig td { color:var(--trig); font-weight:bold; }
+  progress { width:200px; vertical-align:middle; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>EasyCDR Trace Viewer</h1>
+  <button id="btnSerial">Connect (Serial)</button>
+  <button id="btnUsb">Connect (USB)</button>
+  <span id="srvBox" hidden><select id="srvPort"></select> <button id="btnServer">Connect (Server)</button></span>
+  <button id="btnDisc" disabled>Disconnect</button>
+  <span id="conn" style="color:var(--mut)">not connected</span>
+</header>
+<main>
+  <fieldset>
+    <legend>Link / capture parameters (must match the FPGA build)</legend>
+    <label>WIDTH <input type="number" id="width" value="16" step="8" min="8"></label>
+    <label>TS_BITS <input type="number" id="tsbits" value="24" step="8" min="8"></label>
+    <label>ADDR_BITS <input type="number" id="addrbits" value="14" min="8" max="20"></label>
+    <label>clk period [ns] <input type="number" id="tick" value="10" step="0.1"></label>
+    <label>baud <select id="baud"><option>115200</option><option>921600</option><option>2000000</option></select></label>
+  </fieldset>
+  <fieldset>
+    <legend>Capture</legend>
+    <div class="row">
+      <button id="btnCap" class="primary" disabled>Capture now (S)</button>
+      <label><input type="checkbox" id="useTrig"> trigger</label>
+      <label>mask <input type="text" id="mask" value="0x0100"></label>
+      <label>value <input type="text" id="val" value="0x0100"></label>
+      <label>post entries <input type="number" id="post" value=""></label>
+      <button id="btnAbort" disabled>Abort</button>
+      <progress id="prog" value="0" max="1"></progress>
+      <button id="btnCsv" disabled>Export CSV</button>
+      <button id="btnVcd" disabled>Export VCD</button>
+    </div>
+    <div id="status"></div>
+  </fieldset>
+  <fieldset>
+    <legend>TX control (reverse Manchester channel via 'X' frames)</legend>
+    <div class="row">
+      <button id="btnQuery" disabled>Query params (?)</button>
+      <label><input type="checkbox" id="txEnable" checked> trace enable</label>
+      <label>ignore mask <input type="text" id="ignMask" value="0x0000"></label>
+      <button id="btnApply" disabled>Apply</button>
+      <button id="btnTxReset" disabled>Reset TX</button>
+      <span id="txInfo" style="color:var(--mut)"></span>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="perEn"> periodic</label>
+      <label>period [clk] <input type="number" id="perN" value="100000"></label>
+      <label><input type="checkbox" id="chgDis"> change detect off</label>
+      <label>TX trigger mask <input type="text" id="tMask" value="0x0000"></label>
+      <label>value <input type="text" id="tVal" value="0x0000"></label>
+      <label>post <input type="number" id="tPost" value="0"></label>
+      <button id="btnArm" disabled>Arm TX</button>
+      <button id="btnFlags" disabled>Flags (F)</button>
+      <span id="txFlags" style="color:var(--mut)"></span>
+    </div>
+  </fieldset>
+  <fieldset>
+    <legend>Waveform (wheel: zoom, drag: pan, click trigger row to center)</legend>
+    <canvas id="wave"></canvas>
+  </fieldset>
+  <fieldset>
+    <legend>Records</legend>
+    <div class="tbl"><table id="tbl"><thead><tr><th>#</th><th>ts [ns]</th><th>Δt [ns]</th><th>data</th></tr></thead><tbody></tbody></table></div>
+  </fieldset>
+</main>
+<script>
+'use strict';
+const K28_1 = 0x3c, K28_2 = 0x5c;
+const $ = id => document.getElementById(id);
+const log = s => { $('status').textContent += s + '\n'; };
+const clearLog = () => { $('status').textContent = ''; };
+
+// ---------------------------------------------------------------------------
+// Transport abstraction: {write(Uint8Array), read(n, onProgress) -> Uint8Array, close()}
+// The FPGA side is a plain byte stream (trace_capture h_rx/h_tx), so both
+// transports share the same command protocol.
+// ---------------------------------------------------------------------------
+class ByteQueue {
+  constructor() { this.chunks = []; this.len = 0; this.waiters = []; this.closed = false; }
+  push(u8) { if (u8.length) { this.chunks.push(u8); this.len += u8.length; } this._wake(); }
+  close() { this.closed = true; this._wake(); }
+  _wake() { const w = this.waiters; this.waiters = []; w.forEach(f => f()); }
+  flush() { this.chunks = []; this.len = 0; }
+  async read(n, onProgress, abort) {
+    while (this.len < n) {
+      if (this.closed) throw new Error('transport closed');
+      if (abort && abort.aborted) throw new Error('aborted');
+      onProgress && onProgress(this.len);
+      await new Promise(r => { this.waiters.push(r); if (abort) abort.addEventListener('abort', r, {once:true}); });
+    }
+    const out = new Uint8Array(n); let o = 0;
+    while (o < n) {
+      const c = this.chunks[0], take = Math.min(c.length, n - o);
+      out.set(c.subarray(0, take), o); o += take;
+      if (take === c.length) this.chunks.shift(); else this.chunks[0] = c.subarray(take);
+    }
+    this.len -= n; onProgress && onProgress(n);
+    return out;
+  }
+}
+
+class SerialTransport {
+  static async open(baud) {
+    if (!navigator.serial) throw new Error('Web Serial API unavailable (Chrome/Edge, https or file:// required)');
+    const port = await navigator.serial.requestPort();
+    await port.open({ baudRate: baud, bufferSize: 65536 });
+    const t = new SerialTransport(); t.port = port; t.q = new ByteQueue();
+    t.writer = port.writable.getWriter();
+    t.reader = port.readable.getReader();
+    (async () => { try { for (;;) { const {value, done} = await t.reader.read(); if (done) break; t.q.push(value); } }
+                  catch (e) { console.warn(e); } finally { t.q.close(); } })();
+    t.name = `serial @${baud}`;
+    return t;
+  }
+  async write(u8) { await this.writer.write(u8); }
+  read(n, p, a) { return this.q.read(n, p, a); }
+  flush() { this.q.flush(); }
+  async close() { try { await this.reader.cancel(); } catch {} try { this.writer.releaseLock(); } catch {} try { await this.port.close(); } catch {} }
+}
+
+// WebUSB: vendor-class device (rtl/usb UsbDevice, VID 0x1209) with EP1 bulk
+// OUT/IN. Each bulk IN transfer requests up to 64 KiB; the device ends a
+// dump with a short packet, so the read loop stops when it gets one.
+class UsbTransport {
+  static async open() {
+    if (!navigator.usb) throw new Error('WebUSB unavailable');
+    const dev = await navigator.usb.requestDevice({ filters: [{ vendorId: 0x1209 }] });
+    await dev.open();
+    if (dev.configuration === null) await dev.selectConfiguration(1);
+    await dev.claimInterface(0);
+    const t = new UsbTransport(); t.dev = dev; t.q = new ByteQueue(); t.epIn = 1; t.epOut = 1;
+    t.name = `usb ${dev.productName || ''} (VID 0x${dev.vendorId.toString(16)})`;
+    return t;
+  }
+  async write(u8) { await this.dev.transferOut(this.epOut, u8); }
+  async read(n, p, a) {
+    while (this.q.len < n) {
+      if (a && a.aborted) throw new Error('aborted');
+      const r = await this.dev.transferIn(this.epIn, Math.min(65536, Math.max(512, n - this.q.len)));
+      if (r.status !== 'ok') throw new Error('usb transferIn: ' + r.status);
+      this.q.push(new Uint8Array(r.data.buffer, r.data.byteOffset, r.data.byteLength));
+      p && p(this.q.len);
+    }
+    return this.q.read(n, p, a);
+  }
+  flush() { this.q.flush(); }
+  async close() { try { await this.dev.close(); } catch {} }
+}
+
+// Served by util/serial_bridge (Rust): the server owns the serial port and
+// exposes it as POST /api/xfer {write, read, timeout_ms}. Works in any
+// browser and from other machines; no Web Serial / WebUSB needed.
+async function api(path, body, signal) {
+  const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}), signal });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+class HttpTransport {
+  static async open(port, baud) {
+    const r = await api('/api/open', { port, baud });
+    const t = new HttpTransport(); t.name = `server ${r.port} @${r.baud}`; return t;
+  }
+  async write(u8) { await api('/api/xfer', { write: Array.from(u8), read: 0 }); }
+  async read(n, onProgress, abort) {
+    const out = new Uint8Array(n); let got = 0;
+    try {
+      while (got < n) {
+        const r = await api('/api/xfer', { write: [], read: Math.min(4096, n - got), timeout_ms: 600000 }, abort);
+        out.set(r.data, got); got += r.data.length; onProgress && onProgress(got);
+        if (r.timeout) throw new Error(`timeout after ${got}/${n} bytes`);
+      }
+    } catch (e) {
+      if (e.name === 'AbortError') { this.flush(); throw new Error('aborted'); }
+      throw e;
+    }
+    return out;
+  }
+  flush() { api('/api/flush').catch(() => {}); }
+  async close() { await api('/api/close'); }
+}
+const SERVED = location.protocol.startsWith('http');
+async function initServerUi() {
+  if (!SERVED) return;
+  try {
+    const ports = await (await fetch('/api/ports')).json(), st = await (await fetch('/api/state')).json();
+    const sel = $('srvPort'); sel.innerHTML = '';
+    for (const p of ports) { const o = document.createElement('option'); o.value = p.name; o.textContent = `${p.name} (${p.kind})`; sel.appendChild(o); }
+    if (st.port) { if (![...sel.options].some(o => o.value === st.port)) { const o = document.createElement('option'); o.value = st.port; o.textContent = st.port; sel.appendChild(o); } sel.value = st.port; }
+    $('srvBox').hidden = false;
+  } catch (e) { log('server: ' + e.message); }
+}
+
+// ---------------------------------------------------------------------------
+// Protocol + decode (port of host/trace_view.py)
+// ---------------------------------------------------------------------------
+function params() {
+  const width = +$('width').value, ts = +$('tsbits').value, ab = +$('addrbits').value;
+  return { width, ts, db: width / 8, tb: ts / 8, entries: 1 << ab, tick: +$('tick').value };
+}
+function leBytes(v, n) { const b = new Uint8Array(n); for (let i = 0; i < n; i++) b[i] = Number((BigInt(v) >> BigInt(8*i)) & 0xffn); return b; }
+function fromLE(bytes) { let v = 0n; for (let i = bytes.length - 1; i >= 0; i--) v = (v << 8n) | BigInt(bytes[i]); return v; }
+
+function decode(raw, p) {
+  const n = raw.length / 2, recLen = p.tb + p.db;
+  const rec = [], stat = { overflows: 0, junk: 0 };
+  for (let i = 0; i < n;) {
+    const k = raw[2*i] & 1, b = raw[2*i+1];
+    if (k && b === K28_2) { stat.overflows++; i++; continue; }
+    if (k && b === K28_1 && i + recLen < n) {
+      let ok = true;
+      for (let j = 1; j <= recLen; j++) if (raw[2*(i+j)] & 1) { ok = false; break; }
+      if (ok) {
+        const body = []; for (let j = 1; j <= recLen; j++) body.push(raw[2*(i+j)+1]);
+        rec.push({ ts: fromLE(body.slice(0, p.tb)), data: fromLE(body.slice(p.tb)) });
+        i += 1 + recLen; continue;
+      }
+    }
+    stat.junk++; i++;
+  }
+  // unwrap timestamp wrap-around (TS_BITS) into absolute ns
+  const mod = 1n << BigInt(p.ts); let acc = 0n, prev = null;
+  for (const r of rec) {
+    if (prev !== null) acc += ((r.ts - prev) + mod) % mod;
+    r.t = Number(acc) * p.tick; prev = r.ts;
+  }
+  return { rec, stat };
+}
+
+let transport = null, abortCtl = null, result = null, trigIdx = null;
+
+async function capture() {
+  const p = params(); clearLog(); result = null; trigIdx = null; $('btnCsv').disabled = $('btnVcd').disabled = true;
+  abortCtl = new AbortController(); $('btnCap').disabled = true; $('btnAbort').disabled = false;
+  const prog = $('prog'); prog.max = p.entries * 2; prog.value = 0;
+  try {
+    transport.flush();
+    let mask = 0n, val = 0n;
+    if ($('useTrig').checked) {
+      mask = BigInt($('mask').value); val = BigInt($('val').value);
+      const post = $('post').value === '' ? p.entries >> 1 : +$('post').value;
+      await transport.write(new Uint8Array([0x54, ...leBytes(mask, p.db), ...leBytes(val, p.db)]));   // 'T'
+      await transport.write(new Uint8Array([0x41, (post >> 8) & 0xff, post & 0xff]));                  // 'A'
+      log(`armed: (data & 0x${mask.toString(16)}) == 0x${val.toString(16)}, post=${post}; waiting for trigger...`);
+    } else {
+      await transport.write(new Uint8Array([0x53]));                                                    // 'S'
+      log('armed: immediate capture; waiting...');
+    }
+    const ack = await transport.read(1, null, abortCtl.signal);
+    if (ack[0] !== 0x4b) throw new Error(`no 'K' ack (got 0x${ack[0].toString(16)}) - link locked? trigger reachable?`);
+    log('capture frozen, dumping...');
+    const t0 = performance.now();
+    await transport.write(new Uint8Array([0x44]));                                                      // 'D'
+    const raw = await transport.read(p.entries * 2, n => { prog.value = n; }, abortCtl.signal);
+    const dt = (performance.now() - t0) / 1000;
+    log(`dump ${raw.length} bytes in ${dt.toFixed(2)} s (${(raw.length*8/dt/1e3).toFixed(0)} kbps)`);
+    result = decode(raw, p); result.p = p;
+    if ($('useTrig').checked) {
+      trigIdx = result.rec.findIndex(r => (r.data & mask) === (val & mask));
+      if (trigIdx < 0) trigIdx = null;
+    }
+    log(`${result.rec.length} records, ${result.stat.overflows} overflow markers, ${result.stat.junk} skipped entries` +
+        (trigIdx !== null ? `, first trigger match at record #${trigIdx}` : ''));
+    render();
+    $('btnCsv').disabled = $('btnVcd').disabled = false;
+  } catch (e) { log('error: ' + e.message); }
+  finally { $('btnCap').disabled = false; $('btnAbort').disabled = true; abortCtl = null; }
+}
+
+// ---------------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------------
+function renderTable() {
+  const tb = $('tbl').tBodies[0]; tb.innerHTML = '';
+  const { rec, p } = result, hex = p.db * 2, frag = document.createDocumentFragment();
+  const maxRows = 5000, lo = trigIdx !== null ? Math.max(0, trigIdx - maxRows/2) : 0;
+  for (let n = lo; n < Math.min(rec.length, lo + maxRows); n++) {
+    const r = rec[n], tr = document.createElement('tr'); if (n === trigIdx) tr.className = 'trig';
+    const dt = n ? '+' + (r.t - rec[n-1].t).toFixed(0) : '';
+    tr.innerHTML = `<td>${n}</td><td>${r.t.toFixed(0)}</td><td>${dt}</td><td>0x${r.data.toString(16).padStart(hex,'0')}</td>`;
+    tr.onclick = () => { view.center(r.t); drawWave(); };
+    frag.appendChild(tr);
+  }
+  tb.appendChild(frag);
+}
+
+const view = { t0: 0, span: 1, center(t) { this.t0 = t - this.span / 2; } };
+function fitView() {
+  const rec = result.rec; if (!rec.length) return;
+  const tEnd = rec[rec.length-1].t;
+  if (trigIdx !== null) { view.span = Math.max(1000, (tEnd || 1000) / 50); view.center(rec[trigIdx].t); }
+  else { view.t0 = 0; view.span = Math.max(1000, tEnd); }
+}
+function drawWave() {
+  const cv = $('wave'), dpr = devicePixelRatio || 1;
+  const W = cv.clientWidth, H = cv.clientHeight; cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext('2d'); g.scale(dpr, dpr); g.clearRect(0, 0, W, H);
+  if (!result) return;
+  const { rec, p } = result, bits = p.width, labelW = 48, rowH = Math.min(22, (H - 20) / bits), fg = getComputedStyle(document.body).color;
+  const x = t => labelW + (t - view.t0) / view.span * (W - labelW);
+  g.font = '11px monospace'; g.fillStyle = fg; g.strokeStyle = fg; g.lineWidth = 1;
+  // time axis
+  const step = niceStep(view.span / 8);
+  g.globalAlpha = .3;
+  for (let t = Math.ceil(view.t0 / step) * step; t < view.t0 + view.span; t += step) {
+    const px = x(t); g.beginPath(); g.moveTo(px, 0); g.lineTo(px, H); g.stroke();
+    g.fillText(fmtT(t), px + 2, H - 4);
+  }
+  g.globalAlpha = 1;
+  // find first visible record (binary search)
+  let lo = 0, hi = rec.length; while (lo < hi) { const m = (lo + hi) >> 1; if (rec[m].t < view.t0) lo = m + 1; else hi = m; }
+  const start = Math.max(0, lo - 1);
+  for (let b = 0; b < bits; b++) {
+    const y0 = 4 + b * rowH, yH = y0 + rowH * .8, yL = y0 + rowH * .2;
+    g.fillStyle = fg; g.fillText(`[${b}]`, 4, y0 + rowH * .7);
+    g.strokeStyle = (b === trigBit()) ? getComputedStyle(document.documentElement).getPropertyValue('--trig') : getComputedStyle(document.documentElement).getPropertyValue('--acc');
+    g.beginPath();
+    let px = x(rec[start].t), lvl = Number((rec[start].data >> BigInt(b)) & 1n);
+    g.moveTo(Math.max(labelW, px), lvl ? yL : yH);
+    for (let n = start + 1; n < rec.length; n++) {
+      const nx = x(rec[n].t); if (nx > W + 2) break;
+      const nl = Number((rec[n].data >> BigInt(b)) & 1n);
+      g.lineTo(nx, lvl ? yL : yH); if (nl !== lvl) g.lineTo(nx, nl ? yL : yH); lvl = nl;
+    }
+    g.lineTo(W, lvl ? yL : yH); g.stroke();
+  }
+  if (trigIdx !== null) { const px = x(rec[trigIdx].t); g.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--trig'); g.setLineDash([4,3]); g.beginPath(); g.moveTo(px, 0); g.lineTo(px, H); g.stroke(); g.setLineDash([]); }
+}
+function trigBit() { if (!$('useTrig').checked) return -1; const m = BigInt($('mask').value); return (m & (m - 1n)) ? -1 : (m ? m.toString(2).length - 1 : -1); }
+function niceStep(v) { const e = Math.pow(10, Math.floor(Math.log10(v))); const m = v / e; return (m < 2 ? 1 : m < 5 ? 2 : 5) * e; }
+function fmtT(ns) { return Math.abs(ns) >= 1e6 ? (ns/1e6).toFixed(2)+'ms' : Math.abs(ns) >= 1e3 ? (ns/1e3).toFixed(2)+'us' : ns.toFixed(0)+'ns'; }
+function render() { fitView(); drawWave(); renderTable(); }
+
+// zoom / pan
+{
+  const cv = $('wave'); let drag = null;
+  cv.addEventListener('wheel', e => { if (!result) return; e.preventDefault();
+    const r = cv.getBoundingClientRect(), f = (e.clientX - r.left - 48) / (r.width - 48), tc = view.t0 + f * view.span;
+    view.span *= e.deltaY > 0 ? 1.25 : 0.8; view.t0 = tc - f * view.span; drawWave(); }, { passive:false });
+  cv.addEventListener('pointerdown', e => { drag = { x: e.clientX, t0: view.t0 }; cv.setPointerCapture(e.pointerId); });
+  cv.addEventListener('pointermove', e => { if (!drag) return; view.t0 = drag.t0 - (e.clientX - drag.x) / (cv.clientWidth - 48) * view.span; drawWave(); });
+  cv.addEventListener('pointerup', () => drag = null);
+  addEventListener('resize', drawWave);
+}
+
+// Control frames for the trace transmitter (rtl/manchester CtrlFrameRx):
+// [0xA5][ADDR][DATA][CRC-8 poly 0x07 over ADDR,DATA]. Wider registers are
+// written with consecutive frames (LSB first). Sent to the 25K host with
+// the 'X' command (planned): 'X' len bytes...
+function crc8(bytes) { let c = 0; for (const b of bytes) { c ^= b; for (let i = 0; i < 8; i++) c = (c & 0x80) ? ((c << 1) ^ 0x07) & 0xff : (c << 1) & 0xff; } return c; }
+function ctrlFrame(addr, data) {
+  const out = [];
+  data.forEach((d, i) => { const a = (addr + i) & 0xff; out.push(0xa5, a, d, crc8([a, d])); });
+  return new Uint8Array(out);
+}
+const CTRL = { RESET: 1, ENABLE: 2, DESC_REQ: 4, ARM: 8, ADDR: 0x00, IGNORE_MASK: 0x04, MODE: 0x08, PERIOD: 0x09, TRIG_MASK: 0x0c, TRIG_VALUE: 0x0e, POST: 0x10 };
+async function sendCtrl(frames) { await transport.write(new Uint8Array([0x58, frames.length, ...frames])); }   // 'X'
+// note: the capture FSM ignores 'X' and '?' while a capture is armed -
+// configure the TX side first, then arm (or press Abort, which sends 'Z').
+async function queryParams() {
+  transport.flush();
+  await transport.write(new Uint8Array([0x3f]));                      // '?'
+  const r = await transport.read(4);
+  const [ver, width, ts, ab] = r;
+  if (ver === 0) { $('txInfo').textContent = 'no descriptor seen yet (TX link down?)'; return; }
+  $('width').value = width; $('tsbits').value = ts; $('addrbits').value = ab;
+  $('txInfo').textContent = `descriptor v${ver}: WIDTH=${width} TS_BITS=${ts} ADDR_BITS=${ab}`;
+}
+const leBytes16 = (v, n) => { const b = []; for (let i = 0; i < n; i++) b.push(Number((BigInt(v) >> BigInt(8*i)) & 0xffn)); return b; };
+async function applyTxCtrl() {
+  const mb = Math.ceil(+$('width').value / 8);
+  await sendCtrl(ctrlFrame(CTRL.IGNORE_MASK, leBytes16(BigInt($('ignMask').value), mb)));
+  await sendCtrl(ctrlFrame(CTRL.MODE, [($('perEn').checked ? 1 : 0) | ($('chgDis').checked ? 2 : 0)]));
+  await sendCtrl(ctrlFrame(CTRL.PERIOD, leBytes16(+$('perN').value, 3)));
+  await sendCtrl(ctrlFrame(CTRL.TRIG_MASK, leBytes16(BigInt($('tMask').value), mb)));
+  await sendCtrl(ctrlFrame(CTRL.TRIG_MASK + mb, leBytes16(BigInt($('tVal').value), mb)));
+  await sendCtrl(ctrlFrame(CTRL.TRIG_MASK + 2 * mb, leBytes16(+$('tPost').value, 2)));
+  await sendCtrl(ctrlFrame(CTRL.ADDR, [$('txEnable').checked ? CTRL.ENABLE : 0]));
+  $('txInfo').textContent = 'applied';
+}
+async function readFlags() {
+  transport.flush(); await transport.write(new Uint8Array([0x46]));   // 'F'
+  const f = (await transport.read(1))[0];
+  $('txFlags').textContent = `flags 0x${f.toString(16).padStart(2, '0')}: ` + ['enable', 'armed', 'triggered', 'done', 'periodic'].filter((_, i) => f & (1 << i)).join(' ');
+}
+$('btnArm').onclick = () => sendCtrl(ctrlFrame(CTRL.ADDR, [CTRL.ARM | ($('txEnable').checked ? CTRL.ENABLE : 0)])).then(() => { $('txInfo').textContent = 'armed'; return readFlags(); }).catch(e => log('arm: ' + e.message));
+$('btnFlags').onclick = () => readFlags().catch(e => log('flags: ' + e.message));
+$('btnQuery').onclick = () => queryParams().catch(e => log('query: ' + e.message));
+$('btnApply').onclick = () => applyTxCtrl().catch(e => log('tx ctrl: ' + e.message));
+$('btnTxReset').onclick = () => sendCtrl(ctrlFrame(CTRL.ADDR, [CTRL.RESET | CTRL.ENABLE]))
+  .then(() => { $('txInfo').textContent = 'reset sent'; }).catch(e => log('tx reset: ' + e.message));
+
+// exports
+function download(name, text, type) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+$('btnCsv').onclick = () => download('trace.csv', 'index,timestamp_ns,data\n' + result.rec.map((r, i) => `${i},${r.t.toFixed(0)},${r.data}`).join('\n') + '\n', 'text/csv');
+$('btnVcd').onclick = () => {
+  const { rec, p } = result, tick = p.tick;
+  let s = `$timescale 1ns $end\n$scope module trace $end\n$var wire ${p.width} ! sig [${p.width-1}:0] $end\n$upscope $end\n$enddefinitions $end\n`;
+  for (const r of rec) s += `#${r.t.toFixed(0)}\nb${r.data.toString(2)} !\n`;
+  download('trace.vcd', s, 'text/plain');
+};
+
+// connection
+async function connect(kind) {
+  try {
+    transport = kind === 'usb' ? await UsbTransport.open()
+              : kind === 'server' ? await HttpTransport.open($('srvPort').value, +$('baud').value)
+              : await SerialTransport.open(+$('baud').value);
+    $('conn').textContent = 'connected: ' + transport.name;
+    $('btnSerial').disabled = $('btnUsb').disabled = $('btnServer').disabled = true; $('btnDisc').disabled = $('btnCap').disabled = false;
+    $('btnQuery').disabled = $('btnApply').disabled = $('btnTxReset').disabled = $('btnArm').disabled = $('btnFlags').disabled = false;
+    queryParams().catch(() => {});
+  } catch (e) { log('connect failed: ' + e.message); }
+}
+$('btnSerial').onclick = () => connect('serial');
+$('btnUsb').onclick = () => connect('usb');
+$('btnServer').onclick = () => connect('server');
+initServerUi();
+$('btnDisc').onclick = async () => { if (abortCtl) abortCtl.abort(); await transport.close(); transport = null;
+  $('conn').textContent = 'not connected'; $('btnSerial').disabled = $('btnUsb').disabled = $('btnServer').disabled = false; $('btnDisc').disabled = $('btnCap').disabled = true;
+  $('btnQuery').disabled = $('btnApply').disabled = $('btnTxReset').disabled = $('btnArm').disabled = $('btnFlags').disabled = true; };
+$('btnCap').onclick = capture;
+$('btnAbort').onclick = () => { if (abortCtl) abortCtl.abort(); if (transport) { transport.flush(); transport.write(new Uint8Array([0x5a])).catch(() => {}); } };   // 'Z' disarms the FPGA
+if (!navigator.serial) { $('btnSerial').disabled = true; log('Web Serial API not available in this browser'); }
+if (!navigator.usb) { $('btnUsb').disabled = true; }
+</script>
+</body>
+</html>

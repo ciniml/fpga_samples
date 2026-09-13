@@ -1,0 +1,98 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file manchester_tx.veryl
+ * @brief Family-independent Manchester (bi-phase) byte transmitter.
+ *
+ * Wire format (1 bit-time = 2 half-bits of BIT_CYCLES/2 clocks each):
+ *  - data '1' : L then H (rising edge at mid-bit)
+ *  - data '0' : H then L (falling edge at mid-bit)
+ *  - idle     : continuous '1' bits, i.e. a square wave at the bit rate,
+ *               so an AC-coupled link never sits at DC and the receiver
+ *               can tell "link present" from "no link"
+ *  - byte     : SYNC + 8 data bits (LSB first) + even parity = 12 bit-times
+ *      SYNC   : H H H L L L (three half-bits high, three low). This is a
+ *               coding violation: data and idle never hold a level for
+ *               more than two half-bits, so the receiver resynchronises
+ *               on every byte and needs no clock recovery.
+ *
+ * Stream side: valid/ready byte interface. o_ready is a one-clock strobe
+ * at every unit boundary (end of an idle bit or of a byte); a byte
+ * presented with i_valid on that clock is transmitted next, otherwise
+ * one idle bit is sent and o_ready comes again after BIT_CYCLES clocks.
+ */
+pub module ManchesterTx #(
+    param BIT_CYCLES: u32 = 50, // clocks per bit-time (even, >= 4)
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_valid: input  logic   ,
+    i_data : input  logic<8>,
+    o_ready: output logic   ,
+
+    o_txd: output logic,
+) {
+    const HALF: u32 = BIT_CYCLES / 2;
+    const CW  : u32 = if HALF <= 2 ? 1 : $clog2(HALF);
+
+    var cyc : logic<CW>; // clock within the half-bit
+    var hb  : logic<5> ; // half-bit index within the unit (idle: 0..1, byte: 0..23)
+    var busy: logic    ; // 1: byte unit, 0: idle bit
+    var word: logic<9> ; // {even parity, data}
+
+    let half_end: logic = cyc == (HALF - 1) as CW;
+    let unit_end: logic = half_end && (hb == (if busy ? 5'd23 : 5'd1));
+    assign o_ready = unit_end;
+
+    // Line level of half-bit `h` of a unit described by (b, w).
+    function level(b: input logic, h: input logic<5>, w: input logic<9>) -> logic {
+        var idx: logic<4>;
+        idx = (h - 5'd6) >> 1;
+        if !b {
+            return h[0]; // idle '1' = L, H
+        } else if h <: 5'd3 {
+            return 1'b1; // SYNC high
+        } else if h <: 5'd6 {
+            return 1'b0; // SYNC low
+        } else {
+            return if h[0] ? w[idx] : ~w[idx]; // data bit: ~b then b
+        }
+    }
+
+    var hb_n  : logic<5>;
+    var busy_n: logic   ;
+    var word_n: logic<9>;
+    always_comb {
+        if unit_end {
+            hb_n   = 5'd0;
+            busy_n = i_valid;
+            word_n = {^i_data, i_data};
+        } else {
+            hb_n   = hb + 5'd1;
+            busy_n = busy;
+            word_n = word;
+        }
+    }
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            cyc   = 0;
+            hb    = 0;
+            busy  = 1'b0;
+            word  = 0;
+            o_txd = 1'b0;
+        } else {
+            cyc = if half_end ? 0 : cyc + 1;
+            if half_end {
+                hb    = hb_n;
+                busy  = busy_n;
+                word  = word_n;
+                o_txd = level(busy_n, hb_n, word_n);
+            }
+        }
+    }
+}

@@ -1,0 +1,24 @@
+// Tang Nano 9K TX-only trace source.
+IO_LOC "clk_in" 52;
+IO_PORT "clk_in" IO_TYPE=LVCMOS33;
+// S1 / S2 push buttons (active low)
+IO_LOC "rst_btn_n" 4;
+IO_PORT "rst_btn_n" IO_TYPE=LVCMOS18 PULL_MODE=UP;
+IO_LOC "trace_btn_n" 3;
+IO_PORT "trace_btn_n" IO_TYPE=LVCMOS18 PULL_MODE=UP;
+// TX pair: pmod0 pins 2/8 = ExtEasyCDR lane L1 = IOB8 true pair
+// (pin 26 = IOB8B = PMOD pin 2, pin 25 = IOB8A = PMOD pin 8)
+IO_LOC "o_serial_p" 26,25;
+IO_PORT "o_serial_p" IO_TYPE=LVPECL33E PULL_MODE=NONE DRIVE=16 BANK_VCCIO=3.3;
+// Reverse control channel RX pair: pmod0 pins 1/7 = ExtEasyCDR lane L0.
+// (pmod0 pin 1 = FPGA pin 28, pin 7 = FPGA pin 27 - see
+// eda/targets/tangnano9k_pmod/pmod_ports.csv). If PnR places i_ctrl_p on
+// the pad wired to L0_N, set CTRL_INVERT=1 in top.v instead of moving pins.
+IO_LOC "i_ctrl_p" 28,27;
+IO_PORT "i_ctrl_p" IO_TYPE=LVDS25 PULL_MODE=NONE;
+
+// LEDs (active low)
+IO_LOC "led_lock_n" 10;
+IO_PORT "led_lock_n" IO_TYPE=LVCMOS18;
+IO_LOC "led_beat_n" 11;
+IO_PORT "led_beat_n" IO_TYPE=LVCMOS18;

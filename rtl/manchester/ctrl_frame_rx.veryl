@@ -1,0 +1,113 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file ctrl_frame_rx.veryl
+ * @brief Register-write frame parser for a byte stream (ManchesterRx).
+ *
+ * Frame (fixed 4 bytes): [SOF 0xA5] [ADDR] [DATA] [CRC-8]
+ *   CRC-8, polynomial 0x07, init 0x00, over ADDR and DATA.
+ * A frame writes one byte to one register address; wider registers are
+ * written with consecutive frames. Keeping the frame fixed-length removes
+ * the length field, payload buffer and index logic, which is what keeps
+ * this parser small on the trace transmitter.
+ *
+ * On a CRC match o_wr_valid pulses with o_wr_addr / o_wr_data. A CRC
+ * mismatch, an i_err pulse from the line receiver, or (if GAP_TIMEOUT >
+ * 0) more than GAP_TIMEOUT clocks between bytes pulses o_frame_err and
+ * returns to hunting for SOF. SOF is only recognised between frames, so
+ * 0xA5 may appear as ADDR / DATA.
+ *
+ * The CRC is folded in bit-serially during the 8 clocks after each byte
+ * (bytes are >= 12 bit-times apart, so this never overlaps).
+ *
+ * One-way channel: rejected frames are simply re-sent by the host.
+ */
+pub module CtrlFrameRx #(
+    param GAP_TIMEOUT: u32 = 0,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_valid: input logic   ,
+    i_data : input logic<8>,
+    i_err  : input logic   ,
+
+    o_wr_valid : output logic   ,
+    o_wr_addr  : output logic<8>,
+    o_wr_data  : output logic<8>,
+    o_frame_err: output logic   ,
+) {
+    const SOF: logic<8> = 8'ha5;
+    const GW : u32      = if GAP_TIMEOUT <= 1 ? 1 : $clog2(GAP_TIMEOUT + 1);
+
+    enum State: logic<2> {
+        Sof,
+        Addr,
+        Data,
+        Crc,
+    }
+
+    var state   : State   ;
+    var crc     : logic<8>;
+    var crc_bits: logic<4>;
+    var gap     : logic<GW>;
+
+    let in_frame: logic = state != State::Sof;
+    let gap_hit : logic = GAP_TIMEOUT >: 0 && in_frame && gap == GAP_TIMEOUT as GW;
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            state       = State::Sof;
+            crc         = 0;
+            crc_bits    = 0;
+            gap         = 0;
+            o_wr_valid  = 1'b0;
+            o_wr_addr   = 0;
+            o_wr_data   = 0;
+            o_frame_err = 1'b0;
+        } else {
+            o_wr_valid  = 1'b0;
+            o_frame_err = 1'b0;
+            gap = if i_valid ? 0 : if gap == GAP_TIMEOUT as GW ? gap : gap + 1;
+            if crc_bits != 0 {
+                crc      = if crc[7] ? {crc[6:0], 1'b0} ^ 8'h07 : {crc[6:0], 1'b0};
+                crc_bits = crc_bits - 1;
+            }
+
+            if (i_err || gap_hit) && in_frame {
+                state       = State::Sof;
+                o_frame_err = 1'b1;
+            } else if i_valid {
+                case state {
+                    State::Sof: if i_data == SOF {
+                        state = State::Addr;
+                        crc   = 0;
+                    }
+                    State::Addr: {
+                        o_wr_addr = i_data;
+                        crc       = crc ^ i_data;
+                        crc_bits  = 4'd8;
+                        state     = State::Data;
+                    }
+                    State::Data: {
+                        o_wr_data = i_data;
+                        crc       = crc ^ i_data;
+                        crc_bits  = 4'd8;
+                        state     = State::Crc;
+                    }
+                    State::Crc: {
+                        state = State::Sof;
+                        if i_data == crc {
+                            o_wr_valid = 1'b1;
+                        } else {
+                            o_frame_err = 1'b1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

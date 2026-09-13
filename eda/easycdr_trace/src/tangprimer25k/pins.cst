@@ -1,0 +1,41 @@
+// RX differential pair: BANK7 (pmod2), served by the BANK6/BANK7 HCLK group
+// which is driven by u_pll_rx placed at PLL_T (300MHz x 4 phases).
+// RX differential pair: G11/G10 = pmod2 pins 1/7 = ExtEasyCDR lane L0.
+// On-chip 100ohm termination is only available on these top-edge (IOT) pins;
+// left-edge (IOL) pins such as D11/D10 report Diff Resistor OFF.
+IO_LOC "i_serial_p" G11,G10;
+// RX termination: on-chip 100ohm differential resistor (tool default ON).
+// Do NOT add an external termination resistor - that would double-terminate.
+// CTLE=HIGH: receiver continuous-time equalizer. Determined empirically over
+// the ExtEasyCDR (USB-C cable) link: LOW rarely locks, MEDIUM locks with
+// errors, HIGH locks cleanly.
+IO_PORT "i_serial_p" PULL_MODE=NONE DRIVE=OFF BANK_VCCIO=3.3 CTLE=HIGH;
+// TX differential pair: G7/G8 = pmod0 pins 2/8 = ExtEasyCDR lane L1 (IOT68
+// pair, BANK1). Transmitting on lane L1 makes a standard Type-C cable's
+// TX2<->RX2 cross wiring deliver the signal to the far module's lane L0 =
+// pmod2 pins 1/7 = G11/G10, i.e. straight into the RX pair above with
+// correct polarity. (BANK1 is required regardless: the 600MHz TX serializer
+// clock cannot share the RX 300MHz 4-phase HCLK group in BANK6/BANK7.)
+// (Direct-wire loopback without the modules used F5,G5 = pmod0 pins 1/7.)
+// Reverse control channel TX (2Mbps Manchester). For the two-board setup the
+// reply must travel back through the SAME cable as the trace stream, i.e.
+// on the pmod2 module's lane L1 = pmod2 pins 2/8 = D10/D11 (the pin order
+// D10,D11 is the one the 1.0G sample used for a straight-polarity link).
+// (The single-board loopback used pmod0 lane L1 = G7,G8.)
+IO_LOC "o_serial_p" D10,D11;
+IO_PORT "o_serial_p" IO_TYPE=LVPECL33E PULL_MODE=NONE DRIVE=16 BANK_VCCIO=3.3;
+IO_LOC "o_dat_lock" B2;
+IO_PORT "o_dat_lock" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "o_dat_err" C2;
+IO_PORT "o_dat_err" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "dout_flag_xor" E1;
+IO_PORT "dout_flag_xor" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "reset_in" H11;
+IO_PORT "reset_in" IO_TYPE=LVCMOS33 PULL_MODE=DOWN DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC "clk_in" E2;
+IO_PORT "clk_in" PULL_MODE=NONE DRIVE=OFF BANK_VCCIO=3.3;
+INS_LOC "u_pll_rx/PLLA_inst" PLL_T;
+IO_LOC "uart_txd" C3;
+IO_PORT "uart_txd" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "uart_rxd" B3;
+IO_PORT "uart_rxd" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;

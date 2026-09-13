@@ -19,6 +19,19 @@
 //                                 POST entries after it
 //   'D'                         : dump the buffer in chronological order
 //                                 (2 bytes per entry: {7'b0,K} then data)
+//   '?'                         : reply 4 bytes [VER][WIDTH][TS_BITS][ADDR_BITS].
+//                                 VER/WIDTH/TS_BITS come from the last link
+//                                 descriptor (0 if none seen yet), ADDR_BITS
+//                                 from the local parameter.
+//   'X' len byte0..len-1        : forward len bytes to the reverse control
+//                                 channel (o_fwd_valid/o_fwd_data strobes;
+//                                 the top level buffers them for its
+//                                 ManchesterTx)
+//   'F'                         : reply 1 byte: TX descriptor flags (bit0 enable,
+//                                 bit1 armed, bit2 triggered, bit3 done, bit4 periodic)
+//   'Z'                         : abort - disarm a pending capture and return
+//                                 to idle (also accepted while waiting for
+//                                 the trigger; replies 'Z')
 // FPGA -> host: 'K' when the capture has frozen.
 module trace_capture #(
     parameter ADDR_BITS    = 14,
@@ -32,6 +45,11 @@ module trace_capture #(
     input  wire [DATA_BITS-1:0] in_data,
     input  wire                 rec_valid,  // decoded record (trigger source)
     input  wire [WIDTH-1:0]     rec_data,
+    // link descriptor (pclk domain, quasi-static)
+    input  wire [7:0]           i_desc_ver,
+    input  wire [7:0]           i_desc_width,
+    input  wire [7:0]           i_desc_tsbits,
+    input  wire [7:0]           i_desc_flags,
 
     input  wire                 clk_sys,
     input  wire                 rst_sys,
@@ -40,7 +58,10 @@ module trace_capture #(
     input  wire [7:0]           h_rx_data,
     output wire                 h_tx_valid,   // byte to host
     output wire [7:0]           h_tx_data,
-    input  wire                 h_tx_ready
+    input  wire                 h_tx_ready,
+    // reverse control channel ('X' payload, clk_sys domain)
+    output reg                  o_fwd_valid,
+    output reg  [7:0]           o_fwd_data
 );
     localparam DB = WIDTH / 8;
     localparam [ADDR_BITS-1:0] LAST_ADDR = {ADDR_BITS{1'b1}};
@@ -60,6 +81,7 @@ module trace_capture #(
     reg [ADDR_BITS:0]   post_count;     // entries to keep after the trigger
     reg                 arm_immediate;  // 1: 'S' (trigger at once)
     reg                 arm_tgl_sys;
+    reg                 abort_tgl_sys;
 
     // arm request: clk_sys -> pclk
     reg [2:0] arm_sync_p;
@@ -67,6 +89,11 @@ module trace_capture #(
         if (prst) arm_sync_p <= 3'b000;
         else      arm_sync_p <= {arm_sync_p[1:0], arm_tgl_sys};
     wire arm_req_p = arm_sync_p[2] ^ arm_sync_p[1];
+    reg [2:0] abort_sync_p;
+    always @(posedge pclk or posedge prst)
+        if (prst) abort_sync_p <= 3'b000;
+        else      abort_sync_p <= {abort_sync_p[1:0], abort_tgl_sys};
+    wire abort_req_p = abort_sync_p[2] ^ abort_sync_p[1];
 
     //------------------------------------------------------------------
     // capture memory + FSM (pclk)
@@ -94,7 +121,8 @@ module trace_capture #(
                 buffer[waddr] <= in_data;
                 waddr <= waddr + 1'b1;
             end
-            case (cstate)
+            if (abort_req_p) cstate <= CS_IDLE;
+            else case (cstate)
             CS_IDLE:
                 if (arm_req_p) begin
                     post_left <= post_count;
@@ -126,6 +154,13 @@ module trace_capture #(
     reg [ADDR_BITS-1:0] waddr_s;
     always @(posedge clk_sys) waddr_s <= waddr;
 
+    // descriptor bytes: quasi-static, double-registered into clk_sys
+    reg [31:0] desc_m, desc_s;
+    always @(posedge clk_sys) begin
+        desc_m <= {i_desc_flags, i_desc_tsbits, i_desc_width, i_desc_ver};
+        desc_s <= desc_m;
+    end
+
     //------------------------------------------------------------------
     // command parser / dump FSM (clk_sys)
     //------------------------------------------------------------------
@@ -133,6 +168,8 @@ module trace_capture #(
     localparam ST_ARGS   = 3'd1;   // collecting command arguments
     localparam ST_WAIT   = 3'd2;   // capture in progress
     localparam ST_DUMP   = 3'd3;
+    localparam ST_INFO   = 3'd4;   // '?' reply
+    localparam ST_FWD    = 3'd5;   // 'X' payload forwarding
 
     reg [2:0]           state;
     reg [7:0]           cmd;
@@ -142,6 +179,7 @@ module trace_capture #(
     reg [DATA_BITS-1:0] rdata;
     reg                 rd_pending;
     reg                 dump_lo;
+    reg [7:0]           fwd_left;
 
     always @(posedge clk_sys or posedge rst_sys) begin
         if (rst_sys) begin
@@ -153,6 +191,7 @@ module trace_capture #(
             post_count    <= 0;
             arm_immediate <= 1'b0;
             arm_tgl_sys   <= 1'b0;
+            abort_tgl_sys <= 1'b0;
             tx_valid      <= 1'b0;
             tx_data       <= 8'h00;
             raddr         <= {ADDR_BITS{1'b0}};
@@ -160,7 +199,11 @@ module trace_capture #(
             rdata         <= {DATA_BITS{1'b0}};
             rd_pending    <= 1'b0;
             dump_lo       <= 1'b0;
+            o_fwd_valid   <= 1'b0;
+            o_fwd_data    <= 8'h00;
+            fwd_left      <= 8'd0;
         end else begin
+            o_fwd_valid <= 1'b0;
             if (tx_valid && tx_ready) tx_valid <= 1'b0;
             rdata      <= buffer[raddr];
             rd_pending <= 1'b0;
@@ -177,6 +220,23 @@ module trace_capture #(
                     state         <= ST_WAIT;
                 end
                 "T", "A": state <= ST_ARGS;
+                "?": begin
+                    arg_idx <= 8'd0;
+                    state   <= ST_INFO;
+                end
+                "X": begin
+                    fwd_left <= 8'd0;
+                    state    <= ST_FWD;
+                end
+                "Z": begin
+                    abort_tgl_sys <= ~abort_tgl_sys;
+                    tx_data       <= "Z";
+                    tx_valid      <= 1'b1;
+                end
+                "F": begin
+                    tx_data  <= desc_s[31:24];
+                    tx_valid <= 1'b1;
+                end
                 "D": begin
                     raddr      <= waddr_s;
                     dump_left  <= (1 << ADDR_BITS);
@@ -203,10 +263,37 @@ module trace_capture #(
                     end
                 end
             end
+            ST_INFO: if (!tx_valid || tx_ready) begin
+                case (arg_idx[1:0])
+                2'd0: tx_data <= desc_s[7:0];    // VER
+                2'd1: tx_data <= desc_s[15:8];   // WIDTH
+                2'd2: tx_data <= desc_s[23:16];  // TS_BITS
+                2'd3: tx_data <= ADDR_BITS[7:0];
+                endcase
+                tx_valid <= 1'b1;
+                arg_idx  <= arg_idx + 1'b1;
+                if (arg_idx[1:0] == 2'd3) state <= ST_IDLE;
+            end
+            ST_FWD: if (rx_valid) begin
+                if (fwd_left == 8'd0) begin
+                    fwd_left <= rx_data;             // first byte = length
+                    if (rx_data == 8'd0) state <= ST_IDLE;
+                end else begin
+                    o_fwd_valid <= 1'b1;
+                    o_fwd_data  <= rx_data;
+                    fwd_left    <= fwd_left - 1'b1;
+                    if (fwd_left == 8'd1) state <= ST_IDLE;
+                end
+            end
             ST_WAIT: if (full_evt_s) begin
                 tx_data  <= "K";
                 tx_valid <= 1'b1;
                 state    <= ST_IDLE;
+            end else if (rx_valid && rx_data == "Z") begin
+                abort_tgl_sys <= ~abort_tgl_sys;
+                tx_data       <= "Z";
+                tx_valid      <= 1'b1;
+                state         <= ST_IDLE;
             end
             ST_DUMP: if (!tx_valid && tx_ready && !rd_pending) begin
                 if (!dump_lo) begin
