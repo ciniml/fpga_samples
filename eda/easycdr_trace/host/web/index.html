@@ -50,12 +50,15 @@
     <label>baud <select id="baud"><option>115200</option><option>921600</option><option>2000000</option></select></label>
   </fieldset>
   <fieldset>
-    <legend>Signal map (name[:width[:radix]], LSB first; must match the TX build: CRC-32 of "name:width,..." = descriptor hash)</legend>
+    <legend>Signal map (name[:width[:radix]], LSB first; radix hex|dec|bin|enum(A,B,..); derived: name = expr; CRC-32 of "name:width,..." = descriptor hash)</legend>
     <div class="row">
-      <textarea id="sigmap" rows="3" style="width:32em;font-family:monospace">count:8:dec
+      <textarea id="sigmap" rows="4" style="width:34em;font-family:monospace">count:8:dec
 s2:1
-spare:7</textarea>
+spare:7
+# derived (not part of the hash):
+# xfer = s2 &amp; (count == 0x10)</textarea>
       <button id="btnMapApply">Apply map</button>
+      <label><input type="checkbox" id="useMap" checked> use names</label>
       <span id="mapInfo" style="color:var(--mut)"></span>
     </div>
   </fieldset>
@@ -64,6 +67,7 @@ spare:7</textarea>
     <div class="row">
       <button id="btnCap" class="primary" disabled>Capture now (S)</button>
       <label><input type="checkbox" id="useTrig"> trigger</label>
+      <label>condition <input type="text" id="trigExpr" value="s2 == 1" style="width:14em" title="signal conditions joined by &amp;&amp;: name == value, name, !name (equality only); filled into mask/value"></label>
       <label>mask <input type="text" id="mask" value="0x0100"></label>
       <label>value <input type="text" id="val" value="0x0100"></label>
       <label>post entries <input type="number" id="post" value=""></label>
@@ -80,6 +84,7 @@ spare:7</textarea>
       <button id="btnQuery" disabled>Query params (?)</button>
       <button id="btnDiag" disabled title="receiver lock/align + event counters since the previous L">Link diag (L)</button>
       <label><input type="checkbox" id="txEnable" checked> trace enable</label>
+      <label>ignore signals <input type="text" id="ignSig" value="" style="width:9em" title="comma separated signal names excluded from change detection (sets ignore mask)"></label>
       <label>ignore mask <input type="text" id="ignMask" value="0x0000"></label>
       <button id="btnApply" disabled>Apply</button>
       <button id="btnTxReset" disabled>Reset TX</button>
@@ -90,7 +95,8 @@ spare:7</textarea>
       <label><input type="checkbox" id="perEn"> periodic</label>
       <label>period [clk] <input type="number" id="perN" value="100000"></label>
       <label><input type="checkbox" id="chgDis"> change detect off</label>
-      <label>TX trigger mask <input type="text" id="tMask" value="0x0000"></label>
+      <label>TX trigger <input type="text" id="tExpr" value="" style="width:10em" title="same syntax as the capture condition; filled into mask/value"></label>
+      <label>mask <input type="text" id="tMask" value="0x0000"></label>
       <label>value <input type="text" id="tVal" value="0x0000"></label>
       <label>post <input type="number" id="tPost" value="0"></label>
       <button id="btnArm" disabled>Arm TX</button>
@@ -105,6 +111,7 @@ spare:7</textarea>
   <fieldset>
     <legend>Records</legend>
     <div class="tbl"><table id="tbl"><thead><tr><th>#</th><th>ts [ns]</th><th>Δt [ns]</th><th>data</th></tr></thead><tbody></tbody></table></div>
+    <div id="tblNote" style="color:var(--mut)"></div>
   </fieldset>
 </main>
 <script>
@@ -281,6 +288,7 @@ async function capture() {
     transport.flush();
     let mask = 0n, val = 0n;
     if ($('useTrig').checked) {
+      if ($('trigExpr').value.trim() && sigMap) fillMaskVal('trigExpr', 'mask', 'val');
       mask = BigInt($('mask').value); val = BigInt($('val').value);
       const post = $('post').value === '' ? p.entries >> 1 : +$('post').value;
       await transport.write(new Uint8Array([0x54, ...leBytes(mask, p.db), ...leBytes(val, p.db)]));   // 'T'
@@ -317,15 +325,18 @@ async function capture() {
 function renderTable() {
   const tb = $('tbl').tBodies[0]; tb.innerHTML = '';
   const { rec, p } = result, hex = p.db * 2, frag = document.createDocumentFragment();
+  const named = sigMap && $('useMap').checked && sigMap.width === p.width, cols = named ? rows() : [];
+  $('tbl').tHead.rows[0].innerHTML = '<th>#</th><th>ts [ns]</th><th>Δt [ns]</th>' + cols.map(s => `<th>${s.name}</th>`).join('') + '<th>data</th>';
   const maxRows = 5000, lo = trigIdx !== null ? Math.max(0, trigIdx - maxRows/2) : 0;
   for (let n = lo; n < Math.min(rec.length, lo + maxRows); n++) {
     const r = rec[n], tr = document.createElement('tr'); if (n === trigIdx) tr.className = 'trig';
     const dt = n ? '+' + (r.t - rec[n-1].t).toFixed(0) : '';
-    tr.innerHTML = `<td>${n}</td><td>${r.t.toFixed(0)}</td><td>${dt}</td><td>0x${r.data.toString(16).padStart(hex,'0')}</td>`;
+    tr.innerHTML = `<td>${n}</td><td>${r.t.toFixed(0)}</td><td>${dt}</td>` + cols.map(s => `<td>${fmtSig(s, sigValue(r.data, s))}</td>`).join('') + `<td>0x${r.data.toString(16).padStart(hex,'0')}</td>`;
     tr.onclick = () => { view.center(r.t); drawWave(); };
     frag.appendChild(tr);
   }
   tb.appendChild(frag);
+  $('tblNote').textContent = rec.length > maxRows ? `${maxRows} of ${rec.length} records shown` : '';
 }
 
 const view = { t0: 0, span: 1, center(t) { this.t0 = t - this.span / 2; } };
@@ -340,7 +351,9 @@ function drawWave() {
   const W = cv.clientWidth, H = cv.clientHeight; cv.width = W * dpr; cv.height = H * dpr;
   const g = cv.getContext('2d'); g.scale(dpr, dpr); g.clearRect(0, 0, W, H);
   if (!result) return;
-  const { rec, p } = result, bits = p.width, labelW = 48, rowH = Math.min(22, (H - 20) / bits), fg = getComputedStyle(document.body).color;
+  const { rec, p } = result, rws = rows(), bits = rws.length, fg = getComputedStyle(document.body).color;
+  g.font = '11px monospace';
+  const labelW = Math.max(48, 8 + Math.max(...rws.map(r => g.measureText(r.name).width))), rowH = Math.min(22, (H - 20) / bits);
   const x = t => labelW + (t - view.t0) / view.span * (W - labelW);
   g.font = '11px monospace'; g.fillStyle = fg; g.strokeStyle = fg; g.lineWidth = 1;
   // time axis
@@ -354,19 +367,38 @@ function drawWave() {
   // find first visible record (binary search)
   let lo = 0, hi = rec.length; while (lo < hi) { const m = (lo + hi) >> 1; if (rec[m].t < view.t0) lo = m + 1; else hi = m; }
   const start = Math.max(0, lo - 1);
+  const trigMask = $('useTrig').checked ? BigInt($('mask').value || '0') : 0n;
+  const accCol = getComputedStyle(document.documentElement).getPropertyValue('--acc'), trigCol = getComputedStyle(document.documentElement).getPropertyValue('--trig');
   for (let b = 0; b < bits; b++) {
-    const y0 = 4 + b * rowH, yH = y0 + rowH * .8, yL = y0 + rowH * .2;
-    g.fillStyle = fg; g.fillText(`[${b}]`, 4, y0 + rowH * .7);
-    g.strokeStyle = (b === trigBit()) ? getComputedStyle(document.documentElement).getPropertyValue('--trig') : getComputedStyle(document.documentElement).getPropertyValue('--acc');
-    g.beginPath();
-    let px = x(rec[start].t), lvl = Number((rec[start].data >> BigInt(b)) & 1n);
-    g.moveTo(Math.max(labelW, px), lvl ? yL : yH);
-    for (let n = start + 1; n < rec.length; n++) {
-      const nx = x(rec[n].t); if (nx > W + 2) break;
-      const nl = Number((rec[n].data >> BigInt(b)) & 1n);
-      g.lineTo(nx, lvl ? yL : yH); if (nl !== lvl) g.lineTo(nx, nl ? yL : yH); lvl = nl;
+    const s = rws[b], y0 = 4 + b * rowH, yH = y0 + rowH * .8, yL = y0 + rowH * .2;
+    const inTrig = !s.derived && ((trigMask >> BigInt(s.lsb)) & ((1n << BigInt(s.width)) - 1n)) !== 0n;
+    g.fillStyle = fg; g.fillText(s.name, 4, y0 + rowH * .7);
+    g.strokeStyle = inTrig ? trigCol : accCol; g.fillStyle = g.strokeStyle;
+    if (s.width === 1) {                                   // single bit: level line
+      g.beginPath();
+      let px = x(rec[start].t), lvl = Number(sigValue(rec[start].data, s));
+      g.moveTo(Math.max(labelW, px), lvl ? yL : yH);
+      for (let n = start + 1; n < rec.length; n++) {
+        const nx = x(rec[n].t); if (nx > W + 2) break;
+        const nl = Number(sigValue(rec[n].data, s));
+        g.lineTo(nx, lvl ? yL : yH); if (nl !== lvl) g.lineTo(nx, nl ? yL : yH); lvl = nl;
+      }
+      g.lineTo(W, lvl ? yL : yH); g.stroke();
+    } else {                                               // bus: value boxes with crossings at changes
+      let v = sigValue(rec[start].data, s), x0 = Math.max(labelW, x(rec[start].t));
+      const box = (xa, xb, val) => {
+        const w = xb - xa; if (w <= 0) return;
+        g.beginPath(); g.moveTo(xa, (yH + yL) / 2); g.lineTo(xa + Math.min(3, w / 2), yL); g.lineTo(xb - Math.min(3, w / 2), yL); g.lineTo(xb, (yH + yL) / 2);
+        g.lineTo(xb - Math.min(3, w / 2), yH); g.lineTo(xa + Math.min(3, w / 2), yH); g.closePath(); g.stroke();
+        const txt = fmtSig(s, val); if (g.measureText(txt).width + 6 < w) { g.fillStyle = fg; g.fillText(txt, xa + 4, y0 + rowH * .72); g.fillStyle = g.strokeStyle; }
+      };
+      for (let n = start + 1; n < rec.length; n++) {
+        const nx = x(rec[n].t); if (nx > W + 2) break;
+        const nv = sigValue(rec[n].data, s);
+        if (nv !== v) { box(x0, Math.min(nx, W), v); v = nv; x0 = nx; }
+      }
+      box(x0, W, v);
     }
-    g.lineTo(W, lvl ? yL : yH); g.stroke();
   }
   if (trigIdx !== null) { const px = x(rec[trigIdx].t); g.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--trig'); g.setLineDash([4,3]); g.beginPath(); g.moveTo(px, 0); g.lineTo(px, H); g.stroke(); g.setLineDash([]); }
 }
@@ -405,28 +437,98 @@ async function sendCtrl(frames) { await transport.write(new Uint8Array([0x58, fr
 const CRC_TBL = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
 function crc32(str) { let c = 0xffffffff; for (const b of new TextEncoder().encode(str)) c = CRC_TBL[(c ^ b) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
 function parseMap(text) {
-  const sigs = []; let lsb = 0;
-  for (const line of text.split('\n')) for (const raw of line.split('#')[0].split(',')) {
-    const s = raw.trim(); if (!s) continue;
-    const p = s.split(':'); const name = p[0].trim(); const width = p[1] && p[1].trim() ? +p[1] : 1; const radix = (p[2] || 'hex').trim().toLowerCase();
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error('bad signal name: ' + name);
-    if (!(width >= 1 && width <= 64)) throw new Error('bad width for ' + name);
-    if (!['hex', 'dec', 'bin'].includes(radix)) throw new Error('bad radix for ' + name);
-    sigs.push({ name, width, radix, lsb }); lsb += width;
+  const sigs = [], derived = []; let lsb = 0;
+  for (const line of text.split('\n')) {
+    const body = line.split('#')[0];
+    const dm = body.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)([\s\S]*)$/);   // derived: name = expr (excluded from hash)
+    if (dm) {
+      const name = dm[1], e = dm[2];
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error('bad derived name: ' + name);
+      derived.push({ name, expr: e.trim(), width: 1, radix: 'bin', derived: true }); continue;
+    }
+    for (const raw of body.split(',')) {
+      const s = raw.trim(); if (!s) continue;
+      const m = s.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*(\d+)\s*(?::\s*(.+))?)?$/);
+      if (!m) throw new Error('bad entry: ' + s);
+      const name = m[1], width = m[2] ? +m[2] : 1; let radix = (m[3] || 'hex').trim(); let names = null;
+      const en = radix.match(/^enum\s*\((.*)\)$/i);
+      if (en) { names = en[1].split(/[,\s]+/).filter(Boolean); radix = 'enum'; } else radix = radix.toLowerCase();
+      if (!(width >= 1 && width <= 64)) throw new Error('bad width for ' + name);
+      if (!['hex', 'dec', 'bin', 'enum'].includes(radix)) throw new Error('bad radix for ' + name);
+      sigs.push({ name, width, radix, names, lsb }); lsb += width;
+    }
   }
   const canon = sigs.map(s => `${s.name}:${s.width}`).join(',');
-  return { sigs, width: lsb, hash: crc32(canon), canon };
+  // compile derived expressions: identifiers -> values, &,|,^,~,!,==,!=,<,>,(),numbers
+  const byName = new Map(sigs.map(s => [s.name, s]));
+  for (const d of derived) {
+    const js = d.expr.replace(/0x[0-9a-fA-F]+|\d+|[A-Za-z_][A-Za-z0-9_]*|&&|\|\||[&|^~!=<>()]|==|!=/g, tok => {
+      if (/^0x/.test(tok) || /^\d+$/.test(tok)) return `${tok}n`;
+      if (/^[A-Za-z_]/.test(tok)) { if (!byName.has(tok)) throw new Error(`derived ${d.name}: unknown signal ${tok}`); return `v.${tok}`; }
+      return tok;
+    });
+    if (/[^0-9a-zA-Z_.\s&|^~!=<>()n]/.test(js)) throw new Error(`derived ${d.name}: unsupported characters`);
+    try { d.fn = new Function('v', `return (${js}) ? 1n : 0n;`); } catch (e) { throw new Error(`derived ${d.name}: ${e.message}`); }
+  }
+  return { sigs, derived, width: lsb, hash: crc32(canon), canon };
 }
+// value helpers
+function sigValue(data, s) { return s.derived ? s.fn(sigValues(data)) : (data >> BigInt(s.lsb)) & ((1n << BigInt(s.width)) - 1n); }
+function sigValues(data) { const v = {}; for (const s of sigMap.sigs) v[s.name] = (data >> BigInt(s.lsb)) & ((1n << BigInt(s.width)) - 1n); return v; }
+function fmtSig(s, v) {
+  if (s.radix === 'enum') return (s.names && s.names[Number(v)] !== undefined) ? s.names[Number(v)] : String(v);
+  if (s.radix === 'dec') return v.toString(10);
+  if (s.radix === 'bin') return v.toString(2).padStart(s.width, '0');
+  return '0x' + v.toString(16).padStart(Math.ceil(s.width / 4), '0');
+}
+// display rows: named signals (+ derived) when the map is usable, else one row per bit
+function rows() {
+  const p = params();
+  if (sigMap && $('useMap').checked && sigMap.width === p.width) return [...sigMap.sigs, ...sigMap.derived];
+  return Array.from({ length: p.width }, (_, b) => ({ name: `[${b}]`, lsb: b, width: 1, radix: 'bin' }));
+}
+// trigger condition -> {mask, value}: terms joined by && : name == value | name != 0 (bare name) | !name
+function exprToMaskVal(expr) {
+  let mask = 0n, val = 0n;
+  if (!sigMap) throw new Error('no signal map');
+  for (const raw of expr.split('&&')) {
+    const t = raw.trim(); if (!t) continue;
+    const m = t.match(/^(!?)\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:==\s*(.+))?$/);
+    if (!m) throw new Error('bad term: ' + t);
+    const s = sigMap.sigs.find(x => x.name === m[2]); if (!s) throw new Error('unknown signal: ' + m[2]);
+    let v;
+    if (m[3] !== undefined) { const lit = m[3].trim(); const ei = s.names ? s.names.indexOf(lit) : -1; v = ei >= 0 ? BigInt(ei) : BigInt(lit); }
+    else v = m[1] ? 0n : 1n;
+    const w = (1n << BigInt(s.width)) - 1n;
+    if (v > w) throw new Error(`${s.name}: value too wide`);
+    mask |= w << BigInt(s.lsb); val |= (v & w) << BigInt(s.lsb);
+  }
+  return { mask, val };
+}
+function fillMaskVal(exprId, maskId, valId) {
+  const e = $(exprId).value.trim(); if (!e) return;
+  const { mask, val } = exprToMaskVal(e); const hex = Math.ceil(params().width / 4);
+  $(maskId).value = '0x' + mask.toString(16).padStart(hex, '0'); $(valId).value = '0x' + val.toString(16).padStart(hex, '0');
+}
+$('trigExpr').onchange = () => { try { fillMaskVal('trigExpr', 'mask', 'val'); } catch (e) { log('condition: ' + e.message); } };
+$('tExpr').onchange = () => { try { fillMaskVal('tExpr', 'tMask', 'tVal'); } catch (e) { log('TX trigger: ' + e.message); } };
+$('ignSig').onchange = () => {
+  try { let m = 0n; for (const n of $('ignSig').value.split(',').map(s => s.trim()).filter(Boolean)) { const s = sigMap && sigMap.sigs.find(x => x.name === n); if (!s) throw new Error('unknown signal: ' + n); m |= ((1n << BigInt(s.width)) - 1n) << BigInt(s.lsb); }
+    $('ignMask').value = '0x' + m.toString(16).padStart(Math.ceil(params().width / 4), '0'); } catch (e) { log('ignore: ' + e.message); }
+};
 let sigMap = null, txHash = null;
 function applyMap() {
   try { sigMap = parseMap($('sigmap').value); localStorage.setItem('sigmap', $('sigmap').value); }
   catch (e) { sigMap = null; $('mapInfo').textContent = 'map error: ' + e.message; return; }
   const h = sigMap.hash.toString(16).padStart(8, '0');
-  let m = `${sigMap.sigs.length} signals, ${sigMap.width} bits, hash 0x${h}`;
+  let m = `${sigMap.sigs.length} signals${sigMap.derived.length ? ' + ' + sigMap.derived.length + ' derived' : ''}, ${sigMap.width} bits, hash 0x${h}`;
   if (txHash !== null) m += txHash === sigMap.hash ? ' = TX (match)' : ` ≠ TX 0x${txHash.toString(16).padStart(8, '0')} (MISMATCH: map does not describe this transmitter)`;
   if (sigMap.width !== +$('width').value) m += ` [width differs from WIDTH=${$('width').value}]`;
   $('mapInfo').textContent = m; $('mapInfo').style.color = (txHash !== null && txHash !== sigMap.hash) ? 'var(--bad, #c00)' : 'var(--mut)';
+  try { fillMaskVal('trigExpr', 'mask', 'val'); fillMaskVal('tExpr', 'tMask', 'tVal'); } catch (e) {}
+  if (result) render();
 }
+$('useMap').onchange = () => { if (result) render(); };
 try { const s = localStorage.getItem('sigmap'); if (s) $('sigmap').value = s; } catch (e) {}
 $('btnMapApply').onclick = applyMap;
 applyMap();
@@ -483,11 +585,22 @@ function download(name, text, type) {
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
-$('btnCsv').onclick = () => download('trace.csv', 'index,timestamp_ns,data\n' + result.rec.map((r, i) => `${i},${r.t.toFixed(0)},${r.data}`).join('\n') + '\n', 'text/csv');
+$('btnCsv').onclick = () => {
+  const { rec, p } = result, named = sigMap && $('useMap').checked && sigMap.width === p.width, cols = named ? rows() : [];
+  const head = 'index,timestamp_ns,' + cols.map(s => s.name).join(',') + (cols.length ? ',' : '') + 'data\n';
+  download('trace.csv', head + rec.map((r, i) => `${i},${r.t.toFixed(0)},` + cols.map(s => sigValue(r.data, s).toString()).join(',') + (cols.length ? ',' : '') + r.data).join('\n') + '\n', 'text/csv');
+};
 $('btnVcd').onclick = () => {
-  const { rec, p } = result, tick = p.tick;
-  let s = `$timescale 1ns $end\n$scope module trace $end\n$var wire ${p.width} ! sig [${p.width-1}:0] $end\n$upscope $end\n$enddefinitions $end\n`;
-  for (const r of rec) s += `#${r.t.toFixed(0)}\nb${r.data.toString(2)} !\n`;
+  const { rec, p } = result, named = sigMap && $('useMap').checked && sigMap.width === p.width;
+  const vars = named ? rows() : [{ name: 'sig', lsb: 0, width: p.width }];
+  const id = i => String.fromCharCode(33 + (i % 94)) + (i >= 94 ? String.fromCharCode(33 + Math.floor(i / 94)) : '');
+  let s = `$timescale 1ns $end\n$scope module trace $end\n` + vars.map((v, i) => `$var wire ${v.width} ${id(i)} ${v.name}${v.width > 1 ? ` [${v.width-1}:0]` : ''} $end`).join('\n') + `\n$upscope $end\n$enddefinitions $end\n`;
+  const last = new Array(vars.length).fill(null);
+  for (const r of rec) {
+    let chg = '';
+    vars.forEach((v, i) => { const val = named ? sigValue(r.data, v) : r.data; if (val !== last[i]) { chg += (v.width > 1 ? `b${val.toString(2)} ${id(i)}` : `${val}${id(i)}`) + '\n'; last[i] = val; } });
+    if (chg) s += `#${r.t.toFixed(0)}\n` + chg;
+  }
   download('trace.vcd', s, 'text/plain');
 };
 
