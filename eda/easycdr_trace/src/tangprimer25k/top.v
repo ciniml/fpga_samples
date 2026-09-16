@@ -238,6 +238,7 @@ module top(
     wire [31:0] rec_ts;
     wire [63:0] rec_data;
     wire [7:0]  desc_ver, desc_width, desc_tsbits, desc_flags;
+    wire [31:0] desc_hash;
     trace_rx_decoder #(.MAX_WIDTH(64), .MAX_TS_BITS(32)) u_decoder(   // layout from the descriptor
         .clk       (pclk_rx),
         .rst       (rx_reset),
@@ -251,6 +252,7 @@ module top(
         .o_desc_width  (desc_width),
         .o_desc_tsbits (desc_tsbits),
         .o_desc_flags  (desc_flags),
+        .o_desc_hash   (desc_hash),
         .o_desc_busy   (desc_busy)
     );
 
@@ -311,7 +313,8 @@ module top(
         .i_wr_valid(inj_wr_valid), .i_wr_idx(inj_wr_idx), .i_wr_data(inj_wr_data),
         .i_set(inj_set), .i_mode(inj_mode), .i_len(inj_len),
         .txclk(txclk_100m), .txrstn(st_rstn), .i_core_sym(st_symbol), .o_sym(st_sym_out), .o_active());
-    easycdr_trace_tx #(.WIDTH(16), .TS_BITS(24), .SYNC_STAGES(0), .HAS_PERIODIC(0), .HAS_TRIGGER(0), .FIFO_RAM("block")) u_st_tx(
+    // CFG_HASH = tracemap.py hash of "count:16" (the self-test map)
+    easycdr_trace_tx #(.WIDTH(16), .TS_BITS(24), .SYNC_STAGES(0), .HAS_PERIODIC(0), .HAS_TRIGGER(0), .FIFO_RAM("block"), .CFG_HASH(32'hff13d4c5)) u_st_tx(
         .sclk(clk_in), .srstn(resetn_in), .sig(st_cnt[23:8]),
         .clk(txclk_100m), .rstn(st_rstn),
         .i_enable(1'b1), .i_ignore_mask(16'd0), .i_desc_req(1'b0), .i_periodic_en(1'b0), .i_change_dis(1'b0),
@@ -342,6 +345,7 @@ module top(
         .i_desc_width  (desc_width),
         .i_desc_tsbits (desc_tsbits),
         .i_desc_flags  (desc_flags),
+        .i_desc_hash   (desc_hash),
         .clk_sys    (clk_in),
         .rst_sys    (reset_in),
         .h_rx_valid (h_rx_valid),

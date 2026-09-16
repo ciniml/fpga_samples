@@ -10,7 +10,7 @@
 //           (all multi-byte fields little-endian; ts counts sclk cycles)
 //   K28.2 : emitted once per overflow event (records were dropped)
 //   K28.3 : idle filler
-//   desc  : [K28.4][VER=0x01][WIDTH][TS_BITS][flags] descriptor record,
+//   desc  : [K28.4][VER=0x02][WIDTH][TS_BITS][flags][CFG_HASH 4 bytes LE] descriptor,
 //           sent every DESC_INTERVAL link cycles (0 = periodic off) and on
 //           i_desc_req, always at a record boundary. flags bit0 enable,
 //           bit1 armed, bit2 triggered (running), bit3 done, bit4 periodic.
@@ -38,7 +38,8 @@ module easycdr_trace_tx #(
     parameter SYNC_STAGES   = 2,      // 0: sig synchronous to sclk, 2: asynchronous
     parameter HAS_PERIODIC  = 1,
     parameter HAS_TRIGGER   = 1,
-    parameter FIFO_RAM      = "distributed" // "block" on GW5A (no distributed RAM)
+    parameter FIFO_RAM      = "distributed", // "block" on GW5A (no distributed RAM)
+    parameter [31:0] CFG_HASH = 32'h0        // signal-map hash (host/tracemap.py), sent in the descriptor
 ) (
     input  wire             sclk,
     input  wire             srstn,
@@ -162,7 +163,7 @@ module easycdr_trace_tx #(
         if (!rstn) desc_seq_q <= 2'b00; else desc_seq_q <= st_l[4:3];
     wire desc_evt = (st_l[4:3] != desc_seq_q);
 
-    trace_link_tx #(.WIDTH(WIDTH), .TS_BITS(TS_BITS), .FRAME_LEN(FRAME_LEN), .DESC_INTERVAL(DESC_INTERVAL)) u_link(
+    trace_link_tx #(.WIDTH(WIDTH), .TS_BITS(TS_BITS), .FRAME_LEN(FRAME_LEN), .DESC_INTERVAL(DESC_INTERVAL), .CFG_HASH(CFG_HASH)) u_link(
         .clk(clk), .rstn(rstn),
         .i_fifo_empty(fifo_empty), .i_fifo_data(fifo_data), .o_fifo_rd(fifo_rd),
         .i_ovf_req(ovf_req_l), .o_ovf_ack(ovf_ack_l),

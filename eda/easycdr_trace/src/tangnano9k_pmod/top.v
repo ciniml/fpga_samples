@@ -39,10 +39,17 @@ module top(
     output wire led_beat_n   // heartbeat from the demo counter
     );
 
-`ifndef TRACE_WIDTH
-`define TRACE_WIDTH 16
+`ifndef TRACE_MAP_WIDTH
+`define TRACE_MAP_WIDTH 16
 `endif
-    localparam TRACE_WIDTH = `TRACE_WIDTH;   // make TRACE_WIDTH=32 ... (multiple of 8, >= 16)
+`ifndef TRACE_MAP_HASH
+`define TRACE_MAP_HASH 32'h0
+`endif
+    // width and signal-map hash come from maps/*.map via host/tracemap.py
+    // (project.tcl writes the defines): make TRACE_MAP=maps/x.map, or
+    // TRACE_WIDTH=32 for an anonymous map
+    localparam TRACE_WIDTH = `TRACE_MAP_WIDTH;
+    localparam [31:0] CFG_HASH = `TRACE_MAP_HASH;
 `ifdef RATE_742M5
     localparam CTRL_BIT_CYCLES = 37;         // 74.25MHz / 37 = 2.007Mbps Manchester (+0.34%)
     localparam PULSE_HALF_MIN = 1114, PULSE_HALF_MAX = 2228;   // 15..30us at 74.25MHz
@@ -196,7 +203,7 @@ module top(
     // Frontend + link core + serializer
     //------------------------------------------------------------------
     wire [9:0] tx_symbol;
-    easycdr_trace_tx #(.WIDTH(TRACE_WIDTH), .TS_BITS(24), .SYNC_STAGES(0)) u_trace_tx(
+    easycdr_trace_tx #(.WIDTH(TRACE_WIDTH), .TS_BITS(24), .SYNC_STAGES(0), .CFG_HASH(CFG_HASH)) u_trace_tx(
         .sclk          (clk_in),
         .srstn         (rst_btn_n),
         .sig           (trace_sig),

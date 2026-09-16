@@ -34,6 +34,7 @@ EasyCDR受信IP(GW5A、10bit+Word Alignment+8B/10B Decoding構成)が
 | `SYNC_STAGES` | 2 | 0 or ≥2 | `sig` の同期段数。0 = `sclk` 同期入力 |
 | `HAS_PERIODIC` / `HAS_TRIGGER` | 1 | 0/1 | 周期サンプリング / TX トリガの論理を生成するか(0 で削除、入力は無視) |
 | `FIFO_RAM` | "distributed" | "distributed" / "block" | レコード FIFO のメモリ種別(GW5A は "block") |
+| `CFG_HASH` | 0 | 32 bit | 信号マップのハッシュ(`host/tracemap.py`)。デスクリプタ v2 の 4〜7 バイト目で配る |
 
 受信側(`trace_rx_decoder` / `trace_capture`)はレコード形式をデスクリプタから実行時に取る
 (`MAX_WIDTH`=64 / `MAX_TS_BITS`=32 まで)。ホスト (UI / ctrl_test.py) も '?' の値に従うので、
@@ -52,6 +53,8 @@ EasyCDR受信IP(GW5A、10bit+Word Alignment+8B/10B Decoding構成)が
 ```
 
 - **K28.2**: FIFO溢れ通知(1イベントにつき1回、次のレコードの前に送出)
+- **K28.4**: デスクリプタ `[VER=02][WIDTH][TS_BITS][flags][CFG_HASH LE 4 バイト]` (8 バイト、DESC_INTERVAL 毎と要求時)。
+  受信側は VER で長さを判断し、VER 1 (4 バイト) の旧送信機も受ける
 - コンマはレコード途中にも割り込みうる。受信デコーダはK28.5/K28.3を無視し、
   K28.1で再同期、K28.2でオーバーフローをフラグする
 

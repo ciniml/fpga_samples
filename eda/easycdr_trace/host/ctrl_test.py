@@ -8,7 +8,7 @@ util/serial_bridge). Sequence:
   5. RESET -> timestamps restart near zero
 Every step prints what it saw; a failing step says so.
 """
-import argparse, json, time, urllib.request
+import argparse, os, json, time, urllib.request
 
 def api(url, body, to=8000):
     body = dict(body); body.setdefault("timeout_ms", to)
@@ -39,6 +39,7 @@ def main():
     ap.add_argument("--wait-s2", type=float, default=0.0, help="seconds to wait for an S2 press after arming (0 = skip)")
     ap.add_argument("--pulse", action="store_true", help="Nano9K built with CTRL_PULSE=1: test the 'P' reset burst only")
     ap.add_argument("--selftest", action="store_true", help="25K alone, USB-C cable pmod0 -> pmod2: check the receiver with its own stream")
+    ap.add_argument("--map", help="signal map file (maps/*.map) to check against the TX descriptor hash")
     a = ap.parse_args()
     url = a.url
     entries = 1 << a.addr_bits
@@ -68,11 +69,18 @@ def main():
         print("      no lock/commas: check the cable (TX lane -> RX lane), the TX board's PLL/bitstream, and the link rate variant"); return
     check("'L' link: no decode errors", lg["errors"] == 0)
     flush(url)
-    r = api(url, {"write": [0x3F], "read": 4, "timeout_ms": 2000})
+    r = api(url, {"write": [0x3F], "read": 8, "timeout_ms": 2000})
     d = r["data"]
-    check("'?' descriptor", len(d) == 4 and d[0] == 1, f"VER={d[0] if d else None} WIDTH={d[1] if len(d)>1 else None} TS_BITS={d[2] if len(d)>2 else None} ADDR_BITS={d[3] if len(d)>3 else None}")
-    if len(d) < 4 or d[0] != 1:
+    h = (d[4] | (d[5] << 8) | (d[6] << 16) | (d[7] << 24)) if len(d) == 8 else None
+    check("'?' descriptor", len(d) == 8 and d[0] in (1, 2), f"VER={d[0] if d else None} WIDTH={d[1] if len(d)>1 else None} TS_BITS={d[2] if len(d)>2 else None} ADDR_BITS={d[3] if len(d)>3 else None} HASH={('0x%08x' % h) if h is not None else None}")
+    if len(d) < 8 or d[0] not in (1, 2):
         print("descriptor not seen: trace link (Nano9K -> 25K) not up?"); return
+    if a.map:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("tracemap", os.path.join(os.path.dirname(__file__), "tracemap.py"))
+        tm = importlib.util.module_from_spec(spec); spec.loader.exec_module(tm)
+        sigs, mw = tm.parse(open(a.map).read()); mh = tm.crc32(sigs)
+        check(f"signal map {a.map} matches the TX build", d[0] >= 2 and mh == h and mw == d[1], f"map WIDTH={mw} HASH=0x{mh:08x} vs TX WIDTH={d[1]} HASH={('0x%08x' % h) if h is not None else None}")
     width, ts_bits, addr_bits = d[1], d[2], d[3]
     db, tb = width // 8, ts_bits // 8
     entries = 1 << addr_bits

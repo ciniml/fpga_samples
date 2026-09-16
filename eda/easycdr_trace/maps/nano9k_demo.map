@@ -1,0 +1,8 @@
+# Trace signal map for the Tang Nano 9K demo transmitter (src/tangnano9k_pmod/top.v).
+# One entry per line or comma separated: name[:width[:radix]]  (width default 1,
+# radix hex|dec|bin, default hex). Bits are assigned LSB first in this order.
+# The canonical form "name:width,..." is CRC-32 hashed into the descriptor
+# (TRACE_CFG_HASH) so the viewer can verify it holds the right definition.
+count:8:dec     # demo counter, +1 every 256 sample clocks
+s2:1            # button S2 (1 = pressed)
+spare:7

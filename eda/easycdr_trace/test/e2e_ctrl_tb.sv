@@ -30,7 +30,8 @@ module e2e_ctrl_tb #(
     wire         trace_rstn = rstn & ~soft_reset;
     wire  [9:0]  tx_symbol;
 
-    easycdr_trace_tx #(.WIDTH(TX_WIDTH), .TS_BITS(24), .DESC_INTERVAL(4096)) u_trace_tx(
+    localparam [31:0] CFG_HASH = 32'h02d268ca;   // tracemap.py maps/nano9k_demo.map
+    easycdr_trace_tx #(.WIDTH(TX_WIDTH), .TS_BITS(24), .DESC_INTERVAL(4096), .CFG_HASH(CFG_HASH)) u_trace_tx(
         .sclk(sclk), .srstn(1'b1), .sig(trace_sig),
         .clk(clk100), .rstn(trace_rstn),
         .i_enable(trace_en), .i_ignore_mask(ignore_mask), .i_desc_req(desc_req),
@@ -55,11 +56,12 @@ module e2e_ctrl_tb #(
     wire [31:0] rec_ts;
     wire [63:0] rec_data;
     wire [7:0]  desc_ver, desc_width, desc_tsbits, desc_flags;
+    wire [31:0] desc_hash;
     trace_rx_decoder #(.MAX_WIDTH(64), .MAX_TS_BITS(32)) u_rxdec(
         .clk(clk100), .rst(rst), .in_valid(dec_valid), .in_word(rx_word),
         .rec_valid(rec_valid), .rec_ts(rec_ts), .rec_data(rec_data), .ovf_seen(),
         .o_desc_ver(desc_ver), .o_desc_width(desc_width),
-        .o_desc_tsbits(desc_tsbits), .o_desc_flags(desc_flags),
+        .o_desc_tsbits(desc_tsbits), .o_desc_flags(desc_flags), .o_desc_hash(desc_hash),
         .o_desc_busy(desc_busy));
 
     // ---------------- host side (clk50) ----------------
@@ -73,7 +75,7 @@ module e2e_ctrl_tb #(
     trace_capture #(.ADDR_BITS(ADDR_BITS), .DATA_BITS(9), .MAX_WIDTH(64)) u_cap(
         .pclk(clk100), .prst(rst), .in_valid(cap_valid), .in_data(rx_word),
         .rec_valid(rec_valid), .rec_data(rec_data),
-        .i_desc_ver(desc_ver), .i_desc_width(desc_width), .i_desc_tsbits(desc_tsbits), .i_desc_flags(desc_flags),
+        .i_desc_ver(desc_ver), .i_desc_width(desc_width), .i_desc_tsbits(desc_tsbits), .i_desc_flags(desc_flags), .i_desc_hash(desc_hash),
         .clk_sys(clk50), .rst_sys(rst),
         .h_rx_valid(h_rx_valid), .h_rx_data(h_rx_data),
         .h_tx_valid(h_tx_valid), .h_tx_data(h_tx_data), .h_tx_ready(1'b1),
@@ -177,15 +179,17 @@ module e2e_ctrl_tb #(
 
         // 0. descriptor is sent periodically -> latched at the decoder
         wait (desc_ver != 0);
-        check("descriptor latched", desc_ver == 8'h01 && desc_width == TX_WIDTH[7:0] && desc_tsbits == 8'd24);
+        check("descriptor latched", desc_ver == 8'h02 && desc_width == TX_WIDTH[7:0] && desc_tsbits == 8'd24);
+        check($sformatf("descriptor hash %08x", desc_hash), desc_hash == CFG_HASH);
         check("desc flags: enabled", desc_flags[0] == 1'b1);
 
         // 1. '?' returns descriptor + local ADDR_BITS
         repeat (4) @(posedge clk50);   // let the 2FF clk_sys sync settle
         resp.delete();
         hsend("?");
-        wait (resp.size() == 4);
-        check("'?' reply", resp[0] == 8'h01 && resp[1] == TX_WIDTH[7:0] && resp[2] == 8'd24 && resp[3] == ADDR_BITS[7:0]);
+        wait (resp.size() == 8);
+        check("'?' reply", resp[0] == 8'h02 && resp[1] == TX_WIDTH[7:0] && resp[2] == 8'd24 && resp[3] == ADDR_BITS[7:0]);
+        check("'?' hash", {resp[7], resp[6], resp[5], resp[4]} == CFG_HASH);
         if (errors) $display("  '?' got: %02x %02x %02x %02x", resp[0], resp[1], resp[2], resp[3]);
 
         // 2. ignore mask: mask off bit 15..8, capture, only low-byte changes
@@ -289,7 +293,7 @@ module e2e_ctrl_tb #(
         hsend("L"); wait (resp.size() == 14);
         check($sformatf("'L' status 0x%02x ver %0d commas %0d recs %0d errs %0d", resp[0], resp[1],
               {resp[3], resp[2]}, {resp[5], resp[4]}, {resp[7], resp[6]}),
-              resp[0] == 8'h0f && resp[1] == 8'h01 && {resp[3], resp[2]} > 16'd10 && {resp[5], resp[4]} >= 16'd6 && {resp[7], resp[6]} == 16'd0);
+              resp[0] == 8'h0f && resp[1] == 8'h02 && {resp[3], resp[2]} > 16'd10 && {resp[5], resp[4]} >= 16'd6 && {resp[7], resp[6]} == 16'd0);
         resp.delete(); hsend("L"); wait (resp.size() == 14);
         check($sformatf("'L' counters cleared (recs %0d)", {resp[5], resp[4]}), {resp[5], resp[4]} < 16'd6);
 

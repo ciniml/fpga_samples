@@ -1,0 +1,2 @@
+# Tang Primer 25K self-test transmitter (src/tangprimer25k/top.v u_st_tx): free-running 16-bit counter
+count:16:dec

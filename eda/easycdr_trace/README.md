@@ -190,6 +190,12 @@ ENABLE 0/1、RESET でタイムスタンプ再始動、`Z` アボート — ALL 
   `clk` 側のまま。Nano9K デモは 27MHz 水晶をサンプルクロックにしている(タイムスタンプ 37.037ns、
   UI の sample clk period と `ctrl_test.py --tick-ns` の既定値)。構造と再構成パラメータは
   `doc/tx_core_spec.md` §4 参照
+- **信号マップと構成ハッシュ** (2026-09-17): `maps/*.map` に `name[:width[:radix]]` を LSB から並べて書く
+  (`maps/nano9k_demo.map` = `count:8:dec, s2:1, spare:7`)。`host/tracemap.py` が幅と CRC-32 (正規形
+  `name:width,...`) を出し、`project.tcl` が Nano9K ビルドに `TRACE_MAP_WIDTH` / `TRACE_MAP_HASH` を埋める
+  (`make TRACE_MAP=maps/x.map`、`TRACE_WIDTH=32` は無名マップ)。送信側はデスクリプタ v2
+  `[K28.4][02][WIDTH][TS_BITS][flags][HASH×4]` で配り、`?` は 8 バイト (末尾 4 バイトがハッシュ、v1 送信機は 0) を返す。
+  UI の「Signal map」欄と `ctrl_test.py --map` が同じ CRC-32 を計算して照合し、不一致なら警告する
 - **受信側は幅可変** (2026-09-13): 25K のデコーダとキャプチャはレコード形式 (WIDTH / TS_BITS) を
   デスクリプタから実行時に取る (最大 64 / 32 bit)。送信側の幅を変えても 25K の再合成は不要。
   Nano9K デモの幅は `make TRACE_WIDTH=32 TARGET=tangnano9k_pmod` (出力 `build/tangnano9k_pmod_w32/`)

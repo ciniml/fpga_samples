@@ -3,14 +3,15 @@
 // Pops {ts, data} records from the record FIFO and serialises them as
 //   [K28.1][ts bytes][data bytes]   (little-endian)
 // interleaved with the overflow marker (K28.2, one per request) and the
-// descriptor record [K28.4][VER][WIDTH][TS_BITS][flags], all at record
+// descriptor record [K28.4][VER=2][WIDTH][TS_BITS][flags][HASH0..3], all at record
 // boundaries; tx_link_core adds the K28.5 comma framing, K28.3 idle filler
 // and 8b10b encoding. Only the link clock (line rate / 10) is used here.
 module trace_link_tx #(
     parameter WIDTH         = 16,
     parameter TS_BITS       = 24,
     parameter FRAME_LEN     = 16,
-    parameter DESC_INTERVAL = 131072
+    parameter DESC_INTERVAL = 131072,
+    parameter [31:0] CFG_HASH = 32'h0   // signal-map hash (tracemap.py), descriptor bytes 4..7
 ) (
     input  wire                     clk,
     input  wire                     rstn,
@@ -63,13 +64,17 @@ module trace_link_tx #(
     end
 
     reg [7:0] desc_byte;
-    reg [1:0] desc_idx;
+    reg [2:0] desc_idx;
     always @(*) begin
         case (desc_idx)
-        2'd0: desc_byte = 8'h01;          // format version
-        2'd1: desc_byte = WIDTH[7:0];
-        2'd2: desc_byte = TS_BITS[7:0];
-        2'd3: desc_byte = {3'b0, i_desc_flags};
+        3'd0: desc_byte = 8'h02;          // format version 2 (8 bytes)
+        3'd1: desc_byte = WIDTH[7:0];
+        3'd2: desc_byte = TS_BITS[7:0];
+        3'd3: desc_byte = {3'b0, i_desc_flags};
+        3'd4: desc_byte = CFG_HASH[7:0];
+        3'd5: desc_byte = CFG_HASH[15:8];
+        3'd6: desc_byte = CFG_HASH[23:16];
+        default: desc_byte = CFG_HASH[31:24];
         endcase
     end
 
@@ -89,7 +94,7 @@ module trace_link_tx #(
         if (!rstn) begin
             sb_active   <= 1'b0;
             desc_active <= 1'b0;
-            desc_idx    <= 2'd0;
+            desc_idx    <= 3'd0;
             desc_ack    <= 1'b0;
             sb_idx      <= 8'd0;
             cur         <= {REC_BITS{1'b0}};
@@ -106,7 +111,7 @@ module trace_link_tx #(
                 if (desc_active) begin
                     b_valid <= 1'b1; b_is_k <= 1'b0;
                     b_data  <= desc_byte;
-                    if (desc_idx == 2'd3) desc_active <= 1'b0;
+                    if (desc_idx == 3'd7) desc_active <= 1'b0;
                     desc_idx <= desc_idx + 1'b1;
                 end else if (!sb_active) begin
                     if (ovf_pending && !o_ovf_ack) begin
@@ -115,7 +120,7 @@ module trace_link_tx #(
                     end else if (desc_pending && !desc_ack) begin
                         b_valid <= 1'b1; b_is_k <= 1'b1; b_data <= K28_4;
                         desc_active <= 1'b1;
-                        desc_idx    <= 2'd0;
+                        desc_idx    <= 3'd0;
                         desc_ack    <= 1'b1;
                     end else if (!i_fifo_empty && !o_fifo_rd) begin
                         cur       <= {i_fifo_data[WIDTH-1:0], i_fifo_data[REC_BITS-1:WIDTH]};

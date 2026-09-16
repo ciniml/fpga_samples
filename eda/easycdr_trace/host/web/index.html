@@ -50,6 +50,16 @@
     <label>baud <select id="baud"><option>115200</option><option>921600</option><option>2000000</option></select></label>
   </fieldset>
   <fieldset>
+    <legend>Signal map (name[:width[:radix]], LSB first; must match the TX build: CRC-32 of "name:width,..." = descriptor hash)</legend>
+    <div class="row">
+      <textarea id="sigmap" rows="3" style="width:32em;font-family:monospace">count:8:dec
+s2:1
+spare:7</textarea>
+      <button id="btnMapApply">Apply map</button>
+      <span id="mapInfo" style="color:var(--mut)"></span>
+    </div>
+  </fieldset>
+  <fieldset>
     <legend>Capture</legend>
     <div class="row">
       <button id="btnCap" class="primary" disabled>Capture now (S)</button>
@@ -391,14 +401,45 @@ const CTRL = { RESET: 1, ENABLE: 2, DESC_REQ: 4, ARM: 8, ADDR: 0x00, IGNORE_MASK
 async function sendCtrl(frames) { await transport.write(new Uint8Array([0x58, frames.length, ...frames])); }   // 'X'
 // note: the capture FSM ignores 'X' and '?' while a capture is armed -
 // configure the TX side first, then arm (or press Abort, which sends 'Z').
+// ---- signal map: same syntax and CRC-32 canonical form as host/tracemap.py ----
+const CRC_TBL = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(str) { let c = 0xffffffff; for (const b of new TextEncoder().encode(str)) c = CRC_TBL[(c ^ b) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
+function parseMap(text) {
+  const sigs = []; let lsb = 0;
+  for (const line of text.split('\n')) for (const raw of line.split('#')[0].split(',')) {
+    const s = raw.trim(); if (!s) continue;
+    const p = s.split(':'); const name = p[0].trim(); const width = p[1] && p[1].trim() ? +p[1] : 1; const radix = (p[2] || 'hex').trim().toLowerCase();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error('bad signal name: ' + name);
+    if (!(width >= 1 && width <= 64)) throw new Error('bad width for ' + name);
+    if (!['hex', 'dec', 'bin'].includes(radix)) throw new Error('bad radix for ' + name);
+    sigs.push({ name, width, radix, lsb }); lsb += width;
+  }
+  const canon = sigs.map(s => `${s.name}:${s.width}`).join(',');
+  return { sigs, width: lsb, hash: crc32(canon), canon };
+}
+let sigMap = null, txHash = null;
+function applyMap() {
+  try { sigMap = parseMap($('sigmap').value); localStorage.setItem('sigmap', $('sigmap').value); }
+  catch (e) { sigMap = null; $('mapInfo').textContent = 'map error: ' + e.message; return; }
+  const h = sigMap.hash.toString(16).padStart(8, '0');
+  let m = `${sigMap.sigs.length} signals, ${sigMap.width} bits, hash 0x${h}`;
+  if (txHash !== null) m += txHash === sigMap.hash ? ' = TX (match)' : ` ≠ TX 0x${txHash.toString(16).padStart(8, '0')} (MISMATCH: map does not describe this transmitter)`;
+  if (sigMap.width !== +$('width').value) m += ` [width differs from WIDTH=${$('width').value}]`;
+  $('mapInfo').textContent = m; $('mapInfo').style.color = (txHash !== null && txHash !== sigMap.hash) ? 'var(--bad, #c00)' : 'var(--mut)';
+}
+try { const s = localStorage.getItem('sigmap'); if (s) $('sigmap').value = s; } catch (e) {}
+$('btnMapApply').onclick = applyMap;
+applyMap();
 async function queryParams() {
   transport.flush();
   await transport.write(new Uint8Array([0x3f]));                      // '?'
-  const r = await transport.read(4);
+  const r = await transport.read(8);
   const [ver, width, ts, ab] = r;
   if (ver === 0) { $('txInfo').textContent = 'no descriptor seen yet (TX link down?)'; return; }
   $('width').value = width; $('tsbits').value = ts; $('addrbits').value = ab;
-  $('txInfo').textContent = `descriptor v${ver}: WIDTH=${width} TS_BITS=${ts} ADDR_BITS=${ab}`;
+  txHash = ver >= 2 ? ((r[4] | (r[5] << 8) | (r[6] << 16) | (r[7] << 24)) >>> 0) : null;
+  $('txInfo').textContent = `descriptor v${ver}: WIDTH=${width} TS_BITS=${ts} ADDR_BITS=${ab}` + (txHash !== null ? ` HASH=0x${txHash.toString(16).padStart(8, '0')}` : ' (v1: no hash)');
+  applyMap();
 }
 const leBytes16 = (v, n) => { const b = []; for (let i = 0; i < n; i++) b.push(Number((BigInt(v) >> BigInt(8*i)) & 0xffn)); return b; };
 async function applyTxCtrl() {

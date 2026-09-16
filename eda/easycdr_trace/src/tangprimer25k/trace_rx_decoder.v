@@ -2,8 +2,9 @@
 // trace records: [K28.1][ts LSB..MSB][data LSB..MSB].
 // K28.5 commas and K28.3 fillers interleaved inside a record are ignored;
 // K28.1 restarts a record, K28.2 (overflow marker) is flagged.
-// K28.4 starts a 4-byte descriptor ([VER][WIDTH][TS_BITS][flags]) which is
-// latched to o_desc_* (quasi-static once the link is up).
+// K28.4 starts a descriptor ([VER][WIDTH][TS_BITS][flags] for VER 1, plus
+// [HASH0..3] for VER 2) which is latched to o_desc_* (quasi-static once the
+// link is up). o_desc_hash is 0 for VER 1 transmitters.
 //
 // The record layout is taken from the descriptor at run time (WIDTH and
 // TS_BITS in bits, multiples of 8, up to MAX_WIDTH / MAX_TS_BITS), so one
@@ -27,6 +28,7 @@ module trace_rx_decoder #(
     output reg  [7:0]             o_desc_width,
     output reg  [7:0]             o_desc_tsbits,
     output reg  [7:0]             o_desc_flags,
+    output reg  [31:0]            o_desc_hash,
     output wire                   o_desc_busy    // descriptor bytes in flight
 );
     localparam MAX_TB = MAX_TS_BITS / 8;
@@ -50,8 +52,9 @@ module trace_rx_decoder #(
     reg [MAX_TS_BITS-1:0] ts_acc;
     reg [MAX_WIDTH-1:0]   data_acc;
     reg                   desc_active;
-    reg [1:0]             desc_idx;
-    reg [23:0]            desc_acc;
+    reg [2:0]             desc_idx;
+    reg [55:0]            desc_acc;       // bytes 0..6 (byte 7 arrives with the latch)
+    reg [2:0]             desc_last;      // 3 (VER 1) or 7 (VER 2)
     assign o_desc_busy = desc_active;
 
     wire [7:0] didx = idx - tb;
@@ -61,8 +64,10 @@ module trace_rx_decoder #(
             active      <= 1'b0;
             done        <= 1'b0;
             desc_active <= 1'b0;
-            desc_idx    <= 2'd0;
-            desc_acc    <= 24'd0;
+            desc_idx    <= 3'd0;
+            desc_acc    <= 56'd0;
+            desc_last   <= 3'd3;
+            o_desc_hash <= 32'd0;
             o_desc_ver    <= 8'd0;
             o_desc_width  <= 8'd0;
             o_desc_tsbits <= 8'd0;
@@ -96,16 +101,23 @@ module trace_rx_decoder #(
                     end else if (in_word[7:0] == K28_4) begin
                         active      <= 1'b0;
                         desc_active <= 1'b1;
-                        desc_idx    <= 2'd0;
+                        desc_idx    <= 3'd0;
+                        desc_last   <= 3'd3;
                     end
                     // other K codes (comma / filler): ignore
                 end else if (desc_active) begin
-                    if (desc_idx == 2'd3) begin
-                        {o_desc_flags, o_desc_tsbits, o_desc_width, o_desc_ver}
-                            <= {in_word[7:0], desc_acc};
+                    if (desc_idx == 3'd0) desc_last <= (in_word[7:0] >= 8'd2) ? 3'd7 : 3'd3;
+                    if (desc_idx == desc_last) begin
+                        if (desc_last == 3'd3) begin
+                            {o_desc_flags, o_desc_tsbits, o_desc_width, o_desc_ver} <= {in_word[7:0], desc_acc[23:0]};
+                            o_desc_hash <= 32'd0;
+                        end else begin
+                            {o_desc_flags, o_desc_tsbits, o_desc_width, o_desc_ver} <= desc_acc[31:0];
+                            o_desc_hash <= {in_word[7:0], desc_acc[55:32]};
+                        end
                         desc_active <= 1'b0;
                     end
-                    desc_acc <= {in_word[7:0], desc_acc[23:8]};
+                    desc_acc[desc_idx*8 +: 8] <= in_word[7:0];
                     desc_idx <= desc_idx + 1'b1;
                 end else if (active) begin
                     if (idx < tb) ts_acc[idx*8 +: 8]    <= in_word[7:0];

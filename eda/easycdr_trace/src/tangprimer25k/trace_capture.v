@@ -21,10 +21,11 @@
 //   'D'                         : dump the buffer in chronological order
 //                                 (2 bytes per entry: entry[DATA_BITS-1:8] then
 //                                 entry[7:0]; bit 0 of the first byte = K flag)
-//   '?'                         : reply 4 bytes [VER][WIDTH][TS_BITS][ADDR_BITS].
-//                                 VER/WIDTH/TS_BITS come from the last link
-//                                 descriptor (0 if none seen yet), ADDR_BITS
-//                                 from the local parameter.
+//   '?'                         : reply 8 bytes [VER][WIDTH][TS_BITS][ADDR_BITS]
+//                                 [HASH0..HASH3]. VER/WIDTH/TS_BITS/HASH come
+//                                 from the last link descriptor (0 if none seen
+//                                 yet; HASH 0 for VER 1), ADDR_BITS from the
+//                                 local parameter.
 //   'X' len byte0..len-1        : forward len bytes to the reverse control
 //                                 channel (o_fwd_valid/o_fwd_data strobes;
 //                                 the top level buffers them for its
@@ -65,6 +66,7 @@ module trace_capture #(
     input  wire [7:0]           i_desc_width,
     input  wire [7:0]           i_desc_tsbits,
     input  wire [7:0]           i_desc_flags,
+    input  wire [31:0]          i_desc_hash,
 
     input  wire                 clk_sys,
     input  wire                 rst_sys,
@@ -182,9 +184,9 @@ module trace_capture #(
     always @(posedge clk_sys) waddr_s <= waddr;
 
     // descriptor bytes: quasi-static, double-registered into clk_sys
-    reg [31:0] desc_m, desc_s;
+    reg [63:0] desc_m, desc_s;
     always @(posedge clk_sys) begin
-        desc_m <= {i_desc_flags, i_desc_tsbits, i_desc_width, i_desc_ver};
+        desc_m <= {i_desc_hash, i_desc_flags, i_desc_tsbits, i_desc_width, i_desc_ver};
         desc_s <= desc_m;
     end
     // trigger argument byte count = WIDTH/8 from the descriptor (clamped)
@@ -357,15 +359,19 @@ module trace_capture #(
                 endcase
             end
             ST_INFO: if (!tx_valid || tx_ready) begin
-                case (arg_idx[1:0])
-                2'd0: tx_data <= desc_s[7:0];    // VER
-                2'd1: tx_data <= desc_s[15:8];   // WIDTH
-                2'd2: tx_data <= desc_s[23:16];  // TS_BITS
-                2'd3: tx_data <= ADDR_BITS[7:0];
+                case (arg_idx[2:0])
+                3'd0: tx_data <= desc_s[7:0];    // VER
+                3'd1: tx_data <= desc_s[15:8];   // WIDTH
+                3'd2: tx_data <= desc_s[23:16];  // TS_BITS
+                3'd3: tx_data <= ADDR_BITS[7:0];
+                3'd4: tx_data <= desc_s[39:32];  // HASH LSB
+                3'd5: tx_data <= desc_s[47:40];
+                3'd6: tx_data <= desc_s[55:48];
+                default: tx_data <= desc_s[63:56];
                 endcase
                 tx_valid <= 1'b1;
                 arg_idx  <= arg_idx + 1'b1;
-                if (arg_idx[1:0] == 2'd3) state <= ST_IDLE;
+                if (arg_idx[2:0] == 3'd7) state <= ST_IDLE;
             end
             ST_FWD: if (rx_valid) begin
                 if (fwd_left == 8'd0) begin
