@@ -369,6 +369,13 @@ function drawWave() {
   // find first visible record (binary search)
   let lo = 0, hi = rec.length; while (lo < hi) { const m = (lo + hi) >> 1; if (rec[m].t < view.t0) lo = m + 1; else hi = m; }
   const start = Math.max(0, lo - 1);
+  // the capture covers [first record, last record]: draw nothing outside and mark both ends
+  const tStart = rec[0].t, tEnd = rec[rec.length - 1].t;
+  const xStart = Math.max(labelW, x(tStart)), xEnd = Math.min(W, x(tEnd));
+  g.globalAlpha = .08; g.fillStyle = fg;
+  if (x(tStart) > labelW) g.fillRect(labelW, 0, x(tStart) - labelW, H - 16);
+  if (x(tEnd) < W) g.fillRect(x(tEnd), 0, W - x(tEnd), H - 16);
+  g.globalAlpha = 1;
   const trigMask = $('useTrig').checked ? BigInt($('mask').value || '0') : 0n;
   const accCol = getComputedStyle(document.documentElement).getPropertyValue('--acc'), trigCol = getComputedStyle(document.documentElement).getPropertyValue('--trig');
   for (let b = 0; b < bits; b++) {
@@ -385,7 +392,7 @@ function drawWave() {
         const nl = Number(sigValue(rec[n].data, s));
         g.lineTo(nx, lvl ? yL : yH); if (nl !== lvl) g.lineTo(nx, nl ? yL : yH); lvl = nl;
       }
-      g.lineTo(W, lvl ? yL : yH); g.stroke();
+      if (xEnd > labelW) g.lineTo(xEnd, lvl ? yL : yH); g.stroke();
     } else {                                               // bus: value boxes with crossings at changes
       let v = sigValue(rec[start].data, s), x0 = Math.max(labelW, x(rec[start].t));
       const box = (xa, xb, val) => {
@@ -397,12 +404,19 @@ function drawWave() {
       for (let n = start + 1; n < rec.length; n++) {
         const nx = x(rec[n].t); if (nx > W + 2) break;
         const nv = sigValue(rec[n].data, s);
-        if (nv !== v) { box(x0, Math.min(nx, W), v); v = nv; x0 = nx; }
+        if (nv !== v) { box(x0, Math.min(nx, xEnd), v); v = nv; x0 = nx; }
       }
-      box(x0, W, v);
+      box(x0, xEnd, v);
     }
   }
   if (trigIdx !== null) { const px = x(rec[trigIdx].t); g.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--trig'); g.setLineDash([4,3]); g.beginPath(); g.moveTo(px, 0); g.lineTo(px, H); g.stroke(); g.setLineDash([]); }
+  // capture boundaries: dashed lines labelled start / end (records exist only between them)
+  g.strokeStyle = fg; g.fillStyle = fg; g.setLineDash([2, 3]);
+  for (const [t, lab, dx] of [[tStart, 'start', 3], [tEnd, 'end', -28]]) {
+    const px = x(t); if (px < labelW || px > W) continue;
+    g.beginPath(); g.moveTo(px, 0); g.lineTo(px, H - 16); g.stroke(); g.fillText(lab, px + dx, 10);
+  }
+  g.setLineDash([]);
 }
 function trigBit() { if (!$('useTrig').checked) return -1; const m = BigInt($('mask').value); return (m & (m - 1n)) ? -1 : (m ? m.toString(2).length - 1 : -1); }
 function niceStep(v) { const e = Math.pow(10, Math.floor(Math.log10(v))); const m = v / e; return (m < 2 ? 1 : m < 5 ? 2 : 5) * e; }
