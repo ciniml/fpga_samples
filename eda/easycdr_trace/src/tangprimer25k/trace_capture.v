@@ -136,7 +136,7 @@ module trace_capture #(
     // capture memory + FSM (pclk)
     //------------------------------------------------------------------
     reg [DATA_BITS-1:0] buffer [0:(1<<ADDR_BITS)-1];
-    reg [7:0] mapbuf [0:255];
+    reg [7:0] mapbuf [0:255] /* synthesis syn_ramstyle = "block_ram" */;   // 1 SDPB (write pclk, sync read clk_sys)
     always @(posedge pclk) if (i_map_wr) mapbuf[i_map_addr] <= i_map_data;
     reg [7:0] map_len_s, map_rdata;
     always @(posedge clk_sys) map_len_s <= i_map_len;
