@@ -11,6 +11,7 @@
  *  0x00 CTRL   bit0 RESET    : write 1 -> o_soft_reset high for RESET_CYCLES (self-clearing)
  *              bit1 ENABLE   : trace on/off (o_enable), reset value ENABLE_DEFAULT
  *              bit2 DESC_REQ : write 1 -> one-clock o_desc_req
+ *              bit4 MAP_REQ  : write 1 -> one-clock o_map_req (send the signal-map text)
  *              bit3 ARM      : write 1 -> one-clock o_arm (TX-side trigger arm)
  *  0x04..      IGNORE_MASK   : WIDTH bits, a 1 excludes that bit from change detection
  *  0x08 MODE   bit0 PERIODIC : also emit a record every PERIOD clocks
@@ -35,6 +36,7 @@ pub module TraceCtrlRegs #(
     o_soft_reset : output logic       ,
     o_enable     : output logic       ,
     o_desc_req   : output logic       ,
+    o_map_req    : output logic       ,
     o_arm        : output logic       ,
     o_ignore_mask: output logic<WIDTH>,
     o_periodic_en: output logic       ,
@@ -58,6 +60,7 @@ pub module TraceCtrlRegs #(
             rst_cnt       = 0;
             o_enable      = ENABLE_DEFAULT;
             o_desc_req    = 1'b0;
+            o_map_req     = 1'b0;
             o_arm         = 1'b0;
             o_ignore_mask = 0;
             o_periodic_en = 1'b0;
@@ -68,6 +71,7 @@ pub module TraceCtrlRegs #(
             o_post        = 0;
         } else {
             o_desc_req = 1'b0;
+            o_map_req  = 1'b0;
             o_arm      = 1'b0;
             if rst_cnt != 0 {
                 rst_cnt = rst_cnt - 1;
@@ -80,6 +84,7 @@ pub module TraceCtrlRegs #(
                     o_enable   = i_wr_data[1];
                     o_desc_req = i_wr_data[2];
                     o_arm      = i_wr_data[3];
+                    o_map_req  = i_wr_data[4];
                 }
                 if i_wr_addr == 8'h08 {
                     o_periodic_en = i_wr_data[0];

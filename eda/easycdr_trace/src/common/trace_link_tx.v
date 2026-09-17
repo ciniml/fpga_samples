@@ -26,6 +26,11 @@ module trace_link_tx #(
     input  wire                     i_desc_req,
     input  wire [4:0]               i_desc_flags,  // {periodic, done, triggered, armed, enable}
 
+    input  wire                     i_map_req,     // one clock: send the signal-map text once
+    input  wire [7:0]               i_map_len,     // text length (0 = nothing to send)
+    output reg  [7:0]               o_map_addr,    // byte ROM interface (combinational read)
+    input  wire [7:0]               i_map_data,
+
     output wire [9:0]               o_symbol
 );
     localparam TS_BYTES  = TS_BITS / 8;
@@ -34,6 +39,7 @@ module trace_link_tx #(
     localparam [7:0] K28_1 = 8'h3c;
     localparam [7:0] K28_2 = 8'h5c;
     localparam [7:0] K28_4 = 8'h9c;
+    localparam [7:0] K28_6 = 8'hdc;   // signal-map text: [K28.6][LEN][LEN bytes]
 
     //------------------------------------------------------------------
     // descriptor scheduler and overflow marker request
@@ -42,11 +48,13 @@ module trace_link_tx #(
     reg [DIW-1:0] desc_timer;
     reg           desc_pending, desc_ack;
     reg           ovf_pending;
+    reg           map_pending, map_ack, map_active, map_lenbyte;
     always @(posedge clk or negedge rstn) begin
         if (!rstn) begin
             desc_timer   <= {DIW{1'b0}};
             desc_pending <= 1'b0;
             ovf_pending  <= 1'b0;
+            map_pending  <= 1'b0;
         end else begin
             if (DESC_INTERVAL != 0) begin
                 if (desc_timer == DESC_INTERVAL-1) begin
@@ -58,6 +66,8 @@ module trace_link_tx #(
             end
             if (i_desc_req) desc_pending <= 1'b1;
             if (desc_ack)   desc_pending <= 1'b0;
+            if (i_map_req && i_map_len != 8'd0) map_pending <= 1'b1;
+            if (map_ack)    map_pending  <= 1'b0;
             if (i_ovf_req)  ovf_pending  <= 1'b1;
             if (o_ovf_ack)  ovf_pending  <= 1'b0;
         end
@@ -97,6 +107,10 @@ module trace_link_tx #(
             desc_idx    <= 3'd0;
             desc_ack    <= 1'b0;
             sb_idx      <= 8'd0;
+            map_ack     <= 1'b0;
+            map_active  <= 1'b0;
+            map_lenbyte <= 1'b0;
+            o_map_addr  <= 8'd0;
             cur         <= {REC_BITS{1'b0}};
             b_valid     <= 1'b0;
             b_is_k      <= 1'b0;
@@ -106,9 +120,19 @@ module trace_link_tx #(
         end else begin
             o_ovf_ack <= 1'b0;
             desc_ack  <= 1'b0;
+            map_ack   <= 1'b0;
             o_fifo_rd <= 1'b0;
             if (can_load) begin
-                if (desc_active) begin
+                if (map_active) begin                    // [LEN] then the text bytes
+                    b_valid <= 1'b1; b_is_k <= 1'b0;
+                    if (map_lenbyte) begin
+                        b_data <= i_map_len; map_lenbyte <= 1'b0; o_map_addr <= 8'd0;
+                    end else begin
+                        b_data <= i_map_data;
+                        if (o_map_addr == i_map_len - 1'b1) map_active <= 1'b0;
+                        o_map_addr <= o_map_addr + 1'b1;
+                    end
+                end else if (desc_active) begin
                     b_valid <= 1'b1; b_is_k <= 1'b0;
                     b_data  <= desc_byte;
                     if (desc_idx == 3'd7) desc_active <= 1'b0;
@@ -122,6 +146,11 @@ module trace_link_tx #(
                         desc_active <= 1'b1;
                         desc_idx    <= 3'd0;
                         desc_ack    <= 1'b1;
+                    end else if (map_pending && !map_ack) begin
+                        b_valid <= 1'b1; b_is_k <= 1'b1; b_data <= K28_6;
+                        map_active  <= 1'b1;
+                        map_lenbyte <= 1'b1;
+                        map_ack     <= 1'b1;
                     end else if (!i_fifo_empty && !o_fifo_rd) begin
                         cur       <= {i_fifo_data[WIDTH-1:0], i_fifo_data[REC_BITS-1:WIDTH]};
                         o_fifo_rd <= 1'b1;

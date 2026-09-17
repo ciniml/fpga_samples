@@ -36,7 +36,8 @@ if {${TARGET} == "tangnano9k_pmod"} {
     } else {
         set mapargs [list [file normalize ${PROJ_DIR}/maps/nano9k_demo.map]]
     }
-    set mapout [exec python3 [file normalize ${PROJ_DIR}/host/tracemap.py] {*}$mapargs --vh trace_map_cfg.vh]
+    set mapout [exec python3 [file normalize ${PROJ_DIR}/host/tracemap.py] {*}$mapargs --vh trace_map_cfg.vh --rom trace_map_rom.v]
+    add_file -type verilog [file normalize trace_map_rom.v]
     puts "tracemap: $mapout"
     set fh [open trace_map_cfg.vh r]; append defs [read $fh]; close $fh
 }
@@ -71,6 +72,10 @@ if {${TARGET} == "tangprimer25k"} {
     add_file -type verilog [file normalize ${SRC_DIR}/trace_rx_decoder.v]
     add_file -type verilog [file normalize ${SRC_DIR}/trace_link_diag.v]
     add_file -type verilog [file normalize ${SRC_DIR}/trace_sym_inject.v]
+    # self-test transmitter's signal-map text ROM
+    set PROJ_DIR [file normalize ${SRC_DIR}/../..]
+    exec python3 [file normalize ${PROJ_DIR}/host/tracemap.py] [file normalize ${PROJ_DIR}/maps/primer25k_selftest.map] --rom trace_map_rom_selftest.v --module trace_map_rom_selftest
+    add_file -type verilog [file normalize trace_map_rom_selftest.v]
     add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_tx.sv]
     add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_rx.sv]
     add_file -type verilog [file normalize ${SRC_DIR}/pll_tx_500m/pll_tx_500m.v]

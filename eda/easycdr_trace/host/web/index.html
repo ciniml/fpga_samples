@@ -58,7 +58,9 @@ spare:7
 # derived (not part of the hash):
 # xfer = s2 &amp; (count == 0x10)</textarea>
       <button id="btnMapApply">Apply map</button>
+      <button id="btnMapFetch" disabled title="ask the transmitter for its signal map (CTRL.MAP_REQ over the reverse channel, then 'N')">Fetch from TX (N)</button>
       <label><input type="checkbox" id="useMap" checked> use names</label>
+      <label><input type="checkbox" id="autoFetch" checked> auto-fetch on mismatch</label>
       <span id="mapInfo" style="color:var(--mut)"></span>
     </div>
   </fieldset>
@@ -429,7 +431,7 @@ function ctrlFrame(addr, data) {
   data.forEach((d, i) => { const a = (addr + i) & 0xff; out.push(0xa5, a, d, crc8([a, d])); });
   return new Uint8Array(out);
 }
-const CTRL = { RESET: 1, ENABLE: 2, DESC_REQ: 4, ARM: 8, ADDR: 0x00, IGNORE_MASK: 0x04, MODE: 0x08, PERIOD: 0x09, TRIG_MASK: 0x0c, TRIG_VALUE: 0x0e, POST: 0x10 };
+const CTRL = { RESET: 1, ENABLE: 2, DESC_REQ: 4, ARM: 8, MAP_REQ: 16, ADDR: 0x00, IGNORE_MASK: 0x04, MODE: 0x08, PERIOD: 0x09, TRIG_MASK: 0x0c, TRIG_VALUE: 0x0e, POST: 0x10 };
 async function sendCtrl(frames) { await transport.write(new Uint8Array([0x58, frames.length, ...frames])); }   // 'X'
 // note: the capture FSM ignores 'X' and '?' while a capture is armed -
 // configure the TX side first, then arm (or press Abort, which sends 'Z').
@@ -529,6 +531,18 @@ function applyMap() {
   if (result) render();
 }
 $('useMap').onchange = () => { if (result) render(); };
+// signal-map text from the transmitter: CTRL.MAP_REQ (bit 4) over the reverse channel, then 'N' -> [LEN][bytes]
+async function fetchMap() {
+  await sendCtrl(ctrlFrame(CTRL.ADDR, [CTRL.MAP_REQ | ($('txEnable').checked ? CTRL.ENABLE : 0)]));
+  await new Promise(r => setTimeout(r, 60));
+  transport.flush();
+  await transport.write(new Uint8Array([0x4e]));                                      // 'N'
+  const len = (await transport.read(1))[0];
+  if (!len) { $('mapInfo').textContent = 'TX sent no signal map (older build, or reverse channel down)'; return false; }
+  const txt = new TextDecoder().decode(await transport.read(len));
+  $('sigmap').value = txt; applyMap(); log(`signal map fetched from TX (${len} bytes)`); return true;
+}
+$('btnMapFetch').onclick = () => fetchMap().catch(e => log('fetch map: ' + e.message));
 try { const s = localStorage.getItem('sigmap'); if (s) $('sigmap').value = s; } catch (e) {}
 $('btnMapApply').onclick = applyMap;
 applyMap();
@@ -542,6 +556,7 @@ async function queryParams() {
   txHash = ver >= 2 ? ((r[4] | (r[5] << 8) | (r[6] << 16) | (r[7] << 24)) >>> 0) : null;
   $('txInfo').textContent = `descriptor v${ver}: WIDTH=${width} TS_BITS=${ts} ADDR_BITS=${ab}` + (txHash !== null ? ` HASH=0x${txHash.toString(16).padStart(8, '0')}` : ' (v1: no hash)');
   applyMap();
+  if ($('autoFetch').checked && txHash !== null && (!sigMap || sigMap.hash !== txHash)) await fetchMap();
 }
 const leBytes16 = (v, n) => { const b = []; for (let i = 0; i < n; i++) b.push(Number((BigInt(v) >> BigInt(8*i)) & 0xffn)); return b; };
 async function applyTxCtrl() {
@@ -612,7 +627,7 @@ async function connect(kind) {
               : await SerialTransport.open(+$('baud').value);
     $('conn').textContent = 'connected: ' + transport.name;
     $('btnSerial').disabled = $('btnUsb').disabled = $('btnServer').disabled = true; $('btnDisc').disabled = $('btnCap').disabled = false;
-    $('btnQuery').disabled = $('btnDiag').disabled = $('btnApply').disabled = $('btnTxReset').disabled = $('btnPulse').disabled = $('btnArm').disabled = $('btnFlags').disabled = false;
+    $('btnQuery').disabled = $('btnMapFetch').disabled = $('btnDiag').disabled = $('btnApply').disabled = $('btnTxReset').disabled = $('btnPulse').disabled = $('btnArm').disabled = $('btnFlags').disabled = false;
     queryParams().catch(() => {});
   } catch (e) { log('connect failed: ' + e.message); }
 }
@@ -622,7 +637,7 @@ $('btnServer').onclick = () => connect('server');
 initServerUi();
 $('btnDisc').onclick = async () => { if (abortCtl) abortCtl.abort(); await transport.close(); transport = null;
   $('conn').textContent = 'not connected'; $('btnSerial').disabled = $('btnUsb').disabled = $('btnServer').disabled = false; $('btnDisc').disabled = $('btnCap').disabled = true;
-  $('btnQuery').disabled = $('btnDiag').disabled = $('btnApply').disabled = $('btnTxReset').disabled = $('btnPulse').disabled = $('btnArm').disabled = $('btnFlags').disabled = true; };
+  $('btnQuery').disabled = $('btnMapFetch').disabled = $('btnDiag').disabled = $('btnApply').disabled = $('btnTxReset').disabled = $('btnPulse').disabled = $('btnArm').disabled = $('btnFlags').disabled = true; };
 $('btnCap').onclick = capture;
 $('btnAbort').onclick = () => { if (abortCtl) abortCtl.abort(); if (transport) { transport.flush(); transport.write(new Uint8Array([0x5a])).catch(() => {}); } };   // 'Z' disarms the FPGA
 if (!navigator.serial) { $('btnSerial').disabled = true; log('Web Serial API not available in this browser'); }

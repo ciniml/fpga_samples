@@ -40,6 +40,7 @@ def main():
     ap.add_argument("--pulse", action="store_true", help="Nano9K built with CTRL_PULSE=1: test the 'P' reset burst only")
     ap.add_argument("--selftest", action="store_true", help="25K alone, USB-C cable pmod0 -> pmod2: check the receiver with its own stream")
     ap.add_argument("--map", help="signal map file (maps/*.map) to check against the TX descriptor hash")
+    ap.add_argument("--fetch-map", action="store_true", help="request the signal-map text from the TX (CTRL.MAP_REQ) and read it with 'N'")
     a = ap.parse_args()
     url = a.url
     entries = 1 << a.addr_bits
@@ -116,6 +117,20 @@ def main():
     def send_ctrl(frames):
         api(url, {"write": [0x58, len(frames)] + frames, "read": 0})   # 'X'
         time.sleep(0.05)
+
+    if a.fetch_map:
+        flush(url); n0 = api(url, {"write": [0x4E], "read": 1, "timeout_ms": 2000})["data"]
+        send_ctrl(ctrl_frames(0x00, [0x12]))                              # ENABLE | MAP_REQ
+        time.sleep(0.1); flush(url)
+        n = api(url, {"write": [0x4E], "read": 1, "timeout_ms": 2000})["data"]
+        txt = bytes(api(url, {"write": [], "read": n[0], "timeout_ms": 2000})["data"]).decode() if n and n[0] else ""
+        exp = None
+        if a.map:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("tracemap", os.path.join(os.path.dirname(__file__), "tracemap.py"))
+            tm = importlib.util.module_from_spec(spec); spec.loader.exec_module(tm)
+            exp = tm.display(tm.parse(open(a.map).read())[0])
+        check("'N' signal-map text from TX", bool(txt) and (exp is None or txt == exp), f"before request LEN={n0[0] if n0 else None}; got {len(txt)} bytes: {txt!r}" + (f" expected {exp!r}" if exp is not None and txt != exp else ""))
 
     if a.selftest:
         # the 25K's own 16-bit counter stream (steps every 5.12us): consecutive records differ by exactly 1

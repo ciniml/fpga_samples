@@ -10,6 +10,7 @@
 //           (all multi-byte fields little-endian; ts counts sclk cycles)
 //   K28.2 : emitted once per overflow event (records were dropped)
 //   K28.3 : idle filler
+//   map   : [K28.6][LEN][LEN bytes of signal-map text] on i_map_req (once)
 //   desc  : [K28.4][VER=0x02][WIDTH][TS_BITS][flags][CFG_HASH 4 bytes LE] descriptor,
 //           sent every DESC_INTERVAL link cycles (0 = periodic off) and on
 //           i_desc_req, always at a record boundary. flags bit0 enable,
@@ -57,6 +58,10 @@ module easycdr_trace_tx #(
     input  wire [WIDTH-1:0] i_trig_mask,
     input  wire [WIDTH-1:0] i_trig_value,
     input  wire [15:0]      i_post,
+    input  wire             i_map_req,      // one clock: send the signal-map text (from TraceCtrlRegs MAP_REQ)
+    input  wire [7:0]       i_map_len,      // text ROM (tracemap.py --rom): length and combinational byte read
+    output wire [7:0]       o_map_addr,
+    input  wire [7:0]       i_map_data,
     output wire [9:0]       o_symbol,
     output wire             o_overflow,     // sclk domain
     output wire             o_armed,
@@ -168,6 +173,7 @@ module easycdr_trace_tx #(
         .i_fifo_empty(fifo_empty), .i_fifo_data(fifo_data), .o_fifo_rd(fifo_rd),
         .i_ovf_req(ovf_req_l), .o_ovf_ack(ovf_ack_l),
         .i_desc_req(desc_evt),
+        .i_map_req(i_map_req), .i_map_len(i_map_len), .o_map_addr(o_map_addr), .i_map_data(i_map_data),
         .i_desc_flags({i_periodic_en, o_done, o_triggered, o_armed, i_enable}),
         .o_symbol(o_symbol));
 endmodule

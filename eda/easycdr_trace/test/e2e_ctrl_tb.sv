@@ -25,7 +25,9 @@ module e2e_ctrl_tb #(
 
     // ---------------- trace transmitter side (clk100) ----------------
     logic [TX_WIDTH-1:0] trace_sig = '0;
-    logic        soft_reset, trace_en, desc_req;
+    logic        soft_reset, trace_en, desc_req, map_req;
+    wire [7:0]   map_addr, map_data, map_len;
+    trace_map_rom u_map_rom(.addr(map_addr), .data(map_data), .len(map_len));
     logic [TX_WIDTH-1:0] ignore_mask;
     wire         trace_rstn = rstn & ~soft_reset;
     wire  [9:0]  tx_symbol;
@@ -35,6 +37,7 @@ module e2e_ctrl_tb #(
         .sclk(sclk), .srstn(1'b1), .sig(trace_sig),
         .clk(clk100), .rstn(trace_rstn),
         .i_enable(trace_en), .i_ignore_mask(ignore_mask), .i_desc_req(desc_req),
+        .i_map_req(map_req), .i_map_len(map_len), .o_map_addr(map_addr), .i_map_data(map_data),
         .i_periodic_en(periodic_en), .i_change_dis(change_dis), .i_period(period),
         .i_arm(arm), .i_trig_mask(trig_mask), .i_trig_value(trig_value), .i_post(post),
         .o_symbol(tx_symbol), .o_overflow(), .o_armed(), .o_triggered(), .o_done());
@@ -49,7 +52,8 @@ module e2e_ctrl_tb #(
     wire [8:0] rx_word = {dec_is_k, dec_data};
     localparam [7:0] K28_1 = 8'h3c, K28_2 = 8'h5c, K28_5 = 8'hbc, K28_3 = 8'h7c;
     wire desc_busy;
-    wire cap_valid = dec_valid && !desc_busy &&
+    wire map_busy;
+    wire cap_valid = dec_valid && !desc_busy && !map_busy &&
                      (!dec_is_k || dec_data == K28_1 || dec_data == K28_2);
 
     wire        rec_valid;
@@ -57,11 +61,13 @@ module e2e_ctrl_tb #(
     wire [63:0] rec_data;
     wire [7:0]  desc_ver, desc_width, desc_tsbits, desc_flags;
     wire [31:0] desc_hash;
+    wire        map_wr; wire [7:0] map_waddr, map_wdata, map_wlen;
     trace_rx_decoder #(.MAX_WIDTH(64), .MAX_TS_BITS(32)) u_rxdec(
         .clk(clk100), .rst(rst), .in_valid(dec_valid), .in_word(rx_word),
         .rec_valid(rec_valid), .rec_ts(rec_ts), .rec_data(rec_data), .ovf_seen(),
         .o_desc_ver(desc_ver), .o_desc_width(desc_width),
         .o_desc_tsbits(desc_tsbits), .o_desc_flags(desc_flags), .o_desc_hash(desc_hash),
+        .o_map_wr(map_wr), .o_map_addr(map_waddr), .o_map_data(map_wdata), .o_map_len(map_wlen), .o_map_busy(map_busy),
         .o_desc_busy(desc_busy));
 
     // ---------------- host side (clk50) ----------------
@@ -76,6 +82,7 @@ module e2e_ctrl_tb #(
         .pclk(clk100), .prst(rst), .in_valid(cap_valid), .in_data(rx_word),
         .rec_valid(rec_valid), .rec_data(rec_data),
         .i_desc_ver(desc_ver), .i_desc_width(desc_width), .i_desc_tsbits(desc_tsbits), .i_desc_flags(desc_flags), .i_desc_hash(desc_hash),
+        .i_map_wr(map_wr), .i_map_addr(map_waddr), .i_map_data(map_wdata), .i_map_len(map_wlen),
         .clk_sys(clk50), .rst_sys(rst),
         .h_rx_valid(h_rx_valid), .h_rx_data(h_rx_data),
         .h_tx_valid(h_tx_valid), .h_tx_data(h_tx_data), .h_tx_ready(1'b1),
@@ -113,7 +120,7 @@ module e2e_ctrl_tb #(
         .o_wr_valid(wr_valid), .o_wr_addr(wr_addr), .o_wr_data(wr_data), .o_frame_err());
     TraceCtrlRegs #(.WIDTH(TX_WIDTH), .RESET_CYCLES(64)) u_regs(
         .i_clk(clk100), .i_rst(rst), .i_wr_valid(wr_valid), .i_wr_addr(wr_addr), .i_wr_data(wr_data),
-        .o_soft_reset(soft_reset), .o_enable(trace_en), .o_desc_req(desc_req),
+        .o_soft_reset(soft_reset), .o_enable(trace_en), .o_desc_req(desc_req), .o_map_req(map_req),
         .o_ignore_mask(ignore_mask), .o_arm(arm), .o_periodic_en(periodic_en), .o_change_dis(change_dis),
         .o_period(period), .o_trig_mask(trig_mask), .o_trig_value(trig_value), .o_post(post));
 
@@ -296,6 +303,19 @@ module e2e_ctrl_tb #(
               resp[0] == 8'h0f && resp[1] == 8'h02 && {resp[3], resp[2]} > 16'd10 && {resp[5], resp[4]} >= 16'd6 && {resp[7], resp[6]} == 16'd0);
         resp.delete(); hsend("L"); wait (resp.size() == 14);
         check($sformatf("'L' counters cleared (recs %0d)", {resp[5], resp[4]}), {resp[5], resp[4]} < 16'd6);
+
+        // 7. signal-map text: CTRL.MAP_REQ over the reverse channel, then 'N'
+        resp.delete(); hsend("N"); wait (resp.size() == 1);
+        check("'N' before any request -> LEN 0", resp[0] == 8'd0);
+        ctrl_write(8'h00, 8'h12);            // ENABLE | MAP_REQ
+        #20000;                              // K28.6 + LEN + 24 bytes at 10ns/symbol + capture
+        resp.delete(); hsend("N"); wait (resp.size() == 1);
+        begin
+            automatic int n = resp[0]; automatic string txt = "";
+            wait (resp.size() == 1 + n);
+            for (int i = 1; i <= n; i++) txt = {txt, string'(resp[i])};
+            check($sformatf("'N' text (%0d bytes): %s", n, txt), n == 24 && txt == "count:8:dec\ns2:1\nspare:7");
+        end
 
         // 5. desc_req: descriptor immediately (flags reflect enable)
         ctrl_write(8'h00, 8'h06);            // DESC_REQ | ENABLE

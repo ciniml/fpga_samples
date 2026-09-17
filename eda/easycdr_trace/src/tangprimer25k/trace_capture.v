@@ -42,6 +42,9 @@
 //                                 = first on the wire) into the self-test symbol
 //                                 injector and start it: mode 0 stop, 1 once,
 //                                 2 loop (see trace_sym_inject.v); replies 'J'
+//   'N'                         : signal-map text received from the TX ([K28.6] blob,
+//                                 requested with CTRL.MAP_REQ over the reverse channel):
+//                                 reply [LEN] then LEN bytes (LEN 0 = none received)
 //   'L'                         : link diagnostics: o_diag_req strobe, then the 14
 //                                 bytes of i_diag_data (see trace_link_diag.v)
 //   'P'                         : one-clock o_pulse_req strobe (reset burst for
@@ -67,6 +70,11 @@ module trace_capture #(
     input  wire [7:0]           i_desc_tsbits,
     input  wire [7:0]           i_desc_flags,
     input  wire [31:0]          i_desc_hash,
+    // signal-map text from the decoder (pclk)
+    input  wire                 i_map_wr,
+    input  wire [7:0]           i_map_addr,
+    input  wire [7:0]           i_map_data,
+    input  wire [7:0]           i_map_len,
 
     input  wire                 clk_sys,
     input  wire                 rst_sys,
@@ -128,6 +136,10 @@ module trace_capture #(
     // capture memory + FSM (pclk)
     //------------------------------------------------------------------
     reg [DATA_BITS-1:0] buffer [0:(1<<ADDR_BITS)-1];
+    reg [7:0] mapbuf [0:255];
+    always @(posedge pclk) if (i_map_wr) mapbuf[i_map_addr] <= i_map_data;
+    reg [7:0] map_len_s, map_rdata;
+    always @(posedge clk_sys) map_len_s <= i_map_len;
     reg [ADDR_BITS-1:0] waddr;
 
     localparam CS_IDLE = 2'd0;
@@ -204,8 +216,10 @@ module trace_capture #(
     localparam ST_FWD    = 3'd5;   // 'X' payload forwarding
     localparam ST_DIAGW  = 3'd6;   // 'L': waiting for the snapshot
     localparam ST_DIAG   = 3'd7;   // 'L': sending 14 bytes
+    localparam ST_MAP    = 4'd8;   // 'N': sending [LEN][bytes]
 
-    reg [2:0]           state;
+    reg [3:0]           state;
+    reg [7:0]           map_idx;
     reg [7:0]           cmd;
     reg [7:0]           arg_idx;
     reg [ADDR_BITS-1:0] raddr;
@@ -259,6 +273,7 @@ module trace_capture #(
             o_inj_set   <= 1'b0;
             if (tx_valid && tx_ready) tx_valid <= 1'b0;
             rdata      <= buffer[raddr];
+            map_rdata  <= mapbuf[map_idx];
             rd_pending <= 1'b0;
 
             case (state)
@@ -298,6 +313,12 @@ module trace_capture #(
                 "L": begin
                     o_diag_req <= 1'b1;
                     state      <= ST_DIAGW;
+                end
+                "N": begin
+                    map_idx  <= 8'd0;
+                    tx_data  <= map_len_s;
+                    tx_valid <= 1'b1;
+                    state    <= (map_len_s == 8'd0) ? ST_IDLE : ST_MAP;
                 end
                 "D": begin
                     raddr      <= waddr_s;
@@ -417,6 +438,13 @@ module trace_capture #(
                 diag_q  <= i_diag_data;
                 arg_idx <= 8'd0;
                 state   <= ST_DIAG;
+            end
+            ST_MAP: if (!tx_valid && tx_ready && !rd_pending) begin
+                tx_data  <= map_rdata;              // mapbuf[map_idx] read one cycle earlier
+                tx_valid <= 1'b1;
+                map_idx  <= map_idx + 1'b1;
+                rd_pending <= 1'b1;                 // let map_rdata follow the new index
+                if (map_idx == map_len_s - 1'b1) state <= ST_IDLE;
             end
             ST_DIAG: if (!tx_valid || tx_ready) begin
                 tx_data  <= diag_q[7:0];

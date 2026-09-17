@@ -36,6 +36,9 @@ EasyCDR受信IP(GW5A、10bit+Word Alignment+8B/10B Decoding構成)が
 | `FIFO_RAM` | "distributed" | "distributed" / "block" | レコード FIFO のメモリ種別(GW5A は "block") |
 | `CFG_HASH` | 0 | 32 bit | 信号マップのハッシュ(`host/tracemap.py`)。デスクリプタ v2 の 4〜7 バイト目で配る |
 
+ポート追加(2026-09-17): `i_map_req`(1 パルス)、`i_map_len[7:0]`、`o_map_addr[7:0]`、`i_map_data[7:0]`(組合せ読出の
+バイト ROM、`trace_map_rom` を `host/tracemap.py --rom` で生成)。不要なら `i_map_len=0` にする(送出しない)。
+
 受信側(`trace_rx_decoder` / `trace_capture`)はレコード形式をデスクリプタから実行時に取る
 (`MAX_WIDTH`=64 / `MAX_TS_BITS`=32 まで)。ホスト (UI / ctrl_test.py) も '?' の値に従うので、
 送信側の `WIDTH` / `TS_BITS` を変えても受信側の再合成は不要。
@@ -55,6 +58,8 @@ EasyCDR受信IP(GW5A、10bit+Word Alignment+8B/10B Decoding構成)が
 - **K28.2**: FIFO溢れ通知(1イベントにつき1回、次のレコードの前に送出)
 - **K28.4**: デスクリプタ `[VER=02][WIDTH][TS_BITS][flags][CFG_HASH LE 4 バイト]` (8 バイト、DESC_INTERVAL 毎と要求時)。
   受信側は VER で長さを判断し、VER 1 (4 バイト) の旧送信機も受ける
+- **K28.6**: 信号マップのテキスト `[LEN][LEN バイト]` (`i_map_req` の 1 パルスにつき 1 回、`i_map_len`/`o_map_addr`/`i_map_data`
+  の ROM から読む。ROM は `host/tracemap.py --rom` が生成)
 - コンマはレコード途中にも割り込みうる。受信デコーダはK28.5/K28.3を無視し、
   K28.1で再同期、K28.2でオーバーフローをフラグする
 

@@ -29,6 +29,11 @@ module trace_rx_decoder #(
     output reg  [7:0]             o_desc_tsbits,
     output reg  [7:0]             o_desc_flags,
     output reg  [31:0]            o_desc_hash,
+    output reg                    o_map_wr,      // signal-map text bytes ([K28.6][LEN][bytes])
+    output reg  [7:0]             o_map_addr,
+    output reg  [7:0]             o_map_data,
+    output reg  [7:0]             o_map_len,     // latched when the text is complete (0 = none yet)
+    output wire                   o_map_busy,
     output wire                   o_desc_busy    // descriptor bytes in flight
 );
     localparam MAX_TB = MAX_TS_BITS / 8;
@@ -36,6 +41,7 @@ module trace_rx_decoder #(
     localparam [7:0] K28_1 = 8'h3c;
     localparam [7:0] K28_2 = 8'h5c;
     localparam [7:0] K28_4 = 8'h9c;
+    localparam [7:0] K28_6 = 8'hdc;
 
     // record layout in bytes (from the descriptor, clamped to the maxima)
     wire [7:0] d_tb = (o_desc_ver == 8'd0) ? DEFAULT_TS_BITS / 8 : {3'b0, o_desc_tsbits[7:3]};
@@ -56,6 +62,9 @@ module trace_rx_decoder #(
     reg [55:0]            desc_acc;       // bytes 0..6 (byte 7 arrives with the latch)
     reg [2:0]             desc_last;      // 3 (VER 1) or 7 (VER 2)
     assign o_desc_busy = desc_active;
+    reg        map_active, map_lenbyte;
+    reg [7:0]  map_cnt, map_n;
+    assign o_map_busy = map_active;
 
     wire [7:0] didx = idx - tb;
 
@@ -68,6 +77,8 @@ module trace_rx_decoder #(
             desc_acc    <= 56'd0;
             desc_last   <= 3'd3;
             o_desc_hash <= 32'd0;
+            map_active  <= 1'b0; map_lenbyte <= 1'b0; map_cnt <= 8'd0; map_n <= 8'd0;
+            o_map_wr <= 1'b0; o_map_addr <= 8'd0; o_map_data <= 8'd0; o_map_len <= 8'd0;
             o_desc_ver    <= 8'd0;
             o_desc_width  <= 8'd0;
             o_desc_tsbits <= 8'd0;
@@ -83,6 +94,7 @@ module trace_rx_decoder #(
             rec_valid <= 1'b0;
             ovf_seen  <= 1'b0;
             done      <= 1'b0;
+            o_map_wr  <= 1'b0;
             if (done) begin                       // one cycle after the last byte
                 rec_valid <= 1'b1;
                 rec_ts    <= ts_acc;
@@ -103,8 +115,23 @@ module trace_rx_decoder #(
                         desc_active <= 1'b1;
                         desc_idx    <= 3'd0;
                         desc_last   <= 3'd3;
+                    end else if (in_word[7:0] == K28_6) begin
+                        active      <= 1'b0;
+                        desc_active <= 1'b0;
+                        map_active  <= 1'b1;
+                        map_lenbyte <= 1'b1;
+                        map_cnt     <= 8'd0;
                     end
                     // other K codes (comma / filler): ignore
+                end else if (map_active) begin
+                    if (map_lenbyte) begin
+                        map_n <= in_word[7:0]; map_lenbyte <= 1'b0;
+                        if (in_word[7:0] == 8'd0) map_active <= 1'b0;
+                    end else begin
+                        o_map_wr <= 1'b1; o_map_addr <= map_cnt; o_map_data <= in_word[7:0];
+                        map_cnt  <= map_cnt + 1'b1;
+                        if (map_cnt == map_n - 1'b1) begin map_active <= 1'b0; o_map_len <= map_n; end
+                    end
                 end else if (desc_active) begin
                     if (desc_idx == 3'd0) desc_last <= (in_word[7:0] >= 8'd2) ? 3'd7 : 3'd3;
                     if (desc_idx == desc_last) begin

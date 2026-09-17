@@ -32,7 +32,7 @@ CRC 不一致・回線エラー・(`GAP_TIMEOUT` > 0 なら) バイト間ギャ�
 
 | ADDR | レジスタ |
 |---|---|
-| 0x00 | CTRL: bit0 RESET (自己クリア) / bit1 ENABLE / bit2 DESC_REQ (パルス) / bit3 ARM (パルス、TX 側トリガをアーム) |
+| 0x00 | CTRL: bit0 RESET (自己クリア) / bit1 ENABLE / bit2 DESC_REQ (パルス) / bit3 ARM (パルス、TX 側トリガをアーム) / bit4 MAP_REQ (パルス、信号マップのテキストを送信) |
 | 0x04.. | IGNORE_MASK (WIDTH ビット、LSB first、1 = 変化検出から除外) |
 | 0x08 | MODE: bit0 PERIODIC (PERIOD 毎にレコード) / bit1 CHG_DIS (変化検出停止) |
 | 0x09–0x0B | PERIOD (24bit、clk 単位) |
