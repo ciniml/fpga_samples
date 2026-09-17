@@ -1,0 +1,27 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_tx_link_core.veryl
+ * @brief easycdr_trace_tx_core tests (body: test/tx_link_core_body.sv).
+ *
+ * tx_link_core_f16 : FRAME_LEN = 16 (trace link default)
+ * tx_link_core_f8  : FRAME_LEN = 8
+ */
+module TbTxLinkCore {}
+
+#[test(tx_link_core_f16)]
+embed (inline) sv{{{
+module tx_link_core_f16;
+    tx_link_core_body #(.FRAME_LEN(16), .RUN(1)) body();
+endmodule
+}}}
+
+#[test(tx_link_core_f8)]
+embed (inline) sv{{{
+module tx_link_core_f8;
+    tx_link_core_body #(.FRAME_LEN(8), .RUN(1)) body();
+endmodule
+}}}

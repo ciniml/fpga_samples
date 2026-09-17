@@ -1,7 +1,7 @@
 # Verilator end-to-end test of the control path (no device primitives).
 RTL := ../../../rtl
 SRCS := e2e_ctrl_tb.sv trace_map_rom.v \
-        ../src/common/easycdr_trace_tx.v ../src/common/tx_link_core.v \
+        ../src/common/easycdr_trace_tx.v $(RTL)/trace/tx_link_core.sv \
         ../src/common/trace_cdc.v ../src/common/trace_afifo.v \
         ../src/common/trace_frontend.v ../src/common/trace_link_tx.v \
         $(RTL)/manchester/pulse_reset_tx.sv \
@@ -20,7 +20,10 @@ VFLAGS := --binary --timing --assert -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC
 trace_map_rom.v: ../maps/nano9k_demo.map ../host/tracemap.py
 	python3 ../host/tracemap.py ../maps/nano9k_demo.map --rom $@
 
-test: trace_map_rom.v
+$(RTL)/trace/tx_link_core.sv: $(wildcard $(RTL)/trace/*.veryl)
+	cd $(RTL)/trace && veryl build
+
+test: trace_map_rom.v $(RTL)/trace/tx_link_core.sv
 	verilator $(VFLAGS) --Mdir obj_dir -o simv $(SRCS)
 	./obj_dir/simv
 	verilator $(VFLAGS) -GSCLK_PERIOD=10.0 --Mdir obj_dir_s100 -o simv $(SRCS)

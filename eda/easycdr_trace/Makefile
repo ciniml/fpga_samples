@@ -24,8 +24,14 @@ BUILD_SUFFIX := $(BUILD_SUFFIX)_$(shell echo $(RATE) | tr A-Z a-z)
 export RATE
 endif
 
+# Veryl sources (rtl/trace, rtl/manchester): the generated .sv are not tracked, build them first
+TRACE_VERYL_SV := ../../rtl/trace/tx_link_core.sv
+$(TRACE_VERYL_SV): $(wildcard ../../rtl/trace/*.veryl) ../../rtl/trace/Veryl.toml
+	cd ../../rtl/trace && veryl build
+
 SRCS := src/$(TARGET)/pins.cst $(wildcard src/$(TARGET)/*.sdc) \
         $(wildcard src/$(TARGET)/*.v) $(wildcard src/$(TARGET)/*/*.v) $(wildcard src/common/*.v) \
+        $(TRACE_VERYL_SV) \
         ../../rtl/displayport/src/encoder_8b10b.sv $(wildcard ../../rtl/manchester/*.sv) project.tcl \
         host/tracemap.py $(wildcard maps/*.map)
 

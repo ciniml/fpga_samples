@@ -1,0 +1,32 @@
+[project]
+name    = "trace"
+version = "0.1.0"
+
+[build]
+clock_type          = "posedge"
+reset_type          = "sync_high"
+omit_project_prefix = true
+
+[test]
+include_files = [
+    "test/tx_link_core_body.sv",
+    "../displayport/src/encoder_8b10b.sv",
+    "../displayport/src/decoder_8b10b.sv",
+]
+
+[test.verilator]
+compile_args = [
+    "tx_link_core_body.sv",
+    "encoder_8b10b.sv",
+    "decoder_8b10b.sv",
+    "-Wno-WIDTHEXPAND",
+    "-Wno-WIDTHTRUNC",
+    "-Wno-CASEINCOMPLETE",
+    "-Wno-UNUSEDSIGNAL",
+    "-Wno-UNDRIVEN",
+    "-Wno-PINMISSING",
+    "-Wno-INITIALDLY",
+    "-Wno-TIMESCALEMOD",
+    "-Wno-UNUSEDPARAM",
+    "-Wno-MULTITOP",
+]

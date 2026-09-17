@@ -46,7 +46,7 @@ if {${RATE} == "742M5"} { append defs "`define RATE_742M5\n" }
 set fh [open defines_gen.v w]; puts -nonewline $fh $defs; close $fh
 add_file -type verilog [file normalize defines_gen.v]
 add_file -type verilog [file normalize ${SRC_DIR}/top.v]
-add_file -type verilog [file normalize ${COMMON_DIR}/tx_link_core.v]
+add_file -type verilog [file normalize ${RTL_DIR}/trace/tx_link_core.sv]
 add_file -type verilog [file normalize ${COMMON_DIR}/trace_cdc.v]
 add_file -type verilog [file normalize ${COMMON_DIR}/trace_afifo.v]
 add_file -type verilog [file normalize ${COMMON_DIR}/trace_frontend.v]

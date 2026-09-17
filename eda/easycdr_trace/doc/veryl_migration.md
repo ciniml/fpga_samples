@@ -57,7 +57,11 @@ rtl/trace/            Veryl プロジェクト（rtl/manchester と同じ構成�
 各ステップで `veryl build` → `make -C eda/easycdr_trace/test test`（3 条件）→ Nano9K 合成 → LUT/FF/BSRAM を
 現行と比較、してからコミットする。
 
-1. `rtl/trace` を作り tx_link_core だけ移す。8b10b の依存方法（path dependency か `$sv::`）を決める。
+1. **済 (2026-09-17)** `rtl/trace` を作り tx_link_core を移した。8b10b は `$sv::displayport_encoder_8b10b`
+   で参照（displayport を path dependency にすると femtorv 等を含む大きなプロジェクトごと依存ビルドになるため）。
+   リセットは `reset_async_low` ポートで従来の `negedge rstn` を維持。`veryl test`（`test/tx_link_core_body.sv`、
+   FRAME_LEN 16/8: コンマ位置・o_ready・バイト順・充填）。`eda/easycdr_trace/Makefile` と `test/Makefile` に
+   `veryl build` 規則を追加（生成 .sv は非追跡）。E2E 3 条件 PASS、Nano9K 合成は LUT/FF とも従来と同じ。
 2. trace_link_tx（バイト配列化）、trace_frontend（generate-if）。
 3. trace_cdc + trace_afifo（リセット型の決定、25K の BSRAM 推論確認）、ラッパ。ここで送信側が全部 Veryl。
    Nano9K の TRACE_WIDTH=32 / CTRL_PULSE=1 / RATE=742M5 変種も合成。
