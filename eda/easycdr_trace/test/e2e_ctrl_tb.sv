@@ -33,15 +33,15 @@ module e2e_ctrl_tb #(
     wire  [9:0]  tx_symbol;
 
     localparam [31:0] CFG_HASH = 32'h02d268ca;   // tracemap.py maps/nano9k_demo.map
-    easycdr_trace_tx #(.WIDTH(TX_WIDTH), .TS_BITS(24), .DESC_INTERVAL(4096), .CFG_HASH(CFG_HASH)) u_trace_tx(
+    easycdr_trace_tx #(.WIDTH(TX_WIDTH), .TS_BITS(24), .DESC_INTERVAL(4096), .CFG_HASH(CFG_HASH), .TICK_LOG2(8)) u_trace_tx(
         .sclk(sclk), .srstn(1'b1), .sig(trace_sig),
         .clk(clk100), .rstn(trace_rstn),
         .i_enable(trace_en), .i_ignore_mask(ignore_mask), .i_desc_req(desc_req),
         .i_map_req(map_req), .i_map_len(map_len), .o_map_addr(map_addr), .i_map_data(map_data),
-        .i_periodic_en(periodic_en), .i_change_dis(change_dis), .i_period(period),
+        .i_periodic_en(periodic_en), .i_change_dis(change_dis), .i_tick_dis(tick_dis), .i_period(period),
         .i_arm(arm), .i_trig_mask(trig_mask), .i_trig_value(trig_value), .i_post(post),
         .o_symbol(tx_symbol), .o_overflow(), .o_armed(), .o_triggered(), .o_done());
-    logic arm, periodic_en, change_dis; logic [23:0] period; logic [TX_WIDTH-1:0] trig_mask, trig_value; logic [15:0] post;
+    logic arm, periodic_en, change_dis, tick_dis; logic [23:0] period; logic [TX_WIDTH-1:0] trig_mask, trig_value; logic [15:0] post;
 
     // 8b10b decode (same clock domain; symbol-per-cycle)
     wire       dec_valid, dec_is_k, dec_err;
@@ -50,11 +50,11 @@ module e2e_ctrl_tb #(
         .i_clk(clk100), .i_rstn(trace_rstn), .i_valid(1'b1), .i_symbol(tx_symbol),
         .o_valid(dec_valid), .o_data(dec_data), .o_is_k(dec_is_k), .o_code_err(dec_err));
     wire [8:0] rx_word = {dec_is_k, dec_data};
-    localparam [7:0] K28_1 = 8'h3c, K28_2 = 8'h5c, K28_5 = 8'hbc, K28_3 = 8'h7c;
+    localparam [7:0] K28_1 = 8'h3c, K28_2 = 8'h5c, K28_5 = 8'hbc, K28_3 = 8'h7c, K28_7 = 8'hfc;
     wire desc_busy;
     wire map_busy;
     wire cap_valid = dec_valid && !desc_busy && !map_busy &&
-                     (!dec_is_k || dec_data == K28_1 || dec_data == K28_2);
+                     (!dec_is_k || dec_data == K28_1 || dec_data == K28_2 || dec_data == K28_7);
 
     wire        rec_valid;
     wire [31:0] rec_ts;
@@ -121,7 +121,7 @@ module e2e_ctrl_tb #(
     TraceCtrlRegs #(.WIDTH(TX_WIDTH), .RESET_CYCLES(64)) u_regs(
         .i_clk(clk100), .i_rst(rst), .i_wr_valid(wr_valid), .i_wr_addr(wr_addr), .i_wr_data(wr_data),
         .o_soft_reset(soft_reset), .o_enable(trace_en), .o_desc_req(desc_req), .o_map_req(map_req),
-        .o_ignore_mask(ignore_mask), .o_arm(arm), .o_periodic_en(periodic_en), .o_change_dis(change_dis),
+        .o_ignore_mask(ignore_mask), .o_arm(arm), .o_periodic_en(periodic_en), .o_change_dis(change_dis), .o_tick_dis(tick_dis),
         .o_period(period), .o_trig_mask(trig_mask), .o_trig_value(trig_value), .o_post(post));
 
     // ---------------- host driver / scoreboard ----------------
@@ -131,6 +131,8 @@ module e2e_ctrl_tb #(
     logic [7:0] resp[$];
     always @(posedge clk50) if (h_tx_valid) resp.push_back(h_tx_data);
     always @(posedge clk100) if (rec_valid) begin rec_count++; last_ts = rec_ts; end
+    int tick_count = 0;                  // K28.7 ticks at the decoder input
+    always @(posedge clk100) if (dec_valid && dec_is_k && dec_data == K28_7) tick_count++;
 
     task automatic hsend(input logic [7:0] b);
         @(negedge clk50); h_rx_valid = 1; h_rx_data = b;
@@ -157,14 +159,16 @@ module e2e_ctrl_tb #(
     typedef struct { logic [23:0] ts; logic [63:0] data; } rec_t;
     localparam RL = 3 + MB;              // record bytes after K28.1
     rec_t recs[$];
+    int ticks;                           // K28.7 tick markers seen in the last dump
     task automatic dump_and_parse();
         int n0;
-        recs.delete(); resp.delete();
+        recs.delete(); resp.delete(); ticks = 0;
         hsend("D");
         wait (resp.size() == ENTRIES * 2);
         for (int i = 0; i < ENTRIES; ) begin
             logic k = resp[2*i][0];
             logic [7:0] b = resp[2*i+1];
+            if (k && b == K28_7) ticks++;
             if (k && b == K28_1 && i + RL < ENTRIES) begin
                 automatic bit clean = 1;
                 for (int j = 1; j <= RL; j++) if (resp[2*(i+j)][0]) clean = 0;
@@ -264,6 +268,15 @@ module e2e_ctrl_tb #(
         check($sformatf("periodic records ~10 in 1000 sclk at 100-cycle period (got %0d)", rec_count), rec_count >= 9 && rec_count <= 11);
         @(negedge clk100); trace_sig[3:0] = ~trace_sig[3:0]; #5000;
         ctrl_write(8'h08, 8'h00);            // back to change detection
+        // 5d. tick records: one [K28.7][ts] every 2^TICK_LOG2 = 256 sclk while idle; MODE.TICK_DIS stops them
+        #2000; tick_count = 0;
+        #(SCLK_PERIOD * 1024);
+        check($sformatf("ticks ~4 in 1024 sclk (got %0d)", tick_count), tick_count >= 3 && tick_count <= 5);
+        ctrl_write(8'h08, 8'h04);            // TICK_DIS
+        #2000; tick_count = 0;
+        #(SCLK_PERIOD * 1024);
+        check($sformatf("no ticks with TICK_DIS (got %0d)", tick_count), tick_count == 0);
+        ctrl_write(8'h08, 8'h00);
         // 5c. TX trigger: arm on bit8 == 1, post = 3 records
         ctrl_write(A_TMASK, 8'h00); ctrl_write(A_TMASK + 1, 8'h01);   // TRIG_MASK = 0x0100
         ctrl_write(A_TVAL, 8'h00);  ctrl_write(A_TVAL + 1, 8'h01);    // TRIG_VALUE = 0x0100

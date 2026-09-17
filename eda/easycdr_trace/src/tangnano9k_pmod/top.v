@@ -104,7 +104,7 @@ module top(
     wire ctrl_rxd = CTRL_INVERT ? ~ctrl_rxd_raw : ctrl_rxd_raw;
 
     wire ctrl_rst = ~tx_rstn;
-    wire        soft_reset, trace_en, desc_req, arm, periodic_en, change_dis, map_req;
+    wire        soft_reset, trace_en, desc_req, arm, periodic_en, change_dis, tick_dis, map_req;
     wire [TRACE_WIDTH-1:0] ignore_mask, trig_mask, trig_value;
     wire [23:0] period;
     wire [15:0] post;
@@ -125,6 +125,7 @@ module top(
     assign arm         = 1'b0;
     assign periodic_en = 1'b0;
     assign change_dis  = 1'b0;
+    assign tick_dis    = 1'b0;
     assign ignore_mask = {TRACE_WIDTH{1'b0}};
     assign trig_mask   = {TRACE_WIDTH{1'b0}};
     assign trig_value  = {TRACE_WIDTH{1'b0}};
@@ -171,6 +172,7 @@ module top(
         .o_ignore_mask(ignore_mask),
         .o_periodic_en(periodic_en),
         .o_change_dis (change_dis),
+        .o_tick_dis   (tick_dis),
         .o_period     (period),
         .o_trig_mask  (trig_mask),
         .o_trig_value (trig_value),
@@ -224,6 +226,7 @@ module top(
         .i_map_data    (map_data),
         .i_periodic_en (periodic_en),
         .i_change_dis  (change_dis),
+        .i_tick_dis    (tick_dis),
         .i_period      (period),
         .i_arm         (arm),
         .i_trig_mask   (trig_mask),

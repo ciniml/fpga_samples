@@ -35,6 +35,7 @@ EasyCDR受信IP(GW5A、10bit+Word Alignment+8B/10B Decoding構成)が
 | `HAS_PERIODIC` / `HAS_TRIGGER` | 1 | 0/1 | 周期サンプリング / TX トリガの論理を生成するか(0 で削除、入力は無視) |
 | `FIFO_RAM` | "distributed" | "distributed" / "block" | レコード FIFO のメモリ種別(GW5A は "block") |
 | `CFG_HASH` | 0 | 32 bit | 信号マップのハッシュ(`host/tracemap.py`)。デスクリプタ v2 の 4〜7 バイト目で配る |
+| `TICK_LOG2` | 16 | 4〜24 | ティックレコード `[K28.7][ts]` の間隔 = 2^TICK_LOG2 sclk (27MHz で 2.4ms)。`i_tick_dis`=1 で停止 |
 
 ポート追加(2026-09-17): `i_map_req`(1 パルス)、`i_map_len[7:0]`、`o_map_addr[7:0]`、`i_map_data[7:0]`(組合せ読出の
 バイト ROM、`trace_map_rom` を `host/tracemap.py --rom` で生成)。不要なら `i_map_len=0` にする(送出しない)。
@@ -60,6 +61,9 @@ EasyCDR受信IP(GW5A、10bit+Word Alignment+8B/10B Decoding構成)が
   受信側は VER で長さを判断し、VER 1 (4 バイト) の旧送信機も受ける
 - **K28.6**: 信号マップのテキスト `[LEN][LEN バイト]` (`i_map_req` の 1 パルスにつき 1 回、`i_map_len`/`o_map_addr`/`i_map_data`
   の ROM から読む。ROM は `host/tracemap.py --rom` が生成)
+- **K28.7**: ティック `[ts バイト]` (データ無し)。有効中、2^TICK_LOG2 sclk ごとに送る (同じサイクルに
+  データレコードがあればそちらに吸収)。受信側はこれで「最後の変化の後もトレースが続いていた」時刻を知り、
+  波形の終端を最後のティックに置く。トリガの POST 計数には含めない。MODE bit2 `TICK_DIS` で停止
 - コンマはレコード途中にも割り込みうる。受信デコーダはK28.5/K28.3を無視し、
   K28.1で再同期、K28.2でオーバーフローをフラグする
 

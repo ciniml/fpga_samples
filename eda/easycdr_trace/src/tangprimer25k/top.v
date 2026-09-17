@@ -220,6 +220,7 @@ module top(
     //------------------------------------------------------------------
     localparam [7:0] K28_1 = 8'h3c;   // start of record
     localparam [7:0] K28_2 = 8'h5c;   // overflow marker
+    localparam [7:0] K28_7 = 8'hfc;   // tick (timestamp only)
     // descriptor payload bytes must not enter the capture buffer
     wire desc_busy;
     // raw capture mode ('R' 1): every received word, {align, err, dout[9:0]}
@@ -231,7 +232,7 @@ module top(
     wire [11:0] cap_data  = raw_p ? {rx_align, rx_decerr, rx_data[9:0]} : {3'b0, rx_data[8:0]};
     wire cap_valid_rec = rx_word_en && !desc_busy && !map_busy &&
                      (!rx_data[8] ||
-                      rx_data[7:0] == K28_1 || rx_data[7:0] == K28_2);
+                      rx_data[7:0] == K28_1 || rx_data[7:0] == K28_2 || rx_data[7:0] == K28_7);
 
     // on-the-fly record decoder feeding the trigger comparator
     wire        rec_valid;
@@ -326,7 +327,7 @@ module top(
     easycdr_trace_tx #(.WIDTH(16), .TS_BITS(24), .SYNC_STAGES(0), .HAS_PERIODIC(0), .HAS_TRIGGER(0), .FIFO_RAM("block"), .CFG_HASH(32'hff13d4c5)) u_st_tx(
         .sclk(clk_in), .srstn(resetn_in), .sig(st_cnt[23:8]),
         .clk(txclk_100m), .rstn(st_rstn),
-        .i_enable(1'b1), .i_ignore_mask(16'd0), .i_desc_req(1'b0), .i_periodic_en(1'b0), .i_change_dis(1'b0),
+        .i_enable(1'b1), .i_ignore_mask(16'd0), .i_desc_req(1'b0), .i_periodic_en(1'b0), .i_change_dis(1'b0), .i_tick_dis(1'b0),
         .i_period(24'd0), .i_arm(1'b0), .i_trig_mask(16'd0), .i_trig_value(16'd0), .i_post(16'd0),
         .i_map_req(st_map_req), .i_map_len(st_map_len), .o_map_addr(st_map_addr), .i_map_data(st_map_data),
         .o_symbol(st_symbol), .o_overflow(), .o_armed(), .o_triggered(), .o_done());

@@ -42,6 +42,7 @@ module trace_rx_decoder #(
     localparam [7:0] K28_2 = 8'h5c;
     localparam [7:0] K28_4 = 8'h9c;
     localparam [7:0] K28_6 = 8'hdc;
+    localparam [7:0] K28_7 = 8'hfc;   // tick [K28.7][ts]: timestamp only, not a record
 
     // record layout in bytes (from the descriptor, clamped to the maxima)
     wire [7:0] d_tb = (o_desc_ver == 8'd0) ? DEFAULT_TS_BITS / 8 : {3'b0, o_desc_tsbits[7:3]};
@@ -115,6 +116,9 @@ module trace_rx_decoder #(
                         desc_active <= 1'b1;
                         desc_idx    <= 3'd0;
                         desc_last   <= 3'd3;
+                    end else if (in_word[7:0] == K28_7) begin
+                        active      <= 1'b0;       // ts bytes follow; ignored here (raw buffer keeps them)
+                        desc_active <= 1'b0;
                     end else if (in_word[7:0] == K28_6) begin
                         active      <= 1'b0;
                         desc_active <= 1'b0;

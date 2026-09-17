@@ -40,7 +40,8 @@ module easycdr_trace_tx #(
     parameter HAS_PERIODIC  = 1,
     parameter HAS_TRIGGER   = 1,
     parameter FIFO_RAM      = "distributed", // "block" on GW5A (no distributed RAM)
-    parameter [31:0] CFG_HASH = 32'h0        // signal-map hash (host/tracemap.py), sent in the descriptor
+    parameter [31:0] CFG_HASH = 32'h0,       // signal-map hash (host/tracemap.py), sent in the descriptor
+    parameter TICK_LOG2     = 16      // tick record [K28.7][ts] every 2^TICK_LOG2 sclk (end-of-trace marker)
 ) (
     input  wire             sclk,
     input  wire             srstn,
@@ -53,6 +54,7 @@ module easycdr_trace_tx #(
     input  wire             i_desc_req,
     input  wire             i_periodic_en,
     input  wire             i_change_dis,
+    input  wire             i_tick_dis,     // 1: no tick records (MODE bit2)
     input  wire [23:0]      i_period,       // sclk cycles
     input  wire             i_arm,
     input  wire [WIDTH-1:0] i_trig_mask,
@@ -69,7 +71,8 @@ module easycdr_trace_tx #(
     output wire             o_done
 );
     localparam REC_BITS = TS_BITS + WIDTH;
-    localparam CFG_W    = 1 + WIDTH + 1 + 1 + 24 + WIDTH + WIDTH + 16;
+    localparam FIFO_DW  = REC_BITS + 1;              // + tick flag
+    localparam CFG_W    = 1 + WIDTH + 1 + 1 + 1 + 24 + WIDTH + WIDTH + 16;
 
     //------------------------------------------------------------------
     // sample-domain reset: link reset (async) + user reset, released in sclk
@@ -80,7 +83,7 @@ module easycdr_trace_tx #(
     //------------------------------------------------------------------
     // control crossing clk -> sclk
     //------------------------------------------------------------------
-    wire [CFG_W-1:0] cfg_l = {i_enable, i_ignore_mask, i_periodic_en, i_change_dis,
+    wire [CFG_W-1:0] cfg_l = {i_enable, i_ignore_mask, i_periodic_en, i_change_dis, i_tick_dis,
                               i_period, i_trig_mask, i_trig_value, i_post};
     wire [CFG_W-1:0] cfg_s;
     trace_cdc_bus #(.W(CFG_W)) u_cfg(
@@ -89,9 +92,10 @@ module easycdr_trace_tx #(
     wire [WIDTH-1:0] f_ignore_mask = cfg_s[CFG_W-2 -: WIDTH];
     wire             f_periodic_en = cfg_s[CFG_W-2-WIDTH];
     wire             f_change_dis  = cfg_s[CFG_W-3-WIDTH];
-    wire [23:0]      f_period      = cfg_s[CFG_W-4-WIDTH -: 24];
-    wire [WIDTH-1:0] f_trig_mask   = cfg_s[CFG_W-28-WIDTH -: WIDTH];
-    wire [WIDTH-1:0] f_trig_value  = cfg_s[CFG_W-28-2*WIDTH -: WIDTH];
+    wire             f_tick_dis    = cfg_s[CFG_W-4-WIDTH];
+    wire [23:0]      f_period      = cfg_s[CFG_W-5-WIDTH -: 24];
+    wire [WIDTH-1:0] f_trig_mask   = cfg_s[CFG_W-29-WIDTH -: WIDTH];
+    wire [WIDTH-1:0] f_trig_value  = cfg_s[CFG_W-29-2*WIDTH -: WIDTH];
     wire [15:0]      f_post        = cfg_s[15:0];
 
     wire f_arm;
@@ -102,21 +106,21 @@ module easycdr_trace_tx #(
     // frontend (sclk) -> async FIFO -> link serializer (clk)
     //------------------------------------------------------------------
     wire                rec_wr, fifo_full, fifo_empty, fifo_rd, drop;
-    wire [REC_BITS-1:0] rec_data, fifo_data;
+    wire [FIFO_DW-1:0]  rec_data, fifo_data;
     wire                f_armed, f_triggered, f_done;
 
     trace_frontend #(
         .WIDTH(WIDTH), .TS_BITS(TS_BITS), .SYNC_STAGES(SYNC_STAGES),
-        .HAS_PERIODIC(HAS_PERIODIC), .HAS_TRIGGER(HAS_TRIGGER)
+        .HAS_PERIODIC(HAS_PERIODIC), .HAS_TRIGGER(HAS_TRIGGER), .TICK_LOG2(TICK_LOG2)
     ) u_fe(
         .sclk(sclk), .rstn(frstn), .sig(sig),
         .i_enable(f_enable), .i_ignore_mask(f_ignore_mask),
-        .i_periodic_en(f_periodic_en), .i_change_dis(f_change_dis), .i_period(f_period),
-        .i_arm(f_arm), .i_trig_mask(f_trig_mask), .i_trig_value(f_trig_value), .i_post(f_post),
+        .i_periodic_en(f_periodic_en), .i_change_dis(f_change_dis), .i_tick_dis(f_tick_dis),
+        .i_period(f_period), .i_arm(f_arm), .i_trig_mask(f_trig_mask), .i_trig_value(f_trig_value), .i_post(f_post),
         .i_fifo_full(fifo_full), .o_rec_wr(rec_wr), .o_rec_data(rec_data), .o_drop(drop),
         .o_armed(f_armed), .o_triggered(f_triggered), .o_done(f_done));
 
-    trace_afifo #(.DW(REC_BITS), .AW(FIFO_AW), .RAM_STYLE(FIFO_RAM)) u_fifo(
+    trace_afifo #(.DW(FIFO_DW), .AW(FIFO_AW), .RAM_STYLE(FIFO_RAM)) u_fifo(
         .wclk(sclk), .wrstn(frstn), .wr_en(rec_wr), .wr_data(rec_data), .wfull(fifo_full),
         .rclk(clk), .rrstn(rstn), .rd_en(fifo_rd), .rd_data(fifo_data), .rempty(fifo_empty));
 

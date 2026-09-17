@@ -27,6 +27,7 @@
   th, td { padding:2px 8px; text-align:right; border-bottom:1px solid var(--line); white-space:nowrap; }
   th { position:sticky; top:0; background:var(--panel); color:var(--mut); }
   tr.trig td { color:var(--trig); font-weight:bold; }
+  tr.tick td { color:var(--fg2, #888); font-style:italic; }
   progress { width:200px; vertical-align:middle; }
   .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 </style>
@@ -118,7 +119,7 @@ spare:7
 </main>
 <script>
 'use strict';
-const K28_1 = 0x3c, K28_2 = 0x5c;
+const K28_1 = 0x3c, K28_2 = 0x5c, K28_7 = 0xfc;   // record / overflow / tick (ts only)
 const $ = id => document.getElementById(id);
 const log = s => { $('status').textContent += s + '\n'; };
 const clearLog = () => { $('status').textContent = ''; };
@@ -256,17 +257,22 @@ function fromLE(bytes) { let v = 0n; for (let i = bytes.length - 1; i >= 0; i--)
 
 function decode(raw, p) {
   const n = raw.length / 2, recLen = p.tb + p.db;
-  const rec = [], stat = { overflows: 0, junk: 0 };
+  const rec = [], stat = { overflows: 0, junk: 0, ticks: 0 };
+  // ticks ([K28.7][ts]) carry no data: they become entries that repeat the
+  // previous value, so the waveform extends to the last tick (end marker)
   for (let i = 0; i < n;) {
     const k = raw[2*i] & 1, b = raw[2*i+1];
     if (k && b === K28_2) { stat.overflows++; i++; continue; }
-    if (k && b === K28_1 && i + recLen < n) {
+    const isTick = k && b === K28_7, len = isTick ? p.tb : recLen;
+    if (k && (b === K28_1 || isTick) && i + len < n) {
       let ok = true;
-      for (let j = 1; j <= recLen; j++) if (raw[2*(i+j)] & 1) { ok = false; break; }
+      for (let j = 1; j <= len; j++) if (raw[2*(i+j)] & 1) { ok = false; break; }
       if (ok) {
-        const body = []; for (let j = 1; j <= recLen; j++) body.push(raw[2*(i+j)+1]);
-        rec.push({ ts: fromLE(body.slice(0, p.tb)), data: fromLE(body.slice(p.tb)) });
-        i += 1 + recLen; continue;
+        const body = []; for (let j = 1; j <= len; j++) body.push(raw[2*(i+j)+1]);
+        const ts = fromLE(body.slice(0, p.tb));
+        if (isTick) { stat.ticks++; if (rec.length) rec.push({ ts, data: rec[rec.length-1].data, tick: true }); }
+        else rec.push({ ts, data: fromLE(body.slice(p.tb)) });
+        i += 1 + len; continue;
       }
     }
     stat.junk++; i++;
@@ -310,10 +316,10 @@ async function capture() {
     log(`dump ${raw.length} bytes in ${dt.toFixed(2)} s (${(raw.length*8/dt/1e3).toFixed(0)} kbps)`);
     result = decode(raw, p); result.p = p;
     if ($('useTrig').checked) {
-      trigIdx = result.rec.findIndex(r => (r.data & mask) === (val & mask));
+      trigIdx = result.rec.findIndex(r => !r.tick && (r.data & mask) === (val & mask));
       if (trigIdx < 0) trigIdx = null;
     }
-    log(`${result.rec.length} records, ${result.stat.overflows} overflow markers, ${result.stat.junk} skipped entries` +
+    log(`${result.rec.length - result.stat.ticks} records, ${result.stat.ticks} ticks, ${result.stat.overflows} overflow markers, ${result.stat.junk} skipped entries` +
         (trigIdx !== null ? `, first trigger match at record #${trigIdx}` : ''));
     render();
     $('btnCsv').disabled = $('btnVcd').disabled = false;
@@ -331,9 +337,10 @@ function renderTable() {
   $('tbl').tHead.rows[0].innerHTML = '<th>#</th><th>ts [ns]</th><th>Δt [ns]</th>' + cols.map(s => `<th>${s.name}</th>`).join('') + '<th>data</th>';
   const maxRows = 5000, lo = trigIdx !== null ? Math.max(0, trigIdx - maxRows/2) : 0;
   for (let n = lo; n < Math.min(rec.length, lo + maxRows); n++) {
-    const r = rec[n], tr = document.createElement('tr'); if (n === trigIdx) tr.className = 'trig';
+    const r = rec[n], tr = document.createElement('tr'); if (n === trigIdx) tr.className = 'trig'; else if (r.tick) tr.className = 'tick';
     const dt = n ? '+' + (r.t - rec[n-1].t).toFixed(0) : '';
-    tr.innerHTML = `<td>${n}</td><td>${r.t.toFixed(0)}</td><td>${dt}</td>` + cols.map(s => `<td>${fmtSig(s, sigValue(r.data, s))}</td>`).join('') + `<td>0x${r.data.toString(16).padStart(hex,'0')}</td>`;
+    tr.innerHTML = `<td>${n}</td><td>${r.t.toFixed(0)}</td><td>${dt}</td>` + (r.tick ? `<td colspan="${cols.length + 1}">tick (no change)</td>`
+      : cols.map(s => `<td>${fmtSig(s, sigValue(r.data, s))}</td>`).join('') + `<td>0x${r.data.toString(16).padStart(hex,'0')}</td>`);
     tr.onclick = () => { view.center(r.t); drawWave(); };
     frag.appendChild(tr);
   }
@@ -617,7 +624,7 @@ function download(name, text, type) {
 $('btnCsv').onclick = () => {
   const { rec, p } = result, named = sigMap && $('useMap').checked && sigMap.width === p.width, cols = named ? rows() : [];
   const head = 'index,timestamp_ns,' + cols.map(s => s.name).join(',') + (cols.length ? ',' : '') + 'data\n';
-  download('trace.csv', head + rec.map((r, i) => `${i},${r.t.toFixed(0)},` + cols.map(s => sigValue(r.data, s).toString()).join(',') + (cols.length ? ',' : '') + r.data).join('\n') + '\n', 'text/csv');
+  download('trace.csv', head + rec.filter(r => !r.tick).map((r, i) => `${i},${r.t.toFixed(0)},` + cols.map(s => sigValue(r.data, s).toString()).join(',') + (cols.length ? ',' : '') + r.data).join('\n') + '\n', 'text/csv');
 };
 $('btnVcd').onclick = () => {
   const { rec, p } = result, named = sigMap && $('useMap').checked && sigMap.width === p.width;
@@ -630,6 +637,7 @@ $('btnVcd').onclick = () => {
     vars.forEach((v, i) => { const val = named ? sigValue(r.data, v) : r.data; if (val !== last[i]) { chg += (v.width > 1 ? `b${val.toString(2)} ${id(i)}` : `${val}${id(i)}`) + '\n'; last[i] = val; } });
     if (chg) s += `#${r.t.toFixed(0)}\n` + chg;
   }
+  if (rec.length && rec[rec.length-1].tick) s += `#${rec[rec.length-1].t.toFixed(0)}\n`;   // end of trace (last tick)
   download('trace.vcd', s, 'text/plain');
 };
 

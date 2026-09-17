@@ -106,7 +106,9 @@ def main():
         rl = tb + db
         while i < n:
             k, b = raw[2*i] & 1, raw[2*i+1]
-            if k and b == 0x3C and i + rl < n and not any(raw[2*(i+j)] & 1 for j in range(1, rl + 1)):
+            if k and b == 0xFC and i + tb < n:          # K28.7 tick [ts]: skip (no data)
+                i += 1 + tb
+            elif k and b == 0x3C and i + rl < n and not any(raw[2*(i+j)] & 1 for j in range(1, rl + 1)):
                 body = [raw[2*(i+j)+1] for j in range(1, rl + 1)]
                 ts = int.from_bytes(bytes(body[:tb]), "little"); data = int.from_bytes(bytes(body[tb:]), "little")
                 recs.append((ts, data)); i += 1 + rl

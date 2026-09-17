@@ -12,12 +12,18 @@
 //   HAS_PERIODIC / HAS_TRIGGER : 0 removes the periodic sampler / trigger
 //                 FSM (inputs ignored). Tied-off inputs are folded by
 //                 synthesis anyway; the parameters make the intent explicit.
+//   TICK_LOG2   : a "tick" record (timestamp only, no data) is emitted every
+//                 2^TICK_LOG2 sclk while enabled and !i_tick_dis, so the
+//                 receiver knows how far the trace extends past the last
+//                 change (end-of-capture marker). Bit REC_BITS of o_rec_data
+//                 flags a tick.
 module trace_frontend #(
     parameter WIDTH        = 16,
     parameter TS_BITS      = 24,
     parameter SYNC_STAGES  = 2,
     parameter HAS_PERIODIC = 1,
-    parameter HAS_TRIGGER  = 1
+    parameter HAS_TRIGGER  = 1,
+    parameter TICK_LOG2    = 16
 ) (
     input  wire                     sclk,
     input  wire                     rstn,          // synchronous to sclk
@@ -27,6 +33,7 @@ module trace_frontend #(
     input  wire [WIDTH-1:0]         i_ignore_mask,
     input  wire                     i_periodic_en,
     input  wire                     i_change_dis,
+    input  wire                     i_tick_dis,
     input  wire [23:0]              i_period,      // sclk cycles
     input  wire                     i_arm,         // one sclk pulse
     input  wire [WIDTH-1:0]         i_trig_mask,
@@ -34,8 +41,8 @@ module trace_frontend #(
     input  wire [15:0]              i_post,
 
     input  wire                     i_fifo_full,
-    output wire                     o_rec_wr,      // write {ts, data} this cycle
-    output wire [TS_BITS+WIDTH-1:0] o_rec_data,
+    output wire                     o_rec_wr,      // write {tick, ts, data} this cycle
+    output wire [TS_BITS+WIDTH:0]   o_rec_data,
     output reg                      o_drop,        // record lost (FIFO full)
 
     output wire                     o_armed,
@@ -93,6 +100,7 @@ module trace_frontend #(
     // until the match, TS_RUN counts i_post records, TS_DONE holds until re-arm
     //------------------------------------------------------------------
     wire rec_wr;
+    reg  tick_r;
     wire pass, trig_fire;
     generate
         if (HAS_TRIGGER) begin : g_trig
@@ -109,7 +117,7 @@ module trace_frontend #(
                     post_last <= 1'b0;
                 end else begin
                     match_r   <= ((sig_s ^ i_trig_value) & i_trig_mask) == {WIDTH{1'b0}};
-                    rec_wr_r  <= rec_wr;
+                    rec_wr_r  <= rec_wr && !tick_r;   // ticks do not count as post-trigger records
                     post_last <= (post_left <= 16'd1);
                     if (i_arm) begin
                         tstate    <= TS_ARMED;
@@ -147,9 +155,17 @@ module trace_frontend #(
     reg [WIDTH-1:0]   sig_prev, sig_d;
     reg               chg_r, en_q, init_done;
     reg [TS_BITS-1:0] ts;
+    reg [TICK_LOG2-1:0] tick_cnt;
+    wire tick_hit = (tick_cnt == {TICK_LOG2{1'b0}});
+    wire chg_now;
     assign rec_wr     = chg_r && !i_fifo_full;
     assign o_rec_wr   = rec_wr;
-    assign o_rec_data = {ts, sig_d};
+    assign o_rec_data = {tick_r, ts, sig_d};
+    // a data record is sent on the first sample, when i_enable rises, on a
+    // periodic hit, on a trigger and on every (unmasked) change
+    assign chg_now = trig_fire ||
+                     (pass && (!init_done || (i_enable && !en_q) || per_hit ||
+                      (!i_change_dis && (((sig_s ^ sig_prev) & ~i_ignore_mask) != {WIDTH{1'b0}}))));
 
     always @(posedge sclk or negedge rstn) begin
         if (!rstn) begin
@@ -159,16 +175,18 @@ module trace_frontend #(
             en_q      <= 1'b0;
             init_done <= 1'b0;
             ts        <= {TS_BITS{1'b0}};
+            tick_cnt  <= {TICK_LOG2{1'b0}};
+            tick_r    <= 1'b0;
             o_drop    <= 1'b0;
         end else begin
             ts       <= ts + 1'b1;
+            tick_cnt <= tick_cnt + 1'b1;
             sig_prev <= sig_s;
             sig_d    <= sig_s;
             en_q     <= i_enable;
-            // a record is also sent on the first sample and when i_enable rises
-            chg_r    <= i_enable && (trig_fire ||
-                        (pass && (!init_done || (i_enable && !en_q) || per_hit ||
-                         (!i_change_dis && (((sig_s ^ sig_prev) & ~i_ignore_mask) != {WIDTH{1'b0}})))));
+            // a tick coinciding with a data record is folded into that record
+            chg_r    <= i_enable && (chg_now || (tick_hit && !i_tick_dis));
+            tick_r   <= i_enable && !chg_now && tick_hit && !i_tick_dis;
             init_done <= 1'b1;
             o_drop    <= chg_r && i_fifo_full;
         end

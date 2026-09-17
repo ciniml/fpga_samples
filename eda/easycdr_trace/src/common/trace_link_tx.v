@@ -2,6 +2,7 @@
 //
 // Pops {ts, data} records from the record FIFO and serialises them as
 //   [K28.1][ts bytes][data bytes]   (little-endian)
+//   [K28.7][ts bytes]               tick (FIFO word flagged, no data bytes)
 // interleaved with the overflow marker (K28.2, one per request) and the
 // descriptor record [K28.4][VER=2][WIDTH][TS_BITS][flags][HASH0..3], all at record
 // boundaries; tx_link_core adds the K28.5 comma framing, K28.3 idle filler
@@ -17,7 +18,7 @@ module trace_link_tx #(
     input  wire                     rstn,
 
     input  wire                     i_fifo_empty,
-    input  wire [TS_BITS+WIDTH-1:0] i_fifo_data,   // {ts, data}
+    input  wire [TS_BITS+WIDTH:0]   i_fifo_data,   // {tick, ts, data}
     output reg                      o_fifo_rd,
 
     input  wire                     i_ovf_req,     // one clock: schedule a K28.2
@@ -40,6 +41,7 @@ module trace_link_tx #(
     localparam [7:0] K28_2 = 8'h5c;
     localparam [7:0] K28_4 = 8'h9c;
     localparam [7:0] K28_6 = 8'hdc;   // signal-map text: [K28.6][LEN][LEN bytes]
+    localparam [7:0] K28_7 = 8'hfc;   // tick: [K28.7][ts bytes]
 
     //------------------------------------------------------------------
     // descriptor scheduler and overflow marker request
@@ -92,7 +94,7 @@ module trace_link_tx #(
     // byte serializer
     //------------------------------------------------------------------
     reg                sb_active, desc_active;
-    reg [7:0]          sb_idx;
+    reg [7:0]          sb_idx, sb_last;
     reg [REC_BITS-1:0] cur;          // {data, ts}: byte 0 = ts[7:0]
     reg                b_valid, b_is_k;
     reg [7:0]          b_data;
@@ -107,6 +109,7 @@ module trace_link_tx #(
             desc_idx    <= 3'd0;
             desc_ack    <= 1'b0;
             sb_idx      <= 8'd0;
+            sb_last     <= 8'd0;
             map_ack     <= 1'b0;
             map_active  <= 1'b0;
             map_lenbyte <= 1'b0;
@@ -154,7 +157,9 @@ module trace_link_tx #(
                     end else if (!i_fifo_empty && !o_fifo_rd) begin
                         cur       <= {i_fifo_data[WIDTH-1:0], i_fifo_data[REC_BITS-1:WIDTH]};
                         o_fifo_rd <= 1'b1;
-                        b_valid   <= 1'b1; b_is_k <= 1'b1; b_data <= K28_1;
+                        b_valid   <= 1'b1; b_is_k <= 1'b1;
+                        b_data    <= i_fifo_data[REC_BITS] ? K28_7 : K28_1;
+                        sb_last   <= i_fifo_data[REC_BITS] ? TS_BYTES-1 : REC_BYTES-1;
                         sb_active <= 1'b1;
                         sb_idx    <= 8'd0;
                     end else begin
@@ -163,7 +168,7 @@ module trace_link_tx #(
                 end else begin
                     b_valid <= 1'b1; b_is_k <= 1'b0;
                     b_data  <= cur_byte;
-                    if (sb_idx == REC_BYTES-1) sb_active <= 1'b0;
+                    if (sb_idx == sb_last) sb_active <= 1'b0;
                     sb_idx <= sb_idx + 1'b1;
                 end
             end
