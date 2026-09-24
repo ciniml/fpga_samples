@@ -68,7 +68,7 @@ if {${TARGET} == "tangprimer25k"} {
 
 if {${TARGET} == "tangprimer25k"} {
     # host side: EasyCDR RX + capture buffer + UART dump
-    add_file -type verilog [file normalize ${SRC_DIR}/trace_capture.v]
+    add_file -type verilog [file normalize ${RTL_DIR}/trace/trace_capture.sv]
     add_file -type verilog [file normalize ${RTL_DIR}/trace/trace_rx_decoder.sv]
     add_file -type verilog [file normalize ${RTL_DIR}/trace/trace_link_diag.sv]
     add_file -type verilog [file normalize ${RTL_DIR}/trace/trace_sym_inject.sv]

@@ -1,0 +1,549 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file trace_capture.veryl
+ * @brief Trace capture buffer with trigger / pre-trigger support and host dump.
+ *
+ * Capture domain : pclk (EasyCDR parallel clock). While armed, every entry
+ *                  ({K flag, byte}) is written into a ring buffer. Records
+ *                  are decoded on the fly; when the trigger condition
+ *                  (rec_data & mask) == (value & mask) is met, POST more
+ *                  entries are written and the buffer freezes. Entries
+ *                  written before the trigger are the pre-trigger history.
+ * Control domain : clk_sys. The host transport is abstracted as a byte
+ *                  stream (valid/ready both ways) so UART, USB CDC or any
+ *                  other bridge can be attached at the top level.
+ * Both resets are asynchronous active-high.
+ *
+ * Command protocol (host -> FPGA):
+ *   'S'                         : arm, trigger immediately, fill the whole
+ *                                 buffer (POST = buffer size)
+ *   'T' mask[0..DB-1] val[0..DB-1]: set trigger mask/value (LSB first,
+ *                                 DB = WIDTH/8 bytes each, WIDTH from the
+ *                                 last descriptor - send '?' first)
+ *   'A' post_hi post_lo         : arm and wait for the trigger, then keep
+ *                                 POST entries after it
+ *   'D'                         : dump the buffer in chronological order
+ *                                 (2 bytes per entry: entry[DATA_BITS-1:8] then
+ *                                 entry[7:0]; bit 0 of the first byte = K flag)
+ *   '?'                         : reply 8 bytes [VER][WIDTH][TS_BITS][ADDR_BITS]
+ *                                 [HASH0..HASH3]. VER/WIDTH/TS_BITS/HASH come
+ *                                 from the last link descriptor (0 if none seen
+ *                                 yet; HASH 0 for VER 1), ADDR_BITS from the
+ *                                 local parameter.
+ *   'X' len byte0..len-1        : forward len bytes to the reverse control
+ *                                 channel (o_fwd_valid/o_fwd_data strobes;
+ *                                 the top level buffers them for its
+ *                                 ManchesterTx)
+ *   'F'                         : reply 1 byte: TX descriptor flags (bit0 enable,
+ *                                 bit1 armed, bit2 triggered, bit3 done, bit4 periodic)
+ *   'Z'                         : abort - disarm a pending capture and return
+ *                                 to idle (also accepted while waiting for
+ *                                 the trigger; replies 'Z')
+ *   'R' mode                    : raw capture mode (top level: 1 = store every
+ *                                 received word as {align, err, dout[9:0]}, no
+ *                                 record filtering); replies 'R'
+ *   'J' mode len sym0_lo sym0_hi ...: load len raw 10-bit symbols (LSB first, bit 0
+ *                                 = first on the wire) into the self-test symbol
+ *                                 injector and start it: mode 0 stop, 1 once,
+ *                                 2 loop (see trace_sym_inject); replies 'J'
+ *   'N'                         : signal-map text received from the TX ([K28.6] blob,
+ *                                 requested with CTRL.MAP_REQ over the reverse channel):
+ *                                 reply [LEN] then LEN bytes (LEN 0 = none received)
+ *   'L'                         : link diagnostics: o_diag_req strobe, then the 14
+ *                                 bytes of i_diag_data (see trace_link_diag)
+ *   'P'                         : one-clock o_pulse_req strobe (reset burst for
+ *                                 the pulse-only reverse channel); replies 'P'.
+ *                                 Also accepted while waiting for the trigger
+ *                                 (reset the TX inside the capture window)
+ * FPGA -> host: 'K' when the capture has frozen.
+ */
+pub module trace_capture #(
+    param ADDR_BITS    : u32 = 14,
+    param DATA_BITS    : u32 = 9 ,
+    param MAX_WIDTH    : u32 = 64, // trigger compare width (>= any TX WIDTH)
+    param DEFAULT_WIDTH: u32 = 16, // assumed until a descriptor is seen
+) (
+    pclk     : input 'p clock_posedge   ,
+    prst     : input 'p reset_async_high,
+    in_valid : input 'p logic           , // entry strobe (buffer content)
+    in_data  : input 'p logic<DATA_BITS>,
+    rec_valid: input 'p logic           , // decoded record (trigger source)
+    rec_data : input 'p logic<MAX_WIDTH>,
+    // link descriptor (pclk domain, quasi-static)
+    i_desc_ver   : input 'p logic<8> ,
+    i_desc_width : input 'p logic<8> ,
+    i_desc_tsbits: input 'p logic<8> ,
+    i_desc_flags : input 'p logic<8> ,
+    i_desc_hash  : input 'p logic<32>,
+    // signal-map text from the decoder (pclk)
+    i_map_wr  : input 'p logic   ,
+    i_map_addr: input 'p logic<8>,
+    i_map_data: input 'p logic<8>,
+    i_map_len : input 'p logic<8>,
+
+    clk_sys: input 'h clock_posedge   ,
+    rst_sys: input 'h reset_async_high,
+    // host byte stream (transport-agnostic)
+    h_rx_valid: input  'h logic   , // byte from host
+    h_rx_data : input  'h logic<8>,
+    h_tx_valid: output 'h logic   , // byte to host
+    h_tx_data : output 'h logic<8>,
+    h_tx_ready: input  'h logic   ,
+    // reverse control channel ('X' payload, clk_sys domain)
+    o_fwd_valid: output 'h logic   ,
+    o_fwd_data : output 'h logic<8>,
+    o_pulse_req: output 'h logic   ,
+    // link diagnostics (trace_link_diag, clk_sys domain)
+    o_diag_req : output 'h logic     ,
+    i_diag_done: input  'h logic     ,
+    i_diag_data: input  'h logic<112>,
+    // raw capture mode + symbol injector (clk_sys domain)
+    o_raw_mode    : output 'h logic    ,
+    o_inj_wr_valid: output 'h logic    ,
+    o_inj_wr_idx  : output 'h logic<6> ,
+    o_inj_wr_data : output 'h logic<10>,
+    o_inj_set     : output 'h logic    ,
+    o_inj_mode    : output 'h logic<2> ,
+    o_inj_len     : output 'h logic<7> ,
+) {
+    const BUF_SIZE: u32 = 2 ** ADDR_BITS;
+    const MAX_DB  : u32 = MAX_WIDTH / 8;
+    const DEF_DB  : u32 = DEFAULT_WIDTH / 8;
+
+    // host command bytes
+    const CMD_S: logic<8> = 8'h53;
+    const CMD_T: logic<8> = 8'h54;
+    const CMD_A: logic<8> = 8'h41;
+    const CMD_D: logic<8> = 8'h44;
+    const CMD_Q: logic<8> = 8'h3f; // '?'
+    const CMD_X: logic<8> = 8'h58;
+    const CMD_F: logic<8> = 8'h46;
+    const CMD_Z: logic<8> = 8'h5a;
+    const CMD_R: logic<8> = 8'h52;
+    const CMD_J: logic<8> = 8'h4a;
+    const CMD_N: logic<8> = 8'h4e;
+    const CMD_L: logic<8> = 8'h4c;
+    const CMD_P: logic<8> = 8'h50;
+    const RSP_K: logic<8> = 8'h4b;
+
+    let rx_valid: 'h logic    = h_rx_valid;
+    let rx_data : 'h logic<8> = h_rx_data;
+    var tx_valid: 'h logic   ;
+    var tx_data : 'h logic<8>;
+    let tx_ready: 'h logic    = h_tx_ready;
+    assign h_tx_valid = tx_valid;
+    assign h_tx_data  = tx_data;
+
+    //------------------------------------------------------------------
+    // control registers (clk_sys), quasi-static towards pclk
+    //------------------------------------------------------------------
+    var trig_mask    : 'h logic<MAX_DB, 8>    ; // byte i = bits [8i+7:8i]
+    var trig_value   : 'h logic<MAX_DB, 8>    ;
+    var post_count   : 'h logic<ADDR_BITS + 1>; // entries to keep after the trigger
+    var arm_immediate: 'h logic               ; // 1: 'S' (trigger at once)
+    var arm_tgl_sys  : 'h logic               ;
+    var abort_tgl_sys: 'h logic               ;
+
+    // arm / abort requests: clk_sys -> pclk
+    var arm_sync_p  : 'p logic<3>;
+    var abort_sync_p: 'p logic<3>;
+    unsafe (cdc) {
+        always_ff (pclk, prst) {
+            if_reset {
+                arm_sync_p   = 3'b000;
+                abort_sync_p = 3'b000;
+            } else {
+                arm_sync_p   = {arm_sync_p[1:0], arm_tgl_sys};
+                abort_sync_p = {abort_sync_p[1:0], abort_tgl_sys};
+            }
+        }
+    }
+    let arm_req_p  : 'p logic = arm_sync_p[2] ^ arm_sync_p[1];
+    let abort_req_p: 'p logic = abort_sync_p[2] ^ abort_sync_p[1];
+
+    //------------------------------------------------------------------
+    // capture memory + FSM (pclk)
+    //------------------------------------------------------------------
+    var buffer: 'p logic<DATA_BITS> [BUF_SIZE];
+    #[sv("syn_ramstyle = \"block_ram\"")]
+    var mapbuf   : 'p logic<8> [256]; // 1 SDPB (write pclk, sync read clk_sys)
+    var map_len_s: 'h logic<8>      ;
+    var map_rdata: 'h logic<8>      ;
+    var waddr    : 'p logic<ADDR_BITS>;
+    always_ff (pclk) {
+        if i_map_wr {
+            mapbuf[i_map_addr] = i_map_data;
+        }
+    }
+    unsafe (cdc) {
+        always_ff (clk_sys) {
+            map_len_s = i_map_len;
+        }
+    }
+
+    const CS_IDLE: logic<2> = 2'd0;
+    const CS_WAIT: logic<2> = 2'd1; // ring-writing, waiting for the trigger
+    const CS_POST: logic<2> = 2'd2; // ring-writing, counting down
+    var cstate    : 'p logic<2>            ;
+    var post_left : 'p logic<ADDR_BITS + 1>;
+    var full_tgl_p: 'p logic               ;
+
+    var trig_hit: 'p logic;
+    unsafe (cdc) { // trig_mask / trig_value are quasi-static (written before arming)
+        assign trig_hit = rec_valid && ((rec_data & trig_mask) == (trig_value & trig_mask));
+    }
+
+    always_ff (pclk) {
+        if cstate != CS_IDLE && in_valid {
+            buffer[waddr] = in_data;
+        }
+    }
+    unsafe (cdc) { // post_count / arm_immediate / trig_* are quasi-static (set before arm)
+        always_ff (pclk, prst) {
+            if_reset {
+                cstate     = CS_IDLE;
+                waddr      = 0;
+                post_left  = 0;
+                full_tgl_p = 1'b0;
+            } else {
+                if cstate != CS_IDLE && in_valid {
+                    waddr = waddr + 1;
+                }
+                if abort_req_p {
+                    cstate = CS_IDLE;
+                } else {
+                    case cstate {
+                        CS_IDLE: if arm_req_p {
+                            post_left = post_count;
+                            cstate    = if arm_immediate ? CS_POST : CS_WAIT;
+                        }
+                        CS_WAIT: if trig_hit {
+                            cstate = CS_POST;
+                        }
+                        CS_POST: if in_valid {
+                            if post_left <= 1 {
+                                cstate     = CS_IDLE;
+                                full_tgl_p = ~full_tgl_p;
+                            }
+                            post_left = post_left - 1;
+                        }
+                        default: cstate = CS_IDLE;
+                    }
+                }
+            }
+        }
+    }
+
+    // capture-done notification: pclk -> clk_sys
+    var full_sync_s: 'h logic<3>;
+    // oldest entry = current write pointer (quasi-static once frozen)
+    var waddr_s: 'h logic<ADDR_BITS>;
+    // descriptor bytes: quasi-static, double-registered into clk_sys
+    var desc_m: 'h logic<64>;
+    var desc_s: 'h logic<64>;
+    unsafe (cdc) {
+        always_ff (clk_sys, rst_sys) {
+            if_reset {
+                full_sync_s = 3'b000;
+            } else {
+                full_sync_s = {full_sync_s[1:0], full_tgl_p};
+            }
+        }
+        always_ff (clk_sys) {
+            waddr_s = waddr;
+            desc_m  = {i_desc_hash, i_desc_flags, i_desc_tsbits, i_desc_width, i_desc_ver};
+            desc_s  = desc_m;
+        }
+    }
+    let full_evt_s: 'h logic = full_sync_s[2] ^ full_sync_s[1];
+    // trigger argument byte count = WIDTH/8 from the descriptor (clamped)
+    let db_raw: 'h logic<8> = if desc_s[7:0] == 8'd0 ? DEF_DB as 8 : {3'b0, desc_s[15:11]};
+    let db    : 'h logic<8> = if db_raw >: MAX_DB as 8 ? MAX_DB as 8 : db_raw;
+
+    //------------------------------------------------------------------
+    // command parser / dump FSM (clk_sys)
+    //------------------------------------------------------------------
+    const ST_IDLE : logic<4> = 4'd0;
+    const ST_ARGS : logic<4> = 4'd1; // collecting command arguments
+    const ST_WAIT : logic<4> = 4'd2; // capture in progress
+    const ST_DUMP : logic<4> = 4'd3;
+    const ST_INFO : logic<4> = 4'd4; // '?' reply
+    const ST_FWD  : logic<4> = 4'd5; // 'X' payload forwarding
+    const ST_DIAGW: logic<4> = 4'd6; // 'L': waiting for the snapshot
+    const ST_DIAG : logic<4> = 4'd7; // 'L': sending 14 bytes
+    const ST_MAP  : logic<4> = 4'd8; // 'N': sending [LEN][bytes]
+
+    var state     : 'h logic<4>            ;
+    var map_idx   : 'h logic<8>            ;
+    var cmd       : 'h logic<8>            ;
+    var arg_idx   : 'h logic<8>            ;
+    var raddr     : 'h logic<ADDR_BITS>    ;
+    var dump_left : 'h logic<ADDR_BITS + 1>;
+    var rdata     : 'h logic<DATA_BITS>    ;
+    var rd_pending: 'h logic               ;
+    var dump_lo   : 'h logic               ;
+    var fwd_left  : 'h logic<8>            ;
+    var diag_q    : 'h logic<112>          ;
+    var inj_lo    : 'h logic<8>            ;
+    var inj_n     : 'h logic<8>            ;
+    let inj_idx   : 'h logic<8>             = (arg_idx - 8'd3) >> 1;
+
+    // memory reads (pclk-written RAMs, read one cycle ahead of use)
+    unsafe (cdc) {
+        always_ff (clk_sys) {
+            rdata     = buffer[raddr];
+            map_rdata = mapbuf[map_idx];
+        }
+    }
+
+    always_ff (clk_sys, rst_sys) {
+        if_reset {
+            state          = ST_IDLE;
+            cmd            = 8'h00;
+            arg_idx        = 8'd0;
+            trig_mask      = 0;
+            trig_value     = 0;
+            post_count     = 0;
+            arm_immediate  = 1'b0;
+            arm_tgl_sys    = 1'b0;
+            abort_tgl_sys  = 1'b0;
+            tx_valid       = 1'b0;
+            tx_data        = 8'h00;
+            raddr          = 0;
+            dump_left      = 0;
+            rd_pending     = 1'b0;
+            dump_lo        = 1'b0;
+            o_fwd_valid    = 1'b0;
+            o_fwd_data     = 8'h00;
+            o_pulse_req    = 1'b0;
+            o_diag_req     = 1'b0;
+            diag_q         = 112'd0;
+            o_raw_mode     = 1'b0;
+            o_inj_wr_valid = 1'b0;
+            o_inj_wr_idx   = 6'd0;
+            o_inj_wr_data  = 10'd0;
+            o_inj_set      = 1'b0;
+            o_inj_mode     = 2'd0;
+            o_inj_len      = 7'd0;
+            inj_lo         = 8'd0;
+            inj_n          = 8'd0;
+            fwd_left       = 8'd0;
+            map_idx        = 8'd0;
+        } else {
+            o_fwd_valid    = 1'b0;
+            o_pulse_req    = 1'b0;
+            o_diag_req     = 1'b0;
+            o_inj_wr_valid = 1'b0;
+            o_inj_set      = 1'b0;
+            if tx_valid && tx_ready {
+                tx_valid = 1'b0;
+            }
+            rd_pending = 1'b0;
+
+            case state {
+                ST_IDLE: if rx_valid {
+                    cmd     = rx_data;
+                    arg_idx = 8'd0;
+                    case rx_data {
+                        CMD_S: {
+                            post_count    = BUF_SIZE;
+                            arm_immediate = 1'b1;
+                            arm_tgl_sys   = ~arm_tgl_sys;
+                            state         = ST_WAIT;
+                        }
+                        CMD_T, CMD_A, CMD_R, CMD_J: state = ST_ARGS;
+                        CMD_Q: {
+                            arg_idx = 8'd0;
+                            state   = ST_INFO;
+                        }
+                        CMD_X: {
+                            fwd_left = 8'd0;
+                            state    = ST_FWD;
+                        }
+                        CMD_Z: {
+                            abort_tgl_sys = ~abort_tgl_sys;
+                            tx_data       = CMD_Z;
+                            tx_valid      = 1'b1;
+                        }
+                        CMD_F: {
+                            tx_data  = desc_s[31:24];
+                            tx_valid = 1'b1;
+                        }
+                        CMD_P: {
+                            o_pulse_req = 1'b1;
+                            tx_data     = CMD_P;
+                            tx_valid    = 1'b1;
+                        }
+                        CMD_L: {
+                            o_diag_req = 1'b1;
+                            state      = ST_DIAGW;
+                        }
+                        CMD_N: {
+                            map_idx  = 8'd0;
+                            tx_data  = map_len_s;
+                            tx_valid = 1'b1;
+                            state    = if map_len_s == 8'd0 ? ST_IDLE : ST_MAP;
+                        }
+                        CMD_D: {
+                            raddr      = waddr_s;
+                            dump_left  = BUF_SIZE;
+                            rd_pending = 1'b1;
+                            dump_lo    = 1'b0;
+                            state      = ST_DUMP;
+                        }
+                        default: {}
+                    }
+                }
+                ST_ARGS: if rx_valid {
+                    arg_idx = arg_idx + 1;
+                    case cmd {
+                        CMD_T: {
+                            if arg_idx <: db {
+                                trig_mask[arg_idx] = rx_data;
+                            } else {
+                                trig_value[arg_idx - db] = rx_data;
+                            }
+                            if arg_idx == 2 * db - 1 {
+                                state = ST_IDLE;
+                            }
+                        }
+                        CMD_A: { // post count, big-endian 16 bit
+                            if arg_idx == 0 {
+                                post_count[ADDR_BITS:8] = rx_data[ADDR_BITS - 8:0];
+                            } else {
+                                post_count[7:0] = rx_data;
+                                arm_immediate   = 1'b0;
+                                arm_tgl_sys     = ~arm_tgl_sys;
+                                state           = ST_WAIT;
+                            }
+                        }
+                        CMD_R: {
+                            o_raw_mode = rx_data[0];
+                            tx_data    = CMD_R;
+                            tx_valid   = 1'b1;
+                            state      = ST_IDLE;
+                        }
+                        CMD_J: {
+                            if arg_idx == 8'd0 {
+                                o_inj_mode = rx_data[1:0];
+                            } else if arg_idx == 8'd1 {
+                                o_inj_len = rx_data[6:0];
+                                inj_n     = rx_data;
+                                if rx_data == 8'd0 {
+                                    o_inj_set = 1'b1;
+                                    tx_data   = CMD_J;
+                                    tx_valid  = 1'b1;
+                                    state     = ST_IDLE;
+                                }
+                            } else if !arg_idx[0] { // even: low byte
+                                inj_lo = rx_data;
+                            } else { // odd: high byte -> write
+                                o_inj_wr_valid = 1'b1;
+                                o_inj_wr_idx   = inj_idx[5:0];
+                                o_inj_wr_data  = {rx_data[1:0], inj_lo};
+                                if inj_idx == inj_n - 1 {
+                                    o_inj_set = 1'b1;
+                                    tx_data   = CMD_J;
+                                    tx_valid  = 1'b1;
+                                    state     = ST_IDLE;
+                                }
+                            }
+                        }
+                        default: state = ST_IDLE;
+                    }
+                }
+                ST_INFO: if !tx_valid || tx_ready {
+                    case arg_idx[2:0] {
+                        3'd0   : tx_data = desc_s[7:0]; // VER
+                        3'd1   : tx_data = desc_s[15:8]; // WIDTH
+                        3'd2   : tx_data = desc_s[23:16]; // TS_BITS
+                        3'd3   : tx_data = ADDR_BITS as 8;
+                        3'd4   : tx_data = desc_s[39:32]; // HASH LSB
+                        3'd5   : tx_data = desc_s[47:40];
+                        3'd6   : tx_data = desc_s[55:48];
+                        default: tx_data = desc_s[63:56];
+                    }
+                    tx_valid = 1'b1;
+                    arg_idx  = arg_idx + 1;
+                    if arg_idx[2:0] == 3'd7 {
+                        state = ST_IDLE;
+                    }
+                }
+                ST_FWD: if rx_valid {
+                    if fwd_left == 8'd0 {
+                        fwd_left = rx_data; // first byte = length
+                        if rx_data == 8'd0 {
+                            state = ST_IDLE;
+                        }
+                    } else {
+                        o_fwd_valid = 1'b1;
+                        o_fwd_data  = rx_data;
+                        fwd_left    = fwd_left - 1;
+                        if fwd_left == 8'd1 {
+                            state = ST_IDLE;
+                        }
+                    }
+                }
+                ST_WAIT: if full_evt_s {
+                    tx_data  = RSP_K;
+                    tx_valid = 1'b1;
+                    state    = ST_IDLE;
+                } else if rx_valid && rx_data == CMD_Z {
+                    abort_tgl_sys = ~abort_tgl_sys;
+                    tx_data       = CMD_Z;
+                    tx_valid      = 1'b1;
+                    state         = ST_IDLE;
+                } else if rx_valid && rx_data == CMD_P {
+                    o_pulse_req = 1'b1;
+                    tx_data     = CMD_P;
+                    tx_valid    = 1'b1;
+                }
+                ST_DUMP: if !tx_valid && tx_ready && !rd_pending {
+                    if !dump_lo {
+                        tx_data  = rdata[DATA_BITS - 1:8]; // bit 0 = K flag; raw mode adds dout[9], err, align
+                        tx_valid = 1'b1;
+                        dump_lo  = 1'b1;
+                    } else {
+                        tx_data    = rdata[7:0];
+                        tx_valid   = 1'b1;
+                        dump_lo    = 1'b0;
+                        raddr      = raddr + 1;
+                        rd_pending = 1'b1;
+                        dump_left  = dump_left - 1;
+                        if dump_left == 1 {
+                            state = ST_IDLE;
+                        }
+                    }
+                }
+                ST_DIAGW: if i_diag_done {
+                    diag_q  = i_diag_data;
+                    arg_idx = 8'd0;
+                    state   = ST_DIAG;
+                }
+                ST_MAP: if !tx_valid && tx_ready && !rd_pending {
+                    tx_data    = map_rdata; // mapbuf[map_idx] read one cycle earlier
+                    tx_valid   = 1'b1;
+                    map_idx    = map_idx + 1;
+                    rd_pending = 1'b1; // let map_rdata follow the new index
+                    if map_idx == map_len_s - 1 {
+                        state = ST_IDLE;
+                    }
+                }
+                ST_DIAG: if !tx_valid || tx_ready {
+                    tx_data  = diag_q[7:0];
+                    tx_valid = 1'b1;
+                    diag_q   = {8'd0, diag_q[111:8]};
+                    arg_idx  = arg_idx + 1;
+                    if arg_idx == 8'd13 {
+                        state = ST_IDLE;
+                    }
+                }
+                default: state = ST_IDLE;
+            }
+        }
+    }
+}

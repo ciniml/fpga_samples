@@ -1,7 +1,7 @@
 # トレース RTL の Veryl 化 検討メモ（2026-09-17）
 
 対象: トップレベル（`eda/*/src/*/top.v`）以外の、`eda/easycdr_trace/src/common/*.v` と
-`src/tangprimer25k/trace_*.v`。8b10b エンコーダ/デコーダ（`rtl/displayport`）はすでに Veryl、
+`src/tangprimer25k/trace_*.v`。**2026-09-25 に全段階完了、すべて `rtl/trace/*.veryl` に移行済み**（以下は当時の見積りと結果）。8b10b エンコーダ/デコーダ（`rtl/displayport`）はすでに Veryl、
 `rtl/uart` は多数のプロジェクトで共有される手書き SV（iverilog テスト付き）なので対象外。
 参照する Veryl プロジェクトの流儀は `rtl/manchester`（`clock_type = posedge`、`reset_type = sync_high`、
 `omit_project_prefix`、テスト本体は `test/*_body.sv` を `RUN` でゲート）。
@@ -82,7 +82,11 @@ rtl/trace/            Veryl プロジェクト（rtl/manchester と同じ構成�
    バイト単位の蓄積 `ts_acc[idx*8 +: 8]` は `logic<MAX_TB, 8>` の `ts_acc[idx]`、デスクリプタの連結 LHS は
    個別代入に分解。diag の `function` は Veryl の `function inc(...) -> logic<16>`。2 クロックは `'p`/`'h`、`'t`/`'h`。
    E2E 3 条件 PASS、25K クリーン合成 LUT 2958 / FF 2757 / SDPB 16、TNS 0。
-5. trace_capture（最大、文字リテラル FSM、メモリ CDC）。E2E のダンプ経路と 25K 実機で確認。
+5. **済 (2026-09-25)** trace_capture。文字リテラル `"S"` は `const CMD_S: logic<8> = 8'h53` 等、`trig_mask[arg_idx*8 +: 8]`
+   は `logic<MAX_DB, 8>` の `trig_mask[arg_idx]`、リング/マップの RAM は pclk 書込 always_ff と clk_sys 読出 always_ff
+   （`unsafe (cdc)`）に分離、トリガ比較 (pclk × clk_sys の準静的レジスタ) も `unsafe (cdc) { assign }`。
+   E2E 3 条件 PASS、25K クリーン合成 LUT 2947 / FF 2759 / SDPB 16 (buffer / mapbuf とも BSRAM 抽出)、742M5 変種も TNS 0。
+   **ここで top.v 以外は全部 Veryl。** 25K 実機は未確認。
 6. afifo（同一クロック / 比率クロック）とトリガ FSM の `veryl test` を追加。
 
 Veryl 0.20 の既知の罠（記憶メモより）: `param`/`const`、`if c ? a : b`、`>:`/`<:`、`{x repeat N}`、

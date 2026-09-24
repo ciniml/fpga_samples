@@ -17,7 +17,7 @@ Tang Primer 25K (1 枚)
 ```
 
 - 送信側は本来のトレース TX と同じ `easycdr_trace_tx`（8b10b エンコーダは `rtl/displayport` の
-  RD 管理付き）。注入器 `trace_sym_inject.v` はエンコーダ出力の後段でシンボル列を差し替える。
+  RD 管理付き）。注入器 `rtl/trace/trace_sym_inject.veryl` はエンコーダ出力の後段でシンボル列を差し替える。
 - 受信側は通常運用と同じ IP 構成（`OUTPUT10BIT` + `WORD_ALI` + `DECODE_8B10B` + `K_28_5`）。
 
 ## 2. 追加したホストコマンド (trace_capture)

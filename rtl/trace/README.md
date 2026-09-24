@@ -17,8 +17,9 @@
 | `trace_rx_decoder` | `trace_rx_decoder.sv` | 受信側: {K, byte} 語列 → レコード (幅はデスクリプタから実行時決定)、デスクリプタ v1/v2 ラッチ、K28.6 信号マップ出力 |
 | `trace_link_diag` | `trace_link_diag.sv` | 受信側: pclk のイベント計数 (コンマ/レコード/誤り/溢れ/デスクリプタ/データ) を clk_sys からスナップショット、タイムアウト付き |
 | `trace_sym_inject` | `trace_sym_inject.sv` | 自己試験 TX 用: ホストが書いた生シンボル列で送信ストリームを置換 (1 回 / ループ) |
+| `trace_capture` | `trace_capture.sv` | 受信側: 2^ADDR_BITS 語のリングバッファ (pclk) + トリガ/POST、ホストコマンド FSM (clk_sys: S T A D ? X F Z R J N L P) |
 
-送信側 (`eda/easycdr_trace` の旧 `src/common/*.v`) は全部ここに移した。生成された `.sv` は追跡しない (`.gitignore`)。`eda/easycdr_trace/Makefile` と `test/Makefile` が
+`eda/easycdr_trace` の旧 `src/common/*.v` (送信側) と `src/tangprimer25k/trace_*.v` (受信側) は全部ここに移した (top.v だけ Verilog)。生成された `.sv` は追跡しない (`.gitignore`)。`eda/easycdr_trace/Makefile` と `test/Makefile` が
 `veryl build` を先に走らせる。
 
 ```
