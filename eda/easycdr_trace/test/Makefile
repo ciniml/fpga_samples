@@ -1,8 +1,8 @@
 # Verilator end-to-end test of the control path (no device primitives).
 RTL := ../../../rtl
 SRCS := e2e_ctrl_tb.sv trace_map_rom.v \
-        ../src/common/easycdr_trace_tx.v $(RTL)/trace/tx_link_core.sv \
-        ../src/common/trace_cdc.v ../src/common/trace_afifo.v \
+        $(RTL)/trace/easycdr_trace_tx.sv $(RTL)/trace/tx_link_core.sv \
+        $(RTL)/trace/trace_cdc.sv $(RTL)/trace/trace_afifo.sv \
         $(RTL)/trace/trace_frontend.sv $(RTL)/trace/trace_link_tx.sv \
         $(RTL)/manchester/pulse_reset_tx.sv \
         ../src/tangprimer25k/trace_rx_decoder.v ../src/tangprimer25k/trace_capture.v \
@@ -20,7 +20,8 @@ VFLAGS := --binary --timing --assert -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC
 trace_map_rom.v: ../maps/nano9k_demo.map ../host/tracemap.py
 	python3 ../host/tracemap.py ../maps/nano9k_demo.map --rom $@
 
-TRACE_VERYL_SV := $(RTL)/trace/tx_link_core.sv $(RTL)/trace/trace_link_tx.sv $(RTL)/trace/trace_frontend.sv
+TRACE_VERYL_SV := $(RTL)/trace/tx_link_core.sv $(RTL)/trace/trace_link_tx.sv $(RTL)/trace/trace_frontend.sv \
+                  $(RTL)/trace/trace_cdc.sv $(RTL)/trace/trace_afifo.sv $(RTL)/trace/easycdr_trace_tx.sv
 $(TRACE_VERYL_SV): $(wildcard $(RTL)/trace/*.veryl)
 	cd $(RTL)/trace && veryl build
 

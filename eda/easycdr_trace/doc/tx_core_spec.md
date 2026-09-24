@@ -1,7 +1,7 @@
 # easycdr_trace_tx — トレース送信コア仕様
 
-`src/common/easycdr_trace_tx.v`(ラッパ)+ `trace_frontend.v`(サンプルクロック側)+ `trace_afifo.v`
-+ `trace_link_tx.v`(リンククロック側)+ `trace_cdc.v` + `rtl/trace/tx_link_core.veryl`(Veryl、`veryl build` で .sv 生成)+ `rtl/displayport/src/encoder_8b10b.sv`
+`rtl/trace/easycdr_trace_tx.veryl`(ラッパ)+ `trace_frontend.veryl`(サンプルクロック側)+ `trace_afifo.veryl`
++ `trace_link_tx.veryl`(リンククロック側)+ `trace_cdc.veryl` + `tx_link_core.veryl`(すべて Veryl、`veryl build` で .sv 生成、Makefile が自動実行)+ `rtl/displayport/src/encoder_8b10b.sv`
 
 任意幅の信号を監視し、変化時にタイムスタンプ付きレコードを生成して、
 EasyCDR受信IP(GW5A、10bit+Word Alignment+8B/10B Decoding構成)が

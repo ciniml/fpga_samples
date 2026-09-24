@@ -47,11 +47,11 @@ set fh [open defines_gen.v w]; puts -nonewline $fh $defs; close $fh
 add_file -type verilog [file normalize defines_gen.v]
 add_file -type verilog [file normalize ${SRC_DIR}/top.v]
 add_file -type verilog [file normalize ${RTL_DIR}/trace/tx_link_core.sv]
-add_file -type verilog [file normalize ${COMMON_DIR}/trace_cdc.v]
-add_file -type verilog [file normalize ${COMMON_DIR}/trace_afifo.v]
+add_file -type verilog [file normalize ${RTL_DIR}/trace/trace_cdc.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/trace/trace_afifo.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/trace/trace_frontend.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/trace/trace_link_tx.sv]
-add_file -type verilog [file normalize ${COMMON_DIR}/easycdr_trace_tx.v]
+add_file -type verilog [file normalize ${RTL_DIR}/trace/easycdr_trace_tx.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/encoder_8b10b.sv]
 
 # Reverse control channel (rtl/manchester, Veryl output - run `veryl build`

@@ -45,7 +45,7 @@ C3=TX / B3=RX、115200 8N1) でホストにダンプします。
 - ホストツール: `host/trace_dump.py -p /dev/ttyUSBx`
   (カウンタ連番の連続性を検証)
 
-## トレースIP (`src/common/easycdr_trace_tx.v`) とトリガ付きキャプチャ
+## トレースIP (`rtl/trace/easycdr_trace_tx.veryl`) とトリガ付きキャプチャ
 
 TX側はIP化されており、ユーザーデザインには次を置くだけです:
 
@@ -100,7 +100,7 @@ TX側が信号の変化を検出してレコード化し、リンクへ流しま
 - レコード形式: `[K28.1][ts 7:0][ts 15:8][ts 23:16][data 7:0][data 15:8]`
   (ts=100MHzリンククロックのサイクル数=10ns単位、K28.2=FIFO溢れ通知、
   K28.3=アイドル充填)
-- TX: `trace_frontend.v` (2FF同期→変化検出→16段レコードFIFO→バイト直列化)
+- TX: `rtl/trace/trace_frontend.veryl` (2FF同期→変化検出→16段レコードFIFO→バイト直列化)
 - デモ信号: 8bitカウンタ (2.56µs毎に+1) + UART RX線の生波形
   (ホストのコマンド自身がイベントとして記録される)
 - RX: {Kフラグ,バイト}の9bitエントリでキャプチャ、`D`で2バイト/エントリの
@@ -111,7 +111,7 @@ TX側が信号の変化を検出してレコード化し、リンクへ流しま
 ## Tang Nano 9K 送信側 (TARGET=tangnano9k_pmod)
 
 「安価なターゲットFPGA→GW5Aホスト」の非対称構成です。GW1NR-9Cは
-TX専用 (EasyCDRは受信側だけのIP) で、共通RTL (src/common/) をそのまま
+TX専用 (EasyCDRは受信側だけのIP) で、共通RTL (rtl/trace/、Veryl) をそのまま
 使います。
 
 - ラインレート: 27MHz×37/2×2 = **999Mbps** (ホストの1Gbps設定に対し

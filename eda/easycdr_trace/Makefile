@@ -25,10 +25,8 @@ export RATE
 endif
 
 # Veryl sources (rtl/trace, rtl/manchester): the generated .sv are not tracked, build them first
-TRACE_VERYL_SV := ../../rtl/trace/tx_link_core.sv ../../rtl/trace/trace_link_tx.sv ../../rtl/trace/trace_frontend.sv
-$(TRACE_VERYL_SV): $(wildcard ../../rtl/trace/*.veryl) ../../rtl/trace/Veryl.toml
-	cd ../../rtl/trace && veryl build
-
+TRACE_VERYL_SV := ../../rtl/trace/tx_link_core.sv ../../rtl/trace/trace_link_tx.sv ../../rtl/trace/trace_frontend.sv \
+                  ../../rtl/trace/trace_cdc.sv ../../rtl/trace/trace_afifo.sv ../../rtl/trace/easycdr_trace_tx.sv
 SRCS := src/$(TARGET)/pins.cst $(wildcard src/$(TARGET)/*.sdc) \
         $(wildcard src/$(TARGET)/*.v) $(wildcard src/$(TARGET)/*/*.v) $(wildcard src/common/*.v) \
         $(TRACE_VERYL_SV) \
@@ -36,3 +34,8 @@ SRCS := src/$(TARGET)/pins.cst $(wildcard src/$(TARGET)/*.sdc) \
         host/tracemap.py $(wildcard maps/*.map)
 
 include ../build_gowin.mk
+
+# (after the include so that `all` stays the default goal)
+$(TRACE_VERYL_SV): $(wildcard ../../rtl/trace/*.veryl) ../../rtl/trace/Veryl.toml
+	cd ../../rtl/trace && veryl build
+

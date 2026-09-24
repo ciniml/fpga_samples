@@ -1,0 +1,155 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file trace_cdc.veryl
+ * @brief Clock-domain-crossing helpers for the trace transmitter.
+ *
+ *   trace_sync_bit    : N-stage flop synchroniser for W independent bits
+ *   trace_sync_pulse  : one-clock pulse from domain A to domain B (toggle + 2FF)
+ *   trace_reset_sync  : asynchronous assert / synchronous de-assert reset
+ *   trace_cdc_bus     : multi-bit quasi-static bus with a req/ack handshake
+ *                       (the destination copy changes atomically; rapid source
+ *                       changes are coalesced into the latest value)
+ * All resets are asynchronous active-low, as in the Verilog originals.
+ */
+
+pub module trace_sync_bit #(
+    param STAGES: u32 = 2,
+    param W     : u32 = 1,
+) (
+    clk : input  'dst clock_posedge  ,
+    rstn: input  'dst reset_async_low,
+    d   : input  'src logic<W>       ,
+    q   : output 'dst logic<W>       ,
+) {
+    var sr: 'dst logic<STAGES, W>;
+    unsafe (cdc) {
+        always_ff {
+            if_reset {
+                sr = 0;
+            } else {
+                sr[0] = d;
+                for i in 1..STAGES {
+                    sr[i] = sr[i - 1];
+                }
+            }
+        }
+    }
+    assign q = sr[STAGES - 1];
+}
+
+pub module trace_sync_pulse (
+    sclk   : input  'src clock_posedge  ,
+    srstn  : input  'src reset_async_low,
+    i_pulse: input  'src logic          , // one clock in sclk (pulses closer than ~4 dclk are merged)
+    dclk   : input  'dst clock_posedge  ,
+    drstn  : input  'dst reset_async_low,
+    o_pulse: output 'dst logic          , // one clock in dclk
+) {
+    var tgl: 'src logic   ;
+    var s  : 'dst logic<3>;
+    always_ff (sclk, srstn) {
+        if_reset {
+            tgl = 1'b0;
+        } else if i_pulse {
+            tgl = ~tgl;
+        }
+    }
+    unsafe (cdc) {
+        always_ff (dclk, drstn) {
+            if_reset {
+                s = 3'b000;
+            } else {
+                s = {s[1:0], tgl};
+            }
+        }
+    }
+    assign o_pulse = s[2] ^ s[1];
+}
+
+pub module trace_reset_sync (
+    clk  : input  clock_posedge  ,
+    arstn: input  reset_async_low, // asynchronous, active low
+    rstn : output logic          , // asserted immediately, released after 2 clocks
+) {
+    var r: logic<2>;
+    always_ff {
+        if_reset {
+            r = 2'b00;
+        } else {
+            r = {r[0], 1'b1};
+        }
+    }
+    assign rstn = r[1];
+}
+
+pub module trace_cdc_bus #(
+    param W: u32 = 8,
+) (
+    sclk : input  'src clock_posedge  ,
+    srstn: input  'src reset_async_low,
+    i_bus: input  'src logic<W>       ,
+    dclk : input  'dst clock_posedge  ,
+    drstn: input  'dst reset_async_low,
+    o_bus: output 'dst logic<W>       ,
+) {
+    // source: hold the value while a transfer is in flight. The wide
+    // compare is done per 8-bit chunk and registered twice (diff_c, diff_r):
+    // the bus is quasi-static, so acting two cycles late is fine and it
+    // keeps the path short on slow fabrics (GW1N @100MHz).
+    const NCH: u32 = (W + 7) / 8;
+    var hold  : 'src logic<W>  ;
+    var req   : 'src logic     ;
+    var ack_s : 'src logic<3>  ;
+    var diff_c: 'src logic<NCH>;
+    var diff_r: 'src logic     ;
+    var req_s : 'dst logic<3>  ;
+    var ack   : 'dst logic     ;
+    let idle  : 'src logic      = req == ack_s[2];
+
+    for gi in 0..NCH :g_ch {
+        const LO: u32 = gi * 8;
+        const HI: u32 = if LO + 8 >: W ? W - 1 : LO + 7;
+        always_ff (sclk, srstn) {
+            if_reset {
+                diff_c[gi] = 1'b0;
+            } else {
+                diff_c[gi] = i_bus[HI:LO] != hold[HI:LO];
+            }
+        }
+    }
+    unsafe (cdc) {
+        always_ff (sclk, srstn) {
+            if_reset {
+                hold   = 0;
+                req    = 1'b0;
+                ack_s  = 3'b000;
+                diff_r = 1'b0;
+            } else {
+                ack_s  = {ack_s[1:0], ack};
+                diff_r = |diff_c;
+                if idle && diff_r {
+                    hold = i_bus;
+                    req  = ~req;
+                }
+            }
+        }
+        // destination: capture when a new request arrives, then acknowledge
+        always_ff (dclk, drstn) {
+            if_reset {
+                req_s = 3'b000;
+                ack   = 1'b0;
+                o_bus = 0;
+            } else {
+                req_s = {req_s[1:0], req};
+                if req_s[2] != ack {
+                    o_bus = hold;
+                    ack   = ~ack;
+                }
+            }
+        }
+    }
+}

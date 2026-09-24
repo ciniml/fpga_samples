@@ -40,8 +40,9 @@
 ## 3. Verilog のまま残すもの
 
 - `top.v` 群（要件どおり。`ifdef` とデバイスプリミティブの塊）。
-- `trace_afifo.v`（暫定）: `syn_ramstyle` 属性の扱いを Gowin で確認してから。属性が効かないと 25K で FF 実装に戻る。
-- `trace_reset_sync`（`trace_cdc.v` 内）: 非同期アサートの 8 行。`trace_cdc.v` ごと Verilog に残しても損はない。
+- ~~`trace_afifo.v`~~ 済: Veryl の `#[sv("syn_ramstyle = \"block_ram\"")]` は `(* syn_ramstyle = "block_ram" *)` になり、
+  Gowin は認識する（Nano9K で RAM16SDP 9 個、25K で SDPB に推論、Verilog 版と同じ）。
+- ~~`trace_reset_sync`~~ 済: `arstn: input reset_async_low` + `if_reset { r = 0 } else { r = {r[0], 1'b1} }` で同じ回路。
 - `rtl/uart`: 共有資産で iverilog テストが壊れる（生成 SV の `input var logic`）。
 
 ## 4. 提案する配置と進め方
@@ -66,8 +67,17 @@ rtl/trace/            Veryl プロジェクト（rtl/manchester と同じ構成�
    ビット選択がそのまま通る、`TS_LAST as 8` で幅キャスト）、trace_frontend（`if COND :label { }` の generate-if、
    `logic<SYNC_STAGES, WIDTH>` のシフト列、`for i in 1..N`（型注釈不可））。E2E 3 条件 PASS、Nano9K 4 変種とも
    合成 OK で demo は LUT 988 / FF 778（Verilog 版と同一）。実機確認は 25K 未接続のため未実施。
-3. trace_cdc + trace_afifo（リセット型の決定、25K の BSRAM 推論確認）、ラッパ。ここで送信側が全部 Veryl。
-   Nano9K の TRACE_WIDTH=32 / CTRL_PULSE=1 / RATE=742M5 変種も合成。
+3. **済 (2026-09-25)** trace_cdc + trace_afifo + ラッパ。送信側は全部 Veryl になり `src/common/` は削除。
+   - 2 クロックモジュールはポートと変数に `'src`/`'dst`（`'s`/`'d` は識別子 s/d と衝突する）や `'w`/`'r`、
+     ラッパは `'s`/`'l` のドメイン注釈を付け、消費側 always_ff を `unsafe (cdc) { }` で包む。ラッパの
+     `rstn & srstn` は `unsafe (cdc) { assign arstn = (...) as reset_async_low; }`。
+   - 下降パート選択 `[CFG_W-2 -: WIDTH]` は `const P_xx_HI/LO` を置いて `[HI:LO]` に。
+   - クリーン合成（build/ 削除後）: Nano9K demo LUT 987 / FF 778 / RAM16 9（Verilog 版と同一）、w32 1006/899、
+     pulse 450/307、742M5 964/778、25K 2943/2757/16 SDPB。全部 TNS 0。
+   - **注意**: 段階 1〜2 の合成結果として書いた数値は、Makefile の `veryl build` 規則が include より前に
+     あって default goal を奪い、ビットストリームが再生成されていなかった（古い成果物を読んでいた）。
+     段階 1 で書き込んだ実機も Verilog 版のビットストリーム。Veryl 版の実機確認はこの段階でまとめて行う
+     予定だったが、25K 未接続 + Nano9K の JTAG が開けず未実施。
 4. 受信側: decoder → diag → sym_inject。
 5. trace_capture（最大、文字リテラル FSM、メモリ CDC）。E2E のダンプ経路と 25K 実機で確認。
 6. afifo（同一クロック / 比率クロック）とトリガ FSM の `veryl test` を追加。

@@ -1,0 +1,325 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file easycdr_trace_tx.veryl
+ * @brief Family-independent trace transmitter IP.
+ *
+ * Samples a WIDTH-bit signal in its own clock domain (sclk), records a
+ * timestamped entry whenever it changes (or periodically, or after a
+ * TX-side trigger), and emits a continuous 10-bit 8b10b symbol stream on the
+ * link clock for an EasyCDR receiver:
+ *
+ *   frame : every FRAME_LEN-th symbol is a K28.5 comma (word alignment)
+ *   record: [K28.1][ts byte0..TS_BYTES-1][data byte0..DATA_BYTES-1]
+ *           (all multi-byte fields little-endian; ts counts sclk cycles)
+ *   tick  : [K28.7][ts bytes] every 2^TICK_LOG2 sclk (end-of-trace marker)
+ *   K28.2 : emitted once per overflow event (records were dropped)
+ *   K28.3 : idle filler
+ *   map   : [K28.6][LEN][LEN bytes of signal-map text] on i_map_req (once)
+ *   desc  : [K28.4][VER=0x02][WIDTH][TS_BITS][flags][CFG_HASH 4 bytes LE] descriptor,
+ *           sent every DESC_INTERVAL link cycles (0 = periodic off) and on
+ *           i_desc_req, always at a record boundary. flags bit0 enable,
+ *           bit1 armed, bit2 triggered (running), bit3 done, bit4 periodic.
+ *
+ * Clocks:
+ *   sclk / srstn : sample clock (the traced design's clock, or any clock).
+ *                  srstn is an optional extra reset for that domain (tie 1).
+ *                  sclk may be the same net as clk.
+ *   clk  / rstn  : link parallel clock = line rate / 10; rstn (async) resets
+ *                  both domains (the sclk side through a reset synchroniser).
+ * All control inputs are in the clk domain; they cross to sclk inside
+ * (quasi-static values with a handshake, i_arm as a pulse). Status outputs
+ * are in the clk domain. o_overflow is an sclk-domain pulse.
+ *
+ * Structure: trace_frontend (sclk) -> trace_afifo -> trace_link_tx (clk).
+ * Reconfiguration: WIDTH / TS_BITS / FIFO_AW / SYNC_STAGES / HAS_* are
+ * parameters of this wrapper only; the link format follows WIDTH / TS_BITS
+ * and is announced to the host by the descriptor.
+ */
+pub module easycdr_trace_tx #(
+    param WIDTH        : u32       = 16           , // trace width, multiple of 8
+    param TS_BITS      : u32       = 24           , // timestamp width, multiple of 8
+    param FIFO_AW      : u32       = 4            , // record FIFO depth = 2^FIFO_AW (>= 2)
+    param FRAME_LEN    : u32       = 16           , // symbols per comma frame
+    param DESC_INTERVAL: u32       = 131072       , // link cycles between descriptors (0 = off)
+    param SYNC_STAGES  : u32       = 2            , // 0: sig synchronous to sclk, 2: asynchronous
+    param HAS_PERIODIC : u32       = 1            ,
+    param HAS_TRIGGER  : u32       = 1            ,
+    param FIFO_RAM     : string    = "distributed", // "block" on GW5A (no distributed RAM)
+    param CFG_HASH     : logic<32> = 32'h0        , // signal-map hash (host/tracemap.py), sent in the descriptor
+    param TICK_LOG2    : u32       = 16           , // tick record [K28.7][ts] every 2^TICK_LOG2 sclk
+) (
+    sclk : input 's clock_posedge  ,
+    srstn: input    logic          , // extra sample-domain reset (async assert), tie 1 if unused
+    sig  : input 's logic<WIDTH>   ,
+
+    clk          : input  'l clock_posedge  ,
+    rstn         : input  'l reset_async_low,
+    i_enable     : input  'l logic          ,
+    i_ignore_mask: input  'l logic<WIDTH>   ,
+    i_desc_req   : input  'l logic          ,
+    i_periodic_en: input  'l logic          ,
+    i_change_dis : input  'l logic          ,
+    i_tick_dis   : input  'l logic          , // 1: no tick records (MODE bit2)
+    i_period     : input  'l logic<24>      , // sclk cycles
+    i_arm        : input  'l logic          ,
+    i_trig_mask  : input  'l logic<WIDTH>   ,
+    i_trig_value : input  'l logic<WIDTH>   ,
+    i_post       : input  'l logic<16>      ,
+    i_map_req    : input  'l logic          , // one clock: send the signal-map text (from TraceCtrlRegs MAP_REQ)
+    i_map_len    : input  'l logic<8>       , // text ROM (tracemap.py --rom): length and combinational byte read
+    o_map_addr   : output 'l logic<8>       ,
+    i_map_data   : input  'l logic<8>       ,
+    o_symbol     : output 'l logic<10>      ,
+    o_overflow   : output 's logic          , // sclk domain
+    o_armed      : output 'l logic          ,
+    o_triggered  : output 'l logic          ,
+    o_done       : output 'l logic          ,
+) {
+    const REC_BITS: u32 = TS_BITS + WIDTH;
+    const FIFO_DW : u32 = REC_BITS + 1; // + tick flag
+    const CFG_W   : u32 = 1 + WIDTH + 1 + 1 + 1 + 24 + WIDTH + WIDTH + 16;
+
+    //------------------------------------------------------------------
+    // sample-domain reset: link reset (async) + user reset, released in sclk
+    //------------------------------------------------------------------
+    var frstn_l: 's logic;
+    var arstn  : 's reset_async_low;
+    unsafe (cdc) { // asynchronous assert: the link reset enters the sample domain here
+        assign arstn = (rstn & srstn) as reset_async_low;
+    }
+    inst u_frst: trace_reset_sync (
+        clk  : sclk   ,
+        arstn: arstn  ,
+        rstn : frstn_l,
+    );
+    let frstn: 's reset_async_low = frstn_l as reset_async_low;
+
+    //------------------------------------------------------------------
+    // control crossing clk -> sclk
+    //------------------------------------------------------------------
+    let cfg_l: 'l logic<CFG_W> = {i_enable, i_ignore_mask, i_periodic_en, i_change_dis, i_tick_dis,
+                                  i_period, i_trig_mask, i_trig_value, i_post};
+    var cfg_s: 's logic<CFG_W>;
+    inst u_cfg: trace_cdc_bus #(
+        W: CFG_W,
+    ) (
+        sclk : clk  ,
+        srstn: rstn ,
+        i_bus: cfg_l,
+        dclk : sclk ,
+        drstn: frstn,
+        o_bus: cfg_s,
+    );
+    const P_ENABLE: u32 = CFG_W - 1;
+    const P_IGN_HI: u32 = CFG_W - 2;
+    const P_IGN_LO: u32 = CFG_W - 1 - WIDTH;
+    const P_PER_EN: u32 = CFG_W - 2 - WIDTH;
+    const P_CHGDIS: u32 = CFG_W - 3 - WIDTH;
+    const P_TCKDIS: u32 = CFG_W - 4 - WIDTH;
+    const P_PRD_HI: u32 = CFG_W - 5 - WIDTH;
+    const P_PRD_LO: u32 = CFG_W - 28 - WIDTH;
+    const P_TMK_HI: u32 = CFG_W - 29 - WIDTH;
+    const P_TMK_LO: u32 = CFG_W - 28 - 2 * WIDTH;
+    const P_TVL_HI: u32 = CFG_W - 29 - 2 * WIDTH;
+    const P_TVL_LO: u32 = CFG_W - 28 - 3 * WIDTH;
+    let f_enable     : 's logic        = cfg_s[P_ENABLE];
+    let f_ignore_mask: 's logic<WIDTH> = cfg_s[P_IGN_HI:P_IGN_LO];
+    let f_periodic_en: 's logic        = cfg_s[P_PER_EN];
+    let f_change_dis : 's logic        = cfg_s[P_CHGDIS];
+    let f_tick_dis   : 's logic        = cfg_s[P_TCKDIS];
+    let f_period     : 's logic<24>    = cfg_s[P_PRD_HI:P_PRD_LO];
+    let f_trig_mask  : 's logic<WIDTH> = cfg_s[P_TMK_HI:P_TMK_LO];
+    let f_trig_value : 's logic<WIDTH> = cfg_s[P_TVL_HI:P_TVL_LO];
+    let f_post       : 's logic<16>    = cfg_s[15:0];
+
+    var f_arm: 's logic;
+    inst u_arm: trace_sync_pulse (
+        sclk   : clk  ,
+        srstn  : rstn ,
+        i_pulse: i_arm,
+        dclk   : sclk ,
+        drstn  : frstn,
+        o_pulse: f_arm,
+    );
+
+    //------------------------------------------------------------------
+    // frontend (sclk) -> async FIFO -> link serializer (clk)
+    //------------------------------------------------------------------
+    var rec_wr     : 's logic         ;
+    var fifo_full  : 's logic         ;
+    var drop       : 's logic         ;
+    var rec_data   : 's logic<FIFO_DW>;
+    var f_armed    : 's logic         ;
+    var f_triggered: 's logic         ;
+    var f_done     : 's logic         ;
+    var fifo_empty : 'l logic         ;
+    var fifo_rd    : 'l logic         ;
+    var fifo_data  : 'l logic<FIFO_DW>;
+
+    inst u_fe: trace_frontend #(
+        WIDTH       : WIDTH       ,
+        TS_BITS     : TS_BITS     ,
+        SYNC_STAGES : SYNC_STAGES ,
+        HAS_PERIODIC: HAS_PERIODIC,
+        HAS_TRIGGER : HAS_TRIGGER ,
+        TICK_LOG2   : TICK_LOG2   ,
+    ) (
+        sclk         : sclk         ,
+        rstn         : frstn        ,
+        sig          : sig          ,
+        i_enable     : f_enable     ,
+        i_ignore_mask: f_ignore_mask,
+        i_periodic_en: f_periodic_en,
+        i_change_dis : f_change_dis ,
+        i_tick_dis   : f_tick_dis   ,
+        i_period     : f_period     ,
+        i_arm        : f_arm        ,
+        i_trig_mask  : f_trig_mask  ,
+        i_trig_value : f_trig_value ,
+        i_post       : f_post       ,
+        i_fifo_full  : fifo_full    ,
+        o_rec_wr     : rec_wr       ,
+        o_rec_data   : rec_data     ,
+        o_drop       : drop         ,
+        o_armed      : f_armed      ,
+        o_triggered  : f_triggered  ,
+        o_done       : f_done       ,
+    );
+
+    inst u_fifo: trace_afifo #(
+        DW       : FIFO_DW ,
+        AW       : FIFO_AW ,
+        RAM_STYLE: FIFO_RAM,
+    ) (
+        wclk   : sclk      ,
+        wrstn  : frstn     ,
+        wr_en  : rec_wr    ,
+        wr_data: rec_data  ,
+        wfull  : fifo_full ,
+        rclk   : clk       ,
+        rrstn  : rstn      ,
+        rd_en  : fifo_rd   ,
+        rd_data: fifo_data ,
+        rempty : fifo_empty,
+    );
+
+    // overflow: one K28.2 per pending episode (sclk pending flag, ack from clk)
+    var ovf_pending: 's logic;
+    var ovf_ack_s  : 's logic;
+    var ovf_req_l  : 'l logic;
+    var ovf_ack_l  : 'l logic;
+    assign o_overflow = drop;
+    always_ff (sclk, frstn) {
+        if_reset {
+            ovf_pending = 1'b0;
+        } else if ovf_ack_s {
+            ovf_pending = 1'b0;
+        } else if drop {
+            ovf_pending = 1'b1;
+        }
+    }
+    inst u_ovf_req: trace_sync_pulse (
+        sclk   : sclk               ,
+        srstn  : frstn              ,
+        i_pulse: drop && !ovf_pending,
+        dclk   : clk                ,
+        drstn  : rstn               ,
+        o_pulse: ovf_req_l          ,
+    );
+    inst u_ovf_ack: trace_sync_pulse (
+        sclk   : clk      ,
+        srstn  : rstn     ,
+        i_pulse: ovf_ack_l,
+        dclk   : sclk     ,
+        drstn  : frstn    ,
+        o_pulse: ovf_ack_s,
+    );
+
+    //------------------------------------------------------------------
+    // status + descriptor request. A descriptor requested together with a
+    // control change (e.g. ARM | DESC_REQ in one frame) must show the new
+    // state, so the request goes to sclk (ordered after i_arm by one link
+    // cycle), waits for the frontend state to settle, and comes back as a
+    // sequence number in the same handshaked word as the status flags.
+    //------------------------------------------------------------------
+    var desc_req_d: 'l logic;
+    always_ff (clk, rstn) {
+        if_reset {
+            desc_req_d = 1'b0;
+        } else {
+            desc_req_d = i_desc_req;
+        }
+    }
+    var f_desc_req: 's logic;
+    inst u_dreq: trace_sync_pulse (
+        sclk   : clk       ,
+        srstn  : rstn      ,
+        i_pulse: desc_req_d,
+        dclk   : sclk      ,
+        drstn  : frstn     ,
+        o_pulse: f_desc_req,
+    );
+    var f_desc_dly: 's logic<2>;
+    var f_desc_seq: 's logic<2>;
+    always_ff (sclk, frstn) {
+        if_reset {
+            f_desc_dly = 2'b00;
+            f_desc_seq = 2'b00;
+        } else {
+            f_desc_dly = {f_desc_dly[0], f_desc_req};
+            if f_desc_dly[1] {
+                f_desc_seq = f_desc_seq + 1;
+            }
+        }
+    }
+    var st_l: 'l logic<5>;
+    inst u_st: trace_cdc_bus #(
+        W: 5,
+    ) (
+        sclk : sclk                                      ,
+        srstn: frstn                                     ,
+        i_bus: {f_desc_seq, f_done, f_triggered, f_armed},
+        dclk : clk                                       ,
+        drstn: rstn                                      ,
+        o_bus: st_l                                      ,
+    );
+    assign o_done      = st_l[2];
+    assign o_triggered = st_l[1];
+    assign o_armed     = st_l[0];
+    var desc_seq_q: 'l logic<2>;
+    always_ff (clk, rstn) {
+        if_reset {
+            desc_seq_q = 2'b00;
+        } else {
+            desc_seq_q = st_l[4:3];
+        }
+    }
+    let desc_evt: 'l logic = st_l[4:3] != desc_seq_q;
+
+    inst u_link: trace_link_tx #(
+        WIDTH        : WIDTH        ,
+        TS_BITS      : TS_BITS      ,
+        FRAME_LEN    : FRAME_LEN    ,
+        DESC_INTERVAL: DESC_INTERVAL,
+        CFG_HASH     : CFG_HASH     ,
+    ) (
+        clk         : clk                                                    ,
+        rstn        : rstn                                                   ,
+        i_fifo_empty: fifo_empty                                             ,
+        i_fifo_data : fifo_data                                              ,
+        o_fifo_rd   : fifo_rd                                                ,
+        i_ovf_req   : ovf_req_l                                              ,
+        o_ovf_ack   : ovf_ack_l                                              ,
+        i_desc_req  : desc_evt                                               ,
+        i_desc_flags: {i_periodic_en, o_done, o_triggered, o_armed, i_enable},
+        i_map_req   : i_map_req                                              ,
+        i_map_len   : i_map_len                                              ,
+        o_map_addr  : o_map_addr                                             ,
+        i_map_data  : i_map_data                                             ,
+        o_symbol    : o_symbol                                               ,
+    );
+}

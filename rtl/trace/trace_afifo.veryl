@@ -1,0 +1,142 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file trace_afifo.veryl
+ * @brief Asynchronous FIFO (gray-code pointers, 2FF synchronised) for the
+ *        trace record path: written in the sample clock domain, read in the
+ *        link clock domain. Works with identical clocks as well.
+ *
+ * First-word-fall-through: rd_data is valid while !rempty and rd_en pops it.
+ * The memory is read synchronously into a prefetch register (the only form a
+ * block RAM can implement - GW5A has no distributed RAM, an asynchronous read
+ * would be built from flip-flops), so it maps to SDPB / RAM16SDP. AW >= 2.
+ *   RAM_STYLE "distributed" (default): RAM16SDP on GW1N/GW2A - small and
+ *               placeable anywhere; "block": BSRAM (required on GW5A).
+ */
+pub module trace_afifo #(
+    param DW       : u32    = 40           ,
+    param AW       : u32    = 4            ,
+    param RAM_STYLE: string = "distributed",
+) (
+    wclk   : input  'w clock_posedge  ,
+    wrstn  : input  'w reset_async_low,
+    wr_en  : input  'w logic          ,
+    wr_data: input  'w logic<DW>      ,
+    wfull  : output 'w logic          ,
+
+    rclk   : input  'r clock_posedge  ,
+    rrstn  : input  'r reset_async_low,
+    rd_en  : input  'r logic          ,
+    rd_data: output 'r logic<DW>      ,
+    rempty : output 'r logic          ,
+) {
+    const PW: u32 = AW + 1; // pointer width
+
+    // write side. wgray_inc = gray(wbin + 1) is kept in a register so the
+    // full flag is a mux + compare (no adder on the path).
+    var wbin     : 'w logic<PW>;
+    var wgray    : 'w logic<PW>;
+    var wgray_inc: 'w logic<PW>;
+    var rgray_w1 : 'w logic<PW>;
+    var rgray_w2 : 'w logic<PW>;
+    let wr_go    : 'w logic     = wr_en & ~wfull;
+    let wbin_p2  : 'w logic<PW> = wbin + 2'd2;
+    let wgray_n  : 'w logic<PW> = if wr_go ? wgray_inc : wgray;
+    let rgray_wf : 'w logic<PW> = {~rgray_w2[AW:AW - 1], rgray_w2[AW - 2:0]};
+
+    // read side (same pointer structure). mempty = memory empty; the entry
+    // at the read pointer is fetched into rd_data whenever that register is
+    // free (or being popped), so rd_data/rempty behave first-word-fall-through.
+    var rbin     : 'r logic<PW>;
+    var rgray    : 'r logic<PW>;
+    var rgray_inc: 'r logic<PW>;
+    var wgray_r1 : 'r logic<PW>;
+    var wgray_r2 : 'r logic<PW>;
+    var mempty   : 'r logic    ;
+    var ovalid   : 'r logic    ;
+    let fetch    : 'r logic     = ~mempty & (~ovalid | rd_en);
+    let rbin_p2  : 'r logic<PW> = rbin + 2'd2;
+    let rgray_n  : 'r logic<PW> = if fetch ? rgray_inc : rgray;
+    assign rempty = ~ovalid;
+
+    unsafe (cdc) {
+        always_ff (wclk, wrstn) {
+            if_reset {
+                wbin      = 0;
+                wgray     = 0;
+                wgray_inc = 1;
+                wfull     = 1'b0;
+                rgray_w1  = 0;
+                rgray_w2  = 0;
+            } else {
+                if wr_go {
+                    wbin      = wbin + 1;
+                    wgray     = wgray_inc;
+                    wgray_inc = (wbin_p2 >> 1) ^ wbin_p2;
+                }
+                rgray_w1 = rgray;
+                rgray_w2 = rgray_w1;
+                wfull    = wgray_n == rgray_wf;
+            }
+        }
+        always_ff (rclk, rrstn) {
+            if_reset {
+                rbin      = 0;
+                rgray     = 0;
+                rgray_inc = 1;
+                mempty    = 1'b1;
+                ovalid    = 1'b0;
+                wgray_r1  = 0;
+                wgray_r2  = 0;
+            } else {
+                if fetch {
+                    rbin      = rbin + 1;
+                    rgray     = rgray_inc;
+                    rgray_inc = (rbin_p2 >> 1) ^ rbin_p2;
+                    ovalid    = 1'b1;
+                } else if rd_en {
+                    ovalid = 1'b0;
+                }
+                wgray_r1 = wgray;
+                wgray_r2 = wgray_r1;
+                mempty   = rgray_n == wgray_r2;
+            }
+        }
+    }
+
+    // memory: the attribute cannot be parameterised, hence two declarations
+    if RAM_STYLE == "block" :g_bram {
+        #[sv("syn_ramstyle = \"block_ram\"")]
+        var mem: 'w logic<DW> [2 ** AW];
+        always_ff (wclk) {
+            if wr_go {
+                mem[wbin[AW - 1:0]] = wr_data;
+            }
+        }
+        unsafe (cdc) {
+            always_ff (rclk) {
+                if fetch {
+                    rd_data = mem[rbin[AW - 1:0]];
+                }
+            }
+        }
+    } else :g_dram {
+        #[sv("syn_ramstyle = \"distributed_ram\"")]
+        var mem: 'w logic<DW> [2 ** AW];
+        always_ff (wclk) {
+            if wr_go {
+                mem[wbin[AW - 1:0]] = wr_data;
+            }
+        }
+        unsafe (cdc) {
+            always_ff (rclk) {
+                if fetch {
+                    rd_data = mem[rbin[AW - 1:0]];
+                }
+            }
+        }
+    }
+}
