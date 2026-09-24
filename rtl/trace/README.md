@@ -14,6 +14,9 @@
 | `trace_sync_bit` / `trace_sync_pulse` / `trace_reset_sync` / `trace_cdc_bus` (`trace_cdc.veryl`) | `trace_cdc.sv` | CDC ヘルパ (同期化列、トグル式パルス転送、非同期アサート同期解除リセット、req/ack 付き準静的バス) |
 | `trace_afifo` | `trace_afifo.sv` | グレイポインタ非同期 FIFO、同期読出プリフェッチ (FWFT)。`RAM_STYLE` "distributed"/"block" は `(* syn_ramstyle *)` 属性で切替 |
 | `easycdr_trace_tx` | `easycdr_trace_tx.sv` | ラッパ: 制御の clk→sclk 転送 (cdc_bus + pulse)、frontend → afifo → link_tx、溢れ/デスクリプタ要求のハンドシェイク |
+| `trace_rx_decoder` | `trace_rx_decoder.sv` | 受信側: {K, byte} 語列 → レコード (幅はデスクリプタから実行時決定)、デスクリプタ v1/v2 ラッチ、K28.6 信号マップ出力 |
+| `trace_link_diag` | `trace_link_diag.sv` | 受信側: pclk のイベント計数 (コンマ/レコード/誤り/溢れ/デスクリプタ/データ) を clk_sys からスナップショット、タイムアウト付き |
+| `trace_sym_inject` | `trace_sym_inject.sv` | 自己試験 TX 用: ホストが書いた生シンボル列で送信ストリームを置換 (1 回 / ループ) |
 
 送信側 (`eda/easycdr_trace` の旧 `src/common/*.v`) は全部ここに移した。生成された `.sv` は追跡しない (`.gitignore`)。`eda/easycdr_trace/Makefile` と `test/Makefile` が
 `veryl build` を先に走らせる。

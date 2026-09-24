@@ -78,7 +78,10 @@ rtl/trace/            Veryl プロジェクト（rtl/manchester と同じ構成�
      あって default goal を奪い、ビットストリームが再生成されていなかった（古い成果物を読んでいた）。
      段階 1 で書き込んだ実機も Verilog 版のビットストリーム。Veryl 版の実機確認はこの段階でまとめて行う
      予定だったが、25K 未接続 + Nano9K の JTAG が開けず未実施。
-4. 受信側: decoder → diag → sym_inject。
+4. **済 (2026-09-25)** 受信側 decoder → diag → sym_inject。`rst: input reset_async_high` で 25K 側の極性を維持。
+   バイト単位の蓄積 `ts_acc[idx*8 +: 8]` は `logic<MAX_TB, 8>` の `ts_acc[idx]`、デスクリプタの連結 LHS は
+   個別代入に分解。diag の `function` は Veryl の `function inc(...) -> logic<16>`。2 クロックは `'p`/`'h`、`'t`/`'h`。
+   E2E 3 条件 PASS、25K クリーン合成 LUT 2958 / FF 2757 / SDPB 16、TNS 0。
 5. trace_capture（最大、文字リテラル FSM、メモリ CDC）。E2E のダンプ経路と 25K 実機で確認。
 6. afifo（同一クロック / 比率クロック）とトリガ FSM の `veryl test` を追加。
 

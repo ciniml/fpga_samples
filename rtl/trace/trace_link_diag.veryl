@@ -1,0 +1,155 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file trace_link_diag.veryl
+ * @brief Link diagnostics for the trace receiver: event counters in the
+ *        receive clock domain, snapshot + clear on request from the host
+ *        clock domain.
+ *
+ * Host command 'L' (trace_capture) returns 14 bytes:
+ *   0     status : bit0 PLL lock, bit1 word aligned, bit2 descriptor seen,
+ *                  bit3 comma watchdog ok, bit4 IP reset active,
+ *                  bit7 no reply from the receive clock (clock dead)
+ *   1     VER of the last descriptor (0 = none)
+ *   2-3   K28.5 commas          (u16 LE, since the previous 'L', saturating)
+ *   4-5   K28.1 record starts
+ *   6-7   8b10b decode errors
+ *   8-9   K28.2 overflow markers
+ *   10-11 K28.4 descriptors
+ *   12-13 data words
+ * A healthy idle link shows commas > 0, errors = 0; records = 0 means the
+ * transmitter is armed / disabled / not present.
+ * Both resets are asynchronous active-high.
+ */
+pub module trace_link_diag (
+    pclk      : input 'p clock_posedge   ,
+    prst      : input 'p reset_async_high,
+    i_data_en : input 'p logic           , // word strobe from the CDR
+    i_word    : input 'p logic<9>        , // {K, byte}
+    i_decerr  : input 'p logic           , // decode error strobe (with i_data_en)
+    i_status  : input 'p logic<8>        , // quasi-static status bits (see above, bit7 unused)
+    i_desc_ver: input 'p logic<8>        ,
+
+    clk_sys: input  'h clock_posedge   ,
+    rst_sys: input  'h reset_async_high,
+    i_req  : input  'h logic           , // one clock: take a snapshot
+    o_done : output 'h logic           , // one clock: o_data valid
+    o_data : output 'h logic<112>      , // 14 bytes, byte 0 in [7:0]
+) {
+    const K28_1: logic<8> = 8'h3c;
+    const K28_2: logic<8> = 8'h5c;
+    const K28_4: logic<8> = 8'h9c;
+    const K28_5: logic<8> = 8'hbc;
+
+    // request: clk_sys -> pclk
+    var req_tgl: 'h logic   ;
+    var req_p  : 'p logic<3>;
+    always_ff (clk_sys, rst_sys) {
+        if_reset {
+            req_tgl = 1'b0;
+        } else if i_req {
+            req_tgl = ~req_tgl;
+        }
+    }
+    unsafe (cdc) {
+        always_ff (pclk, prst) {
+            if_reset {
+                req_p = 3'b000;
+            } else {
+                req_p = {req_p[1:0], req_tgl};
+            }
+        }
+    }
+    let snap: 'p logic = req_p[2] ^ req_p[1];
+
+    // counters (pclk), saturating at 0xffff
+    var c_comma    : 'p logic<16>;
+    var c_rec      : 'p logic<16>;
+    var c_err      : 'p logic<16>;
+    var c_ovf      : 'p logic<16>;
+    var c_desc     : 'p logic<16>;
+    var c_data     : 'p logic<16>;
+    var snap_cnt   : 'p logic<96>;
+    var snap_status: 'p logic<8> ;
+    var snap_ver   : 'p logic<8> ;
+    var ack_tgl    : 'p logic    ;
+    let is_k       : 'p logic     = i_data_en && i_word[8];
+    let is_d       : 'p logic     = i_data_en && !i_word[8];
+    function inc (
+        c: input logic<16>,
+        e: input logic    ,
+    ) -> logic<16> {
+        return if e && c != 16'hffff ? c + 1 : c;
+    }
+    always_ff (pclk, prst) {
+        if_reset {
+            c_comma     = 0;
+            c_rec       = 0;
+            c_err       = 0;
+            c_ovf       = 0;
+            c_desc      = 0;
+            c_data      = 0;
+            snap_cnt    = 0;
+            snap_status = 0;
+            snap_ver    = 0;
+            ack_tgl     = 1'b0;
+        } else {
+            if snap {
+                snap_cnt    = {c_data, c_desc, c_ovf, c_err, c_rec, c_comma};
+                snap_status = i_status;
+                snap_ver    = i_desc_ver;
+                ack_tgl     = ~ack_tgl;
+                c_comma     = 0;
+                c_rec       = 0;
+                c_err       = 0;
+                c_ovf       = 0;
+                c_desc      = 0;
+                c_data      = 0;
+            } else {
+                c_comma = inc(c_comma, is_k && i_word[7:0] == K28_5);
+                c_rec   = inc(c_rec, is_k && i_word[7:0] == K28_1);
+                c_ovf   = inc(c_ovf, is_k && i_word[7:0] == K28_2);
+                c_desc  = inc(c_desc, is_k && i_word[7:0] == K28_4);
+                c_err   = inc(c_err, i_data_en && i_decerr);
+                c_data  = inc(c_data, is_d);
+            }
+        }
+    }
+
+    // ack: pclk -> clk_sys, with a timeout in case pclk is dead
+    var ack_s   : 'h logic<3> ;
+    var waiting : 'h logic    ;
+    var wait_cnt: 'h logic<16>;
+    unsafe (cdc) {
+        always_ff (clk_sys, rst_sys) {
+            if_reset {
+                ack_s    = 3'b000;
+                waiting  = 1'b0;
+                wait_cnt = 16'd0;
+                o_done   = 1'b0;
+                o_data   = 112'd0;
+            } else {
+                ack_s  = {ack_s[1:0], ack_tgl};
+                o_done = 1'b0;
+                if i_req {
+                    waiting  = 1'b1;
+                    wait_cnt = 16'd0;
+                } else if waiting {
+                    wait_cnt = wait_cnt + 1;
+                    if ack_s[2] != ack_s[1] {
+                        waiting = 1'b0;
+                        o_done  = 1'b1;
+                        o_data  = {snap_cnt, snap_ver, 1'b0, snap_status[6:0]};
+                    } else if &wait_cnt {
+                        waiting = 1'b0;
+                        o_done  = 1'b1;
+                        o_data  = {96'd0, 8'd0, 8'h80}; // bit7: receive clock did not answer
+                    }
+                }
+            }
+        }
+    }
+}

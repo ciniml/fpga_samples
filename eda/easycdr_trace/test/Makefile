@@ -5,8 +5,8 @@ SRCS := e2e_ctrl_tb.sv trace_map_rom.v \
         $(RTL)/trace/trace_cdc.sv $(RTL)/trace/trace_afifo.sv \
         $(RTL)/trace/trace_frontend.sv $(RTL)/trace/trace_link_tx.sv \
         $(RTL)/manchester/pulse_reset_tx.sv \
-        ../src/tangprimer25k/trace_rx_decoder.v ../src/tangprimer25k/trace_capture.v \
-        ../src/tangprimer25k/trace_link_diag.v \
+        $(RTL)/trace/trace_rx_decoder.sv ../src/tangprimer25k/trace_capture.v \
+        $(RTL)/trace/trace_link_diag.sv \
         $(RTL)/displayport/src/encoder_8b10b.sv $(RTL)/displayport/src/decoder_8b10b.sv \
         $(RTL)/manchester/manchester_tx.sv $(RTL)/manchester/manchester_rx.sv \
         $(RTL)/manchester/ctrl_frame_rx.sv $(RTL)/manchester/trace_ctrl_regs.sv
@@ -21,7 +21,8 @@ trace_map_rom.v: ../maps/nano9k_demo.map ../host/tracemap.py
 	python3 ../host/tracemap.py ../maps/nano9k_demo.map --rom $@
 
 TRACE_VERYL_SV := $(RTL)/trace/tx_link_core.sv $(RTL)/trace/trace_link_tx.sv $(RTL)/trace/trace_frontend.sv \
-                  $(RTL)/trace/trace_cdc.sv $(RTL)/trace/trace_afifo.sv $(RTL)/trace/easycdr_trace_tx.sv
+                  $(RTL)/trace/trace_cdc.sv $(RTL)/trace/trace_afifo.sv $(RTL)/trace/easycdr_trace_tx.sv \
+                  $(RTL)/trace/trace_rx_decoder.sv $(RTL)/trace/trace_link_diag.sv $(RTL)/trace/trace_sym_inject.sv
 $(TRACE_VERYL_SV): $(wildcard $(RTL)/trace/*.veryl)
 	cd $(RTL)/trace && veryl build
 
