@@ -14,7 +14,7 @@ module ip_phy_gw5a (
     wire pll_lock;
     wire rxclk_500m_0 /* synthesis syn_keep=1 */;
     wire rxclk_500m_90, rxclk_500m_180, rxclk_500m_270;
-    pll_rx_500m_4ph u_pll_rx(
+    pll_rx_500m_4ph #(.MDIV(`RATE_MDIV), .MDIV_FRAC(`RATE_MDIV_FRAC), .ODIV(`RATE_ODIV)) u_pll_rx(
         .lock(pll_lock), .clkout0(rxclk_500m_0), .clkout1(rxclk_500m_90),
         .clkout2(rxclk_500m_180), .clkout3(rxclk_500m_270), .clkin(clk_in),
         .pssel(3'd0), .psdir(1'b0), .pspulse(1'b0));

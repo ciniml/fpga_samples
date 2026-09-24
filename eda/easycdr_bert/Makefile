@@ -8,6 +8,11 @@ ifeq ($(USE_EASYCDR_IP),1)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_ip
 export USE_EASYCDR_IP
 endif
+# RATE=1200M / 1400M / 1487M5 / 1600M: line-rate variants of the IP receiver (BER vs rate)
+ifneq ($(RATE),)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_$(shell echo $(RATE) | tr A-Z a-z)
+export RATE
+endif
 ifeq ($(DYN_DLY1),1)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_dyn1
 export DYN_DLY1

@@ -136,7 +136,7 @@ module top(
     // (ext_ctrl[2], direction ext_ctrl[1]) while the RX CDR phase is frozen
     // (ext_ctrl[0]); the data eye then moves across the fixed RX sampling
     // point and the BERT counts errors per step.
-    pll_tx_500m u_pll_tx(
+    pll_tx_500m #(.MDIV(`RATE_MDIV), .MDIV_FRAC(`RATE_MDIV_FRAC), .ODIV(`RATE_ODIV)) u_pll_tx(
         .lock(pll_tx_lock), .clkout0(txclk_500m), .clkout1(), .clkout2(), .clkout3(), .clkin(clk_in),
         .psdir(ext_ctrl[1]), .pspulse(ext_ctrl[2]));
     CLKDIV u_clkdiv_tx(.HCLKIN(txclk_500m), .RESETN(resetn_in), .CALIB(1'b0), .CLKOUT(txclk_125m));
@@ -285,22 +285,30 @@ module top(
     //------------------------------------------------------------------
     // status pins
     //------------------------------------------------------------------
-    reg [15:0] act_cnt; reg act_ok;
-    reg [19:0] err_stretch;
+    // (registered compares and an extra output stage: these LED paths were the
+    //  worst pclk setup paths in the 175..200MHz RATE variants)
+    reg [15:0] act_cnt; reg act_full, act_ok, act_ok_q;
+    reg [19:0] err_stretch; reg err_hit, err_any, err_any_q;
     always @(posedge pclk or posedge rx_reset) begin
         if (rx_reset) begin
-            act_cnt <= 16'd0; act_ok <= 1'b0; err_stretch <= 20'd0;
+            act_cnt <= 16'd0; act_full <= 1'b0; act_ok <= 1'b0; act_ok_q <= 1'b0;
+            err_stretch <= 20'd0; err_hit <= 1'b0; err_any <= 1'b0; err_any_q <= 1'b0;
         end else begin
+            act_full <= &act_cnt;
             if (rx_data_en) begin act_cnt <= 16'd0; act_ok <= 1'b1; end
-            else if (&act_cnt) act_ok <= 1'b0;
+            else if (act_full) act_ok <= 1'b0;
             else act_cnt <= act_cnt + 1'b1;
-            if (u_core.u_chk.o_valid && u_core.u_chk.o_errs != 0) err_stretch <= 20'hfffff;
-            else if (err_stretch != 0) err_stretch <= err_stretch - 1'b1;
+            act_ok_q <= act_ok;
+            err_hit <= u_core.u_chk.o_valid && u_core.u_chk.o_errs != 0;
+            err_any <= (err_stretch != 0);
+            if (err_hit) err_stretch <= 20'hfffff;
+            else if (err_any) err_stretch <= err_stretch - 1'b1;
+            err_any_q <= err_any;
         end
     end
     assign o_dat_lock    = locked;
-    assign o_dat_err     = (err_stretch != 0);
-    assign dout_flag_xor = act_ok;
+    assign o_dat_err     = err_any_q;
+    assign dout_flag_xor = act_ok_q;
     assign o_dat_err_num = 8'h00;
     assign O_ERROR       = 1'b0;
 endmodule

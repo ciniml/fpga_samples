@@ -45,12 +45,15 @@ pub module PrbsGen #(
     var fixpos_n: logic<4>    ;
     var p       : logic<4>    ;
     var flip    : logic<WIDTH>;
+    // i_sel is quasi-static: a local copy keeps the (fanout-heavy) select
+    // mux out of the register-to-register path from the config registers
+    var sel_q   : PrbsSel     ;
 
     always_comb {
         nxt_hist = hist;
         for i in 0..WIDTH {
-            prbs_w[i] = prbs_next(nxt_hist, i_sel);
-            nxt_hist  = prbs_shift(nxt_hist, i_sel);
+            prbs_w[i] = prbs_next(nxt_hist, sel_q);
+            nxt_hist  = prbs_shift(nxt_hist, sel_q);
         }
         p = fixpos;
         for i in 0..WIDTH {
@@ -78,7 +81,9 @@ pub module PrbsGen #(
             fixpos = 0;
             inj    = 1'b0;
             o_data = 0;
+            sel_q  = 0 as PrbsSel;
         } else {
+            sel_q = i_sel;
             if i_enable {
                 hist   = nxt_hist;
                 fixpos = fixpos_n;

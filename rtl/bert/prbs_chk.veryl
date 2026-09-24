@@ -81,6 +81,7 @@ pub module PrbsChk #(
     var hist_ld : logic<HIST> ; // history loaded from the received bits
     var diff    : logic<WIDTH>;
     var nerr    : logic<CNTW> ;
+    var sel_q   : PrbsSel     ; // local copy of the quasi-static i_sel (timing)
     always_comb {
         // prediction chains per polynomial with constant taps, selected at
         // the end: keeps the i_sel mux out of the unrolled XOR chain
@@ -93,8 +94,8 @@ pub module PrbsChk #(
             }
             hist_k[k] = h;
         }
-        pred     = pred_k[if i_sel >: 4 as PrbsSel ? 4 : i_sel as 3];
-        hist_run = hist_k[if i_sel >: 4 as PrbsSel ? 4 : i_sel as 3];
+        pred     = pred_k[if sel_q >: 4 as PrbsSel ? 4 : sel_q as 3];
+        hist_run = hist_k[if sel_q >: 4 as PrbsSel ? 4 : sel_q as 3];
         diff = pred ^ d;
         nerr = 0;
         for i in 0..WIDTH {
@@ -115,6 +116,7 @@ pub module PrbsChk #(
 
     always_ff (i_clk, i_rst) {
         if_reset {
+            sel_q    = 0 as PrbsSel;
             hist     = 0;
             hist_nz  = 1'b0;
             locked   = 1'b0;
@@ -130,6 +132,7 @@ pub module PrbsChk #(
             o_errs   = 0;
             o_unlock = 1'b0;
         } else {
+            sel_q = i_sel;
             // stage 0
             v1 = i_valid;
             l1 = locked;

@@ -7,7 +7,14 @@
 //Device Version: A
 //Created Time: Wed Sep 27 09:04:47 2023
 
-module pll_tx_500m (lock, clkout0, clkout1, clkout2, clkout3, clkin, psdir, pspulse);
+// Transmit bit clock (OSER8 FCLK): VCO = 50MHz x (MDIV + MDIV_FRAC/8),
+// clkout0 = VCO / ODIV. Defaults give 500MHz (1Gbps); the RATE build
+// variants override the parameters. One PSPULSE = VCO period / 8.
+module pll_tx_500m #(
+    parameter MDIV      = 20,
+    parameter MDIV_FRAC = 0,
+    parameter ODIV      = 2
+) (lock, clkout0, clkout1, clkout2, clkout3, clkin, psdir, pspulse);
 
 output lock;
 output clkout0;
@@ -62,16 +69,16 @@ defparam PLLA_inst.FCLKIN = "50";
 defparam PLLA_inst.IDIV_SEL = 1;
 defparam PLLA_inst.FBDIV_SEL = 1;
 defparam PLLA_inst.CLKFB_SEL = "INTERNAL";
-defparam PLLA_inst.ODIV0_SEL = 2;
+defparam PLLA_inst.ODIV0_SEL = ODIV;
 defparam PLLA_inst.ODIV0_FRAC_SEL = 0;
-defparam PLLA_inst.ODIV1_SEL = 2;
-defparam PLLA_inst.ODIV2_SEL = 2;
-defparam PLLA_inst.ODIV3_SEL = 2;
+defparam PLLA_inst.ODIV1_SEL = ODIV;
+defparam PLLA_inst.ODIV2_SEL = ODIV;
+defparam PLLA_inst.ODIV3_SEL = ODIV;
 defparam PLLA_inst.ODIV4_SEL = 8;
 defparam PLLA_inst.ODIV5_SEL = 8;
 defparam PLLA_inst.ODIV6_SEL = 8;
-defparam PLLA_inst.MDIV_SEL = 20;
-defparam PLLA_inst.MDIV_FRAC_SEL = 0;
+defparam PLLA_inst.MDIV_SEL = MDIV;
+defparam PLLA_inst.MDIV_FRAC_SEL = MDIV_FRAC;
 defparam PLLA_inst.CLKOUT0_EN = "TRUE";
 defparam PLLA_inst.CLKOUT1_EN = "FALSE";
 defparam PLLA_inst.CLKOUT2_EN = "FALSE";

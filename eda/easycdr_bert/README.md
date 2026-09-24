@@ -28,6 +28,28 @@ DISPLAY= QT_QPA_PLATFORM=offscreen make synthesis GW_SH=~/gowin/1.9.12/IDE/bin/g
 make run [OPENFPGA_LOADER_DEVICE_OVERRIDE="--busdev-num <bus:dev>"]
 ```
 
+### レート変種 (純正 IP 版のみ、`build/tangprimer25k_ip_<rate>/`)
+
+GW5A-25 の GPIO 受信経路 (IDES 上限 1600Mbps、DS1103 Table 3-31) がどこまで持つかを BER で測る変種。
+`make USE_EASYCDR_IP=1 RATE=<rate>`。RX 4 相 PLL と TX PLL (OSER8 FCLK) を同じ MDIV/ODIV で組み、
+IP の `DELAY_1` (UI/4 のタップ数、12.5ps/段) と SDC を project.tcl のテーブルから生成する。
+
+| RATE | 線速 | FCLK / pclk | PLL (50MHz 入力) | DELAY_1 |
+|---|---|---|---|---|
+| (既定) | 1.0 Gbps | 500 / 125 MHz | VCO 1000 (MDIV 20), ODIV 2 | 21 |
+| `1200M` | 1.2 Gbps | 600 / 150 | VCO 1200 (MDIV 24), ODIV 2 | 18 |
+| `1400M` | 1.4 Gbps | 700 / 175 | VCO 1400 (MDIV 28), ODIV 2 | 15 |
+| `1487M5` | 1.4875 Gbps (1080p60 の 1.485 に +0.17%) | 743.75 / 185.9 | VCO 743.75 (MDIV 14 + 7/8), ODIV 1 | 14 |
+| `1600M` | 1.6 Gbps (IDES の仕様上限、DP RBR 1.62 の −1%) | 800 / 200 | VCO 800 (MDIV 16), ODIV 1 | 13 |
+
+- 4 相の 90° は PLLA の PE_FINE (VCO 周期 / 8) で ODIV 2 なら 4 ステップ、ODIV 1 なら 2 ステップ (ラッパで自動計算)
+- 合成結果 (2026-09-25、実機未測定): 1200M / 1400M / 1487M5 はタイミング違反なし (pclk Fmax 193MHz)。1600M は pclk 200MHz に
+  対し IP 内ギアボックス −0.16ns、64bit 誤り計数器 −0.08ns が残る (BER 測定には支障ない程度だが要注意)。
+  LED 状態ピンと PRBS の sel マルチプレクサは変種のためにパイプライン化した (bert_core/prbs_gen/prbs_chk の `sel_q`)
+- 自前 CDR (`oscdr_phy_gw5a.v`) は 1Gbps 固定タップなので RATE との併用は project.tcl がエラーにする
+- アイスキャン (`host/eyescan.py --step-ps`) の 1 ステップは VCO 周期 / 8: 1200M 104ps、1400M 89ps、1487M5 168ps、1600M 156ps
+  (ただしアイスキャンは自前 CDR の位相凍結が前提なので IP 版では BER のみ)
+
 Chrome/Edge で `host/bert.html` を開き Connect (Serial)。接続時に `I` で識別、
 設定を Apply しカウンタをクリアして計測開始。表示: ロック、ビット数、誤り数、
 BER、95% 信頼上限 (誤り 0 のとき 3/N)、アンロック回数、経過時間、累積 BER の
