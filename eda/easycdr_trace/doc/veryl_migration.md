@@ -62,7 +62,10 @@ rtl/trace/            Veryl プロジェクト（rtl/manchester と同じ構成�
    リセットは `reset_async_low` ポートで従来の `negedge rstn` を維持。`veryl test`（`test/tx_link_core_body.sv`、
    FRAME_LEN 16/8: コンマ位置・o_ready・バイト順・充填）。`eda/easycdr_trace/Makefile` と `test/Makefile` に
    `veryl build` 規則を追加（生成 .sv は非追跡）。E2E 3 条件 PASS、Nano9K 合成は LUT/FF とも従来と同じ。
-2. trace_link_tx（バイト配列化）、trace_frontend（generate-if）。
+2. **済 (2026-09-25)** trace_link_tx（`cur: logic<REC_BYTES, 8>` で `cur[sb_idx]`、`WIDTH[7:0]` は param の
+   ビット選択がそのまま通る、`TS_LAST as 8` で幅キャスト）、trace_frontend（`if COND :label { }` の generate-if、
+   `logic<SYNC_STAGES, WIDTH>` のシフト列、`for i in 1..N`（型注釈不可））。E2E 3 条件 PASS、Nano9K 4 変種とも
+   合成 OK で demo は LUT 988 / FF 778（Verilog 版と同一）。実機確認は 25K 未接続のため未実施。
 3. trace_cdc + trace_afifo（リセット型の決定、25K の BSRAM 推論確認）、ラッパ。ここで送信側が全部 Veryl。
    Nano9K の TRACE_WIDTH=32 / CTRL_PULSE=1 / RATE=742M5 変種も合成。
 4. 受信側: decoder → diag → sym_inject。

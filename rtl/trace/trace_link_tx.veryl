@@ -1,0 +1,243 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file trace_link_tx.veryl
+ * @brief Link-clock-domain part of the trace transmitter.
+ *
+ * Pops {tick, ts, data} records from the record FIFO and serialises them as
+ *   [K28.1][ts bytes][data bytes]   (little-endian)
+ *   [K28.7][ts bytes]               tick (FIFO word flagged, no data bytes)
+ * interleaved with the overflow marker (K28.2, one per request), the
+ * descriptor record [K28.4][VER=2][WIDTH][TS_BITS][flags][HASH0..3] and the
+ * signal-map text [K28.6][LEN][bytes], all at record boundaries;
+ * easycdr_trace_tx_core adds the K28.5 comma framing, K28.3 idle filler and
+ * 8b10b encoding. Only the link clock (line rate / 10) is used here.
+ * Priority: overflow > descriptor > map > record.
+ */
+pub module trace_link_tx #(
+    param WIDTH        : u32       = 16    ,
+    param TS_BITS      : u32       = 24    ,
+    param FRAME_LEN    : u32       = 16    ,
+    param DESC_INTERVAL: u32       = 131072,
+    param CFG_HASH     : logic<32> = 32'h0 , // signal-map hash (tracemap.py), descriptor bytes 4..7
+) (
+    clk : input clock_posedge  ,
+    rstn: input reset_async_low,
+
+    i_fifo_empty: input  logic                  ,
+    i_fifo_data : input  logic<TS_BITS + WIDTH + 1>, // {tick, ts, data}
+    o_fifo_rd   : output logic                  ,
+
+    i_ovf_req: input  logic, // one clock: schedule a K28.2
+    o_ovf_ack: output logic, // one clock: K28.2 sent
+
+    i_desc_req  : input logic   ,
+    i_desc_flags: input logic<5>, // {periodic, done, triggered, armed, enable}
+
+    i_map_req : input  logic   , // one clock: send the signal-map text once
+    i_map_len : input  logic<8>, // text length (0 = nothing to send)
+    o_map_addr: output logic<8>, // byte ROM interface (combinational read)
+    i_map_data: input  logic<8>,
+
+    o_symbol: output logic<10>,
+) {
+    const TS_BYTES : u32 = TS_BITS / 8;
+    const REC_BYTES: u32 = TS_BYTES + WIDTH / 8;
+    const REC_BITS : u32 = TS_BITS + WIDTH;
+    const TS_LAST  : u32 = TS_BYTES - 1;
+    const REC_LAST : u32 = REC_BYTES - 1;
+
+    const K28_1: logic<8> = 8'h3c; // record
+    const K28_2: logic<8> = 8'h5c; // overflow marker
+    const K28_4: logic<8> = 8'h9c; // descriptor
+    const K28_6: logic<8> = 8'hdc; // signal-map text: [K28.6][LEN][LEN bytes]
+    const K28_7: logic<8> = 8'hfc; // tick: [K28.7][ts bytes]
+
+    //------------------------------------------------------------------
+    // descriptor scheduler, overflow marker and map requests
+    //------------------------------------------------------------------
+    const DIW      : u32 = if DESC_INTERVAL <= 1 ? 1 : $clog2(DESC_INTERVAL);
+    const DESC_LAST: u32 = DESC_INTERVAL - 1;
+
+    var desc_timer  : logic<DIW>;
+    var desc_pending: logic     ;
+    var desc_ack    : logic     ;
+    var ovf_pending : logic     ;
+    var map_pending : logic     ;
+    var map_ack     : logic     ;
+    var map_active  : logic     ;
+    var map_lenbyte : logic     ;
+
+    always_ff {
+        if_reset {
+            desc_timer   = 0;
+            desc_pending = 1'b0;
+            ovf_pending  = 1'b0;
+            map_pending  = 1'b0;
+        } else {
+            if DESC_INTERVAL != 0 {
+                if desc_timer == DESC_LAST as DIW {
+                    desc_timer   = 0;
+                    desc_pending = 1'b1;
+                } else {
+                    desc_timer = desc_timer + 1;
+                }
+            }
+            if i_desc_req {
+                desc_pending = 1'b1;
+            }
+            if desc_ack {
+                desc_pending = 1'b0;
+            }
+            if i_map_req && i_map_len != 8'd0 {
+                map_pending = 1'b1;
+            }
+            if map_ack {
+                map_pending = 1'b0;
+            }
+            if i_ovf_req {
+                ovf_pending = 1'b1;
+            }
+            if o_ovf_ack {
+                ovf_pending = 1'b0;
+            }
+        }
+    }
+
+    var desc_byte: logic<8>;
+    var desc_idx : logic<3>;
+    always_comb {
+        case desc_idx {
+            3'd0   : desc_byte = 8'h02; // format version 2 (8 bytes)
+            3'd1   : desc_byte = WIDTH[7:0];
+            3'd2   : desc_byte = TS_BITS[7:0];
+            3'd3   : desc_byte = {3'b0, i_desc_flags};
+            3'd4   : desc_byte = CFG_HASH[7:0];
+            3'd5   : desc_byte = CFG_HASH[15:8];
+            3'd6   : desc_byte = CFG_HASH[23:16];
+            default: desc_byte = CFG_HASH[31:24];
+        }
+    }
+
+    //------------------------------------------------------------------
+    // byte serializer
+    //------------------------------------------------------------------
+    var sb_active  : logic               ;
+    var desc_active: logic               ;
+    var sb_idx     : logic<8>            ;
+    var sb_last    : logic<8>            ;
+    var cur        : logic<REC_BYTES, 8> ; // {data, ts}: cur[0] = ts[7:0]
+    var b_valid    : logic               ;
+    var b_is_k     : logic               ;
+    var b_data     : logic<8>            ;
+    var b_ready    : logic               ;
+    let can_load   : logic                = !b_valid || b_ready;
+    let cur_byte   : logic<8>             = cur[sb_idx];
+    let fifo_tick  : logic                = i_fifo_data[REC_BITS];
+
+    always_ff {
+        if_reset {
+            sb_active   = 1'b0;
+            desc_active = 1'b0;
+            desc_idx    = 3'd0;
+            desc_ack    = 1'b0;
+            sb_idx      = 8'd0;
+            sb_last     = 8'd0;
+            map_ack     = 1'b0;
+            map_active  = 1'b0;
+            map_lenbyte = 1'b0;
+            o_map_addr  = 8'd0;
+            cur         = 0;
+            b_valid     = 1'b0;
+            b_is_k      = 1'b0;
+            b_data      = 8'h00;
+            o_ovf_ack   = 1'b0;
+            o_fifo_rd   = 1'b0;
+        } else {
+            o_ovf_ack = 1'b0;
+            desc_ack  = 1'b0;
+            map_ack   = 1'b0;
+            o_fifo_rd = 1'b0;
+            if can_load {
+                if map_active { // [LEN] then the text bytes
+                    b_valid = 1'b1;
+                    b_is_k  = 1'b0;
+                    if map_lenbyte {
+                        b_data      = i_map_len;
+                        map_lenbyte = 1'b0;
+                        o_map_addr  = 8'd0;
+                    } else {
+                        b_data = i_map_data;
+                        if o_map_addr == i_map_len - 1 {
+                            map_active = 1'b0;
+                        }
+                        o_map_addr = o_map_addr + 1;
+                    }
+                } else if desc_active {
+                    b_valid = 1'b1;
+                    b_is_k  = 1'b0;
+                    b_data  = desc_byte;
+                    if desc_idx == 3'd7 {
+                        desc_active = 1'b0;
+                    }
+                    desc_idx = desc_idx + 1;
+                } else if !sb_active {
+                    if ovf_pending && !o_ovf_ack {
+                        b_valid   = 1'b1;
+                        b_is_k    = 1'b1;
+                        b_data    = K28_2;
+                        o_ovf_ack = 1'b1;
+                    } else if desc_pending && !desc_ack {
+                        b_valid     = 1'b1;
+                        b_is_k      = 1'b1;
+                        b_data      = K28_4;
+                        desc_active = 1'b1;
+                        desc_idx    = 3'd0;
+                        desc_ack    = 1'b1;
+                    } else if map_pending && !map_ack {
+                        b_valid     = 1'b1;
+                        b_is_k      = 1'b1;
+                        b_data      = K28_6;
+                        map_active  = 1'b1;
+                        map_lenbyte = 1'b1;
+                        map_ack     = 1'b1;
+                    } else if !i_fifo_empty && !o_fifo_rd {
+                        cur       = {i_fifo_data[WIDTH - 1:0], i_fifo_data[REC_BITS - 1:WIDTH]};
+                        o_fifo_rd = 1'b1;
+                        b_valid   = 1'b1;
+                        b_is_k    = 1'b1;
+                        b_data    = if fifo_tick ? K28_7 : K28_1;
+                        sb_last   = if fifo_tick ? TS_LAST as 8 : REC_LAST as 8;
+                        sb_active = 1'b1;
+                        sb_idx    = 8'd0;
+                    } else {
+                        b_valid = 1'b0;
+                    }
+                } else {
+                    b_valid = 1'b1;
+                    b_is_k  = 1'b0;
+                    b_data  = cur_byte;
+                    if sb_idx == sb_last {
+                        sb_active = 1'b0;
+                    }
+                    sb_idx = sb_idx + 1;
+                }
+            }
+        }
+    }
+
+    inst u_core: easycdr_trace_tx_core #(
+        FRAME_LEN: FRAME_LEN,
+    ) (
+        clk     : clk     ,
+        rstn    : rstn    ,
+        i_valid : b_valid ,
+        i_is_k  : b_is_k  ,
+        i_data  : b_data  ,
+        o_ready : b_ready ,
+        o_symbol: o_symbol,
+    );
+}

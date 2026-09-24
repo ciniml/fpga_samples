@@ -3,7 +3,7 @@ RTL := ../../../rtl
 SRCS := e2e_ctrl_tb.sv trace_map_rom.v \
         ../src/common/easycdr_trace_tx.v $(RTL)/trace/tx_link_core.sv \
         ../src/common/trace_cdc.v ../src/common/trace_afifo.v \
-        ../src/common/trace_frontend.v ../src/common/trace_link_tx.v \
+        $(RTL)/trace/trace_frontend.sv $(RTL)/trace/trace_link_tx.sv \
         $(RTL)/manchester/pulse_reset_tx.sv \
         ../src/tangprimer25k/trace_rx_decoder.v ../src/tangprimer25k/trace_capture.v \
         ../src/tangprimer25k/trace_link_diag.v \
@@ -20,10 +20,11 @@ VFLAGS := --binary --timing --assert -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC
 trace_map_rom.v: ../maps/nano9k_demo.map ../host/tracemap.py
 	python3 ../host/tracemap.py ../maps/nano9k_demo.map --rom $@
 
-$(RTL)/trace/tx_link_core.sv: $(wildcard $(RTL)/trace/*.veryl)
+TRACE_VERYL_SV := $(RTL)/trace/tx_link_core.sv $(RTL)/trace/trace_link_tx.sv $(RTL)/trace/trace_frontend.sv
+$(TRACE_VERYL_SV): $(wildcard $(RTL)/trace/*.veryl)
 	cd $(RTL)/trace && veryl build
 
-test: trace_map_rom.v $(RTL)/trace/tx_link_core.sv
+test: trace_map_rom.v $(TRACE_VERYL_SV)
 	verilator $(VFLAGS) --Mdir obj_dir -o simv $(SRCS)
 	./obj_dir/simv
 	verilator $(VFLAGS) -GSCLK_PERIOD=10.0 --Mdir obj_dir_s100 -o simv $(SRCS)

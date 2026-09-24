@@ -25,7 +25,7 @@ export RATE
 endif
 
 # Veryl sources (rtl/trace, rtl/manchester): the generated .sv are not tracked, build them first
-TRACE_VERYL_SV := ../../rtl/trace/tx_link_core.sv
+TRACE_VERYL_SV := ../../rtl/trace/tx_link_core.sv ../../rtl/trace/trace_link_tx.sv ../../rtl/trace/trace_frontend.sv
 $(TRACE_VERYL_SV): $(wildcard ../../rtl/trace/*.veryl) ../../rtl/trace/Veryl.toml
 	cd ../../rtl/trace && veryl build
 

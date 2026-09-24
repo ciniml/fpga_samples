@@ -9,6 +9,8 @@
 | モジュール | 生成 SV | 内容 |
 |---|---|---|
 | `easycdr_trace_tx_core` (`tx_link_core.veryl`) | `tx_link_core.sv` | K28.5 コンマ挿入 (FRAME_LEN 語毎)、K28.3 充填、8b10b。エンコーダは `$sv::displayport_encoder_8b10b` (rtl/displayport) |
+| `trace_link_tx` | `trace_link_tx.sv` | レコード FIFO → `[K28.1][ts][data]` / `[K28.7][ts]` (tick) / K28.2 溢れ / K28.4 デスクリプタ / K28.6 信号マップ のバイト直列化 |
+| `trace_frontend` | `trace_frontend.sv` | サンプルクロック側: 同期化、変化検出 + 無視マスク、タイムスタンプ、周期サンプル、TX トリガ、tick |
 
 生成された `.sv` は追跡しない (`.gitignore`)。`eda/easycdr_trace/Makefile` と `test/Makefile` が
 `veryl build` を先に走らせる。

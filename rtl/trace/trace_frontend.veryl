@@ -1,0 +1,216 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file trace_frontend.veryl
+ * @brief Sample-clock-domain part of the trace transmitter.
+ *
+ * Runs entirely on the sample clock (the clock of the signals being traced,
+ * or any convenient clock): input synchroniser (optional), change detection
+ * with ignore mask, timestamp counter, periodic sampling, TX-side trigger,
+ * tick records. Produces {tick, timestamp, data} words for the record FIFO;
+ * the link side (trace_link_tx) is clock-independent. All control inputs
+ * must already be synchronous to sclk (easycdr_trace_tx crosses them from
+ * the link clock).
+ *
+ *   SYNC_STAGES  : 0 = sig is synchronous to sclk (no added latency)
+ *                  2 = asynchronous inputs (2FF synchroniser)
+ *   HAS_PERIODIC / HAS_TRIGGER : 0 removes the periodic sampler / trigger
+ *                  FSM (inputs ignored).
+ *   TICK_LOG2    : a "tick" record (timestamp only, no data) is emitted every
+ *                  2^TICK_LOG2 sclk while enabled and !i_tick_dis, so the
+ *                  receiver knows how far the trace extends past the last
+ *                  change (end-of-capture marker). Bit TS_BITS+WIDTH of
+ *                  o_rec_data flags a tick.
+ */
+pub module trace_frontend #(
+    param WIDTH       : u32 = 16,
+    param TS_BITS     : u32 = 24,
+    param SYNC_STAGES : u32 = 2 ,
+    param HAS_PERIODIC: u32 = 1 ,
+    param HAS_TRIGGER : u32 = 1 ,
+    param TICK_LOG2   : u32 = 16,
+) (
+    sclk: input clock_posedge  ,
+    rstn: input reset_async_low, // synchronous to sclk
+    sig : input logic<WIDTH>   ,
+
+    i_enable     : input logic       ,
+    i_ignore_mask: input logic<WIDTH>,
+    i_periodic_en: input logic       ,
+    i_change_dis : input logic       ,
+    i_tick_dis   : input logic       ,
+    i_period     : input logic<24>   , // sclk cycles
+    i_arm        : input logic       , // one sclk pulse
+    i_trig_mask  : input logic<WIDTH>,
+    i_trig_value : input logic<WIDTH>,
+    i_post       : input logic<16>   ,
+
+    i_fifo_full: input  logic                      ,
+    o_rec_wr   : output logic                      , // write {tick, ts, data} this cycle
+    o_rec_data : output logic<TS_BITS + WIDTH + 1> ,
+    o_drop     : output logic                      , // record lost (FIFO full)
+
+    o_armed    : output logic,
+    o_triggered: output logic,
+    o_done     : output logic,
+) {
+    //------------------------------------------------------------------
+    // input synchroniser
+    //------------------------------------------------------------------
+    var sig_s: logic<WIDTH>;
+    if SYNC_STAGES == 0 :g_nosync {
+        assign sig_s = sig;
+    } else :g_sync {
+        var sr: logic<SYNC_STAGES, WIDTH>;
+        always_ff (sclk) {
+            sr[0] = sig;
+            for i in 1..SYNC_STAGES {
+                sr[i] = sr[i - 1];
+            }
+        }
+        assign sig_s = sr[SYNC_STAGES - 1];
+    }
+
+    //------------------------------------------------------------------
+    // periodic sampler (down-counter, registered compare - GW1N timing)
+    //------------------------------------------------------------------
+    var per_hit: logic;
+    if HAS_PERIODIC != 0 :g_per {
+        var per_cnt  : logic<24>;
+        var period_m1: logic<24>;
+        var per_over : logic    ;
+        always_ff {
+            if_reset {
+                per_cnt   = 24'd0;
+                period_m1 = 24'd0;
+                per_over  = 1'b0;
+                per_hit   = 1'b0;
+            } else {
+                period_m1 = i_period - 1;
+                per_over  = per_cnt >: period_m1;
+                per_hit   = 1'b0;
+                if !i_periodic_en || per_over {
+                    per_cnt = period_m1;
+                } else if per_cnt == 24'd0 {
+                    per_cnt = period_m1;
+                    per_hit = 1'b1;
+                } else {
+                    per_cnt = per_cnt - 1;
+                }
+            }
+        }
+    } else :g_noper {
+        assign per_hit = 1'b0;
+    }
+
+    //------------------------------------------------------------------
+    // TX-side trigger: ARM -> hold records until (sig & mask) == value,
+    // then pass the matching sample + i_post more (0 = unlimited)
+    //------------------------------------------------------------------
+    var rec_wr   : logic;
+    var tick_r   : logic;
+    var pass     : logic;
+    var trig_fire: logic;
+    if HAS_TRIGGER != 0 :g_trig {
+        const TS_FREE : logic<2> = 2'd0;
+        const TS_ARMED: logic<2> = 2'd1;
+        const TS_RUN  : logic<2> = 2'd2;
+        const TS_DONE : logic<2> = 2'd3;
+        var tstate   : logic<2> ;
+        var post_left: logic<16>;
+        var match_r  : logic    ;
+        var rec_wr_r : logic    ;
+        var post_last: logic    ;
+        always_ff {
+            if_reset {
+                tstate    = TS_FREE;
+                post_left = 16'd0;
+                match_r   = 1'b0;
+                rec_wr_r  = 1'b0;
+                post_last = 1'b0;
+            } else {
+                match_r   = ((sig_s ^ i_trig_value) & i_trig_mask) == 0;
+                rec_wr_r  = rec_wr && !tick_r; // ticks do not count as post-trigger records
+                post_last = post_left <= 16'd1;
+                if i_arm {
+                    tstate    = TS_ARMED;
+                    post_left = i_post;
+                } else {
+                    case tstate {
+                        TS_ARMED: if match_r && i_enable {
+                            tstate    = TS_RUN;
+                            post_left = i_post + 1; // the trigger record itself + i_post more
+                        }
+                        TS_RUN: if rec_wr_r && i_post != 16'd0 {
+                            if post_last {
+                                tstate = TS_DONE;
+                            }
+                            post_left = post_left - 1;
+                        }
+                        default: {}
+                    }
+                }
+            }
+        }
+        assign pass        = (tstate == TS_FREE) || (tstate == TS_RUN);
+        assign trig_fire   = (tstate == TS_ARMED) && match_r && i_enable;
+        assign o_armed     = tstate == TS_ARMED;
+        assign o_triggered = tstate == TS_RUN;
+        assign o_done      = tstate == TS_DONE;
+    } else :g_notrig {
+        assign pass        = 1'b1;
+        assign trig_fire   = 1'b0;
+        assign o_armed     = 1'b0;
+        assign o_triggered = 1'b0;
+        assign o_done      = 1'b0;
+    }
+
+    //------------------------------------------------------------------
+    // change detector (1-stage pipeline), timestamp, tick, record output
+    //------------------------------------------------------------------
+    var sig_prev : logic<WIDTH>    ;
+    var sig_d    : logic<WIDTH>    ;
+    var chg_r    : logic           ;
+    var en_q     : logic           ;
+    var init_done: logic           ;
+    var ts       : logic<TS_BITS>  ;
+    var tick_cnt : logic<TICK_LOG2>;
+    let tick_hit : logic            = tick_cnt == 0;
+    // a data record is sent on the first sample, when i_enable rises, on a
+    // periodic hit, on a trigger and on every (unmasked) change
+    let chg_now: logic = trig_fire ||
+                         (pass && (!init_done || (i_enable && !en_q) || per_hit ||
+                          (!i_change_dis && (((sig_s ^ sig_prev) & ~i_ignore_mask) != 0))));
+
+    assign rec_wr     = chg_r && !i_fifo_full;
+    assign o_rec_wr   = rec_wr;
+    assign o_rec_data = {tick_r, ts, sig_d};
+
+    always_ff {
+        if_reset {
+            sig_prev  = 0;
+            sig_d     = 0;
+            chg_r     = 1'b0;
+            en_q      = 1'b0;
+            init_done = 1'b0;
+            ts        = 0;
+            tick_cnt  = 0;
+            tick_r    = 1'b0;
+            o_drop    = 1'b0;
+        } else {
+            ts       = ts + 1;
+            tick_cnt = tick_cnt + 1;
+            sig_prev = sig_s;
+            sig_d    = sig_s;
+            en_q     = i_enable;
+            // a tick coinciding with a data record is folded into that record
+            chg_r     = i_enable && (chg_now || (tick_hit && !i_tick_dis));
+            tick_r    = i_enable && !chg_now && tick_hit && !i_tick_dis;
+            init_done = 1'b1;
+            o_drop    = chg_r && i_fifo_full;
+        }
+    }
+}
