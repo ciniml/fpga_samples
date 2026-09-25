@@ -1,14 +1,15 @@
-// Timing constraints for the EasyCDR trace-link sample (1Gbps, 8b10b).
+// Timing constraints for the EasyCDR trace-link sample (8b10b). Template: project.tcl fills @FP@/@FH@
+// (FCLK period) and @PM@/@PD@ (pclk_rx from 50MHz) per RATE variant (1G: 2.0 / 1.0 / 5 / 2).
 create_clock -name clk_in -period 20 -waveform {0 10} [get_ports {clk_in}]
 
 // RX: 500MHz 4-phase HCLK from u_pll_rx
-create_clock -name rxclk_500m_0   -period 2.0 -waveform {0 1.0} [get_nets {rxclk_500m_0}]
-create_clock -name rxclk_500m_90  -period 2.0 -waveform {0 1.0} [get_nets {rxclk_500m_90}]
-create_clock -name rxclk_500m_180 -period 2.0 -waveform {0 1.0} [get_nets {rxclk_500m_180}]
-create_clock -name rxclk_500m_270 -period 2.0 -waveform {0 1.0} [get_nets {rxclk_500m_270}]
+create_clock -name rxclk_500m_0   -period @FP@ -waveform {0 @FH@} [get_nets {rxclk_500m_0}]
+create_clock -name rxclk_500m_90  -period @FP@ -waveform {0 @FH@} [get_nets {rxclk_500m_90}]
+create_clock -name rxclk_500m_180 -period @FP@ -waveform {0 @FH@} [get_nets {rxclk_500m_180}]
+create_clock -name rxclk_500m_270 -period @FP@ -waveform {0 @FH@} [get_nets {rxclk_500m_270}]
 // RX parallel clock: 125MHz (share_clk4_o = 500MHz / 4), constrained on the
 // top-level net because the IP-internal CLKDIV pin is not addressable.
-create_generated_clock -name pclk_rx -source [get_ports {clk_in}] -master_clock clk_in -divide_by 2 -multiply_by 5 [get_nets {pclk_rx}]
+create_generated_clock -name pclk_rx -source [get_ports {clk_in}] -master_clock clk_in -divide_by @PD@ -multiply_by @PM@ [get_nets {pclk_rx}]
 
 // Reverse control channel TX (2Mbps Manchester) runs on clk_in directly.
 

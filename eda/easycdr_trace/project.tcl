@@ -43,6 +43,23 @@ if {${TARGET} == "tangnano9k_pmod"} {
 }
 set RATE [expr {[info exists ::env(RATE)] ? $::env(RATE) : "1G"}]
 if {${RATE} == "742M5"} { append defs "`define RATE_742M5\n" }
+# 25K-only rate variants (self-test loopback, 8b10b stream): line rate = 50MHz x (MDIV + FRAC/8) / ODIV x 2.
+# Columns: MDIV MDIV_FRAC ODIV DELAY_1 FCLK_period_ns pclk_rx_mult pclk_rx_div. 742M5 keeps its own IP dir / PLL / SDC.
+array set RATE_TAB {
+    1G     {20 0 2 21 2.0    5   2}
+    1200M  {24 0 2 18 1.6667 3   1}
+    1300M  {26 0 2 16 1.5385 13  4}
+    1400M  {28 0 2 15 1.4286 7   2}
+    1487M5 {14 7 1 14 1.3445 119 32}
+    1600M  {16 0 1 13 1.25   4   1}
+}
+if {${RATE} != "742M5"} {
+    if {![info exists RATE_TAB(${RATE})]} { error "unknown RATE ${RATE} (1G 742M5 1200M 1300M 1400M 1487M5 1600M)" }
+    if {${TARGET} != "tangprimer25k" && ${RATE} != "1G"} { error "RATE ${RATE} is a tangprimer25k self-test variant (the Nano9K supports 1G / 742M5)" }
+    lassign $RATE_TAB(${RATE}) R_MDIV R_FRAC R_ODIV R_DLY1 R_FPER R_PMUL R_PDIV
+    if {[info exists ::env(DELAY1)]} { set R_DLY1 $::env(DELAY1) }
+    append defs "`define RATE_MDIV ${R_MDIV}\n`define RATE_MDIV_FRAC ${R_FRAC}\n`define RATE_ODIV ${R_ODIV}\n`define RATE_DELAY1 ${R_DLY1}\n"
+}
 set fh [open defines_gen.v w]; puts -nonewline $fh $defs; close $fh
 add_file -type verilog [file normalize defines_gen.v]
 add_file -type verilog [file normalize ${SRC_DIR}/top.v]
@@ -106,6 +123,12 @@ if {${TARGET} == "tangnano9k_pmod"} {
 add_file -type cst [file normalize ${SRC_DIR}/pins.cst]
 if {${RATE} == "742M5"} {
     add_file -type sdc [file normalize ${SRC_DIR}/timing_742m5.sdc]
+} elseif {${TARGET} == "tangprimer25k"} {
+    # timing.sdc is a template (@FP@/@FH@ FCLK period, @PM@/@PD@ pclk_rx from 50MHz)
+    set fh [open ${SRC_DIR}/timing.sdc r]; set sdc [read $fh]; close $fh
+    set sdc [string map [list @FP@ ${R_FPER} @FH@ [expr {${R_FPER} / 2.0}] @PM@ ${R_PMUL} @PD@ ${R_PDIV}] $sdc]
+    set fh [open timing_gen.sdc w]; puts -nonewline $fh $sdc; close $fh
+    add_file -type sdc [file normalize timing_gen.sdc]
 } else {
     add_file -type sdc [file normalize ${SRC_DIR}/timing.sdc]
 }

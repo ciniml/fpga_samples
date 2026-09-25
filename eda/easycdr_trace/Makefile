@@ -18,6 +18,11 @@ ifneq ($(TRACE_MAP),)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_$(basename $(notdir $(TRACE_MAP)))
 export TRACE_MAP
 endif
+# DELAY1=<taps>: override the IP DELAY_1 (25K RATE variants)
+ifneq ($(DELAY1),)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_d$(DELAY1)
+export DELAY1
+endif
 # RATE=742M5: 742.5Mbps link (both boards; e.g. to share a 720p DVI clock on the TX)
 ifneq ($(RATE),)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_$(shell echo $(RATE) | tr A-Z a-z)

@@ -57,7 +57,7 @@ module top(
 `ifdef RATE_742M5
     pll_rx_371m_4ph u_pll_rx(     // 742.5Mbps variant (make RATE=742M5)
 `else
-    pll_rx_500m_4ph u_pll_rx(
+    pll_rx_500m_4ph #(.MDIV(`RATE_MDIV), .MDIV_FRAC(`RATE_MDIV_FRAC), .ODIV(`RATE_ODIV)) u_pll_rx(   // RATE variants (project.tcl)
 `endif
         .lock    (pll_rx_lock),
         .clkout0 (rxclk_500m_0),
@@ -301,7 +301,7 @@ module top(
     wire pll_tx_lock;
     wire txclk_500m /* synthesis syn_keep=1 */;
     wire txclk_100m;
-    pll_tx_500m u_pll_tx(
+    pll_tx_500m #(.MDIV(`RATE_MDIV), .MDIV_FRAC(`RATE_MDIV_FRAC), .ODIV(`RATE_ODIV)) u_pll_tx(
         .lock(pll_tx_lock), .clkout0(txclk_500m), .clkout1(), .clkout2(), .clkout3(), .clkin(clk_in));
     CLKDIV u_clkdiv_tx(.HCLKIN(txclk_500m), .RESETN(resetn_in), .CALIB(1'b0), .CLKOUT(txclk_100m));
     defparam u_clkdiv_tx.DIV_MODE = "5";
