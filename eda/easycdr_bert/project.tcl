@@ -30,19 +30,21 @@ if {[info exists ::env(IODLY_TEST)] && $::env(IODLY_TEST) == "1"} { append defs 
 if {[info exists ::env(IODLY_DYN)] && $::env(IODLY_DYN) == "1"} { append defs "`define IODLY_DYN\n" }
 if {[info exists ::env(IODLY_ADAPT)] && $::env(IODLY_ADAPT) == "1"} { append defs "`define IODLY_ADAPT\n" }
 if {[info exists ::env(IODLY_STATIC)]} { append defs "`define IODLY_STATIC $::env(IODLY_STATIC)\n" }
-# RATE=<variant> (IP receiver only): line rate = 50MHz x (MDIV + MDIV_FRAC/8) / ODIV x 2.
+# RATE=<variant>: line rate = 50MHz x (MDIV + MDIV_FRAC/8) / ODIV x 2.
 # Columns: MDIV MDIV_FRAC ODIV DELAY_1 FCLK_period_ns pclk_mult pclk_div (pclk = FCLK/4 from 50MHz)
 array set RATE_TAB {
     1G     {20 0 2 21 2.0    5   2}
     1200M  {24 0 2 18 1.6667 3   1}
+    1300M  {26 0 2 16 1.5385 13  4}
     1400M  {28 0 2 15 1.4286 7   2}
     1487M5 {14 7 1 14 1.3445 119 32}
     1600M  {16 0 1 13 1.25   4   1}
 }
 set RATE [expr {[info exists ::env(RATE)] ? $::env(RATE) : "1G"}]
-if {![info exists RATE_TAB(${RATE})]} { error "unknown RATE ${RATE} (1G 1200M 1400M 1487M5 1600M)" }
-if {${RATE} != "1G" && !${USE_IP}} { error "RATE variants need USE_EASYCDR_IP=1 (the own PHY is tuned for 1Gbps)" }
+if {![info exists RATE_TAB(${RATE})]} { error "unknown RATE ${RATE} (1G 1200M 1300M 1400M 1487M5 1600M)" }
 lassign $RATE_TAB(${RATE}) R_MDIV R_FRAC R_ODIV R_DLY1 R_FPER R_PMUL R_PDIV
+# DELAY1=<taps> overrides the IP's DELAY_1 (sampling-offset sweep)
+if {[info exists ::env(DELAY1)]} { set R_DLY1 $::env(DELAY1) }
 append defs "`define RATE_MDIV ${R_MDIV}\n`define RATE_MDIV_FRAC ${R_FRAC}\n`define RATE_ODIV ${R_ODIV}\n`define RATE_DELAY1 ${R_DLY1}\n"
 set fh [open defines_gen.v w]; puts -nonewline $fh $defs; close $fh
 add_file -type verilog [file normalize defines_gen.v]
@@ -86,7 +88,10 @@ if {${USE_IP}} {
     set fh [open timing_gen.sdc w]; puts -nonewline $fh $sdc; close $fh
     add_file -type sdc [file normalize timing_gen.sdc]
 } else {
-    add_file -type sdc [file normalize ${SRC_DIR}/timing.sdc]
+    set fh [open ${SRC_DIR}/timing.sdc r]; set sdc [read $fh]; close $fh
+    set sdc [string map [list @FP@ ${R_FPER} @FH@ [expr {${R_FPER} / 2.0}] @PM@ ${R_PMUL} @PD@ ${R_PDIV}] $sdc]
+    set fh [open timing_gen.sdc w]; puts -nonewline $fh $sdc; close $fh
+    add_file -type sdc [file normalize timing_gen.sdc]
 }
 
 run all

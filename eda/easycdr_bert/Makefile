@@ -13,6 +13,11 @@ ifneq ($(RATE),)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_$(shell echo $(RATE) | tr A-Z a-z)
 export RATE
 endif
+# DELAY1=<taps>: override the IP DELAY_1 (with USE_EASYCDR_IP=1), e.g. a sweep at one RATE
+ifneq ($(DELAY1),)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_d$(DELAY1)
+export DELAY1
+endif
 ifeq ($(DYN_DLY1),1)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_dyn1
 export DYN_DLY1

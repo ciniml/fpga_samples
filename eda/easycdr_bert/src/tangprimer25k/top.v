@@ -81,7 +81,7 @@ module top(
     wire cdr_lock, cdr_slip, dly_sat;
     wire [1:0] cdr_phase;
     wire [31:0] raw_samples;
-    oscdr_phy_gw5a #(.DLY0(0), .DLY1(21), .DYN1(PHY_DYN1), .DYN0(PHY_DYN0), .ADAPT1(PHY_ADAPT1)) u_phy(
+    oscdr_phy_gw5a #(.DLY0(0), .DLY1(`RATE_DELAY1), .DYN1(PHY_DYN1), .DYN0(PHY_DYN0), .ADAPT1(PHY_ADAPT1)) u_phy(
         .clk_in(clk_in), .rstn_in(resetn_in),
         .i_serial_p(i_serial_p), .i_serial_n(i_serial_n),
         .i_freeze(ext_ctrl[0]),
