@@ -91,6 +91,8 @@ IP の `DELAY_1` (UI/4 のタップ数、12.5ps/段) と SDC を project.tcl の
   | 1600M | 6.5e-3 / 1.3e-2 | |
 
   → 経路さえ良ければ GPIO + EasyCDR IP は 1.3 Gbps まで誤りなし、1.4 Gbps で 1e-7、1.4875 Gbps (1080p60) は 1e-4 台。
+  RX CTLE (`make ... CTLE=LOW|MEDIUM|HIGH`、1487M5、終端付き直結): LOW ロックせず (1e-1)、MEDIUM 8e-3、HIGH 2.4e-4 →
+  直結でも HIGH が最良 (過補償ではない)。
   これまでの「1.2 Gbps 上限」は経路 (モジュール + USB-C、終端なしジャンパ) の限界だった。1487M5 は ODIV 1 の 4 相
   (PE_FINE 2/4/6) を使っており、DELAY_1 に対して非単調なのは位相精度の影響かもしれない (未確認)。
 - 合成結果 (2026-09-25): 1200M / 1400M / 1487M5 はタイミング違反なし (pclk Fmax 193MHz)。1600M は pclk 200MHz に

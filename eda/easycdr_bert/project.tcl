@@ -84,7 +84,8 @@ if {${TARGET} == "tangnano9k_pmod"} {
 
 set TLVDS  [expr {[info exists ::env(TX_TLVDS)] && $::env(TX_TLVDS) == "1"}]
 set DIRECT [expr {[info exists ::env(TX_DIRECT)] && $::env(TX_DIRECT) == "1"}]
-if {${TLVDS} || ${DIRECT}} {
+set CTLE   [expr {[info exists ::env(CTLE)] ? $::env(CTLE) : ""}]
+if {${TLVDS} || ${DIRECT} || ${CTLE} != ""} {
     set fh [open ${SRC_DIR}/pins.cst r]; set cst [read $fh]; close $fh
     if {${TLVDS}} {
         # true LVDS on the serial output: same attributes as the DisplayPort lanes (LVDS25 DRIVE=6)
@@ -94,6 +95,10 @@ if {${TLVDS} || ${DIRECT}} {
         # TX_DIRECT=1: serial output on pmod0 pins 1/7 (F5/G5) for a direct-wire loop to pmod2 pins 1/7
         # (no ExtEasyCDR modules / USB-C cable); the IODELAY tone input normally on F5/G5 is dropped
         set cst [string map [list {IO_LOC "o_serial_p" G7,G8;} {IO_LOC "o_serial_p" F5,G5;} {IO_LOC "i_tone_p" F5,G5;} {}] $cst]
+    }
+    if {${CTLE} != ""} {
+        # CTLE=LOW|MEDIUM|HIGH: receiver equalizer setting (pins.cst default HIGH, chosen for the USB-C path)
+        set cst [string map [list {CTLE=HIGH;} "CTLE=${CTLE};"] $cst]
     }
     set fh [open pins_gen.cst w]; puts -nonewline $fh $cst; close $fh
     add_file -type cst [file normalize pins_gen.cst]

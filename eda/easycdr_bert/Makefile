@@ -24,6 +24,11 @@ ifeq ($(TX_DIRECT),1)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_direct
 export TX_DIRECT
 endif
+# CTLE=LOW|MEDIUM|HIGH: receiver equalizer (default HIGH)
+ifneq ($(CTLE),)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_ctle$(shell echo $(CTLE) | tr A-Z a-z)
+export CTLE
+endif
 ifeq ($(TX_TLVDS),1)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_tlvds
 export TX_TLVDS
