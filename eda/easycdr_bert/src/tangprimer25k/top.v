@@ -280,7 +280,11 @@ module top(
         .D4(oser_word[4]), .D5(oser_word[5]), .D6(oser_word[6]), .D7(oser_word[7]),
         .TX0(1'b0), .TX1(1'b0), .TX2(1'b0), .TX3(1'b0),
         .PCLK(txclk_125m), .FCLK(txclk_500m), .RESET(tx_rst));
-    ELVDS_OBUF u_tx(.I(o_serial_data), .O(o_serial_p), .OB(o_serial_n));
+`ifdef TX_TLVDS
+    TLVDS_OBUF u_tx(.I(o_serial_data), .O(o_serial_p), .OB(o_serial_n));   // true LVDS (pins.cst: LVDS25)
+`else
+    ELVDS_OBUF u_tx(.I(o_serial_data), .O(o_serial_p), .OB(o_serial_n));   // emulated (LVPECL33E + resistors)
+`endif
 
     //------------------------------------------------------------------
     // status pins

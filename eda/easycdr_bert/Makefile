@@ -18,6 +18,11 @@ ifneq ($(DELAY1),)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_d$(DELAY1)
 export DELAY1
 endif
+# TX_TLVDS=1: true LVDS (TLVDS_OBUF / LVDS25) on the serial output instead of emulated LVPECL33E
+ifeq ($(TX_TLVDS),1)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_tlvds
+export TX_TLVDS
+endif
 ifeq ($(DYN_DLY1),1)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_dyn1
 export DYN_DLY1

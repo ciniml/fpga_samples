@@ -45,6 +45,8 @@ if {![info exists RATE_TAB(${RATE})]} { error "unknown RATE ${RATE} (1G 1200M 13
 lassign $RATE_TAB(${RATE}) R_MDIV R_FRAC R_ODIV R_DLY1 R_FPER R_PMUL R_PDIV
 # DELAY1=<taps> overrides the IP's DELAY_1 (sampling-offset sweep)
 if {[info exists ::env(DELAY1)]} { set R_DLY1 $::env(DELAY1) }
+# TX_TLVDS=1: true-LVDS output buffer (TLVDS_OBUF, IO_TYPE=LVDS25) instead of the emulated LVPECL33E
+if {[info exists ::env(TX_TLVDS)] && $::env(TX_TLVDS) == "1"} { append defs "`define TX_TLVDS\n" }
 append defs "`define RATE_MDIV ${R_MDIV}\n`define RATE_MDIV_FRAC ${R_FRAC}\n`define RATE_ODIV ${R_ODIV}\n`define RATE_DELAY1 ${R_DLY1}\n"
 set fh [open defines_gen.v w]; puts -nonewline $fh $defs; close $fh
 add_file -type verilog [file normalize defines_gen.v]
@@ -80,7 +82,15 @@ if {${TARGET} == "tangnano9k_pmod"} {
     add_file -type verilog [file normalize ${SRC_DIR}/pll_tx_4995/pll_tx_4995.v]
 }
 
-add_file -type cst [file normalize ${SRC_DIR}/pins.cst]
+if {[info exists ::env(TX_TLVDS)] && $::env(TX_TLVDS) == "1"} {
+    # true LVDS on the serial output: same attributes as the DisplayPort lanes (LVDS25 DRIVE=6)
+    set fh [open ${SRC_DIR}/pins.cst r]; set cst [read $fh]; close $fh
+    set cst [string map [list {IO_PORT "o_serial_p" IO_TYPE=LVPECL33E PULL_MODE=NONE DRIVE=16 BANK_VCCIO=3.3;} {IO_PORT "o_serial_p" IO_TYPE=LVDS25 PULL_MODE=NONE DRIVE=6 BANK_VCCIO=3.3;}] $cst]
+    set fh [open pins_gen.cst w]; puts -nonewline $fh $cst; close $fh
+    add_file -type cst [file normalize pins_gen.cst]
+} else {
+    add_file -type cst [file normalize ${SRC_DIR}/pins.cst]
+}
 if {${USE_IP}} {
     # timing_ip.sdc is a template: @FP@ / @FH@ = FCLK period / half, @PM@ / @PD@ = pclk multiply / divide from 50MHz
     set fh [open ${SRC_DIR}/timing_ip.sdc r]; set sdc [read $fh]; close $fh
