@@ -43,7 +43,19 @@ IP の `DELAY_1` (UI/4 のタップ数、12.5ps/段) と SDC を project.tcl の
 | `1600M` | 1.6 Gbps (IDES の仕様上限、DP RBR 1.62 の −1%) | 800 / 200 | VCO 800 (MDIV 16), ODIV 1 | 13 |
 
 - 4 相の 90° は PLLA の PE_FINE (VCO 周期 / 8) で ODIV 2 なら 4 ステップ、ODIV 1 なら 2 ステップ (ラッパで自動計算)
-- 合成結果 (2026-09-25、実機未測定): 1200M / 1400M / 1487M5 はタイミング違反なし (pclk Fmax 193MHz)。1600M は pclk 200MHz に
+- **実機 BER (2026-09-26、25K 自己ループ pmod0→pmod2、USB-C ケーブル、`host/ber_run.py --dwell 30 --prbs 4`)**:
+
+  | RATE | PRBS31 30 s | PRBS7 10 s | 備考 |
+  |---|---|---|---|
+  | 1G (IP) | 3.0e10 bit、誤り 0、アンロック 0 | — | 自前 CDR 版も誤り 0 |
+  | 1200M | BER 1.5e-8 (誤り 526、アンロック 25) | 誤り 0 | 10 s ×2 でも 1.2e-8 / 9.4e-9 と再現 |
+  | 1400M | BER 1.0e-2、アンロック 1.4e7 | BER 1.7e-2 | 実質リンク不成立 |
+  | 1487M5 | BER 4.6e-2、ロックせず | — | |
+  | 1600M | ロックせず (bit 計数ほぼ 0) | — | |
+
+  → この経路 (GPIO + EasyCDR IP、DELAY_1 = UI/4 固定) は 1.2 Gbps が限界、1.4 Gbps 以上は使えない。
+  1080p60 (1.485 Gbps) を GPIO で受けるにはこの構成では届かない (DELAY_1 の追い込みや TX 側ドライブ設定は未検討)。
+- 合成結果 (2026-09-25): 1200M / 1400M / 1487M5 はタイミング違反なし (pclk Fmax 193MHz)。1600M は pclk 200MHz に
   対し IP 内ギアボックス −0.16ns、64bit 誤り計数器 −0.08ns が残る (BER 測定には支障ない程度だが要注意)。
   LED 状態ピンと PRBS の sel マルチプレクサは変種のためにパイプライン化した (bert_core/prbs_gen/prbs_chk の `sel_q`)
 - 自前 CDR (`oscdr_phy_gw5a.v`) は 1Gbps 固定タップなので RATE との併用は project.tcl がエラーにする
