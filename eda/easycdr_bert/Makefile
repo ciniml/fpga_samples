@@ -19,6 +19,11 @@ BUILD_SUFFIX := $(BUILD_SUFFIX)_d$(DELAY1)
 export DELAY1
 endif
 # TX_TLVDS=1: true LVDS (TLVDS_OBUF / LVDS25) on the serial output instead of emulated LVPECL33E
+# TX_DIRECT=1: serial output on pmod0 pins 1/7 (F5/G5), direct wire to pmod2 (no modules / USB-C)
+ifeq ($(TX_DIRECT),1)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_direct
+export TX_DIRECT
+endif
 ifeq ($(TX_TLVDS),1)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_tlvds
 export TX_TLVDS

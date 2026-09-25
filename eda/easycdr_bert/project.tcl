@@ -82,10 +82,19 @@ if {${TARGET} == "tangnano9k_pmod"} {
     add_file -type verilog [file normalize ${SRC_DIR}/pll_tx_4995/pll_tx_4995.v]
 }
 
-if {[info exists ::env(TX_TLVDS)] && $::env(TX_TLVDS) == "1"} {
-    # true LVDS on the serial output: same attributes as the DisplayPort lanes (LVDS25 DRIVE=6)
+set TLVDS  [expr {[info exists ::env(TX_TLVDS)] && $::env(TX_TLVDS) == "1"}]
+set DIRECT [expr {[info exists ::env(TX_DIRECT)] && $::env(TX_DIRECT) == "1"}]
+if {${TLVDS} || ${DIRECT}} {
     set fh [open ${SRC_DIR}/pins.cst r]; set cst [read $fh]; close $fh
-    set cst [string map [list {IO_PORT "o_serial_p" IO_TYPE=LVPECL33E PULL_MODE=NONE DRIVE=16 BANK_VCCIO=3.3;} {IO_PORT "o_serial_p" IO_TYPE=LVDS25 PULL_MODE=NONE DRIVE=6 BANK_VCCIO=3.3;}] $cst]
+    if {${TLVDS}} {
+        # true LVDS on the serial output: same attributes as the DisplayPort lanes (LVDS25 DRIVE=6)
+        set cst [string map [list {IO_PORT "o_serial_p" IO_TYPE=LVPECL33E PULL_MODE=NONE DRIVE=16 BANK_VCCIO=3.3;} {IO_PORT "o_serial_p" IO_TYPE=LVDS25 PULL_MODE=NONE DRIVE=6 BANK_VCCIO=3.3;}] $cst]
+    }
+    if {${DIRECT}} {
+        # TX_DIRECT=1: serial output on pmod0 pins 1/7 (F5/G5) for a direct-wire loop to pmod2 pins 1/7
+        # (no ExtEasyCDR modules / USB-C cable); the IODELAY tone input normally on F5/G5 is dropped
+        set cst [string map [list {IO_LOC "o_serial_p" G7,G8;} {IO_LOC "o_serial_p" F5,G5;} {IO_LOC "i_tone_p" F5,G5;} {}] $cst]
+    }
     set fh [open pins_gen.cst w]; puts -nonewline $fh $cst; close $fh
     add_file -type cst [file normalize pins_gen.cst]
 } else {
