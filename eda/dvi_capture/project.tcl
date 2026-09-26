@@ -33,6 +33,10 @@ add_file -type verilog [file normalize ${RTL_DIR}/ddc_edid/edid_rom.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/iser10_lane.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/dvi_in_phy.sv]
 
+# --- Status UART ---
+add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_tx.sv]
+add_file -type verilog [file normalize ${SRC_DIR}/cap_status.sv]
+
 # --- Top + reset ---
 add_file -type verilog [file normalize ${SRC_DIR}/reset_seq.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/top.sv]

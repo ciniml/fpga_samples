@@ -53,7 +53,10 @@ module top(
     // these 3.3 V pins.
     input  wire  ddc_scl,
     inout  wire  ddc_sda,
-    output logic hpd
+    output logic hpd,
+
+    // Status line once per second (USB-UART, 115200 8N1; cap_status.sv)
+    output wire  uart_txd
 );
 
     // -----------------------------------------------------------------
@@ -105,7 +108,7 @@ module top(
         .o_5v_good()
     );
 
-    wire _unused_ddc = &{1'b0, ddc_busy, ddc_read_strobe, ddc_offset};
+    wire _unused_ddc = &{1'b0, ddc_busy};
 
     // -----------------------------------------------------------------
     // Input buffers. The clock-lane IBUF output fans out to both the
@@ -377,6 +380,23 @@ module top(
             err_stretch <= err_stretch - 1'd1;
         end
     end
+
+    cap_status u_status (
+        .clock            (clock),
+        .reset            (reset_sys),
+        .i_ddc_read_strobe(ddc_read_strobe),
+        .i_ddc_offset     (ddc_offset),
+        .i_hpd            (hpd),
+        .i_pll_lock       (pll_lock),
+        .uart_txd         (uart_txd),
+        .pclk             (pclk),
+        .i_locked         (locked),
+        .i_valid          (video_valid),
+        .i_de             (video_de),
+        .i_vsync          (video_vsync),
+        .i_decode_err     (|decode_err),
+        .i_crc_mismatch   (crc_mismatch)
+    );
 
     assign led_locked     = locked;
     assign led_decode_err = err_stretch != '0;
