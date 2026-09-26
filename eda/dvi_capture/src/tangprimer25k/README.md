@@ -126,13 +126,27 @@ commands as the loopback (see its README), with these differences:
   / a blanking word with lane 1 or 2 not a control symbol / a lane 1-2
   decode error
 
-Build variants: `make CTLE=OFF|LOW|MEDIUM|HIGH` (default HIGH).
+Build variants: `make CTLE=OFF|LOW|MEDIUM|HIGH` (default HIGH) and
+`make RATE=1080P` (1920x1080p60: 148.5 MHz recovery PLL from
+eda/dvi_loopback, 1080p EDID, timing_1080p.sdc).
+
+The frame check is loop_check's pixel sum compared with the previous
+frame (the former CRC32 over 24 bits per clock did not close at
+148.5 MHz); the per-line CRC debug block is gone.
 
 Result with a notebook PC (HDMI cable, Pmod DVI on pmod0, 2026-09-27):
 it reads the EDID and sends 720p60. Error-free phase window (4-tap
 steps): CTLE OFF 0x30..0x5C, HIGH / MEDIUM 0x20..0x58 (half a bit).
 The default offset 0x3C gives 0 decode errors and no CRC change except
 the clock over 8000 frames.
+
+1080p60 (`RATE=1080P`, same PC and cable): the error-free window is only
+about 2 coarse steps wide (e.g. 0x2C..0x30, repeating every 0x34 taps)
+and lane 2 (R) samples ~7 taps early: with a shared phase every frame
+still had a few wrong R pixels without any decode error. Offset 0x30
+with lane trims B -1 / G +3 / R -7 (the RATE=1080P defaults) gives 7440
+frames with 0 decode errors, 0 lock losses, 2073600 DE pixels per frame
+and frame changes only at the clock's minute ticks.
 
 ## HDMI/DVI side channel (DDC / EDID / HPD)
 

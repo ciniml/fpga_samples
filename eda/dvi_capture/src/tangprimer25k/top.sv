@@ -7,7 +7,8 @@
  * @file top.sv
  * @brief Tang Primer 25K DVI receiver top.
  *
- *   Receives 720p60 DVI (F_pixel = 74.25 MHz) through a Sipeed Pmod DVI
+ *   Receives 720p60 DVI (F_pixel = 74.25 MHz; `define RATE_1080P for
+ *   1080p60 at 148.5 MHz, make RATE=1080P) through a Sipeed Pmod DVI
  *   module on PMOD1, from a Tang Nano 9K running eda/dvi_out_tpg.
  *
  *   Clocking is source-synchronous: the cable CLK pair is buffered once
@@ -40,10 +41,10 @@ module top(
     output logic led_decode_err,
 
     // Verification taps on PMOD1 (scope these):
-    // dbg[0] = frame CRC mismatch, stretched to ~110 us per bad frame.
-    //          Pulse rate = corrupted frames per second (static source).
-    // dbg[1] = per-line CRC mismatch vs previous frame (~3.4 us pulse
-    //          per corrupted line; timing shows WHICH lines are hit)
+    // dbg[0] = frame differs from the previous one (pixel-sum compare),
+    //          stretched. Pulse rate = changed frames per second
+    //          (static source: corrupted frames).
+    // dbg[1] = a decode error in this clock
     // dbg[2] = recovered video DE
     // dbg[3] = recovered video VSYNC (frame reference, 60 Hz)
     output logic [3:0] dbg,
@@ -79,7 +80,11 @@ module top(
     logic ddc_busy;
     logic ddc_read_strobe;
     logic [7:0] ddc_offset;
+`ifdef RATE_1080P
+    ddc_edid #(.EDID_1080P(1'b1)) u_ddc (
+`else
     ddc_edid u_ddc (
+`endif
         .i_clk        (clock),
         .i_rst        (reset_sys),
         .i_scl        (ddc_scl),
@@ -134,7 +139,13 @@ module top(
     logic pclk;
     logic fclk;
     logic pll_lock;
+`ifdef RATE_1080P
+    // 1080p60: 148.5 MHz cable clock -> 148.5 / 742.5 MHz (VCO 742.5,
+    // eda/dvi_loopback's pll_rx_1080p)
+    pll_rx_1080p pll_main (
+`else
     gowin_pll_dvi pll_main (
+`endif
         .clkout0(pclk),
         .clkout1(fclk),
         .lock   (pll_lock),
@@ -215,176 +226,37 @@ module top(
     wire [9:0] dbg_word_d2;
     wire       dbg_align_shift;
 
-    // Raw lane-0 control-symbol hit — the signal dvi_in now aligns on.
-    wire dbg_d0_is_ctl = dbg_word_d0 == 10'b1101010100
-                      || dbg_word_d0 == 10'b0010101011
-                      || dbg_word_d0 == 10'b0101010100
-                      || dbg_word_d0 == 10'b1010101011;
-
     // ------------------------------------------------------------------
-    // Frame CRC checker. With a static test pattern on the source, every
-    // frame must hash identically; a CRC change means at least one pixel
-    // was corrupted in that frame. CRC32 (poly 04C11DB7) over RGB24
-    // during DE, snapshotted and compared at each VSYNC rising edge.
+    // Scope taps. Frame check: loop_check compares each frame's pixel sum
+    // with the previous frame's (a static screen gives no pulses).
     // ------------------------------------------------------------------
-    function automatic [31:0] crc32_d24(input [31:0] c, input [23:0] d);
-        logic [31:0] x;
-        x = c;
-        for (int i = 23; i >= 0; i--) begin
-            if (x[31] ^ d[i]) x = {x[30:0], 1'b0} ^ 32'h04C11DB7;
-            else              x = {x[30:0], 1'b0};
-        end
-        return x;
-    endfunction
-
-    logic [31:0] frame_crc;
-    logic [31:0] frame_crc_prev;
-    logic [1:0]  crc_warmup;       // skip partial frames right after lock
-    logic        vsync_q;
-    logic        crc_mismatch;
-    logic [12:0] mism_stretch;     // ~110 us so the scope shows it easily
-
+    logic        frame_bad;
+    logic [13:0] bad_stretch;    // ~110 us at 148.5 MHz, ~220 us at 74.25 MHz
     always_ff @(posedge pclk) begin
-        if (reset_pclk || !locked) begin
-            frame_crc      <= 32'hFFFFFFFF;
-            frame_crc_prev <= '0;
-            crc_warmup     <= '0;
-            vsync_q        <= 1'b0;
-            crc_mismatch   <= 1'b0;
-        end else begin
-            crc_mismatch <= 1'b0;
-            vsync_q      <= video_vsync;
-            if (video_valid && video_de) begin
-                frame_crc <= crc32_d24(frame_crc, video_data);
-            end
-            if (video_vsync && !vsync_q) begin
-                if (crc_warmup == 2'd3) begin
-                    if (frame_crc != frame_crc_prev) begin
-                        crc_mismatch <= 1'b1;
-                    end
-                end else begin
-                    crc_warmup <= crc_warmup + 1'd1;
-                end
-                frame_crc_prev <= frame_crc;
-                frame_crc      <= 32'hFFFFFFFF;
-            end
-        end
+        if (reset_pclk)                bad_stretch <= '0;
+        else if (frame_bad)            bad_stretch <= '1;
+        else if (bad_stretch != '0)    bad_stretch <= bad_stretch - 1'd1;
+        dbg[0] <= bad_stretch != '0;
+        dbg[1] <= video_valid && |decode_err;
+        dbg[2] <= video_de;
+        dbg[3] <= video_vsync;
     end
 
-    always_ff @(posedge pclk) begin
-        if (reset_pclk) begin
-            mism_stretch <= '0;
-        end else if (crc_mismatch) begin
-            mism_stretch <= '1;
-        end else if (mism_stretch != '0) begin
-            mism_stretch <= mism_stretch - 1'd1;
-        end
-    end
-
-    // ------------------------------------------------------------------
-    // Culprit-word capture. o_video_de has 2 cycles of latency from the
-    // raw deserializer words, so pipeline word_d0 by 2 to latch the
-    // symbol that actually produced the spurious DE during VSYNC.
-    // ------------------------------------------------------------------
-    logic [9:0] w0_q1, w0_q2;
-    logic [9:0] glitch_word;
-    always_ff @(posedge pclk) begin
-        if (reset_pclk) begin
-            w0_q1       <= '0;
-            w0_q2       <= '0;
-            glitch_word <= '0;
-        end else begin
-            w0_q1 <= dbg_word_d0;
-            w0_q2 <= w0_q1;
-            if (video_valid && video_vsync && video_de) begin
-                glitch_word <= w0_q2;
-            end
-        end
-    end
-
-    // ------------------------------------------------------------------
-    // Per-line CRC comparison against the previous frame. One BRAM holds
-    // last frame's line CRCs; each line end compares and pulses dbg[1]
-    // on mismatch, so the LA shows how many lines per frame are hit and
-    // at which vertical position.
-    // ------------------------------------------------------------------
-    logic [31:0] line_crc;
-    logic [31:0] line_ram [0:1023];
-    logic [31:0] line_ram_q;
-    logic [9:0]  line_idx;
-    logic        de_q;
-    logic        line_cmp_pending;
-    logic        frame_seen;
-    logic        line_bad;
-    logic [7:0]  line_bad_stretch;
-
-    always_ff @(posedge pclk) begin
-        if (reset_pclk || !locked) begin
-            line_crc         <= 32'hFFFFFFFF;
-            line_idx         <= '0;
-            de_q             <= 1'b0;
-            line_cmp_pending <= 1'b0;
-            frame_seen       <= 1'b0;
-            line_bad         <= 1'b0;
-        end else begin
-            line_bad <= 1'b0;
-            de_q     <= video_de;
-            if (video_valid && video_de) begin
-                line_crc <= crc32_d24(line_crc, video_data);
-            end
-            if (de_q && !video_de) begin
-                line_ram_q       <= line_ram[line_idx];
-                line_cmp_pending <= 1'b1;
-            end else if (line_cmp_pending) begin
-                line_cmp_pending <= 1'b0;
-                if (frame_seen && line_ram_q != line_crc) begin
-                    line_bad <= 1'b1;
-                end
-                line_ram[line_idx] <= line_crc;
-                line_crc           <= 32'hFFFFFFFF;
-                line_idx           <= line_idx + 1'd1;
-            end
-            if (video_vsync && !vsync_q) begin
-                if (line_idx != '0) begin
-                    frame_seen <= 1'b1;
-                end
-                line_idx <= '0;
-            end
-        end
-    end
-
-    always_ff @(posedge pclk) begin
-        if (reset_pclk) begin
-            line_bad_stretch <= '0;
-        end else if (line_bad) begin
-            line_bad_stretch <= '1;
-        end else if (line_bad_stretch != '0) begin
-            line_bad_stretch <= line_bad_stretch - 1'd1;
-        end
-    end
-
-    always_ff @(posedge pclk) begin
-        dbg[0]   <= mism_stretch != '0;
-        dbg[1]   <= line_bad_stretch != '0;
-        dbg[2]   <= video_de;
-        dbg[3]   <= video_vsync;
-    end
-
-    wire _unused_glitch = &glitch_word;
-
-    wire _unused_dbg = &{dbg_d0_is_ctl, dbg_align_shift, video_hsync, video_ctl};
+    wire _unused_dbg = &{1'b0, dbg_align_shift, video_hsync, video_ctl};
 
     // -----------------------------------------------------------------
     // Status indicators. decode_err is a single-pclk pulse per bad
     // symbol; stretch it to ~0.11 s (2^23 / 74.25 MHz) so it is visible.
     // -----------------------------------------------------------------
+    // (the MSB is the LED: counting down from all ones keeps it lit for
+    //  2^22 clocks without a wide zero compare in the enable path)
     logic [22:0] err_stretch;
     always_ff @(posedge pclk) begin
         if (reset_pclk) begin
             err_stretch <= '0;
         end else if (|decode_err) begin
             err_stretch <= '1;
-        end else if (err_stretch != '0) begin
+        end else if (err_stretch[22]) begin
             err_stretch <= err_stretch - 1'd1;
         end
     end
@@ -425,8 +297,8 @@ module top(
         .i_word2         (dbg_word_d2),
         .o_rx_offset     (rx_offset),
         .o_rx_lane_offset(rx_lane_offset),
-        .o_frame_bad     (),
-        .i_ext_bad       (crc_mismatch),
+        .o_frame_bad     (frame_bad),
+        .i_ext_bad       (1'b0),
         .i_tx_s1         ('0),
         .i_tx_s2         ('0),
         .i_tx_count      ('0),
@@ -454,9 +326,16 @@ module top(
         .sys_lane_offset (sys_lane_offset)
     );
 
-    // Default offset 0x3C (DLYSTEP 24 + 60): centre of the error-free
-    // window 0x20..0x58 measured with a notebook PC source and CTLE=HIGH.
+    // Defaults from a notebook PC source over HDMI with CTLE=HIGH:
+    //  720p:  offset 0x3C (DLYSTEP 24 + 60), centre of the error-free
+    //         window 0x20..0x58; no lane trims needed.
+    //  1080p: offset 0x30 with trims B -1 / G +3 / R -7 (the window is
+    //         only ~2 steps wide and lane 2 sits ~7 taps early).
+`ifdef RATE_1080P
+    loop_report #(.OFFSET_DEFAULT(8'h30), .TRIM_DEFAULT(24'hFF03F9)) u_report (
+`else
     loop_report #(.OFFSET_DEFAULT(8'd60)) u_report (
+`endif
         .clock         (clock),
         .reset         (reset_sys),
         .uart_rxd      (uart_rxd),
@@ -485,7 +364,7 @@ module top(
     );
 
     assign led_locked     = locked;
-    assign led_decode_err = err_stretch != '0;
+    assign led_decode_err = err_stretch[22];
 
 endmodule
 `default_nettype wire
