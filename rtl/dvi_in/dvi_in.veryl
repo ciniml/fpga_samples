@@ -291,6 +291,7 @@ pub module dvi_in #(
     var ctrl2_decode: ctrl_decode_t    ;
     var ctrl0_new   : ctrl_decode_t    ; // lane 0 look-ahead (word t)
     var ctrl0_old   : ctrl_decode_t    ; // lane 0 look-back  (word t-2)
+    var sync_agree  : logic            ; // word t-1 matches t-2 or t (sync glitch filter)
 
     always_comb {
         ctrl0_decode = isControlSymbol(d0_q);
@@ -298,6 +299,8 @@ pub module dvi_in #(
         ctrl2_decode = isControlSymbol(d2_q);
         ctrl0_new    = isControlSymbol(i_word_data[0]);
         ctrl0_old    = isControlSymbol(d0_q2);
+        sync_agree   = (ctrl0_old.is_ctrl && ctrl0_old.ctrl == ctrl0_decode.ctrl)
+            || (ctrl0_new.is_ctrl && ctrl0_new.ctrl == ctrl0_decode.ctrl);
         // DE for word t-1 is the 3-word majority over lane 0's
         // "not a control symbol" at t-2 / t-1 / t. An isolated corrupted
         // symbol inside a blanking run (unterminated-lane ISI, see the
@@ -352,10 +355,16 @@ pub module dvi_in #(
                 o_decode_err  = err_next;
                 // hsync/vsync/ctl only update during blanking (de == 0),
                 // and only from a word that decodes as a genuine control
-                // symbol — a corrupted blanking word must not be allowed
-                // to yank the sync outputs. Hold during active video per
+                // symbol that agrees with a neighbouring word — a corrupted
+                // blanking word must not be allowed to yank the sync
+                // outputs. A single bit error can turn one control symbol
+                // into another (CTRL_01 -> CTRL_11 differ only in bit 9,
+                // i.e. a false VSYNC inside an HSYNC pulse); real sync
+                // levels last many words, so requiring agreement with the
+                // previous or the next word drops such words without
+                // moving genuine edges. Hold during active video per
                 // DVI Fig 3-7.
-                if !de_next && ctrl0_decode.is_ctrl {
+                if !de_next && ctrl0_decode.is_ctrl && sync_agree {
                     o_video_hsync = hsync_next;
                     o_video_vsync = vsync_next;
                     o_video_ctl   = ctl_next;

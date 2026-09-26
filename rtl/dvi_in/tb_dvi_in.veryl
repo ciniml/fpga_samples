@@ -16,7 +16,8 @@
  *                         dvi_in's o_align_shift_req pulses to converge on
  *                         the true boundary, then checks a clean frame.
  *  - dvi_in_glitch_filter: corrupts single lane-0 words (hsync symbol bit 1
- *                         dropped, active word turned into a control symbol);
+ *                         dropped, active word turned into a control symbol,
+ *                         hsync symbol turned into a vsync symbol by bit 9);
  *                         de/hsync/vsync must stay intact and only lane 0
  *                         may flag the error.
  *  - dvi_in_relock      : link down past LOSE_TIMEOUT (outputs must hold),
@@ -519,7 +520,7 @@ module dvi_in_glitch_filter;
         end
     end
 
-    localparam int h_pulse  = 3;
+    localparam int h_pulse  = 8;   // long enough that a mid-pulse glitch has genuine neighbours
     localparam int h_back   = 10;
     localparam int h_active = 20;
     localparam int h_front  = 10;
@@ -574,7 +575,7 @@ module dvi_in_glitch_filter;
         logic        vsync;
         logic [9:0]  h;
         logic [9:0]  v;
-        logic [1:0]  inj;   // 0: none, 1: blanking glitch, 2: active glitch
+        logic [1:0]  inj;   // 0: none, 1: blanking glitch, 2: active glitch, 3: false-sync glitch
     } sample_t;
     sample_t pipe [0:PIPE_DEPTH-1];
 
@@ -587,12 +588,15 @@ module dvi_in_glitch_filter;
     end
 
     // Injection points (h, v of the corrupted word):
-    //  - (1, 0):  hsync symbol on the vsync line (CTRL_11), bit 1 -> 0
-    //  - (1, 5):  hsync symbol on an ordinary line (CTRL_01), bit 1 -> 0
+    //  - (4, 0):  hsync symbol on the vsync line (CTRL_11), bit 1 -> 0
+    //  - (4, 5):  hsync symbol on an ordinary line (CTRL_01), bit 1 -> 0
     //  - (22, 15): active video, word replaced by CTRL_00
+    //  - (4, 7):  hsync symbol CTRL_01, bit 9 flipped -> CTRL_11 (a valid
+    //             control symbol that would fake a VSYNC)
     function automatic logic [1:0] inj_kind(input logic [9:0] h, input logic [9:0] v);
-        if (h == 1 && (v == 0 || v == 5)) return 2'd1;
+        if (h == 4 && (v == 0 || v == 5)) return 2'd1;
         if (h == 22 && v == 15)           return 2'd2;
+        if (h == 4 && v == 7)             return 2'd3;
         return 2'd0;
     endfunction
 
@@ -621,6 +625,7 @@ module dvi_in_glitch_filter;
             case (pipe[2].inj)
                 2'd1: rx_data0 = dvi_data0 & ~10'b0000000010;
                 2'd2: rx_data0 = CTRL_00;
+                2'd3: rx_data0 = dvi_data0 ^ 10'b1000000000;
                 default: ;
             endcase
         end
@@ -653,7 +658,7 @@ module dvi_in_glitch_filter;
 
     integer mismatches;
     integer checked;
-    integer injected [1:2];
+    integer injected [1:3];
     integer lane0_err;
     logic   last_hsync;
     logic   last_vsync;
@@ -664,6 +669,7 @@ module dvi_in_glitch_filter;
         checked     = 0;
         injected[1] = 0;
         injected[2] = 0;
+        injected[3] = 0;
         lane0_err   = 0;
         last_hsync  = 0;
         last_vsync  = 0;
@@ -723,20 +729,20 @@ module dvi_in_glitch_filter;
             end
             if (rx_decode_err[0]) begin
                 lane0_err++;
-                if (ref_s.inj == 0) begin
+                if (ref_s.inj == 0 || ref_s.inj == 3) begin
                     mismatches++;
                     $display("[tb_dvi_in_glitch] spurious lane0 decode_err @(h=%0d,v=%0d)", ref_s.h, ref_s.v);
                 end
-            end else if (ref_s.inj != 0) begin
+            end else if (ref_s.inj == 1 || ref_s.inj == 2) begin
                 mismatches++;
                 $display("[tb_dvi_in_glitch] injected word not flagged @(h=%0d,v=%0d)", ref_s.h, ref_s.v);
             end
             checked++;
         end
 
-        if (injected[1] != 6 || injected[2] != 3) begin
-            $fatal(1, "[tb_dvi_in_glitch] expected 6 blanking + 3 active injections, saw %0d + %0d",
-                   injected[1], injected[2]);
+        if (injected[1] != 6 || injected[2] != 3 || injected[3] != 3) begin
+            $fatal(1, "[tb_dvi_in_glitch] expected 6 blanking + 3 active + 3 false-sync injections, saw %0d + %0d + %0d",
+                   injected[1], injected[2], injected[3]);
         end
         if (mismatches != 0) begin
             $fatal(1, "[tb_dvi_in_glitch] %0d mismatches across %0d samples", mismatches, checked);
