@@ -162,10 +162,14 @@ pub module dvi_in #(
     var state: State;
 
     // Counters shared across states.
-    var match_count  : logic<32>; // consecutive lane-0 control symbols in WORD_ALIGN
-    var window_count : logic<32>; // words observed at the current boundary
-    var timeout_count: logic<32>; // words since the last control symbol in LOCKED
-    var settle_count : logic<32>; // post-shift quarantine cycles
+    // Counter widths are sized for the parameter ranges in use (they sit in
+    // the lock FSM's enable paths, which must close at 148.5 MHz):
+    // LOCK_THRESHOLD < 2^16, ALIGN_WINDOW < 2^16, LOSE_TIMEOUT < 2^24,
+    // SHIFT_SETTLE_CYCLES < 2^8.
+    var match_count  : logic<16>; // consecutive lane-0 control symbols in WORD_ALIGN
+    var window_count : logic<16>; // words observed at the current boundary
+    var timeout_count: logic<24>; // words since the last control symbol in LOCKED
+    var settle_count : logic<8> ; // post-shift quarantine cycles
 
     // Data lane 0 carries HSYNC/VSYNC control symbols during every
     // blanking interval — the alignment reference per DVI §3.3.2.
