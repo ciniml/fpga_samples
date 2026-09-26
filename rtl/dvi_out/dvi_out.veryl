@@ -10,12 +10,12 @@
 
 module dvi_out (
     r#clock: input clock_posedge,
-    r#reset: input reset,
+    r#reset: input reset        ,
 
     video_data : input logic<24>,
-    video_de   : input logic,
-    video_hsync: input logic,
-    video_vsync: input logic,
+    video_de   : input logic    ,
+    video_hsync: input logic    ,
+    video_vsync: input logic    ,
 
     dvi_clock: output logic<10>,
     dvi_data0: output logic<10>,
@@ -26,10 +26,11 @@ module dvi_out (
 
     // Video signal register type
     struct video_reg_t {
-        de   : logic,
-        hsync: logic,
-        vsync: logic,
+        de   : logic    ,
+        hsync: logic    ,
+        vsync: logic    ,
         data : logic<27>,
+        n0n1 : logic<24>, // per-channel n0 - n1 of data, precomputed for dcBalancing
     }
 
     const VIDEO_REGS_DEPTH: u32 = 2;
@@ -58,9 +59,9 @@ module dvi_out (
         var pop_count   : logic<4>;
         var xnor_process: logic   ;
         var bits        : logic<8>;
-        pop_count = popCount8(x);
+        pop_count    = popCount8(x);
         xnor_process = pop_count >: 4'd4 || (pop_count == 4'd4 && !x[0]);
-        bits[0] = x[0];
+        bits[0]      = x[0];
         for i in 1..8 {
             bits[i] = (bits[i - 1] ^ x[i]) ^ xnor_process;
         }
@@ -69,18 +70,26 @@ module dvi_out (
 
     struct dc_balancing_t {
         out    : logic<10>,
-        counter: logic<8>,
+        counter: logic<8> ,
+    }
+
+    // n0 - n1 over q_m[7:0] (= 8 - 2 * n1). Computed one register stage
+    // ahead of dcBalancing so the popcount is not in the counter's
+    // feedback path (1080p60 = 148.5 MHz on GW5A).
+    function balanceDiff (
+        x: input logic<9>,
+    ) -> logic<8> {
+        var n1: logic<4>;
+        n1 = popCount8(x[7:0]);
+        return 8'd8 - {3'b000, n1, 1'b0};
     }
 
     function dcBalancing (
         x      : input logic<9>,
+        n0n1   : input logic<8>,
         counter: input logic<8>,
     ) -> dc_balancing_t {
-        var n1    : logic<4>       ;
-        var n0n1  : logic<8>       ;
-        var result: dc_balancing_t ;
-        n1 = popCount8(x[7:0]);
-        n0n1 = 8'd8 - {3'b000, n1, 1'b0};
+        var result: dc_balancing_t;
         if counter == '0 || n0n1 == '0 {
             result.out     = {!x[8], x[8], if x[8] ? x[7:0] : ~x[7:0]};
             result.counter = if x[8] ? counter - n0n1 : counter + n0n1;
@@ -108,9 +117,9 @@ module dvi_out (
         return r;
     }
 
-    var video_reg_in: video_reg_t                    ;
-    var video_regs  : video_reg_t [VIDEO_REGS_DEPTH] ;
-    var video       : video_reg_t                    ;
+    var video_reg_in: video_reg_t                   ;
+    var video_regs  : video_reg_t [VIDEO_REGS_DEPTH];
+    var video       : video_reg_t                   ;
     assign video = video_regs[0];
 
     var counter0: logic<8>;
@@ -119,13 +128,18 @@ module dvi_out (
     assign video_reg_in.de    = video_de;
     assign video_reg_in.hsync = video_hsync;
     assign video_reg_in.vsync = video_vsync;
-    assign video_reg_in.data  = {transitionMinimized(video_data[23:16]), transitionMinimized(video_data[15:8]), transitionMinimized(video_data[7:0])};
+    assign video_reg_in.data  = {
+        transitionMinimized(video_data[23:16]), transitionMinimized(video_data[15:8]),
+        transitionMinimized(video_data[7:0])
+    };
+    assign video_reg_in.n0n1  = 0;
 
     always_ff (r#clock) {
         if r#reset {
             for i in 0..VIDEO_REGS_DEPTH {
                 video_regs[i].de    = 0;
                 video_regs[i].data  = 0;
+                video_regs[i].n0n1  = 0;
                 video_regs[i].hsync = 1;
                 video_regs[i].vsync = 1;
             }
@@ -134,6 +148,11 @@ module dvi_out (
             for i in 0..VIDEO_REGS_DEPTH - 1 {
                 video_regs[i] = video_regs[i + 1];
             }
+            // Output stage: precompute the disparity of each channel.
+            video_regs[0].n0n1 = {
+                balanceDiff(video_regs[1].data[26:18]), balanceDiff(video_regs[1].data[17:9]),
+                balanceDiff(video_regs[1].data[8:0])
+            };
         }
     }
 
@@ -157,13 +176,13 @@ module dvi_out (
                 counter1  = 0;
                 counter2  = 0;
             } else {
-                result0   = dcBalancing(video.data[8:0], counter0);
+                result0   = dcBalancing(video.data[8:0], video.n0n1[7:0], counter0);
                 dvi_data0 = result0.out;
                 counter0  = result0.counter;
-                result1   = dcBalancing(video.data[17:9], counter1);
+                result1   = dcBalancing(video.data[17:9], video.n0n1[15:8], counter1);
                 dvi_data1 = result1.out;
                 counter1  = result1.counter;
-                result2   = dcBalancing(video.data[26:18], counter2);
+                result2   = dcBalancing(video.data[26:18], video.n0n1[23:16], counter2);
                 dvi_data2 = result2.out;
                 counter2  = result2.counter;
             }

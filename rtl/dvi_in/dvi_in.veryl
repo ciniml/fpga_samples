@@ -31,22 +31,22 @@
  */
 
 pub module dvi_in #(
-    param LOCK_THRESHOLD       : u32 = 32'd16     , // consecutive lane-0 control symbols required to lock
-    param LOSE_THRESHOLD       : u32 = 32'd16     , // unused (kept for interface compatibility)
-    param SHIFT_SETTLE_CYCLES  : u32 = 32'd4      , // wait after a shift pulse before re-observing
-    param TAP_MAX              : u32 = 32'd31     , // unused (kept for interface compatibility)
-    param TAP_DWELL            : u32 = 32'd256    , // unused (kept for interface compatibility)
-    param ALIGN_WINDOW         : u32 = 32'd4096   , // words observed per boundary; must span >= 1 hblank
-    param LOSE_TIMEOUT         : u32 = 32'd2200000, // lock lost if no control symbol for this many words (~30ms at 74.25MHz > 1 frame)
-    param DELAY_TAP_FIXED      : u32 = 32'd16     , // static IDELAY tap loaded at start-up
-    param SIMULATION_FAST_LOCK : bit = 1'b0       , // unused (kept for interface compatibility)
+    param LOCK_THRESHOLD      : u32 = 32'd16     , // consecutive lane-0 control symbols required to lock
+    param LOSE_THRESHOLD      : u32 = 32'd16     , // unused (kept for interface compatibility)
+    param SHIFT_SETTLE_CYCLES : u32 = 32'd4      , // wait after a shift pulse before re-observing
+    param TAP_MAX             : u32 = 32'd31     , // unused (kept for interface compatibility)
+    param TAP_DWELL           : u32 = 32'd256    , // unused (kept for interface compatibility)
+    param ALIGN_WINDOW        : u32 = 32'd4096   , // words observed per boundary; must span >= 1 hblank
+    param LOSE_TIMEOUT        : u32 = 32'd2200000, // lock lost if no control symbol for this many words (~30ms at 74.25MHz > 1 frame)
+    param DELAY_TAP_FIXED     : u32 = 32'd16     , // static IDELAY tap loaded at start-up
+    param SIMULATION_FAST_LOCK: bit = 1'b0       , // unused (kept for interface compatibility)
 ) (
     r#clock: input clock_posedge,
-    r#reset: input reset         ,
+    r#reset: input reset        ,
 
     // Deserialized 10-bit words, LSB-first (bit[0] = first transmitted bit).
-    i_word_data : input logic<10> [3] ,
-    i_word_valid: input logic         ,
+    i_word_data : input logic<10> [3],
+    i_word_valid: input logic        ,
 
     // Recovered video. Held at reset values while !o_locked.
     o_video_data : output logic<24>,
@@ -154,35 +154,47 @@ pub module dvi_in #(
     // -------------------------------------------------------------------
 
     enum State: logic<2> {
-        INIT      ,
+        INIT,
         WORD_ALIGN,
-        LOCKED    ,
+        LOCKED,
     }
 
     var state: State;
 
     // Counters shared across states.
-    var match_count : logic<32>; // consecutive lane-0 control symbols in WORD_ALIGN
-    var window_count: logic<32>; // words observed at the current boundary
+    var match_count  : logic<32>; // consecutive lane-0 control symbols in WORD_ALIGN
+    var window_count : logic<32>; // words observed at the current boundary
     var timeout_count: logic<32>; // words since the last control symbol in LOCKED
     var settle_count : logic<32>; // post-shift quarantine cycles
 
     // Data lane 0 carries HSYNC/VSYNC control symbols during every
     // blanking interval — the alignment reference per DVI §3.3.2.
+    // The match is registered so the deserializer output does not drive
+    // the counters' enables directly (1080p60 = 148.5 MHz on GW5A); the
+    // FSM sees each word one clock late, which SHIFT_SETTLE_CYCLES covers.
     var ctl_align_decode: ctrl_decode_t;
-    var ctl_match       : logic;
+    var ctl_match       : logic        ;
+    var word_valid_q    : logic        ;
     always_comb {
         ctl_align_decode = isControlSymbol(i_word_data[0]);
     }
-    assign ctl_match = i_word_valid && ctl_align_decode.is_ctrl;
+    always_ff (r#clock) {
+        if r#reset {
+            ctl_match    = 0;
+            word_valid_q = 0;
+        } else {
+            ctl_match    = i_word_valid && ctl_align_decode.is_ctrl;
+            word_valid_q = i_word_valid;
+        }
+    }
 
     always_ff (r#clock) {
         if r#reset {
-            state         = State::INIT;
-            match_count   = 0;
-            window_count  = 0;
-            timeout_count = 0;
-            settle_count  = 0;
+            state             = State::INIT;
+            match_count       = 0;
+            window_count      = 0;
+            timeout_count     = 0;
+            settle_count      = 0;
             o_locked          = 0;
             o_align_shift_req = 0;
             o_delay_inc       = 0;
@@ -210,7 +222,7 @@ pub module dvi_in #(
                 State::WORD_ALIGN: {
                     if settle_count != 0 {
                         settle_count = settle_count - 1;
-                    } else if i_word_valid {
+                    } else if word_valid_q {
                         if ctl_match {
                             match_count = match_count + 1;
                             if match_count >= LOCK_THRESHOLD - 1 {
@@ -234,7 +246,7 @@ pub module dvi_in #(
                     }
                 }
                 State::LOCKED: {
-                    if i_word_valid {
+                    if word_valid_q {
                         if ctl_match {
                             timeout_count = 0;
                         } else {
@@ -261,24 +273,24 @@ pub module dvi_in #(
     // While !o_locked all stage-2 outputs hold (per DVI §3.3.2).
     // -------------------------------------------------------------------
 
-    var d0_q      : logic<10>;
-    var d1_q      : logic<10>;
-    var d2_q      : logic<10>;
-    var d0_q2     : logic<10>;
-    var valid_q   : logic    ;
-    var locked_q  : logic    ;
+    var d0_q    : logic<10>;
+    var d1_q    : logic<10>;
+    var d2_q    : logic<10>;
+    var d0_q2   : logic<10>;
+    var valid_q : logic    ;
+    var locked_q: logic    ;
 
-    var de_next      : logic    ;
-    var hsync_next   : logic    ;
-    var vsync_next   : logic    ;
-    var ctl_next     : logic<4> ;
-    var data_next    : logic<24>;
-    var err_next     : logic<3> ;
-    var ctrl0_decode : ctrl_decode_t;
-    var ctrl1_decode : ctrl_decode_t;
-    var ctrl2_decode : ctrl_decode_t;
-    var ctrl0_new    : ctrl_decode_t; // lane 0 look-ahead (word t)
-    var ctrl0_old    : ctrl_decode_t; // lane 0 look-back  (word t-2)
+    var de_next     : logic            ;
+    var hsync_next  : logic            ;
+    var vsync_next  : logic            ;
+    var ctl_next    : logic        <4> ;
+    var data_next   : logic        <24>;
+    var err_next    : logic        <3> ;
+    var ctrl0_decode: ctrl_decode_t    ;
+    var ctrl1_decode: ctrl_decode_t    ;
+    var ctrl2_decode: ctrl_decode_t    ;
+    var ctrl0_new   : ctrl_decode_t    ; // lane 0 look-ahead (word t)
+    var ctrl0_old   : ctrl_decode_t    ; // lane 0 look-back  (word t-2)
 
     always_comb {
         ctrl0_decode = isControlSymbol(d0_q);
@@ -292,11 +304,10 @@ pub module dvi_in #(
         // PMOD wrapper notes) can neither fake DE nor punch a hole in
         // real active video; genuine DE edges are preserved because two
         // neighbours always agree on either side of the transition.
-        de_next = (!ctrl0_new.is_ctrl && !ctrl0_decode.is_ctrl)
-               || (!ctrl0_new.is_ctrl && !ctrl0_old.is_ctrl)
-               || (!ctrl0_decode.is_ctrl && !ctrl0_old.is_ctrl);
-        hsync_next   = ctrl0_decode.ctrl[0];
-        vsync_next   = ctrl0_decode.ctrl[1];
+        de_next    = (!ctrl0_new.is_ctrl && !ctrl0_decode.is_ctrl) || (!ctrl0_new.is_ctrl && !ctrl0_old.is_ctrl)
+            || (!ctrl0_decode.is_ctrl && !ctrl0_old.is_ctrl);
+        hsync_next = ctrl0_decode.ctrl[0];
+        vsync_next = ctrl0_decode.ctrl[1];
         // Channel 1 carries {CTL1, CTL0}; channel 2 carries {CTL3, CTL2}.
         ctl_next[0] = ctrl1_decode.ctrl[0];
         ctl_next[1] = ctrl1_decode.ctrl[1];
