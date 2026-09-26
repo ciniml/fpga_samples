@@ -123,18 +123,19 @@ module tb_loop;
     logic [31:0] lane_bit_err [0:2];
     logic [7:0]  sys_lane_offset [0:2], rx_lane_offset [0:2];
     logic        words_req, words_done;
+    logic [1:0]  words_mode;
     logic [9:0]  words [0:2][0:11];
     loop_check u_check (
         .rx_clk(rx_clk), .rx_reset(rx_reset),
         .i_video_data(rx_data), .i_video_de(rx_de), .i_video_vsync(rx_vs), .i_video_valid(rx_valid),
         .i_decode_err(rx_err), .i_locked(rx_locked),
-        .i_word0(rx_w[0]), .i_word1(rx_w[1]), .i_word2(rx_w[2]), .o_rx_offset(rx_offset), .o_frame_bad(frame_bad),
+        .i_word0(rx_w[0]), .i_word1(rx_w[1]), .i_word2(rx_w[2]), .o_rx_offset(rx_offset), .o_frame_bad(frame_bad), .i_ext_bad(1'b0),
         .i_tx_s1(ref_s1), .i_tx_s2(ref_s2), .i_tx_count(ref_count), .i_tx_ref_valid(ref_valid),
         .sys_clk(sys_clk), .sys_snap_req(snap_req), .sys_snap_done(snap_done),
         .sys_locked(snap_locked), .sys_frames(snap_frames), .sys_bad(snap_bad), .sys_derr(snap_derr),
         .sys_unlock(snap_unlock), .sys_last_count(snap_count), .sys_lane_err(lane_err), .sys_rx_cycles(rx_cycles), .sys_pix_err(pix_err), .sys_bit_err(bit_err),
         .sys_lane_bit_err(lane_bit_err), .sys_lane_offset(sys_lane_offset), .o_rx_lane_offset(rx_lane_offset), .sys_clear(clear_req),
-        .sys_words_req(words_req), .sys_words_done(words_done), .sys_words(words), .sys_offset(sys_offset)
+        .sys_words_req(words_req), .sys_words_done(words_done), .sys_words(words), .sys_words_mode(words_mode), .sys_offset(sys_offset)
     );
 
     logic uart_to_dut = 1, uart_from_dut;
@@ -147,7 +148,7 @@ module tb_loop;
         .i_frames(snap_frames), .i_bad(snap_bad), .i_derr(snap_derr), .i_unlock(snap_unlock),
         .i_last_count(snap_count), .i_lane_err(lane_err), .i_rx_cycles(rx_cycles), .i_pix_err(pix_err), .i_bit_err(bit_err),
         .i_lane_bit_err(lane_bit_err), .o_lane_offset(sys_lane_offset), .i_pll_lock(1'b1), .o_clear(clear_req),
-        .o_words_req(words_req), .i_words_done(words_done), .i_words(words)
+        .o_words_req(words_req), .o_words_mode(words_mode), .i_words_done(words_done), .i_words(words)
     );
 
     // ---------------- UART decode / encode ----------------
@@ -336,6 +337,15 @@ module tb_loop;
             check(l.len() == 51, $sformatf("W line length %0d", l.len()));
             next_raw(l); check(l.substr(0, 1) == "W1", "W1 line");
             next_raw(l); check(l.substr(0, 1) == "W2", "W2 line");
+            // run start: 6 control words, then the first data word
+            send_char("v");
+            do next_raw(l); while (l[0] != "W");
+            check(l.substr(3, 5) == "354" || l.substr(3, 5) == "0AB" || l.substr(3, 5) == "154" || l.substr(3, 5) == "2AB",
+                  $sformatf("v: word 0 is a control symbol (%s)", l));
+            check(!(l.substr(27, 29) == "354" || l.substr(27, 29) == "0AB" || l.substr(27, 29) == "154" || l.substr(27, 29) == "2AB"),
+                  $sformatf("v: word 6 is data (%s)", l));
+            next_raw(l);
+            next_raw(l);
         end
 
         // 5. RX clock absent -> X, then recovery

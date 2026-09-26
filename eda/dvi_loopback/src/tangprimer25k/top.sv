@@ -296,6 +296,7 @@ module top (
     logic        rx_frame_bad;
     logic [23:0] snap_lane_err [0:2];
     logic        words_req, words_done;
+    logic [1:0]  words_mode;
     logic [9:0]  words [0:2][0:11];
     logic [31:0] snap_rx_cycles;
     logic [31:0] snap_pix_err, snap_bit_err;
@@ -318,6 +319,7 @@ module top (
         .o_rx_offset   (rx_offset),
         .o_rx_lane_offset(rx_lane_offset),
         .o_frame_bad   (rx_frame_bad),
+        .i_ext_bad     (1'b0),
         .i_tx_s1       (tx_ref_s1),
         .i_tx_s2       (tx_ref_s2),
         .i_tx_count    (tx_ref_count),
@@ -341,6 +343,7 @@ module top (
         .sys_words_req (words_req),
         .sys_words_done(words_done),
         .sys_words     (words),
+        .sys_words_mode(words_mode),
         .sys_offset    (sys_offset)
     );
 
@@ -367,6 +370,7 @@ module top (
         .i_pll_lock  (rx_pll_lock),
         .o_clear     (clear_req),
         .o_words_req (words_req),
+        .o_words_mode(words_mode),
         .i_words_done(words_done),
         .i_words     (words)
     );

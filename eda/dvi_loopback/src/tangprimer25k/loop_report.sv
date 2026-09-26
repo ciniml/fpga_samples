@@ -39,6 +39,10 @@
  *     w  raw words: 12 consecutive deserializer words of each lane from
  *        the first lane-0 control symbol, one "Wn" line per lane, hex,
  *        bit 0 = first bit received. Control symbols: 354 0AB 154 2AB.
+ *     v  same, around a lane-0 run start (6 words before the first data word)
+ *     x  same, around a blanking word whose lane 1 or 2 is not a control
+ *        symbol, 6 words before it
+ *     e  same, around a lane 1 / 2 decode error reported by dvi_in
  */
 `default_nettype none
 module loop_report #(
@@ -73,6 +77,7 @@ module loop_report #(
     input  wire         i_pll_lock,       // RX PLL lock (asynchronous)
     output logic        o_clear,
     output logic        o_words_req,
+    output logic [1:0]  o_words_mode,
     input  wire         i_words_done,
     input  wire  [9:0]  i_words [0:2][0:11]
 );
@@ -281,6 +286,7 @@ module loop_report #(
             o_snap_req   <= 1'b0;
             o_clear      <= 1'b0;
             o_words_req  <= 1'b0;
+            o_words_mode <= 2'd0;
             line_len     <= LINE_LEN;
             p_wlane      <= '0;
             tx_valid     <= 1'b0;
@@ -341,7 +347,8 @@ module loop_report #(
                                 scan_stride  <= 3'd1;
                                 state        <= S_SCAN_SET;
                             end
-                            "w": begin
+                            "w", "v", "x", "e": begin
+                                o_words_mode <= cmd_char == "w" ? 2'd0 : cmd_char == "v" ? 2'd1 : cmd_char == "x" ? 2'd2 : 2'd3;
                                 o_words_req <= 1'b1;
                                 timer       <= SNAP_TIMEOUT * 10;
                                 state       <= S_WORDS_WAIT;

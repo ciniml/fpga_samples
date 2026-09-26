@@ -33,7 +33,12 @@
  *       samples agree.
  */
 `default_nettype none
-module loop_check (
+module loop_check #(
+    // 1: no transmitter reference (e.g. eda/dvi_capture receiving from a
+    // real source). Every complete frame is counted, "bad" counts
+    // i_ext_bad pulses, and the pixel check is off.
+    parameter bit EXT_CHECK = 1'b0
+) (
     // ---- RX domain ----
     input  wire         rx_clk,
     input  wire         rx_reset,
@@ -49,6 +54,7 @@ module loop_check (
     output logic [7:0]  o_rx_offset,
     output logic [7:0]  o_rx_lane_offset [0:2],
     output logic        o_frame_bad,      // one clock per mismatched frame
+    input  wire         i_ext_bad,        // EXT_CHECK: one clock per bad frame
 
     // ---- TX domain (quasi-static) ----
     input  wire  [31:0] i_tx_s1,
@@ -77,6 +83,7 @@ module loop_check (
     input  wire         sys_words_req,    // pulse
     output logic        sys_words_done,   // pulse; sys_words valid
     output logic [9:0]  sys_words [0:2][0:11],
+    input  wire  [1:0]  sys_words_mode,   // capture trigger, see "Raw word capture"
     input  wire  [7:0]  sys_offset,
     input  wire  [7:0]  sys_lane_offset [0:2]
 );
@@ -180,7 +187,7 @@ module loop_check (
         end
         if (i_video_valid && i_video_de) px_x <= px_x + 1'd1;
         else                             px_x <= '0;
-        px_cmp <= i_video_valid && i_video_de && px_armed;
+        px_cmp <= i_video_valid && i_video_de && px_armed && !EXT_CHECK;
         px_got <= i_video_data;
         px_exp <= {px_x[7:0] ^ px_y[7:0],
                    px_x[10:3] + px_y[7:0],
@@ -200,7 +207,7 @@ module loop_check (
     logic       cmp_stb = 1'b0, cmp_stb_q = 1'b0;
     logic [2:0] cmp_eq  = '0;
     always_ff @(posedge rx_clk) begin
-        cmp_stb   <= rx_stb && rx_complete && tx_ref_ok;
+        cmp_stb   <= rx_stb && rx_complete && (tx_ref_ok || EXT_CHECK);
         cmp_eq    <= {rx_s1 == tx_ref_s1[95:64], rx_s2 == tx_ref_s1[63:32], rx_count == tx_ref_s1[31:0]};
         cmp_stb_q <= cmp_stb;
     end
@@ -221,10 +228,14 @@ module loop_check (
             if (cmp_stb_q) begin
                 frames     <= frames + 1'd1;
                 last_count <= rx_count;
-                if (cmp_eq != 3'b111) begin
+                if (cmp_eq != 3'b111 && !EXT_CHECK) begin
                     bad         <= bad + 1'd1;
                     o_frame_bad <= 1'b1;
                 end
+            end
+            if (EXT_CHECK && i_ext_bad) begin
+                bad         <= bad + 1'd1;
+                o_frame_bad <= 1'b1;
             end
             if (i_video_valid && |i_decode_err) derr <= derr + 1'd1;
             for (int l = 0; l < 3; l++) begin
@@ -259,28 +270,49 @@ module loop_check (
     end
     always_ff @(posedge rx_clk) rx_cycles <= rx_cycles + 1'd1;
 
-    // Raw word capture, RX side
+    // Raw word capture, RX side. The last 12 words of each lane shift
+    // through rx_words until a trigger, then the window runs on for
+    // `post` words and freezes (stable for the sys-side copy) until the
+    // next request. Trigger (sys_words_mode):
+    //   0: a lane-0 control symbol          -> trigger word first
+    //   1: a lane-0 run start (ctrl -> data) -> 6 words before it
+    //   2: lane 0 control but lane 1 or 2 not (blanking errors on 1/2)
+    //                                        -> 6 words before it
+    //   3: a lane 1 / 2 decode error from dvi_in -> 6 words before the
+    //      flag (the flagged word is ~3 words earlier: dvi_in's latency)
+    // With no trigger within ~7 ms at 148.5 MHz the window is taken anyway.
     logic       words_req_t = 1'b0;             // sys domain
     logic [2:0] words_req_sync = '0;            // RX domain
     logic       words_ack_t = 1'b0;             // RX domain
     logic       words_armed = 1'b0;
-    logic [3:0] words_n = '0;                   // words still to capture
+    logic       words_frozen = 1'b0;
+    logic [3:0] words_post = '0;                // words still to shift in after the trigger
+    logic       words_running = 1'b0;           // triggered, shifting the post words
     logic [19:0] words_wait = '0;
+    logic [1:0] words_mode_s0 = '0, words_mode_s1 = '0;
     logic [9:0] rx_words [0:2][0:11];
-    wire w0_is_ctrl = i_word0 == 10'b1101010100 || i_word0 == 10'b0010101011
-                   || i_word0 == 10'b0101010100 || i_word0 == 10'b1010101011;
+    logic       w0_ctrl_q = 1'b0;
+    function automatic logic is_ctrl_sym(input logic [9:0] w);
+        return w == 10'b1101010100 || w == 10'b0010101011 || w == 10'b0101010100 || w == 10'b1010101011;
+    endfunction
+    wire w0_is_ctrl = is_ctrl_sym(i_word0);
+    wire w1_is_ctrl = is_ctrl_sym(i_word1);
+    wire w2_is_ctrl = is_ctrl_sym(i_word2);
+    logic words_trig;
+    always_comb begin
+        case (words_mode_s1)
+            2'd1:    words_trig = !w0_is_ctrl && w0_ctrl_q;
+            2'd2:    words_trig = w0_is_ctrl && (!w1_is_ctrl || !w2_is_ctrl);
+            2'd3:    words_trig = i_video_valid && (i_decode_err[1] || i_decode_err[2]);
+            default: words_trig = w0_is_ctrl;
+        endcase
+    end
     always_ff @(posedge rx_clk) begin
         words_req_sync <= {words_req_sync[1:0], words_req_t};
-        if (words_req_sync[2] != words_req_sync[1]) begin
-            words_armed <= 1'b1;
-            words_wait  <= '0;
-        end else if (words_armed && (w0_is_ctrl || &words_wait)) begin
-            words_armed <= 1'b0;
-            words_n     <= 4'd11;     // this word + 11 more
-        end else if (words_armed) begin
-            words_wait <= words_wait + 1'd1;
-        end
-        if (words_n != 0 || (words_armed && (w0_is_ctrl || &words_wait))) begin
+        words_mode_s0  <= sys_words_mode;
+        words_mode_s1  <= words_mode_s0;
+        w0_ctrl_q      <= w0_is_ctrl;
+        if (!words_frozen) begin
             for (int l = 0; l < 3; l++) begin
                 for (int k = 0; k < 11; k++) rx_words[l][k] <= rx_words[l][k + 1];
             end
@@ -288,9 +320,26 @@ module loop_check (
             rx_words[1][11] <= i_word1;
             rx_words[2][11] <= i_word2;
         end
-        if (words_n != 0) begin
-            words_n <= words_n - 1'd1;
-            if (words_n == 4'd1) words_ack_t <= ~words_ack_t;  // last word enters now
+        if (words_req_sync[2] != words_req_sync[1]) begin
+            words_armed   <= 1'b1;
+            words_frozen  <= 1'b0;
+            words_running <= 1'b0;
+            words_wait    <= '0;
+        end else if (words_armed) begin
+            words_wait <= words_wait + 1'd1;
+            // (wait until the window holds 12 fresh words)
+            if (words_wait >= 20'd12 && (words_trig || &words_wait)) begin
+                words_armed   <= 1'b0;
+                words_running <= 1'b1;
+                words_post    <= (words_mode_s1 == 2'd0 || &words_wait) ? 4'd11 : 4'd5;
+            end
+        end else if (words_running) begin
+            if (words_post == 4'd1) begin
+                words_running <= 1'b0;
+                words_frozen  <= 1'b1;       // the last word enters now
+                words_ack_t   <= ~words_ack_t;
+            end
+            words_post <= words_post - 1'd1;
         end
     end
 
