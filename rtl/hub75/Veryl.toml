@@ -1,0 +1,8 @@
+[project]
+name    = "hub75"
+version = "0.1.0"
+
+[build]
+clock_type          = "posedge"
+reset_type          = "sync_high"
+omit_project_prefix = true

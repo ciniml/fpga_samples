@@ -1,0 +1,462 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+//
+// HUB75 LED matrix panel controller with BCM (binary code modulation)
+// gradation and a double-buffered pixel-write port.
+//
+// Lineage: ported from riscv-veryl/src/hub75.veryl (RGB111, CPU byte
+// port) with the gradation scheme brought back in from the original
+// Chisel implementation (fpga_samples/chisel/.../display/hub75.scala):
+// each scan row is shifted out COMPONENT_BITS times, once per bit
+// plane MSB→LSB, and the OE (display) pulse length halves with each
+// plane — LSB plane = 2×BASE_OE_CYCLES, MSB plane = 2^N×BASE_OE_CYCLES.
+//
+// Default configuration: FOUR 64x32 panels chained horizontally →
+// shift-register length per scan row = 256 cells, SCAN_DIV = 16
+// (1/16 scan). The user physically folds the chain (e.g. 2x2 for a
+// 128×64 display); the controller sees only the linear 256×32 chain.
+//
+// VRAM: one pixel per address, 3×COMPONENT_BITS wide
+// ({R,G,B} MSB-justified fields). Address layout:
+//   addr = {half_bit, scan_row[LOG2_SCAN_DIV-1:0], chain_x[X_BITS-1:0]}
+//   half_bit 0 = upper panel half (R1/G1/B1 lane), 1 = lower (R2/G2/B2).
+// Two banks (double buffer): the writer fills the back bank; a flip
+// request is consumed at the next frame boundary so the panel never
+// shows a half-written frame.
+//
+// FM6126A handshake: the Init{Brightness,Output} states bit-bang the
+// two shift-register init sequences. Harmless for non-FM6126A drivers.
+pub module Hub75 #(
+    param PANEL_WIDTH   : u32 = 64, // cols per individual panel
+    param PANEL_HEIGHT  : u32 = 32, // rows per individual panel (must be even, <= 64)
+    param NUM_CHAINED   : u32 = 4 , // number of panels chained data-in→data-out
+    param CLOCK_DIVIDER : u32 = 1 , // HUB75 clk period = 2 * (N+1) sysclk
+    param COMPONENT_BITS: u32 = 5 , // BCM bit planes per colour component
+    param BASE_OE_CYCLES: u32 = 16, // OE pulse unit; LSB plane shows 2×this
+) (
+    i_clk: input clock          ,
+    i_rst: input reset_sync_high,
+
+    // Pixel write port (always writes the current BACK bank).
+    // Address = {half, scan_row, chain_x} =
+    //   $clog2(PANEL_WIDTH*NUM_CHAINED * PANEL_HEIGHT/2) + 1 bits.
+    i_px_wen : input logic                                                          ,
+    i_px_addr: input logic<$clog2(PANEL_WIDTH * NUM_CHAINED * PANEL_HEIGHT / 2) + 1>,
+    i_px_data: input logic<3 * COMPONENT_BITS>                                      , // {R, G, B}
+
+    // Frame flip: pulse i_flip_req after finishing a frame; the swap
+    // happens at the next panel frame boundary. o_flip_pending stays
+    // high until consumed (v-sync acknowledge).
+    i_flip_req    : input  logic,
+    o_flip_pending: output logic,
+
+    // HUB75 panel pins.
+    o_row_a: output logic,
+    o_row_b: output logic,
+    o_row_c: output logic,
+    o_row_d: output logic,
+    o_row_e: output logic,
+    // Upper-half data lane (R1/G1/B1).
+    o_r0: output logic,
+    o_g0: output logic,
+    o_b0: output logic,
+    // Lower-half data lane (R2/G2/B2).
+    o_r1 : output logic,
+    o_g1 : output logic,
+    o_b1 : output logic,
+    o_oe : output logic,
+    o_lat: output logic,
+    o_clk: output logic,
+) {
+    // -----------------------------------------------------------------
+    // Derived constants. PANEL_WIDTH, PANEL_HEIGHT and NUM_CHAINED must
+    // all be powers of two for the bit slicing below to work cleanly.
+    // -----------------------------------------------------------------
+    const SCAN_DIV       : u32 = PANEL_HEIGHT / 2; // 16 for HEIGHT=32
+    const CHAIN_LEN      : u32 = PANEL_WIDTH * NUM_CHAINED; // shift cells per row
+    const LOG2_SCAN_DIV  : u32 = $clog2(SCAN_DIV);
+    const X_BITS         : u32 = $clog2(CHAIN_LEN);
+    const HALF_VRAM_DEPTH: u32 = SCAN_DIV * CHAIN_LEN; // pixels per half
+    const HALF_ADDR_BITS : u32 = $clog2(HALF_VRAM_DEPTH);
+    const PX_ADDR_BITS   : u32 = HALF_ADDR_BITS + 1; // + half select
+    const PX_BITS        : u32 = 3 * COMPONENT_BITS;
+    // Largest OE pulse = MSB plane = BASE << COMPONENT_BITS.
+    const OE_MAX     : u32 = BASE_OE_CYCLES << COMPONENT_BITS;
+    const OE_BITS    : u32 = $clog2(OE_MAX + 1);
+    const CLKDIV_BITS: u32 = $clog2(CLOCK_DIVIDER + 2);
+
+    // FSM state encoding (binary).
+    const ST_RESET      : logic<4> = 4'd0;
+    const ST_INIT_BRIGHT: logic<4> = 4'd1;
+    const ST_INIT_OUTPUT: logic<4> = 4'd2;
+    const ST_START_FRAME: logic<4> = 4'd3;
+    const ST_SETUP_ROW  : logic<4> = 4'd4;
+    const ST_OUTPUT_ROW : logic<4> = 4'd5;
+    const ST_WAIT_OE    : logic<4> = 4'd6;
+    const ST_NEXT_ROW   : logic<4> = 4'd7;
+    const ST_LATCH      : logic<4> = 4'd8;
+
+    // FM6126A init patterns.
+    const BRIGHTNESS_PATTERN: logic<16> = 16'b0000_0111_1110_0000;
+    const ENABLE_PATTERN    : logic<16> = 16'b0000_0010_0000_0000;
+
+    // -----------------------------------------------------------------
+    // Double-buffered VRAM: bank A/B × upper/lower half, one pixel per
+    // address, PX_BITS wide. `read_bank` = bank the FSM displays; the
+    // writer lands in the other bank.
+    // -----------------------------------------------------------------
+    #[sv("ram_style=\"block\"")]
+    var vram_a_upper: logic<PX_BITS> [HALF_VRAM_DEPTH];
+    #[sv("ram_style=\"block\"")]
+    var vram_a_lower: logic<PX_BITS> [HALF_VRAM_DEPTH];
+    #[sv("ram_style=\"block\"")]
+    var vram_b_upper: logic<PX_BITS> [HALF_VRAM_DEPTH];
+    #[sv("ram_style=\"block\"")]
+    var vram_b_lower: logic<PX_BITS> [HALF_VRAM_DEPTH];
+
+    var read_bank   : logic;
+    var pending_flip: logic;
+    assign o_flip_pending = pending_flip;
+
+    let wr_half: logic                 = i_px_addr[PX_ADDR_BITS - 1];
+    let wr_addr: logic<HALF_ADDR_BITS> = i_px_addr[HALF_ADDR_BITS - 1:0];
+
+    let write_a_upper: logic = i_px_wen && read_bank && !wr_half;
+    let write_a_lower: logic = i_px_wen && read_bank && wr_half;
+    let write_b_upper: logic = i_px_wen && !read_bank && !wr_half;
+    let write_b_lower: logic = i_px_wen && !read_bank && wr_half;
+
+    always_ff {
+        if write_a_upper {
+            vram_a_upper[wr_addr] = i_px_data;
+        }
+        if write_a_lower {
+            vram_a_lower[wr_addr] = i_px_data;
+        }
+        if write_b_upper {
+            vram_b_upper[wr_addr] = i_px_data;
+        }
+        if write_b_lower {
+            vram_b_lower[wr_addr] = i_px_data;
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // FSM registers.
+    // -----------------------------------------------------------------
+    var state        : logic<4>             ;
+    var x_counter    : logic<X_BITS>        ;
+    var y_counter    : logic<5>             ; // scan row (supports SCAN_DIV up to 32)
+    var oe_counter   : logic<OE_BITS>       ;
+    var next_oe      : logic<OE_BITS>       ; // OE length of the plane being shifted
+    var output_bit   : logic<COMPONENT_BITS>; // one-hot BCM plane mask, MSB→LSB
+    var address      : logic<HALF_ADDR_BITS>; // registered VRAM read address (SDPB)
+    var row_addr     : logic<HALF_ADDR_BITS>; // start-of-row address for plane rewind
+    var clk_reg      : logic                ;
+    var clock_counter: logic<CLKDIV_BITS>   ;
+    var out_phase    : logic                ;
+    var latch_line   : logic                ;
+    var oe_active    : logic                ;
+    // Pixel words latched at the shift-clock rising edge.
+    var pixel_upper: logic<PX_BITS>;
+    var pixel_lower: logic<PX_BITS>;
+    // Currently-driven RGB outputs.
+    var rgb_r0: logic;
+    var rgb_g0: logic;
+    var rgb_b0: logic;
+    var rgb_r1: logic;
+    var rgb_g1: logic;
+    var rgb_b1: logic;
+
+    // VRAM read ports.
+    let vram_a_upper_dout: logic<PX_BITS> = vram_a_upper[address];
+    let vram_a_lower_dout: logic<PX_BITS> = vram_a_lower[address];
+    let vram_b_upper_dout: logic<PX_BITS> = vram_b_upper[address];
+    let vram_b_lower_dout: logic<PX_BITS> = vram_b_lower[address];
+    let upper_dout       : logic<PX_BITS> = if read_bank ? vram_b_upper_dout : vram_a_upper_dout;
+    let lower_dout       : logic<PX_BITS> = if read_bank ? vram_b_lower_dout : vram_a_lower_dout;
+
+    let clock_enable: logic = (state != ST_RESET) && (clock_counter == 0);
+    let initializing: logic = (state == ST_RESET) || (state == ST_INIT_BRIGHT) || (state == ST_INIT_OUTPUT);
+
+    let bright_bit: logic = BRIGHTNESS_PATTERN[x_counter[3:0]];
+    let enable_bit: logic = ENABLE_PATTERN[x_counter[3:0]];
+
+    // BCM plane select: pixel word fields are {R, G, B}, each
+    // COMPONENT_BITS wide; a channel drives 1 when its bit under the
+    // current one-hot plane mask is set.
+    let upper_r_field: logic<COMPONENT_BITS> = pixel_upper[3 * COMPONENT_BITS - 1:2 * COMPONENT_BITS];
+    let upper_g_field: logic<COMPONENT_BITS> = pixel_upper[2 * COMPONENT_BITS - 1:COMPONENT_BITS];
+    let upper_b_field: logic<COMPONENT_BITS> = pixel_upper[COMPONENT_BITS - 1:0];
+    let lower_r_field: logic<COMPONENT_BITS> = pixel_lower[3 * COMPONENT_BITS - 1:2 * COMPONENT_BITS];
+    let lower_g_field: logic<COMPONENT_BITS> = pixel_lower[2 * COMPONENT_BITS - 1:COMPONENT_BITS];
+    let lower_b_field: logic<COMPONENT_BITS> = pixel_lower[COMPONENT_BITS - 1:0];
+
+    // Plane bits straight from the VRAM read data (address registered;
+    // the data is ready one clock after the address changes, and row
+    // shifting ticks are at least 2 clocks apart).
+    let dplane_r0: logic = (upper_dout[3 * COMPONENT_BITS - 1:2 * COMPONENT_BITS] & output_bit) != 0;
+    let dplane_g0: logic = (upper_dout[2 * COMPONENT_BITS - 1:COMPONENT_BITS] & output_bit) != 0;
+    let dplane_b0: logic = (upper_dout[COMPONENT_BITS - 1:0] & output_bit) != 0;
+    let dplane_r1: logic = (lower_dout[3 * COMPONENT_BITS - 1:2 * COMPONENT_BITS] & output_bit) != 0;
+    let dplane_g1: logic = (lower_dout[2 * COMPONENT_BITS - 1:COMPONENT_BITS] & output_bit) != 0;
+    let dplane_b1: logic = (lower_dout[COMPONENT_BITS - 1:0] & output_bit) != 0;
+
+    let plane_r0: logic = (upper_r_field & output_bit) != 0;
+    let plane_g0: logic = (upper_g_field & output_bit) != 0;
+    let plane_b0: logic = (upper_b_field & output_bit) != 0;
+    let plane_r1: logic = (lower_r_field & output_bit) != 0;
+    let plane_g1: logic = (lower_g_field & output_bit) != 0;
+    let plane_b1: logic = (lower_b_field & output_bit) != 0;
+
+    let row_init_addr: logic<HALF_ADDR_BITS> = {y_counter[LOG2_SCAN_DIV - 1:0], 1'b0 repeat X_BITS};
+
+    // -----------------------------------------------------------------
+    // Pin outputs.
+    // -----------------------------------------------------------------
+    assign o_row_a = y_counter[0];
+    assign o_row_b = y_counter[1];
+    assign o_row_c = y_counter[2];
+    assign o_row_d = y_counter[3];
+    assign o_row_e = y_counter[4];
+    assign o_lat   = latch_line;
+    assign o_r0    = rgb_r0;
+    assign o_g0    = rgb_g0;
+    assign o_b0    = rgb_b0;
+    assign o_r1    = rgb_r1;
+    assign o_g1    = rgb_g1;
+    assign o_b1    = rgb_b1;
+    // OE is active-low on the panel — high while idle / blanked.
+    assign o_oe = (oe_counter == 0) || initializing;
+
+    assign o_clk = clk_reg;
+
+    // -----------------------------------------------------------------
+    // FSM.
+    // -----------------------------------------------------------------
+    always_ff {
+        if_reset {
+            state         = ST_RESET;
+            x_counter     = 0 as X_BITS;
+            y_counter     = 5'd0;
+            oe_counter    = 0 as OE_BITS;
+            next_oe       = 0 as OE_BITS;
+            output_bit    = 0 as COMPONENT_BITS;
+            address       = 0 as HALF_ADDR_BITS;
+            row_addr      = 0 as HALF_ADDR_BITS;
+            clk_reg       = 1'b0;
+            clock_counter = 0 as CLKDIV_BITS;
+            out_phase     = 1'b0;
+            latch_line    = 1'b0;
+            oe_active     = 1'b0;
+            pixel_upper   = 0 as PX_BITS;
+            pixel_lower   = 0 as PX_BITS;
+            rgb_r0        = 1'b0;
+            rgb_g0        = 1'b0;
+            rgb_b0        = 1'b0;
+            rgb_r1        = 1'b0;
+            rgb_g1        = 1'b0;
+            rgb_b1        = 1'b0;
+            read_bank     = 1'b0;
+            pending_flip  = 1'b0;
+        } else {
+            if i_flip_req {
+                pending_flip = 1'b1;
+            }
+            if oe_counter >: 0 as OE_BITS {
+                oe_counter = oe_counter - (1 as OE_BITS);
+            }
+            if state != ST_RESET {
+                if clock_counter == 0 as CLKDIV_BITS {
+                    // The shift clock free-runs only for the FM6126A init
+                    // sequences; row shifting drives it explicitly so that
+                    // CLK stays low while LAT / OE are active.
+                    if state == ST_INIT_BRIGHT || state == ST_INIT_OUTPUT {
+                        clk_reg = ~clk_reg;
+                    }
+                    clock_counter = CLOCK_DIVIDER as CLKDIV_BITS;
+                } else {
+                    clock_counter = clock_counter - (1 as CLKDIV_BITS);
+                }
+            }
+
+            case state {
+                ST_RESET: {
+                    address    = 0 as HALF_ADDR_BITS;
+                    x_counter  = 0 as X_BITS;
+                    y_counter  = 5'd0;
+                    oe_counter = 0 as OE_BITS;
+                    latch_line = 1'b0;
+                    clk_reg    = 1'b0;
+                    out_phase  = 1'b0;
+                    rgb_r0     = 1'b0;
+                    rgb_g0     = 1'b0;
+                    rgb_b0     = 1'b0;
+                    rgb_r1     = 1'b0;
+                    rgb_g1     = 1'b0;
+                    rgb_b1     = 1'b0;
+                    oe_active  = 1'b0;
+                    state      = ST_INIT_BRIGHT;
+                }
+
+                ST_INIT_BRIGHT: {
+                    if clock_enable {
+                        if !clk_reg && !out_phase {
+                            rgb_r0     = bright_bit;
+                            rgb_g0     = bright_bit;
+                            rgb_b0     = bright_bit;
+                            rgb_r1     = bright_bit;
+                            rgb_g1     = bright_bit;
+                            rgb_b1     = bright_bit;
+                            latch_line = x_counter >: ((CHAIN_LEN - 12) as X_BITS);
+                            out_phase  = 1'b1;
+                        } else if !clk_reg && out_phase {
+                            clk_reg = 1'b1;
+                        } else {
+                            clk_reg   = 1'b0;
+                            out_phase = 1'b0;
+                            x_counter = x_counter + (1 as X_BITS);
+                            if x_counter == ((CHAIN_LEN - 1) as X_BITS) {
+                                x_counter  = 0 as X_BITS;
+                                latch_line = 1'b0;
+                                state      = ST_INIT_OUTPUT;
+                            }
+                        }
+                    }
+                }
+
+                ST_INIT_OUTPUT: {
+                    if clock_enable {
+                        if !clk_reg && !out_phase {
+                            rgb_r0     = enable_bit;
+                            rgb_g0     = enable_bit;
+                            rgb_b0     = enable_bit;
+                            rgb_r1     = enable_bit;
+                            rgb_g1     = enable_bit;
+                            rgb_b1     = enable_bit;
+                            latch_line = x_counter >: ((CHAIN_LEN - 13) as X_BITS);
+                            out_phase  = 1'b1;
+                        } else if !clk_reg && out_phase {
+                            clk_reg = 1'b1;
+                        } else {
+                            out_phase = 1'b0;
+                            x_counter = x_counter + (1 as X_BITS);
+                            if x_counter == ((CHAIN_LEN - 1) as X_BITS) {
+                                clk_reg    = 1'b1;
+                                x_counter  = 0 as X_BITS;
+                                latch_line = 1'b0;
+                                state      = ST_START_FRAME;
+                            } else {
+                                clk_reg = 1'b0;
+                            }
+                        }
+                    }
+                }
+
+                ST_START_FRAME: {
+                    y_counter = 5'd0;
+                    address   = 0 as HALF_ADDR_BITS;
+                    // Consume a pending flip exactly at the frame
+                    // boundary so the panel never shows a torn frame.
+                    if pending_flip {
+                        read_bank    = ~read_bank;
+                        pending_flip = 1'b0;
+                    }
+                    state = ST_SETUP_ROW;
+                }
+
+                ST_SETUP_ROW: {
+                    x_counter = 0 as X_BITS;
+                    clk_reg   = 1'b0;
+                    address   = row_init_addr;
+                    row_addr  = row_init_addr;
+                    // BCM: start from the MSB plane; its OE pulse is the
+                    // longest (BASE << COMPONENT_BITS), halving per plane.
+                    output_bit = (1 << (COMPONENT_BITS - 1)) as COMPONENT_BITS;
+                    next_oe    = OE_MAX as OE_BITS;
+                    out_phase  = 1'b0;
+                    state      = ST_OUTPUT_ROW;
+                }
+
+                ST_OUTPUT_ROW: {
+                    // Exactly CHAIN_LEN clock pulses per plane. For each
+                    // pixel: CLK low with the pixel's plane bits on the
+                    // data lines, then CLK high (the panel samples on the
+                    // rising edge) while the VRAM address advances.
+                    if clock_enable {
+                        if !out_phase {
+                            clk_reg   = 1'b0;
+                            rgb_r0    = dplane_r0;
+                            rgb_g0    = dplane_g0;
+                            rgb_b0    = dplane_b0;
+                            rgb_r1    = dplane_r1;
+                            rgb_g1    = dplane_g1;
+                            rgb_b1    = dplane_b1;
+                            out_phase = 1'b1;
+                        } else {
+                            clk_reg   = 1'b1;
+                            out_phase = 1'b0;
+                            address   = address + (1 as HALF_ADDR_BITS);
+                            if x_counter == ((CHAIN_LEN - 1) as X_BITS) {
+                                x_counter = 0 as X_BITS;
+                                state     = ST_LATCH;
+                            } else {
+                                x_counter = x_counter + (1 as X_BITS);
+                            }
+                        }
+                    }
+                }
+
+                ST_LATCH: {
+                    // CLK low, then one LAT pulse with the clock stopped
+                    // (works for edge-triggered and transparent latches),
+                    // then the OE pulse for this plane.
+                    if clock_enable {
+                        if clk_reg {
+                            clk_reg = 1'b0;
+                        } else if !latch_line {
+                            latch_line = 1'b1;
+                        } else {
+                            latch_line = 1'b0;
+                            oe_counter = next_oe;
+                            oe_active  = 1'b1;
+                            state      = ST_WAIT_OE;
+                        }
+                    }
+                }
+
+                ST_WAIT_OE: {
+                    // Once the pulse expires: next plane (rewind the row
+                    // address) or, after the LSB plane, the next row.
+                    if oe_active && oe_counter == 0 as OE_BITS {
+                        oe_active = 1'b0;
+                        next_oe   = next_oe >> 1;
+                        if output_bit == (1 as COMPONENT_BITS) {
+                            state = ST_NEXT_ROW;
+                        } else {
+                            output_bit = output_bit >> 1;
+                            address    = row_addr;
+                            x_counter  = 0 as X_BITS;
+                            out_phase  = 1'b0;
+                            state      = ST_OUTPUT_ROW;
+                        }
+                    }
+                }
+
+                ST_NEXT_ROW: {
+                    if y_counter == ((SCAN_DIV - 1) as 5) {
+                        state = ST_START_FRAME;
+                    } else {
+                        y_counter = y_counter + 5'd1;
+                        state     = ST_SETUP_ROW;
+                    }
+                }
+
+                default: {}
+            }
+        }
+    }
+}
