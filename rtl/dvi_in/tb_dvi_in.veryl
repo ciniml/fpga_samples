@@ -12,8 +12,15 @@
  *
  *  - dvi_in_loopback    : straight-through (no rotation) equivalence check.
  *  - dvi_in_word_align  : models the external 1:10 deserializer's barrel
- *                         shifter; starts mis-aligned by 3 bits and waits
- *                         for dvi_in's o_align_shift_req pulses to converge.
+ *                         shifter; from every start offset (0-9), waits for
+ *                         dvi_in's o_align_shift_req pulses to converge on
+ *                         the true boundary, then checks a clean frame.
+ *  - dvi_in_glitch_filter: corrupts single lane-0 words (hsync symbol bit 1
+ *                         dropped, active word turned into a control symbol);
+ *                         de/hsync/vsync must stay intact and only lane 0
+ *                         may flag the error.
+ *  - dvi_in_relock      : link down past LOSE_TIMEOUT (outputs must hold),
+ *                         re-plug on another bit phase, relock and decode.
  */
 
 module TbDviIn {}
@@ -262,14 +269,22 @@ module dvi_in_word_align;
     logic        rx_locked;
     logic        rx_align_shift_req;
     logic        rx_video_valid;
+    logic [2:0]  rx_decode_err;
+
+    // Words observed per boundary. Must span at least one line so every
+    // window sees an hblank run (a line here is 43 words).
+    localparam int ALIGN_WINDOW        = 256;
+    localparam int SHIFT_SETTLE_CYCLES = 4;
+    // Worst case: all 10 boundaries tried once more, plus slack.
+    localparam int LOCK_BOUND = 11 * (ALIGN_WINDOW + SHIFT_SETTLE_CYCLES + 2);
 
     // ----------------------------------------------------------------
     // External barrel shifter model: emulates the 1:10 deserializer's
-    // bit-boundary register. Initially mis-aligned by 3, advances by 1
-    // each cycle that o_align_shift_req pulses.
+    // bit-boundary register. Starts at start_offset on reset and advances
+    // by 1 (mod 10) each cycle that o_align_shift_req pulses.
     // ----------------------------------------------------------------
+    logic [3:0] start_offset;
     logic [3:0] align_offset;
-    logic [9:0] rx_clk_word;
     logic [9:0] rx_data0;
     logic [9:0] rx_data1;
     logic [9:0] rx_data2;
@@ -280,22 +295,17 @@ module dvi_in_word_align;
         rotate_right = doubled[sh +: 10];
     endfunction
 
-    assign rx_clk_word = rotate_right(tx_dvi_clock, align_offset);
-    assign rx_data0    = rotate_right(tx_dvi_data0, align_offset);
-    assign rx_data1    = rotate_right(tx_dvi_data1, align_offset);
-    assign rx_data2    = rotate_right(tx_dvi_data2, align_offset);
+    assign rx_data0 = rotate_right(tx_dvi_data0, align_offset);
+    assign rx_data1 = rotate_right(tx_dvi_data1, align_offset);
+    assign rx_data2 = rotate_right(tx_dvi_data2, align_offset);
 
     integer shift_pulse_count;
 
     always_ff @(posedge clock) begin
         if (reset) begin
-            align_offset      <= 4'd3;
+            align_offset      <= start_offset;
             shift_pulse_count <= 0;
         end else if (rx_align_shift_req) begin
-            // Walk align_offset toward 0 by adding 1 mod 10. (The walking
-            // direction is arbitrary as long as it sweeps all positions —
-            // a real deserializer shifts in one direction; this matches
-            // that intent.)
             align_offset      <= (align_offset == 4'd9) ? 4'd0 : align_offset + 4'd1;
             shift_pulse_count <= shift_pulse_count + 1;
         end
@@ -320,7 +330,8 @@ module dvi_in_word_align;
     assign rx_word_data[2] = rx_data2;
 
     dvi_in #(
-        .SIMULATION_FAST_LOCK(1'b1)
+        .ALIGN_WINDOW       (ALIGN_WINDOW),
+        .SHIFT_SETTLE_CYCLES(SHIFT_SETTLE_CYCLES)
     ) dut_rx (
         .clock            (clock),
         .reset            (reset),
@@ -332,7 +343,7 @@ module dvi_in_word_align;
         .o_video_vsync    (),
         .o_video_ctl      (),
         .o_video_valid    (rx_video_valid),
-        .o_decode_err     (),
+        .o_decode_err     (rx_decode_err),
         .o_locked         (rx_locked),
         .o_align_shift_req(rx_align_shift_req),
         .o_delay_inc      (),
@@ -350,45 +361,659 @@ module dvi_in_word_align;
         end
     end
 
-    // Drive blanking-only stimulus: dvi_out emits control symbols on all
-    // lanes whenever video_de is low. That's all we need for alignment
-    // verification (the clock-lane is independent of video state anyway).
-    initial begin
-        video_data  = 0;
-        video_de    = 0;
-        video_hsync = 0;
-        video_vsync = 0;
+    // ----------------------------------------------------------------
+    // Stimulus: the same small frame as dvi_in_loopback, so misaligned
+    // boundaries see real active-video data as well as blanking.
+    // ----------------------------------------------------------------
+    localparam int h_pulse  = 3;
+    localparam int h_back   = 10;
+    localparam int h_active = 20;
+    localparam int h_front  = 10;
+    localparam int h_max_count = h_pulse + h_back + h_active + h_front - 1;
+    localparam int v_pulse  = 1;
+    localparam int v_back   = 10;
+    localparam int v_active = 20;
+    localparam int v_front  = 10;
+    localparam int v_max_count = v_pulse + v_back + v_active + v_front - 1;
+    localparam int FRAME_WORDS = (h_max_count + 1) * (v_max_count + 1);
+
+    logic [9:0] counter_h;
+    logic [9:0] counter_v;
+
+    always_ff @(posedge clock) begin
+        if (reset) begin
+            video_de    <= 0;
+            video_hsync <= 0;
+            video_vsync <= 0;
+            video_data  <= 0;
+            counter_h   <= 0;
+            counter_v   <= 0;
+        end else begin
+            video_hsync <= counter_h < h_pulse;
+            video_vsync <= counter_v < v_pulse;
+            video_de    <= h_pulse + h_back <= counter_h && counter_h < h_pulse + h_back + h_active
+                        && v_pulse + v_back <= counter_v && counter_v < v_pulse + v_back + v_active;
+            video_data  <= video_data + 1;
+
+            if (counter_h == h_max_count) begin
+                counter_h <= 0;
+                if (counter_v == v_max_count) begin
+                    counter_v <= 0;
+                end else begin
+                    counter_v <= counter_v + 1;
+                end
+            end else begin
+                counter_h <= counter_h + 1;
+            end
+        end
     end
 
+    // ----------------------------------------------------------------
+    // For every starting offset: reset, wait for lock, check that the
+    // shifter converged to offset 0 and that a full frame decodes with
+    // no errors.
+    // ----------------------------------------------------------------
+    integer errs;
+
     initial begin
-        reset = 1'b1;
-        repeat (32) @(posedge clock);
-        reset = 1'b0;
+        for (int off = 0; off < 10; off++) begin
+            start_offset = off[3:0];
+            reset = 1'b1;
+            repeat (32) @(posedge clock);
+            reset = 1'b0;
 
-        // Wait for lock with bounded loop (verilator doesn't accept fork/wait
-        // patterns with implicit repeat counters across processes).
-        for (int wait_cycles = 0; wait_cycles < 2000; wait_cycles++) begin
-            @(posedge clock);
-            if (rx_locked) break;
-        end
-        if (!rx_locked) begin
-            $fatal(1, "[tb_dvi_in_word_align] never locked after 2000 cycles");
+            // Bounded wait (verilator doesn't accept fork/wait patterns
+            // with implicit repeat counters across processes).
+            for (int wait_cycles = 0; wait_cycles < LOCK_BOUND; wait_cycles++) begin
+                @(posedge clock);
+                if (rx_locked) break;
+            end
+            if (!rx_locked) begin
+                $fatal(1, "[tb_dvi_in_word_align] start %0d: never locked after %0d cycles", off, LOCK_BOUND);
+            end
+            if (align_offset !== 4'd0) begin
+                $fatal(1, "[tb_dvi_in_word_align] start %0d: locked at align_offset = %0d (saw %0d shift pulses)",
+                       off, align_offset, shift_pulse_count);
+            end
+            if (shift_pulse_count != (10 - off) % 10) begin
+                $fatal(1, "[tb_dvi_in_word_align] start %0d: %0d shift pulses, expected %0d",
+                       off, shift_pulse_count, (10 - off) % 10);
+            end
+
+            errs = 0;
+            repeat (8) @(posedge clock);
+            for (int i = 0; i < FRAME_WORDS; i++) begin
+                @(posedge clock);
+                if (!rx_locked || !rx_video_valid) begin
+                    $fatal(1, "[tb_dvi_in_word_align] start %0d: lost lock/valid after locking", off);
+                end
+                if (rx_decode_err != 0) errs++;
+            end
+            if (errs != 0) begin
+                $fatal(1, "[tb_dvi_in_word_align] start %0d: %0d decode errors in a frame after lock", off, errs);
+            end
+            $display("[tb_dvi_in_word_align] start %0d: locked after %0d shift pulses", off, shift_pulse_count);
         end
 
-        // Verify the shift pulses converged to zero offset. Starting at 3
-        // and advancing +1 (mod 10) each pulse, reaching 0 takes 7 pulses.
-        if (align_offset !== 4'd0) begin
-            $fatal(1, "[tb_dvi_in_word_align] locked but align_offset = %0d != 0 (saw %0d shift pulses)",
-                   align_offset, shift_pulse_count);
-        end
-
-        $display("[tb_dvi_in_word_align] PASS (locked after %0d shift pulses)", shift_pulse_count);
+        $display("[tb_dvi_in_word_align] PASS (all 10 start offsets)");
         $finish;
     end
 
     initial begin
         #5_000_000;
         $fatal(1, "[tb_dvi_in_word_align] timeout");
+    end
+endmodule
+}}}
+
+#[test(dvi_in_glitch_filter)]
+embed (inline) sv{{{
+`timescale 10ns/1ps
+
+// Single-word corruption on data lane 0, modelling the deterministic ISI
+// seen on unterminated Pmod lanes (bit 1 of an hsync control symbol read
+// as 0) and the opposite case (an active-video word that happens to decode
+// as a control symbol). The 3-word DE majority must keep de/hsync/vsync
+// intact, and only lane 0 may report a decode error, only at the
+// corrupted word.
+module dvi_in_glitch_filter;
+    logic clock;
+    logic reset;
+
+    logic [23:0] video_data;
+    logic        video_de;
+    logic        video_hsync;
+    logic        video_vsync;
+    logic [9:0]  dvi_clock_word;
+    logic [9:0]  dvi_data0;
+    logic [9:0]  dvi_data1;
+    logic [9:0]  dvi_data2;
+
+    logic        rx_locked;
+    logic [23:0] rx_video_data;
+    logic        rx_video_de;
+    logic        rx_video_hsync;
+    logic        rx_video_vsync;
+    logic        rx_video_valid;
+    logic [2:0]  rx_decode_err;
+
+    dvi_out dut_tx (
+        .clock      (clock),
+        .reset      (reset),
+        .video_data (video_data),
+        .video_de   (video_de),
+        .video_hsync(video_hsync),
+        .video_vsync(video_vsync),
+        .dvi_clock  (dvi_clock_word),
+        .dvi_data0  (dvi_data0),
+        .dvi_data1  (dvi_data1),
+        .dvi_data2  (dvi_data2)
+    );
+
+    initial begin
+        forever begin
+            clock = 1;
+            #2;
+            clock = 0;
+            #2;
+        end
+    end
+
+    localparam int h_pulse  = 3;
+    localparam int h_back   = 10;
+    localparam int h_active = 20;
+    localparam int h_front  = 10;
+    localparam int h_max_count = h_pulse + h_back + h_active + h_front - 1;
+    localparam int v_pulse  = 1;
+    localparam int v_back   = 10;
+    localparam int v_active = 20;
+    localparam int v_front  = 10;
+    localparam int v_max_count = v_pulse + v_back + v_active + v_front - 1;
+
+    logic [9:0] counter_h;
+    logic [9:0] counter_v;
+
+    always_ff @(posedge clock) begin
+        if (reset) begin
+            video_de    <= 0;
+            video_hsync <= 0;
+            video_vsync <= 0;
+            video_data  <= 0;
+            counter_h   <= 0;
+            counter_v   <= 0;
+        end else begin
+            video_hsync <= counter_h < h_pulse;
+            video_vsync <= counter_v < v_pulse;
+            video_de    <= h_pulse + h_back <= counter_h && counter_h < h_pulse + h_back + h_active
+                        && v_pulse + v_back <= counter_v && counter_v < v_pulse + v_back + v_active;
+            video_data  <= video_data + 1;
+
+            if (counter_h == h_max_count) begin
+                counter_h <= 0;
+                if (counter_v == v_max_count) begin
+                    counter_v <= 0;
+                end else begin
+                    counter_v <= counter_v + 1;
+                end
+            end else begin
+                counter_h <= counter_h + 1;
+            end
+        end
+    end
+
+    // ----------------------------------------------------------------
+    // Reference pipeline, carrying the (registered) h/v position of each
+    // sample. pipe[k] is the video input delayed k+1 cycles, so pipe[2]
+    // lines up with the dvi_out words and pipe[4] with the dvi_in output.
+    // ----------------------------------------------------------------
+    localparam int PIPE_DEPTH = 5;
+    typedef struct packed {
+        logic [23:0] data;
+        logic        de;
+        logic        hsync;
+        logic        vsync;
+        logic [9:0]  h;
+        logic [9:0]  v;
+        logic [1:0]  inj;   // 0: none, 1: blanking glitch, 2: active glitch
+    } sample_t;
+    sample_t pipe [0:PIPE_DEPTH-1];
+
+    // counter_h/v are one cycle ahead of the registered video signals.
+    logic [9:0] pos_h;
+    logic [9:0] pos_v;
+    always_ff @(posedge clock) begin
+        pos_h <= counter_h;
+        pos_v <= counter_v;
+    end
+
+    // Injection points (h, v of the corrupted word):
+    //  - (1, 0):  hsync symbol on the vsync line (CTRL_11), bit 1 -> 0
+    //  - (1, 5):  hsync symbol on an ordinary line (CTRL_01), bit 1 -> 0
+    //  - (22, 15): active video, word replaced by CTRL_00
+    function automatic logic [1:0] inj_kind(input logic [9:0] h, input logic [9:0] v);
+        if (h == 1 && (v == 0 || v == 5)) return 2'd1;
+        if (h == 22 && v == 15)           return 2'd2;
+        return 2'd0;
+    endfunction
+
+    always_ff @(posedge clock) begin
+        if (reset) begin
+            for (int i = 0; i < PIPE_DEPTH; i++) pipe[i] <= '{default:'0};
+        end else begin
+            pipe[0].data  <= video_data;
+            pipe[0].de    <= video_de;
+            pipe[0].hsync <= video_hsync;
+            pipe[0].vsync <= video_vsync;
+            pipe[0].h     <= pos_h;
+            pipe[0].v     <= pos_v;
+            pipe[0].inj   <= inj_kind(pos_h, pos_v);
+            for (int i = 1; i < PIPE_DEPTH; i++) pipe[i] <= pipe[i-1];
+        end
+    end
+
+    localparam logic [9:0] CTRL_00 = 10'b1101010100;
+
+    logic       inject_en;
+    logic [9:0] rx_data0;
+    always_comb begin
+        rx_data0 = dvi_data0;
+        if (inject_en) begin
+            case (pipe[2].inj)
+                2'd1: rx_data0 = dvi_data0 & ~10'b0000000010;
+                2'd2: rx_data0 = CTRL_00;
+                default: ;
+            endcase
+        end
+    end
+
+    logic [9:0] rx_word_data [0:2];
+    assign rx_word_data[0] = rx_data0;
+    assign rx_word_data[1] = dvi_data1;
+    assign rx_word_data[2] = dvi_data2;
+
+    dvi_in dut_rx (
+        .clock            (clock),
+        .reset            (reset),
+        .i_word_data      (rx_word_data),
+        .i_word_valid     (1'b1),
+        .o_video_data     (rx_video_data),
+        .o_video_de       (rx_video_de),
+        .o_video_hsync    (rx_video_hsync),
+        .o_video_vsync    (rx_video_vsync),
+        .o_video_ctl      (),
+        .o_video_valid    (rx_video_valid),
+        .o_decode_err     (rx_decode_err),
+        .o_locked         (rx_locked),
+        .o_align_shift_req(),
+        .o_delay_inc      (),
+        .o_delay_dec      (),
+        .o_delay_load     (),
+        .o_delay_tap      ()
+    );
+
+    integer mismatches;
+    integer checked;
+    integer injected [1:2];
+    integer lane0_err;
+    logic   last_hsync;
+    logic   last_vsync;
+    sample_t ref_s;
+
+    initial begin
+        mismatches  = 0;
+        checked     = 0;
+        injected[1] = 0;
+        injected[2] = 0;
+        lane0_err   = 0;
+        last_hsync  = 0;
+        last_vsync  = 0;
+        inject_en   = 0;
+        reset       = 1'b1;
+        repeat (32) @(posedge clock);
+        reset = 1'b0;
+
+        wait (rx_locked == 1'b1);
+        repeat (8) @(posedge clock);
+        inject_en = 1;
+        // Let the first injected word (if any) reach the output only
+        // after inject_en is stable: skip the pipeline depth.
+        repeat (PIPE_DEPTH) @(posedge clock);
+
+        for (int i = 0; i < (h_max_count + 1) * (v_max_count + 1) * 3; i++) begin
+            @(posedge clock);
+            ref_s = pipe[PIPE_DEPTH-1];
+            if (!rx_locked || !rx_video_valid) begin
+                $fatal(1, "[tb_dvi_in_glitch] lost lock/valid @%0t", $time);
+            end
+            if (ref_s.inj != 0) injected[ref_s.inj]++;
+
+            if (rx_video_de !== ref_s.de) begin
+                mismatches++;
+                $display("[tb_dvi_in_glitch] de mismatch @(h=%0d,v=%0d): expected %0b actual %0b",
+                         ref_s.h, ref_s.v, ref_s.de, rx_video_de);
+            end
+            if (!ref_s.de) begin
+                last_hsync = ref_s.hsync;
+                last_vsync = ref_s.vsync;
+            end
+            if (rx_video_hsync !== last_hsync || rx_video_vsync !== last_vsync) begin
+                mismatches++;
+                $display("[tb_dvi_in_glitch] sync mismatch @(h=%0d,v=%0d): expected h%0b v%0b actual h%0b v%0b",
+                         ref_s.h, ref_s.v, last_hsync, last_vsync, rx_video_hsync, rx_video_vsync);
+            end
+            // The corrupted active word decodes to garbage on lane 0
+            // (blue); green/red must still match.
+            if (ref_s.de && rx_video_de) begin
+                if (ref_s.inj == 2) begin
+                    if (rx_video_data[23:8] !== ref_s.data[23:8]) begin
+                        mismatches++;
+                        $display("[tb_dvi_in_glitch] rgb[23:8] mismatch at injected word (h=%0d,v=%0d)", ref_s.h, ref_s.v);
+                    end
+                end else if (rx_video_data !== ref_s.data) begin
+                    mismatches++;
+                    $display("[tb_dvi_in_glitch] rgb mismatch @(h=%0d,v=%0d): expected %06h actual %06h",
+                             ref_s.h, ref_s.v, ref_s.data, rx_video_data);
+                end
+            end
+            // Only lane 0 may flag an error, and only at an injected word.
+            if (rx_decode_err[2:1] != 0) begin
+                mismatches++;
+                $display("[tb_dvi_in_glitch] lane1/2 decode_err=%03b @(h=%0d,v=%0d)",
+                         rx_decode_err, ref_s.h, ref_s.v);
+            end
+            if (rx_decode_err[0]) begin
+                lane0_err++;
+                if (ref_s.inj == 0) begin
+                    mismatches++;
+                    $display("[tb_dvi_in_glitch] spurious lane0 decode_err @(h=%0d,v=%0d)", ref_s.h, ref_s.v);
+                end
+            end else if (ref_s.inj != 0) begin
+                mismatches++;
+                $display("[tb_dvi_in_glitch] injected word not flagged @(h=%0d,v=%0d)", ref_s.h, ref_s.v);
+            end
+            checked++;
+        end
+
+        if (injected[1] != 6 || injected[2] != 3) begin
+            $fatal(1, "[tb_dvi_in_glitch] expected 6 blanking + 3 active injections, saw %0d + %0d",
+                   injected[1], injected[2]);
+        end
+        if (mismatches != 0) begin
+            $fatal(1, "[tb_dvi_in_glitch] %0d mismatches across %0d samples", mismatches, checked);
+        end
+        $display("[tb_dvi_in_glitch] PASS (%0d samples, %0d+%0d injected words, %0d lane-0 errors flagged)",
+                 checked, injected[1], injected[2], lane0_err);
+        $finish;
+    end
+
+    initial begin
+        #5_000_000;
+        $fatal(1, "[tb_dvi_in_glitch] timeout");
+    end
+endmodule
+}}}
+
+#[test(dvi_in_relock)]
+embed (inline) sv{{{
+`timescale 10ns/1ps
+
+// Lock loss and recovery: after locking, the link is replaced by a
+// stream with no control symbols (cable pulled / source switching) for
+// longer than LOSE_TIMEOUT. dvi_in must drop o_locked and o_video_valid
+// and hold its video outputs. While the link is down the bit boundary
+// moves (re-plug lands on a different phase); once the signal returns
+// dvi_in must re-align through o_align_shift_req, relock and decode a
+// full frame without errors.
+module dvi_in_relock;
+    logic clock;
+    logic reset;
+
+    logic [23:0] video_data;
+    logic        video_de;
+    logic        video_hsync;
+    logic        video_vsync;
+    logic [9:0]  tx_dvi_clock;
+    logic [9:0]  tx_dvi_data0;
+    logic [9:0]  tx_dvi_data1;
+    logic [9:0]  tx_dvi_data2;
+
+    logic        rx_locked;
+    logic        rx_align_shift_req;
+    logic [23:0] rx_video_data;
+    logic        rx_video_de;
+    logic        rx_video_hsync;
+    logic        rx_video_vsync;
+    logic        rx_video_valid;
+    logic [2:0]  rx_decode_err;
+
+    localparam int ALIGN_WINDOW        = 256;
+    localparam int SHIFT_SETTLE_CYCLES = 4;
+    localparam int LOSE_TIMEOUT        = 500;
+    localparam int LOCK_BOUND = 11 * (ALIGN_WINDOW + SHIFT_SETTLE_CYCLES + 2);
+    localparam int OFFSET_AFTER_CUT = 4;
+
+    // Barrel shifter model (see dvi_in_word_align); the testbench can
+    // also force a new offset to model a re-plug.
+    logic [3:0] align_offset;
+    logic       force_offset;
+    integer     shift_pulse_count;
+
+    function automatic logic [9:0] rotate_right(input logic [9:0] w, input logic [3:0] sh);
+        logic [19:0] doubled;
+        doubled = {w, w};
+        rotate_right = doubled[sh +: 10];
+    endfunction
+
+    always_ff @(posedge clock) begin
+        if (reset) begin
+            align_offset      <= 4'd0;
+            shift_pulse_count <= 0;
+        end else if (force_offset) begin
+            align_offset      <= OFFSET_AFTER_CUT;
+        end else if (rx_align_shift_req) begin
+            align_offset      <= (align_offset == 4'd9) ? 4'd0 : align_offset + 4'd1;
+            shift_pulse_count <= shift_pulse_count + 1;
+        end
+    end
+
+    // Link-down stimulus: a data symbol (never a control symbol) on
+    // every lane.
+    localparam logic [9:0] NOISE_WORD = 10'b0111110000;
+    logic link_down;
+
+    logic [9:0] rx_word_data [0:2];
+    assign rx_word_data[0] = link_down ? NOISE_WORD : rotate_right(tx_dvi_data0, align_offset);
+    assign rx_word_data[1] = link_down ? NOISE_WORD : rotate_right(tx_dvi_data1, align_offset);
+    assign rx_word_data[2] = link_down ? NOISE_WORD : rotate_right(tx_dvi_data2, align_offset);
+
+    dvi_out dut_tx (
+        .clock      (clock),
+        .reset      (reset),
+        .video_data (video_data),
+        .video_de   (video_de),
+        .video_hsync(video_hsync),
+        .video_vsync(video_vsync),
+        .dvi_clock  (tx_dvi_clock),
+        .dvi_data0  (tx_dvi_data0),
+        .dvi_data1  (tx_dvi_data1),
+        .dvi_data2  (tx_dvi_data2)
+    );
+
+    dvi_in #(
+        .ALIGN_WINDOW       (ALIGN_WINDOW),
+        .SHIFT_SETTLE_CYCLES(SHIFT_SETTLE_CYCLES),
+        .LOSE_TIMEOUT       (LOSE_TIMEOUT)
+    ) dut_rx (
+        .clock            (clock),
+        .reset            (reset),
+        .i_word_data      (rx_word_data),
+        .i_word_valid     (1'b1),
+        .o_video_data     (rx_video_data),
+        .o_video_de       (rx_video_de),
+        .o_video_hsync    (rx_video_hsync),
+        .o_video_vsync    (rx_video_vsync),
+        .o_video_ctl      (),
+        .o_video_valid    (rx_video_valid),
+        .o_decode_err     (rx_decode_err),
+        .o_locked         (rx_locked),
+        .o_align_shift_req(rx_align_shift_req),
+        .o_delay_inc      (),
+        .o_delay_dec      (),
+        .o_delay_load     (),
+        .o_delay_tap      ()
+    );
+
+    initial begin
+        forever begin
+            clock = 1;
+            #2;
+            clock = 0;
+            #2;
+        end
+    end
+
+    localparam int h_pulse  = 3;
+    localparam int h_back   = 10;
+    localparam int h_active = 20;
+    localparam int h_front  = 10;
+    localparam int h_max_count = h_pulse + h_back + h_active + h_front - 1;
+    localparam int v_pulse  = 1;
+    localparam int v_back   = 10;
+    localparam int v_active = 20;
+    localparam int v_front  = 10;
+    localparam int v_max_count = v_pulse + v_back + v_active + v_front - 1;
+    localparam int FRAME_WORDS = (h_max_count + 1) * (v_max_count + 1);
+
+    logic [9:0] counter_h;
+    logic [9:0] counter_v;
+
+    always_ff @(posedge clock) begin
+        if (reset) begin
+            video_de    <= 0;
+            video_hsync <= 0;
+            video_vsync <= 0;
+            video_data  <= 0;
+            counter_h   <= 0;
+            counter_v   <= 0;
+        end else begin
+            video_hsync <= counter_h < h_pulse;
+            video_vsync <= counter_v < v_pulse;
+            video_de    <= h_pulse + h_back <= counter_h && counter_h < h_pulse + h_back + h_active
+                        && v_pulse + v_back <= counter_v && counter_v < v_pulse + v_back + v_active;
+            video_data  <= video_data + 1;
+
+            if (counter_h == h_max_count) begin
+                counter_h <= 0;
+                if (counter_v == v_max_count) begin
+                    counter_v <= 0;
+                end else begin
+                    counter_v <= counter_v + 1;
+                end
+            end else begin
+                counter_h <= counter_h + 1;
+            end
+        end
+    end
+
+    task automatic wait_lock(input string what);
+        for (int i = 0; i < LOCK_BOUND; i++) begin
+            @(posedge clock);
+            if (rx_locked) return;
+        end
+        $fatal(1, "[tb_dvi_in_relock] %s: no lock within %0d cycles", what, LOCK_BOUND);
+    endtask
+
+    task automatic check_frame(input string what);
+        integer errs;
+        errs = 0;
+        repeat (8) @(posedge clock);
+        for (int i = 0; i < FRAME_WORDS; i++) begin
+            @(posedge clock);
+            if (!rx_locked || !rx_video_valid) begin
+                $fatal(1, "[tb_dvi_in_relock] %s: lock/valid dropped while the link is good", what);
+            end
+            if (rx_decode_err != 0) errs++;
+        end
+        if (errs != 0) begin
+            $fatal(1, "[tb_dvi_in_relock] %s: %0d decode errors in a frame", what, errs);
+        end
+    endtask
+
+    logic [23:0] held_data;
+    logic        held_de;
+    logic        held_hsync;
+    logic        held_vsync;
+    integer      lost_at;
+    integer      pulses_before;
+
+    initial begin
+        link_down    = 0;
+        force_offset = 0;
+        reset        = 1'b1;
+        repeat (32) @(posedge clock);
+        reset = 1'b0;
+
+        wait_lock("initial");
+        check_frame("initial");
+
+        // ---- Link down ----
+        link_down = 1;
+        lost_at   = -1;
+        for (int i = 0; i < LOSE_TIMEOUT + 16; i++) begin
+            @(posedge clock);
+            if (!rx_locked) begin
+                lost_at = i;
+                break;
+            end
+        end
+        if (lost_at < 0) begin
+            $fatal(1, "[tb_dvi_in_relock] lock not dropped within LOSE_TIMEOUT + 16 words");
+        end
+        if (lost_at < LOSE_TIMEOUT - 8) begin
+            $fatal(1, "[tb_dvi_in_relock] lock dropped too early (after %0d words, LOSE_TIMEOUT=%0d)",
+                   lost_at, LOSE_TIMEOUT);
+        end
+
+        // Outputs must hold (valid low) while unlocked.
+        repeat (4) @(posedge clock);
+        held_data  = rx_video_data;
+        held_de    = rx_video_de;
+        held_hsync = rx_video_hsync;
+        held_vsync = rx_video_vsync;
+        for (int i = 0; i < 200; i++) begin
+            @(posedge clock);
+            if (rx_locked) begin
+                $fatal(1, "[tb_dvi_in_relock] locked onto the no-control-symbol stream");
+            end
+            if (rx_video_valid || rx_decode_err != 0
+                || rx_video_data !== held_data || rx_video_de !== held_de
+                || rx_video_hsync !== held_hsync || rx_video_vsync !== held_vsync) begin
+                $fatal(1, "[tb_dvi_in_relock] video outputs not held while unlocked");
+            end
+        end
+
+        // Re-plug on a different bit phase.
+        @(negedge clock);
+        force_offset = 1;
+        @(negedge clock);
+        force_offset = 0;
+        pulses_before = shift_pulse_count;
+        link_down = 0;
+
+        wait_lock("relock");
+        if (align_offset !== 4'd0) begin
+            $fatal(1, "[tb_dvi_in_relock] relocked at align_offset = %0d", align_offset);
+        end
+        check_frame("relock");
+
+        $display("[tb_dvi_in_relock] PASS (lock lost after %0d words, relocked after %0d shift pulses)",
+                 lost_at, shift_pulse_count - pulses_before);
+        $finish;
+    end
+
+    initial begin
+        #5_000_000;
+        $fatal(1, "[tb_dvi_in_relock] timeout");
     end
 endmodule
 }}}
