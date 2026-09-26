@@ -1023,3 +1023,259 @@ module dvi_in_relock;
     end
 endmodule
 }}}
+
+#[test(dvi_in_hdmi_mode)]
+embed (inline) sv{{{
+`timescale 10ns/1ps
+
+// HDMI-mode stream from a source that ignores the DVI-only EDID:
+// every active line is preceded by the video preamble (CTL3..0 = 0001 on
+// lanes 1/2 for 8 words) and a 2-word video guard band, and each line's
+// front porch carries a data island (preamble CTL = 0101, guard bands,
+// 32 TERC4 words, trailing guard bands). dvi_in must keep DE / RGB /
+// syncs exactly as for DVI and must not report the island or guard-band
+// words as decode errors. Odd active lines instead come from a DVI source
+// that keeps CTL0 = 1 through the whole blanking without a guard band (a
+// notebook PC seen on hardware): none of their pixels may be dropped.
+module dvi_in_hdmi_mode;
+    logic clock;
+    logic reset;
+
+    logic [23:0] video_data;
+    logic        video_de;
+    logic        video_hsync;
+    logic        video_vsync;
+    logic [9:0]  dvi_clock_word;
+    logic [9:0]  dvi_data0;
+    logic [9:0]  dvi_data1;
+    logic [9:0]  dvi_data2;
+
+    logic        rx_locked;
+    logic [23:0] rx_video_data;
+    logic        rx_video_de;
+    logic        rx_video_hsync;
+    logic        rx_video_vsync;
+    logic        rx_video_valid;
+    logic [2:0]  rx_decode_err;
+
+    dvi_out dut_tx (
+        .clock      (clock),
+        .reset      (reset),
+        .video_data (video_data),
+        .video_de   (video_de),
+        .video_hsync(video_hsync),
+        .video_vsync(video_vsync),
+        .dvi_clock  (dvi_clock_word),
+        .dvi_data0  (dvi_data0),
+        .dvi_data1  (dvi_data1),
+        .dvi_data2  (dvi_data2)
+    );
+
+    initial begin
+        forever begin
+            clock = 1;
+            #2;
+            clock = 0;
+            #2;
+        end
+    end
+
+    // Front porch long enough for a 44-word data island.
+    localparam int h_pulse  = 4;
+    localparam int h_back   = 12;
+    localparam int h_active = 20;
+    localparam int h_front  = 50;
+    localparam int h_max_count = h_pulse + h_back + h_active + h_front - 1;
+    localparam int v_pulse  = 1;
+    localparam int v_back   = 10;
+    localparam int v_active = 20;
+    localparam int v_front  = 10;
+    localparam int v_max_count = v_pulse + v_back + v_active + v_front - 1;
+    localparam int ACT0 = h_pulse + h_back;           // first active h
+    localparam int ISL0 = ACT0 + h_active + 2;        // first island word
+
+    logic [9:0] counter_h;
+    logic [9:0] counter_v;
+
+    always_ff @(posedge clock) begin
+        if (reset) begin
+            video_de    <= 0;
+            video_hsync <= 0;
+            video_vsync <= 0;
+            video_data  <= 0;
+            counter_h   <= 0;
+            counter_v   <= 0;
+        end else begin
+            video_hsync <= counter_h < h_pulse;
+            video_vsync <= counter_v < v_pulse;
+            video_de    <= ACT0 <= counter_h && counter_h < ACT0 + h_active
+                        && v_pulse + v_back <= counter_v && counter_v < v_pulse + v_back + v_active;
+            video_data  <= video_data + 24'h010203;
+            if (counter_h == h_max_count) begin
+                counter_h <= 0;
+                counter_v <= (counter_v == v_max_count) ? 10'd0 : counter_v + 1;
+            end else begin
+                counter_h <= counter_h + 1;
+            end
+        end
+    end
+
+    // Reference pipeline with the (registered) h/v position of each sample:
+    // pipe[2] lines up with the dvi_out words, pipe[4] with dvi_in's output.
+    localparam int PIPE_DEPTH = 5;
+    typedef struct packed {
+        logic [23:0] data;
+        logic        de;
+        logic        hsync;
+        logic        vsync;
+        logic [9:0]  h;
+        logic [9:0]  v;
+    } sample_t;
+    sample_t pipe [0:PIPE_DEPTH-1];
+    logic [9:0] pos_h;
+    logic [9:0] pos_v;
+    always_ff @(posedge clock) begin
+        pos_h <= counter_h;
+        pos_v <= counter_v;
+    end
+    always_ff @(posedge clock) begin
+        if (reset) begin
+            for (int i = 0; i < PIPE_DEPTH; i++) pipe[i] <= '{default:'0};
+        end else begin
+            pipe[0] <= '{data: video_data, de: video_de, hsync: video_hsync, vsync: video_vsync, h: pos_h, v: pos_v};
+            for (int i = 1; i < PIPE_DEPTH; i++) pipe[i] <= pipe[i-1];
+        end
+    end
+
+    localparam logic [9:0] CTRL_00 = 10'b1101010100;
+    localparam logic [9:0] CTRL_01 = 10'b0010101011;
+    localparam logic [9:0] GB_02   = 10'b1011001100;   // video guard band, lanes 0 / 2
+    localparam logic [9:0] GB_1    = 10'b0100110011;   // guard band, lane 1 (and islands 1 / 2)
+    localparam logic [9:0] TERC4 [0:15] = '{
+        10'b1010011100, 10'b1001100011, 10'b1011100100, 10'b1011100010,
+        10'b0101110001, 10'b0100011110, 10'b0110001110, 10'b0100111100,
+        10'b1011001100, 10'b0100111001, 10'b0110011100, 10'b1011000110,
+        10'b1010001110, 10'b1001110001, 10'b0101100011, 10'b1011000011};
+
+    logic [9:0] rx_word_data [0:2];
+    logic       active_line;
+    int         hh;
+    always_comb begin
+        rx_word_data[0] = dvi_data0;
+        rx_word_data[1] = dvi_data1;
+        rx_word_data[2] = dvi_data2;
+        hh          = pipe[2].h;
+        active_line = v_pulse + v_back <= pipe[2].v && pipe[2].v < v_pulse + v_back + v_active;
+        // Odd active lines: CTL0 = 1 across the blanking before the line, no guard band.
+        if (active_line && pipe[2].v[0] && hh < ACT0) begin
+            rx_word_data[1] = CTRL_01;
+        end else
+        // Video preamble (8 words) + guard band (2 words) right before active video.
+        if (active_line && hh >= ACT0 - 10 && hh < ACT0 - 2) begin
+            rx_word_data[1] = CTRL_01;          // CTL0 = 1
+            rx_word_data[2] = CTRL_00;
+        end else if (active_line && hh >= ACT0 - 2 && hh < ACT0) begin
+            rx_word_data[0] = GB_02;
+            rx_word_data[1] = GB_1;
+            rx_word_data[2] = GB_02;
+        end
+        // Data island in the front porch of every line.
+        if (hh >= ISL0 && hh < ISL0 + 8) begin
+            rx_word_data[1] = CTRL_01;          // CTL0 = 1
+            rx_word_data[2] = CTRL_01;          // CTL2 = 1
+        end else if (hh >= ISL0 + 8 && hh < ISL0 + 8 + 36) begin
+            rx_word_data[0] = TERC4[(hh * 5 + pipe[2].v) & 15];
+            rx_word_data[1] = (hh < ISL0 + 10 || hh >= ISL0 + 42) ? GB_1 : TERC4[(hh * 3) & 15];
+            rx_word_data[2] = (hh < ISL0 + 10 || hh >= ISL0 + 42) ? GB_1 : TERC4[(hh * 7 + 1) & 15];
+        end
+    end
+
+    dvi_in dut_rx (
+        .clock            (clock),
+        .reset            (reset),
+        .i_word_data      (rx_word_data),
+        .i_word_valid     (1'b1),
+        .o_video_data     (rx_video_data),
+        .o_video_de       (rx_video_de),
+        .o_video_hsync    (rx_video_hsync),
+        .o_video_vsync    (rx_video_vsync),
+        .o_video_ctl      (),
+        .o_video_valid    (rx_video_valid),
+        .o_decode_err     (rx_decode_err),
+        .o_locked         (rx_locked),
+        .o_align_shift_req(),
+        .o_delay_inc      (),
+        .o_delay_dec      (),
+        .o_delay_load     (),
+        .o_delay_tap      ()
+    );
+
+    integer mismatches;
+    integer checked;
+    integer de_count;
+    logic   last_hsync;
+    logic   last_vsync;
+    sample_t ref_s;
+
+    initial begin
+        mismatches = 0;
+        checked    = 0;
+        de_count   = 0;
+        last_hsync = 0;
+        last_vsync = 0;
+        reset      = 1'b1;
+        repeat (32) @(posedge clock);
+        reset = 1'b0;
+        wait (rx_locked == 1'b1);
+        repeat (8) @(posedge clock);
+
+        for (int i = 0; i < (h_max_count + 1) * (v_max_count + 1) * 3; i++) begin
+            @(posedge clock);
+            ref_s = pipe[PIPE_DEPTH-1];
+            if (!rx_locked || !rx_video_valid) begin
+                $fatal(1, "[tb_dvi_in_hdmi] lost lock/valid");
+            end
+            if (rx_video_de !== ref_s.de) begin
+                mismatches++;
+                if (mismatches < 10)
+                    $display("[tb_dvi_in_hdmi] de mismatch @(h=%0d,v=%0d): expected %0b actual %0b",
+                             ref_s.h, ref_s.v, ref_s.de, rx_video_de);
+            end
+            if (!ref_s.de) begin
+                last_hsync = ref_s.hsync;
+                last_vsync = ref_s.vsync;
+            end
+            if (rx_video_hsync !== last_hsync || rx_video_vsync !== last_vsync) begin
+                mismatches++;
+                if (mismatches < 10)
+                    $display("[tb_dvi_in_hdmi] sync mismatch @(h=%0d,v=%0d)", ref_s.h, ref_s.v);
+            end
+            if (ref_s.de && rx_video_de && rx_video_data !== ref_s.data) begin
+                mismatches++;
+                if (mismatches < 10)
+                    $display("[tb_dvi_in_hdmi] rgb mismatch @(h=%0d,v=%0d)", ref_s.h, ref_s.v);
+            end
+            if (rx_decode_err != 0) begin
+                mismatches++;
+                if (mismatches < 10)
+                    $display("[tb_dvi_in_hdmi] decode_err=%03b @(h=%0d,v=%0d)", rx_decode_err, ref_s.h, ref_s.v);
+            end
+            if (rx_video_de) de_count++;
+            checked++;
+        end
+        if (de_count != h_active * v_active * 3) begin
+            $fatal(1, "[tb_dvi_in_hdmi] %0d DE words in 3 frames, expected %0d", de_count, h_active * v_active * 3);
+        end
+        if (mismatches != 0) begin
+            $fatal(1, "[tb_dvi_in_hdmi] %0d mismatches across %0d samples", mismatches, checked);
+        end
+        $display("[tb_dvi_in_hdmi] PASS (%0d samples)", checked);
+        $finish;
+    end
+
+    initial begin
+        #10_000_000;
+        $fatal(1, "[tb_dvi_in_hdmi] timeout");
+    end
+endmodule
+}}}

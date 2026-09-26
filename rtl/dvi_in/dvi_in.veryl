@@ -292,6 +292,33 @@ pub module dvi_in #(
     var ctrl0_new   : ctrl_decode_t    ; // lane 0 look-ahead (word t)
     var ctrl0_old   : ctrl_decode_t    ; // lane 0 look-back  (word t-2)
     var sync_agree  : logic            ; // word t-1 matches t-2 or t (sync glitch filter)
+    var de_raw      : logic            ; // DVI DE (3-word majority on lane 0)
+    var hdmi_mask   : logic            ; // word t-1 is an HDMI guard band / data island word
+
+    // HDMI periods (for sources that send HDMI regardless of the EDID).
+    // Each run of non-control words on lane 0 is classified by the CTL
+    // preamble on lanes 1/2 during the preceding control period:
+    //   CTL3..0 = 0001 and the run opens with the video guard band
+    //                  -> video data period: the first 2 words are the
+    //                     guard band, not pixels (a DVI source may keep
+    //                     CTL0 = 1 without any guard band: then it is DVI);
+    //   CTL3..0 = 0101 -> data island: none of it is video;
+    //   otherwise      -> DVI: the whole run is video.
+    // Video leading guard band (HDMI 1.4 Table 5-5), bit 0 = first bit.
+    const VIDEO_GB_02: logic<10> = 10'b1011001100;
+    const VIDEO_GB_1 : logic<10> = 10'b0100110011;
+
+    enum RunKind: logic<2> {
+        DVI,
+        VIDEO,
+        ISLAND,
+    }
+    var pre_kind: RunKind   ; // preamble seen in the current control period (up to word t-2)
+    var run_kind: RunKind   ; // kind of the run word t-2 belongs to
+    var run_idx : logic  <2>; // position of word t-2 in its run (saturating)
+    var cur_kind: RunKind   ; // same for word t-1
+    var cur_idx : logic  <2>;
+    var all_ctrl: logic     ; // word t-1 is a control symbol on all three lanes
 
     always_comb {
         ctrl0_decode = isControlSymbol(d0_q);
@@ -307,8 +334,27 @@ pub module dvi_in #(
         // PMOD wrapper notes) can neither fake DE nor punch a hole in
         // real active video; genuine DE edges are preserved because two
         // neighbours always agree on either side of the transition.
-        de_next    = (!ctrl0_new.is_ctrl && !ctrl0_decode.is_ctrl) || (!ctrl0_new.is_ctrl && !ctrl0_old.is_ctrl)
+        de_raw = (!ctrl0_new.is_ctrl && !ctrl0_decode.is_ctrl) || (!ctrl0_new.is_ctrl && !ctrl0_old.is_ctrl)
             || (!ctrl0_decode.is_ctrl && !ctrl0_old.is_ctrl);
+        // HDMI run classification for word t-1.
+        all_ctrl = ctrl0_decode.is_ctrl && ctrl1_decode.is_ctrl && ctrl2_decode.is_ctrl;
+        if !ctrl0_decode.is_ctrl && ctrl0_old.is_ctrl {
+            // a run starts here
+            if pre_kind == RunKind::ISLAND {
+                cur_kind = RunKind::ISLAND;
+            } else if pre_kind == RunKind::VIDEO && d0_q == VIDEO_GB_02 && d1_q == VIDEO_GB_1 && d2_q == VIDEO_GB_02 {
+                cur_kind = RunKind::VIDEO;
+            } else {
+                cur_kind = RunKind::DVI;
+            }
+            cur_idx = 0;
+        } else {
+            cur_kind = run_kind;
+            cur_idx  = if run_idx == 2'd3 ? 2'd3 : run_idx + 2'd1;
+        }
+        hdmi_mask  = !ctrl0_decode.is_ctrl
+            && (cur_kind == RunKind::ISLAND || (cur_kind == RunKind::VIDEO && cur_idx <: 2'd2));
+        de_next    = de_raw && !hdmi_mask;
         hsync_next = ctrl0_decode.ctrl[0];
         vsync_next = ctrl0_decode.ctrl[1];
         // Channel 1 carries {CTL1, CTL0}; channel 2 carries {CTL3, CTL2}.
@@ -317,9 +363,10 @@ pub module dvi_in #(
         ctl_next[2] = ctrl2_decode.ctrl[0];
         ctl_next[3] = ctrl2_decode.ctrl[1];
         data_next   = {decodeTmdsData(d2_q), decodeTmdsData(d1_q), decodeTmdsData(d0_q)};
-        err_next[0] = decodeTmdsErr(d0_q, de_next);
-        err_next[1] = decodeTmdsErr(d1_q, de_next);
-        err_next[2] = decodeTmdsErr(d2_q, de_next);
+        // Guard-band / TERC4 words are neither pixels nor control symbols.
+        err_next[0] = !hdmi_mask && decodeTmdsErr(d0_q, de_next);
+        err_next[1] = !hdmi_mask && decodeTmdsErr(d1_q, de_next);
+        err_next[2] = !hdmi_mask && decodeTmdsErr(d2_q, de_next);
     }
 
     always_ff (r#clock) {
@@ -328,6 +375,9 @@ pub module dvi_in #(
             d1_q     = 0;
             d2_q     = 0;
             d0_q2    = 0;
+            pre_kind = RunKind::DVI;
+            run_kind = RunKind::DVI;
+            run_idx  = 0;
             valid_q  = 0;
             locked_q = 0;
 
@@ -339,6 +389,20 @@ pub module dvi_in #(
             o_video_valid = 0;
             o_decode_err  = 0;
         } else {
+            // HDMI run tracking (state of word t-1 becomes the t-2 state).
+            run_kind = cur_kind;
+            run_idx  = cur_idx;
+            if all_ctrl {
+                // CTL preamble: lane 1 = {CTL1, CTL0}, lane 2 = {CTL3, CTL2}.
+                if ctrl1_decode.ctrl == 2'b01 && ctrl2_decode.ctrl == 2'b00 {
+                    pre_kind = RunKind::VIDEO;
+                } else if ctrl1_decode.ctrl == 2'b01 && ctrl2_decode.ctrl == 2'b01 {
+                    pre_kind = RunKind::ISLAND;
+                } else {
+                    pre_kind = RunKind::DVI;
+                }
+            }
+
             // Stage 1: capture inputs.
             d0_q     = i_word_data[0];
             d1_q     = i_word_data[1];
