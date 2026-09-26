@@ -31,7 +31,7 @@
  *     f  fine scan: target value -16 .. +15 in steps of 1, same "S" lines
  *     a / 0 / 1 / 2   select the target of + - > < s f: a = common
  *        offset O, 0/1/2 = per-lane trim added to O for that lane
- *        (0 = B, 1 = G, 2 = R). "d" resets O and all trims.
+ *        (0 = B, 1 = G, 2 = R). "d" resets O and the trims to their defaults.
  *     > / <  target += 1 / -= 1
  *
  *   Per-lane fields: Z0/Z1/Z2 wrong bits per lane, K = trims of lanes
@@ -51,7 +51,8 @@ module loop_report #(
     parameter int SETTLE_CYCLES  = 3_000_000,   // 60 ms (> lock-loss timeout + realign)
     parameter int DWELL_CYCLES   = 12_500_000,  // 250 ms (15 frames at 60 Hz)
     parameter int SNAP_TIMEOUT   = 100_000,     // 2 ms
-    parameter logic [7:0] OFFSET_DEFAULT = 8'd32
+    parameter logic [7:0] OFFSET_DEFAULT = 8'd32,
+    parameter logic [23:0] TRIM_DEFAULT  = 24'h000000   // lane trims {lane 0, lane 1, lane 2} (as the K field)
 ) (
     input  wire         clock,
     input  wire         reset,
@@ -276,7 +277,7 @@ module loop_report #(
             scan_base    <= '0;
             scan_stride  <= 3'd4;
             o_offset     <= OFFSET_DEFAULT;
-            o_lane_offset <= '{default: '0};
+            o_lane_offset <= '{TRIM_DEFAULT[23:16], TRIM_DEFAULT[15:8], TRIM_DEFAULT[7:0]};
             sel          <= 2'd3;
             cmd_wp       <= '0;
             cmd_rp       <= '0;
@@ -328,7 +329,7 @@ module loop_report #(
                             "2": sel <= 2'd2;
                             "d": begin
                                 o_offset      <= OFFSET_DEFAULT;
-                                o_lane_offset <= '{default: '0};
+                                o_lane_offset <= '{TRIM_DEFAULT[23:16], TRIM_DEFAULT[15:8], TRIM_DEFAULT[7:0]};
                             end
                             "c": o_clear  <= 1'b1;
                             "s": begin

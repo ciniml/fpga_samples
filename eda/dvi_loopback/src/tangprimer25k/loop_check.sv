@@ -35,8 +35,9 @@
 `default_nettype none
 module loop_check #(
     // 1: no transmitter reference (e.g. eda/dvi_capture receiving from a
-    // real source). Every complete frame is counted, "bad" counts
-    // i_ext_bad pulses, and the pixel check is off.
+    // real source). Every complete frame is counted; "bad" counts frames
+    // whose sum differs from the previous frame (a static screen gives 0)
+    // plus i_ext_bad pulses; the pixel check is off.
     parameter bit EXT_CHECK = 1'b0
 ) (
     // ---- RX domain ----
@@ -206,10 +207,19 @@ module loop_check #(
     // words in the clock after the strobe, count in the one after that.
     logic       cmp_stb = 1'b0, cmp_stb_q = 1'b0;
     logic [2:0] cmp_eq  = '0;
+    // EXT_CHECK: the reference is the previous complete frame
+    logic [95:0] prev_sum = '0;
+    logic        prev_ok  = 1'b0;
+    wire  [95:0] ref_sum  = EXT_CHECK ? prev_sum : tx_ref_s1;
     always_ff @(posedge rx_clk) begin
         cmp_stb   <= rx_stb && rx_complete && (tx_ref_ok || EXT_CHECK);
-        cmp_eq    <= {rx_s1 == tx_ref_s1[95:64], rx_s2 == tx_ref_s1[63:32], rx_count == tx_ref_s1[31:0]};
+        cmp_eq    <= {rx_s1 == ref_sum[95:64], rx_s2 == ref_sum[63:32], rx_count == ref_sum[31:0]};
         cmp_stb_q <= cmp_stb;
+        if (EXT_CHECK && cmp_stb_q) begin
+            prev_sum <= {rx_s1, rx_s2, rx_count};
+            prev_ok  <= 1'b1;
+        end
+        if (rx_reset) prev_ok <= 1'b0;
     end
 
     always_ff @(posedge rx_clk) begin
@@ -228,7 +238,7 @@ module loop_check #(
             if (cmp_stb_q) begin
                 frames     <= frames + 1'd1;
                 last_count <= rx_count;
-                if (cmp_eq != 3'b111 && !EXT_CHECK) begin
+                if (cmp_eq != 3'b111 && (!EXT_CHECK || prev_ok)) begin
                     bad         <= bad + 1'd1;
                     o_frame_bad <= 1'b1;
                 end
@@ -295,15 +305,25 @@ module loop_check #(
     function automatic logic is_ctrl_sym(input logic [9:0] w);
         return w == 10'b1101010100 || w == 10'b0010101011 || w == 10'b0101010100 || w == 10'b1010101011;
     endfunction
-    wire w0_is_ctrl = is_ctrl_sym(i_word0);
-    wire w1_is_ctrl = is_ctrl_sym(i_word1);
-    wire w2_is_ctrl = is_ctrl_sym(i_word2);
+    // (words registered once: the deserializer outputs must not drive the
+    //  trigger / enable logic directly at 148.5 MHz)
+    logic [9:0] cw0 = '0, cw1 = '0, cw2 = '0;
+    logic       cerr = 1'b0;
+    always_ff @(posedge rx_clk) begin
+        cw0  <= i_word0;
+        cw1  <= i_word1;
+        cw2  <= i_word2;
+        cerr <= i_video_valid && (i_decode_err[1] || i_decode_err[2]);
+    end
+    wire w0_is_ctrl = is_ctrl_sym(cw0);
+    wire w1_is_ctrl = is_ctrl_sym(cw1);
+    wire w2_is_ctrl = is_ctrl_sym(cw2);
     logic words_trig;
     always_comb begin
         case (words_mode_s1)
             2'd1:    words_trig = !w0_is_ctrl && w0_ctrl_q;
             2'd2:    words_trig = w0_is_ctrl && (!w1_is_ctrl || !w2_is_ctrl);
-            2'd3:    words_trig = i_video_valid && (i_decode_err[1] || i_decode_err[2]);
+            2'd3:    words_trig = cerr;
             default: words_trig = w0_is_ctrl;
         endcase
     end
@@ -316,9 +336,9 @@ module loop_check #(
             for (int l = 0; l < 3; l++) begin
                 for (int k = 0; k < 11; k++) rx_words[l][k] <= rx_words[l][k + 1];
             end
-            rx_words[0][11] <= i_word0;
-            rx_words[1][11] <= i_word1;
-            rx_words[2][11] <= i_word2;
+            rx_words[0][11] <= cw0;
+            rx_words[1][11] <= cw1;
+            rx_words[2][11] <= cw2;
         end
         if (words_req_sync[2] != words_req_sync[1]) begin
             words_armed   <= 1'b1;

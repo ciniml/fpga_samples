@@ -62,7 +62,8 @@ class Loop:
         n = 32 if fine else 64
         self.fresh()
         self.send(target + ('f' if fine else 's'))
-        txt = self.read_for(150, lambda b: b.count(b'\nS L') >= n)
+        # (count S lines at line starts, including one at the very start)
+        txt = self.read_for(150, lambda b: (b'\n' + b).count(b'\nS L') >= n and b.endswith(b'\n'))
         return [parse(l) for l in txt.splitlines() if is_line(l, 'S')]
 
     def words(self):
