@@ -17,6 +17,8 @@
  *     E  clocks with a decode error; E0/E1/E2 per lane (low 24 bits)
  *     U  word-lock losses
  *     P  RX recovery PLL lock        C  RX clock count (delta per line = frequency)
+ *     X  active pixels differing from the pattern
+ *     Y  wrong bits in those pixels  (BER = Y / (F x N x 24))
  *     N  active pixels in the last compared frame (1080p: 001FA400)
  *     O  IODELAY offset added to dvi_in's tap (DLYSTEP = 24 + O)
  *
@@ -26,6 +28,7 @@
  *     s  sampling-phase scan: for O = 00, 04, .. FC, settle SETTLE_CYCLES,
  *        then print an "S" line with the counter deltas over DWELL_CYCLES
  *        (L = lock at the end of the dwell). The offset is restored after.
+ *     f  fine scan: offsets O-16 .. O+15 in steps of 1, same "S" lines
  *     w  raw words: 12 consecutive deserializer words of each lane from
  *        the first lane-0 control symbol, one "Wn" line per lane, hex,
  *        bit 0 = first bit received. Control symbols: 354 0AB 154 2AB.
@@ -56,6 +59,8 @@ module loop_report #(
     input  wire  [31:0] i_last_count,
     input  wire  [23:0] i_lane_err [0:2],
     input  wire  [31:0] i_rx_cycles,
+    input  wire  [31:0] i_pix_err,
+    input  wire  [31:0] i_bit_err,
     input  wire         i_pll_lock,       // RX PLL lock (asynchronous)
     output logic        o_clear,
     output logic        o_words_req,
@@ -94,7 +99,7 @@ module loop_report #(
     //   "K Lx Fxxxxxxxx Bxxxxxxxx Exxxxxxxx E0xxxxxx E1xxxxxx E2xxxxxx Uxxxx Nxxxxxxxx Oxx\r\n"
     //   "Wn www www ... (12 words)\r\n"
     // -----------------------------------------------------------------
-    localparam int LINE_LEN  = 96;
+    localparam int LINE_LEN  = 116;
     localparam int WLINE_LEN = 53;
 
     logic [7:0]  p_kind;
@@ -104,6 +109,7 @@ module loop_report #(
     logic [7:0]  p_offset;
     logic [23:0] p_lane [0:2];
     logic [31:0] p_cycles;
+    logic [31:0] p_pix, p_bit;
     logic [7:0]  p_pll;
     logic [2:0]  pll_sync;
     logic [1:0]  p_wlane;
@@ -162,8 +168,12 @@ module loop_report #(
         if (i == 83)             return p_pll;
         if (i == 85)             return "C";
         if (i >= 86 && i <= 93)  return nib32(p_cycles, i - 86);
-        if (i == 94)             return 8'h0D;
-        if (i == 95)             return 8'h0A;
+        if (i == 95)             return "X";
+        if (i >= 96 && i <= 103) return nib32(p_pix, i - 96);
+        if (i == 105)            return "Y";
+        if (i >= 106 && i <= 113) return nib32(p_bit, i - 106);
+        if (i == 114)            return 8'h0D;
+        if (i == 115)            return 8'h0A;
         return " ";
     endfunction
 
@@ -189,6 +199,9 @@ module loop_report #(
     logic [31:0] period;
     logic [6:0]  char_idx;
     logic [6:0]  scan_step;
+    logic [6:0]  scan_count;     // 64 (coarse) or 32 (fine)
+    logic [7:0]  scan_base;
+    logic [2:0]  scan_stride;    // 4 (coarse) or 1 (fine)
     logic [7:0]  saved_offset;
     logic        snap_ok;        // last snapshot answered
     logic        scan_a_req;     // snapshot A of this scan step requested
@@ -201,6 +214,7 @@ module loop_report #(
     logic [15:0] a_unlock;
     logic [23:0] s_lane [0:2];
     logic [23:0] a_lane [0:2];
+    logic [31:0] s_pix, s_bit, a_pix, a_bit;
     logic [9:0]  words [0:2][0:11];
 
     always_ff @(posedge clock) begin
@@ -212,6 +226,9 @@ module loop_report #(
             period       <= PERIOD_CYCLES - 1;
             char_idx     <= '0;
             scan_step    <= '0;
+            scan_count   <= 7'd64;
+            scan_base    <= '0;
+            scan_stride  <= 3'd4;
             o_offset     <= OFFSET_DEFAULT;
             saved_offset <= OFFSET_DEFAULT;
             o_snap_req   <= 1'b0;
@@ -245,6 +262,17 @@ module loop_report #(
                             "s": begin
                                 saved_offset <= o_offset;
                                 scan_step    <= '0;
+                                scan_count   <= 7'd64;
+                                scan_base    <= '0;
+                                scan_stride  <= 3'd4;
+                                state        <= S_SCAN_SET;
+                            end
+                            "f": begin
+                                saved_offset <= o_offset;
+                                scan_step    <= '0;
+                                scan_count   <= 7'd32;
+                                scan_base    <= o_offset - 8'd16;
+                                scan_stride  <= 3'd1;
                                 state        <= S_SCAN_SET;
                             end
                             "w": begin
@@ -276,6 +304,8 @@ module loop_report #(
                             s_unlock <= i_unlock;
                             s_count  <= i_last_count;
                             s_lane   <= i_lane_err;
+                            s_pix    <= i_pix_err;
+                            s_bit    <= i_bit_err;
                         end
                         case (snap_ret)
                             S_IDLE: begin
@@ -290,6 +320,8 @@ module loop_report #(
                                 p_lane    <= i_snap_done ? i_lane_err   : s_lane;
                                 p_cycles  <= i_rx_cycles;
                                 p_pll     <= pll_sync[2] ? "1" : "0";
+                                p_pix     <= i_snap_done ? i_pix_err : s_pix;
+                                p_bit     <= i_snap_done ? i_bit_err : s_bit;
                                 p_offset  <= o_offset;
                                 line_len  <= LINE_LEN;
                                 char_idx  <= '0;
@@ -319,11 +351,11 @@ module loop_report #(
                 end
 
                 S_SCAN_SET: begin
-                    if (scan_step == 7'd64) begin
+                    if (scan_step == scan_count) begin
                         o_offset <= saved_offset;
                         state    <= S_IDLE;
                     end else begin
-                        o_offset   <= {scan_step[5:0], 2'b00};
+                        o_offset   <= scan_base + 8'(scan_step) * 8'(scan_stride);
                         timer      <= SETTLE_CYCLES;
                         state      <= S_SCAN_A;
                         scan_a_req <= 1'b0;
@@ -346,6 +378,8 @@ module loop_report #(
                         a_derr   <= s_derr;
                         a_unlock <= s_unlock;
                         a_lane   <= s_lane;
+                        a_pix    <= s_pix;
+                        a_bit    <= s_bit;
                         timer    <= DWELL_CYCLES;
                         state    <= S_SCAN_DWELL;
                     end
@@ -373,6 +407,8 @@ module loop_report #(
                     for (int l = 0; l < 3; l++) p_lane[l] <= s_lane[l] - a_lane[l];
                     p_cycles  <= i_rx_cycles;
                     p_pll     <= pll_sync[2] ? "1" : "0";
+                    p_pix     <= s_pix - a_pix;
+                    p_bit     <= s_bit - a_bit;
                     p_offset  <= o_offset;
                     line_len  <= LINE_LEN;
                     char_idx  <= '0;

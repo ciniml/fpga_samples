@@ -297,6 +297,7 @@ module top (
     logic        words_req, words_done;
     logic [9:0]  words [0:2][0:11];
     logic [31:0] snap_rx_cycles;
+    logic [31:0] snap_pix_err, snap_bit_err;
 
     loop_check u_check (
         .rx_clk        (rx_pclk),
@@ -327,6 +328,8 @@ module top (
         .sys_last_count(snap_last_count),
         .sys_lane_err  (snap_lane_err),
         .sys_rx_cycles (snap_rx_cycles),
+        .sys_pix_err   (snap_pix_err),
+        .sys_bit_err   (snap_bit_err),
         .sys_clear     (clear_req),
         .sys_words_req (words_req),
         .sys_words_done(words_done),
@@ -350,6 +353,8 @@ module top (
         .i_last_count(snap_last_count),
         .i_lane_err  (snap_lane_err),
         .i_rx_cycles (snap_rx_cycles),
+        .i_pix_err   (snap_pix_err),
+        .i_bit_err   (snap_bit_err),
         .i_pll_lock  (rx_pll_lock),
         .o_clear     (clear_req),
         .o_words_req (words_req),

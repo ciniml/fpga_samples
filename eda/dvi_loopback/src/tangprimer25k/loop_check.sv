@@ -12,7 +12,12 @@
  *     - frame_sum over the decoded video, compared frame by frame with
  *       the transmitter's sum of the same (static) picture
  *     - counters: frames compared, frames mismatched, clocks with a
- *       decode error, word-lock losses. Not reset by rx_reset (which
+ *       decode error, word-lock losses.
+ *     - pixel check: the expected pixel is regenerated from the received
+ *       DE (x counts DE pixels, y counts lines since VSYNC) with the same
+ *       function as loop_pattern, so every active pixel is compared.
+ *       Counts wrong pixels and wrong bits (popcount of the XOR); bit
+ *       errors / (pixels x 24) is the BER. Not reset by rx_reset (which
  *       follows the recovery PLL, i.e. the cable), only by a clear
  *       request, so a cable glitch stays visible in the counts.
  *
@@ -61,6 +66,8 @@ module loop_check (
     output logic [15:0] sys_unlock,
     output logic [31:0] sys_last_count,
     output logic [31:0] sys_rx_cycles,    // free-running RX clock count (frequency check)
+    output logic [31:0] sys_pix_err,      // active pixels that differ from the pattern
+    output logic [31:0] sys_bit_err,      // wrong bits in those pixels
     output logic [23:0] sys_lane_err [0:2], // decode errors per lane (low 24 bits)
     input  wire         sys_clear,        // pulse
     // Raw word capture: 12 consecutive words of each lane, starting at the
@@ -124,6 +131,52 @@ module loop_check (
     logic [15:0] unlock     = '0;
     logic [31:0] last_count = '0;
     logic [23:0] lane_err [0:2] = '{default: '0};
+
+    // -----------------------------------------------------------------
+    // Pixel check against the regenerated pattern (see loop_pattern.sv)
+    // -----------------------------------------------------------------
+    logic [11:0] px_x = '0, px_y = '0;
+    logic        px_de_q = 1'b0, px_vs_q = 1'b0;
+    logic        px_armed = 1'b0;   // a VSYNC edge was seen while valid: y is meaningful
+    logic        px_cmp = 1'b0, px_cmp_q = 1'b0;
+    logic [23:0] px_got = '0, px_exp = '0, px_diff = '0;
+    logic [4:0]  px_bits = '0;
+    logic        px_bad_q = 1'b0;
+    logic [31:0] pix_err = '0, bit_err = '0;
+    function automatic logic [4:0] popcount24(input logic [23:0] v);
+        logic [4:0] n;
+        n = '0;
+        for (int i = 0; i < 24; i++) n += 5'(v[i]);
+        return n;
+    endfunction
+    always_ff @(posedge rx_clk) begin
+        // stage 0: coordinates of the current pixel
+        px_de_q <= i_video_valid && i_video_de;
+        px_vs_q <= i_video_valid && i_video_vsync;
+        if (!i_video_valid) begin
+            px_armed <= 1'b0;
+        end else if (i_video_vsync && !px_vs_q) begin
+            px_armed <= 1'b1;
+        end
+        if (i_video_valid && i_video_vsync && !px_vs_q) begin
+            px_y <= '0;
+        end else if (px_de_q && !(i_video_valid && i_video_de)) begin
+            px_y <= px_y + 1'd1;
+        end
+        if (i_video_valid && i_video_de) px_x <= px_x + 1'd1;
+        else                             px_x <= '0;
+        px_cmp <= i_video_valid && i_video_de && px_armed;
+        px_got <= i_video_data;
+        px_exp <= {px_x[7:0] ^ px_y[7:0],
+                   px_x[10:3] + px_y[7:0],
+                   px_x[8:1] ^ {px_y[3:0], px_y[7:4]}};
+        // stage 1: difference
+        px_cmp_q <= px_cmp;
+        px_diff  <= px_cmp ? (px_got ^ px_exp) : '0;
+        // stage 2: popcount
+        px_bits  <= popcount24(px_diff);
+        px_bad_q <= px_cmp_q && px_diff != '0;
+    end
     logic        locked_q   = 1'b0;
 
     // The frame_sum outputs hold until the next frame: compare the three
@@ -145,6 +198,8 @@ module loop_check (
             derr       <= '0;
             unlock     <= '0;
             lane_err   <= '{default: '0};
+            pix_err    <= '0;
+            bit_err    <= '0;
         end else begin
             if (cmp_stb_q) begin
                 frames     <= frames + 1'd1;
@@ -158,6 +213,11 @@ module loop_check (
             for (int l = 0; l < 3; l++) begin
                 if (i_video_valid && i_decode_err[l]) lane_err[l] <= lane_err[l] + 1'd1;
             end
+            // stage 3: accumulate
+            if (px_bad_q) begin
+                pix_err <= pix_err + 1'd1;
+                bit_err <= bit_err + 32'(px_bits);
+            end
             if (locked_q && !i_locked && unlock != '1) unlock <= unlock + 1'd1;
         end
     end
@@ -167,11 +227,13 @@ module loop_check (
     logic [23:0]  rx_snap_lane [0:2] = '{default: '0};
     logic [31:0]  rx_cycles = '0;
     logic [31:0]  rx_snap_cycles = '0;
+    logic [63:0]  rx_snap_px = '0;
     always_ff @(posedge rx_clk) begin
         if (snap_req_sync[2] != snap_req_sync[1]) begin
             rx_snap      <= {i_locked, frames, bad, derr, unlock, last_count};
             rx_snap_lane   <= lane_err;
             rx_snap_cycles <= rx_cycles;
+            rx_snap_px     <= {pix_err, bit_err};
             snap_ack_t     <= ~snap_ack_t;
         end
     end
@@ -225,6 +287,7 @@ module loop_check (
             {sys_locked, sys_frames, sys_bad, sys_derr, sys_unlock, sys_last_count} <= rx_snap;
             sys_lane_err  <= rx_snap_lane;
             sys_rx_cycles <= rx_snap_cycles;
+            {sys_pix_err, sys_bit_err} <= rx_snap_px;
             sys_snap_done <= 1'b1;
         end
     end

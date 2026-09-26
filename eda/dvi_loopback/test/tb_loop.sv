@@ -119,7 +119,7 @@ module tb_loop;
     logic [15:0] snap_unlock;
     logic [7:0]  sys_offset, rx_offset;
     logic [23:0] lane_err [0:2];
-    logic [31:0] rx_cycles;
+    logic [31:0] rx_cycles, pix_err, bit_err;
     logic        words_req, words_done;
     logic [9:0]  words [0:2][0:11];
     loop_check u_check (
@@ -130,7 +130,7 @@ module tb_loop;
         .i_tx_s1(ref_s1), .i_tx_s2(ref_s2), .i_tx_count(ref_count), .i_tx_ref_valid(ref_valid),
         .sys_clk(sys_clk), .sys_snap_req(snap_req), .sys_snap_done(snap_done),
         .sys_locked(snap_locked), .sys_frames(snap_frames), .sys_bad(snap_bad), .sys_derr(snap_derr),
-        .sys_unlock(snap_unlock), .sys_last_count(snap_count), .sys_lane_err(lane_err), .sys_rx_cycles(rx_cycles), .sys_clear(clear_req),
+        .sys_unlock(snap_unlock), .sys_last_count(snap_count), .sys_lane_err(lane_err), .sys_rx_cycles(rx_cycles), .sys_pix_err(pix_err), .sys_bit_err(bit_err), .sys_clear(clear_req),
         .sys_words_req(words_req), .sys_words_done(words_done), .sys_words(words), .sys_offset(sys_offset)
     );
 
@@ -142,7 +142,7 @@ module tb_loop;
         .clock(sys_clk), .reset(reset), .uart_rxd(uart_to_dut), .uart_txd(uart_from_dut),
         .o_offset(sys_offset), .o_snap_req(snap_req), .i_snap_done(snap_done), .i_locked(snap_locked),
         .i_frames(snap_frames), .i_bad(snap_bad), .i_derr(snap_derr), .i_unlock(snap_unlock),
-        .i_last_count(snap_count), .i_lane_err(lane_err), .i_rx_cycles(rx_cycles), .i_pll_lock(1'b1), .o_clear(clear_req),
+        .i_last_count(snap_count), .i_lane_err(lane_err), .i_rx_cycles(rx_cycles), .i_pix_err(pix_err), .i_bit_err(bit_err), .i_pll_lock(1'b1), .o_clear(clear_req),
         .o_words_req(words_req), .i_words_done(words_done), .i_words(words)
     );
 
@@ -184,7 +184,7 @@ module tb_loop;
     typedef struct {
         byte  kind;
         byte  lock;
-        int unsigned f, b, e, e0, e1, e2, u, n, o;
+        int unsigned f, b, e, e0, e1, e2, u, n, o, x, y;
     } rep_t;
 
     function automatic int unsigned hexval(input string s);
@@ -210,6 +210,8 @@ module tb_loop;
         r.u = hexval(s.substr(63, 66));
         r.n = hexval(s.substr(69, 76));
         r.o = hexval(s.substr(79, 80));
+        r.x = hexval(s.substr(96, 103));
+        r.y = hexval(s.substr(106, 113));
         return r;
     endfunction
 
@@ -241,7 +243,7 @@ module tb_loop;
 
         // 1. lock and count
         do next_line(r); while (!(r.kind == "R" && r.lock == "1" && r.f >= 3));
-        check(r.b == 0 && r.e == 0, "clean frames after lock");
+        check(r.b == 0 && r.e == 0 && r.x == 0 && r.y == 0, $sformatf("clean frames after lock (X=%0d Y=%0d)", r.x, r.y));
         check(r.n == HACTIVE * VACTIVE, $sformatf("pixel count %0d", r.n));
         check(r.o == 8'h20, "default offset 0x20");
         check(slip == 0, $sformatf("bit slip converged to 0 (is %0d)", slip));
@@ -251,6 +253,7 @@ module tb_loop;
         next_line(r);
         next_line(r);
         check(r.kind == "R" && r.b == 1, $sformatf("one mismatched frame after injection (B=%0d)", r.b));
+        check(r.x == 1 && r.y >= 1, $sformatf("one wrong pixel after injection (X=%0d Y=%0d)", r.x, r.y));
         check(r.lock == "1" && r.u == 0, "still locked after a data error");
 
         // 3. clear, offset +4
