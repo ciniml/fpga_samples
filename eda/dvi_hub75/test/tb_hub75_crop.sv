@@ -81,10 +81,38 @@ module tb_hub75_crop;
     logic                cmd_wen, skipped;
     logic [CMD_BITS-1:0] cmd;
     logic                flip_pending;
+    logic       lut_init = 0, lut_we = 0, lut_busy;
+    logic [2:0] lut_mask = 0;
+    logic [7:0] lut_addr = 0, lut_data = 0;
     crop_to_hub75 #(.DISP_W(DISP_W), .DISP_H(DISP_H), .COMPONENT_BITS(CB)) u_crop (
         .i_pclk(pclk), .i_reset(reset), .i_valid(1'b1), .i_de(vde), .i_vsync(vvs),
         .i_data(vdata), .i_flip_pending(flip_pending),
-        .o_cmd_wen(cmd_wen), .o_cmd(cmd), .o_frame_skipped(skipped));
+        .o_cmd_wen(cmd_wen), .o_cmd(cmd), .o_frame_skipped(skipped),
+        .i_clk(clock), .i_rst(reset), .i_lut_init(lut_init), .i_lut_we(lut_we),
+        .i_lut_mask(lut_mask), .i_lut_addr(lut_addr), .i_lut_data(lut_data), .o_lut_busy(lut_busy));
+
+    // ---------------- colour tables (reference copy) ----------------
+    logic [7:0] ref_lut [0:2][0:255];     // [R, G, B]
+    task automatic set_identity();
+        for (int c = 0; c < 3; c++) for (int i = 0; i < 256; i++) ref_lut[c][i] = 8'(i);
+    endtask
+    task automatic lut_write_all(input int c);  // copy ref_lut[c] into the hardware
+        for (int i = 0; i < 256; i++) begin
+            @(negedge clock);
+            lut_we = 1; lut_mask = 3'(1 << c); lut_addr = 8'(i); lut_data = ref_lut[c][i];
+        end
+        @(negedge clock) lut_we = 0;
+    endtask
+    // the 8-bit source channel of pixel (x, y) (the picture's 5 bits + noise)
+    function automatic logic [7:0] src8(input logic sel, input int x, input int y, input int c);
+        logic [14:0] p;
+        p = pic(sel, x, y);
+        case (c)
+            0: return {p[14:10], 3'(x)};
+            1: return {p[9:5], 3'(y)};
+            default: return {p[4:0], 3'(x ^ y)};
+        endcase
+    endfunction
 
     logic                rd_empty, rd_valid = 0, full;
     logic [CMD_BITS-1:0] rd_cmd;
@@ -181,14 +209,13 @@ module tb_hub75_crop;
         for (int ey = 0; ey < 64; ey++) begin
             for (int ex = 0; ex < CHAIN_LEN; ex++) begin
                 int x, y;
-                logic [14:0] exp;
+
                 x = ex % DISP_W;
                 y = (ex / DISP_W) * 64 + ey;
-                exp = pic(sel, x, y);
                 for (int c = 0; c < 3; c++) begin
                     int got, want;
                     got  = acc[ey][ex][c] / LSB_OE;
-                    want = exp[14 - 5 * c -: 5];
+                    want = ref_lut[c][src8(sel, x, y, c)] >> (8 - CB);
                     if (acc[ey][ex][c] % LSB_OE != 0 || got != want) begin
                         bad++;
                         if (bad <= 8)
@@ -210,6 +237,7 @@ module tb_hub75_crop;
     always @(posedge pclk) if (skipped) skips++;
 
     initial begin
+        set_identity();
         repeat (20) @(posedge clock);
         reset = 0;
         // first picture: wait until a frame has been written and flipped in
@@ -219,6 +247,25 @@ module tb_hub75_crop;
         @(posedge pclk) pattern = 1;
         wait_refreshes(3);
         check_picture(1, "picture B");
+
+        // colour tables: R inverted, G gamma 2.2, B identity (all 8 input
+        // bits matter, not only the top 5)
+        for (int i = 0; i < 256; i++) begin
+            ref_lut[0][i] = 8'(255 - i);
+            ref_lut[1][i] = 8'($rtoi(255.0 * ((real'(i) / 255.0) ** 2.2) + 0.5));
+        end
+        lut_write_all(0);
+        lut_write_all(1);
+        wait_refreshes(3);
+        check_picture(1, "picture B, tables R inv / G gamma 2.2");
+
+        // back to identity
+        @(negedge clock) lut_init = 1;
+        @(negedge clock) lut_init = 0;
+        set_identity();
+        wait (!lut_busy);
+        wait_refreshes(3);
+        check_picture(1, "picture B, tables reset to identity");
         if (rule_errors != 0) begin
             errors++;
             $display("[tb_hub75] %0d CLK/LAT/OE timing-rule violations", rule_errors);

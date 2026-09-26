@@ -177,6 +177,10 @@ module top (
     // =================================================================
     // Crop -> command FIFO -> Hub75
     // =================================================================
+    // colour tables (gamma / white balance), written from the UART ("G", "i")
+    logic       lut_init, lut_we;
+    logic [2:0] lut_mask;
+    logic [7:0] lut_addr, lut_data;
     logic                cmd_wen, frame_skipped;
     logic [CMD_BITS-1:0] cmd;
     logic                flip_pending;
@@ -194,7 +198,15 @@ module top (
         .i_flip_pending (flip_pending),
         .o_cmd_wen      (cmd_wen),
         .o_cmd          (cmd),
-        .o_frame_skipped(frame_skipped)
+        .o_frame_skipped(frame_skipped),
+        .i_clk          (clock),
+        .i_rst          (reset_sys),
+        .i_lut_init     (lut_init),
+        .i_lut_we       (lut_we),
+        .i_lut_mask     (lut_mask),
+        .i_lut_addr     (lut_addr),
+        .i_lut_data     (lut_data),
+        .o_lut_busy     ()
     );
 
     // 128 pixels arrive per line at 74.25 MHz and drain at 50 MHz: ~45
@@ -347,6 +359,11 @@ module top (
         .o_clear       (clear_req),
         .o_words_req   (words_req),
         .o_words_mode  (words_mode),
+        .o_lut_init    (lut_init),
+        .o_lut_we      (lut_we),
+        .o_lut_mask    (lut_mask),
+        .o_lut_addr    (lut_addr),
+        .o_lut_data    (lut_data),
         .i_words_done  (words_done),
         .i_words       (words)
     );
