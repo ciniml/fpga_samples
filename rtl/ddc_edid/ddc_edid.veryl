@@ -30,6 +30,7 @@
 pub module ddc_edid #(
     param I2C_ADDR    : bit<7> = 7'h50,
     param FILTER_DEPTH: u32    = 8    , // glitch filter length in clocks (>= 50ns spike suppression)
+    param EDID_1080P  : bit    = 1'b0 , // 1: serve edid_rom_1080p (1920x1080@60) instead of edid_rom (1280x720@60)
 ) (
     i_clk: input clock,
     i_rst: input reset,
@@ -115,10 +116,17 @@ pub module ddc_edid #(
     var host_ack: logic   ;
     var rom_data: logic<8>;
 
-    inst u_rom: edid_rom (
-        i_addr: offset  ,
-        o_data: rom_data,
-    );
+    if EDID_1080P :g_rom {
+        inst u_rom: edid_rom_1080p (
+            i_addr: offset  ,
+            o_data: rom_data,
+        );
+    } else {
+        inst u_rom: edid_rom (
+            i_addr: offset  ,
+            o_data: rom_data,
+        );
+    }
 
     assign o_busy   = state != State::IDLE && state != State::ADDR;
     assign o_offset = offset;

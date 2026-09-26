@@ -6,16 +6,17 @@
 |---|---|
 | `ddc_edid` | 読み出し専用 I2C ターゲット (7'h50)。ランダムリード / カレントアドレスリード / 256 で折り返す連続読み出し。書き込みはオフセット 1 バイトだけ ACK。E-DDC セグメント (7'h30) と HDCP (7'h3A) には応答しない。SCL は伸ばさない |
 | `hpd_ctrl` | +5V をデバウンスし、+5V あり かつ `i_ready` のときだけ HPD を上げる。`i_replug` や +5V 断で最低 `HPD_LOW_MS` (既定 200ms、HDMI は 100ms 以上で EDID 変更を通知) Low |
-| `edid_rom` | `gen_edid.py` が生成する 128 バイトの組み合わせ ROM (128〜255 はミラー) |
+| `edid_rom` / `edid_rom_1080p` | `gen_edid.py` が生成する 128 バイトの組み合わせ ROM (128〜255 はミラー)。`ddc_edid` の `EDID_1080P` で選ぶ |
 
 ## EDID
 
-`python3 gen_edid.py [--name "..."] [--bin edid.bin]` で `edid_rom.veryl` を再生成する。
+`python3 gen_edid.py [--mode 720p|1080p] [--name "..."] [--bin edid.bin]` で `edid_rom.veryl` / `edid_rom_1080p.veryl` を再生成する。
 
 - EDID 1.3、基本ブロックのみ (CEA-861 拡張なし = HDMI VSDB なし)。ソースは DVI で送ってくるので、データアイランドを持たない映像を `dvi_in` がそのまま受けられる
-- タイミングは推奨の 1280x720@60 (74.25MHz) だけ。キャプチャ PLL が 74.25MHz 専用なので、Established/Standard timing は空
+- タイミングは推奨の 1 つだけ: 1280x720@60 (74.25MHz) か、`--mode 1080p` で 1920x1080@60 (148.5MHz、範囲制限 66–68kHz / 150MHz)。
+  キャプチャ PLL が 1 つのピクセルクロック専用なので、Established/Standard timing は空
 - sRGB、範囲制限 59–61Hz / 44–46kHz / 80MHz、製品名 "FPGA DVI RX"。製造者 ID "FPG" は PNP 登録 ID ではない
-- `edid-decode --check` で conformity PASS を確認済み
+- `edid-decode --check` で conformity PASS を確認済み (720p / 1080p とも)
 
 ## 接続
 
