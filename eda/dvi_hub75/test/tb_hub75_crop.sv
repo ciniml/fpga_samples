@@ -32,7 +32,13 @@ module tb_hub75_crop;
 `endif
     localparam int DISP_W = `DISP_W;
     localparam int DISP_H = `DISP_H;
-    localparam int CB     = 5;
+`ifndef CB
+`define CB 5
+`endif
+`ifndef CLKDIV
+`define CLKDIV 1
+`endif
+    localparam int CB     = `CB;
     localparam int CHAIN_LEN = DISP_W * DISP_H / 64;
     localparam int X_BITS    = $clog2(CHAIN_LEN);
     localparam int ADDR_BITS = 1 + 5 + X_BITS;
@@ -126,7 +132,7 @@ module tb_hub75_crop;
 
     logic ra, rb, rc, rd, re, r0, g0, b0, r1, g1, b1, oe, lat, hclk;
     Hub75 #(.PANEL_WIDTH(64), .PANEL_HEIGHT(64), .NUM_CHAINED(CHAIN_LEN / 64),
-            .CLOCK_DIVIDER(1), .COMPONENT_BITS(CB), .BASE_OE_CYCLES(BASE_OE)) u_hub75 (
+            .CLOCK_DIVIDER(`CLKDIV), .COMPONENT_BITS(CB), .BASE_OE_CYCLES(BASE_OE)) u_hub75 (
         .i_clk(clock), .i_rst(reset),
         .i_px_wen(rd_valid && !rd_cmd[CMD_BITS-1]),
         .i_px_addr(rd_cmd[CMD_BITS-2 -: ADDR_BITS]),
@@ -181,9 +187,15 @@ module tb_hub75_crop;
     // Refresh boundaries: row address returning to 0 after 31.
     int refreshes = 0;
     logic [4:0] last_row = 0;
+    longint cyc = 0, last_refresh_cyc = 0, refresh_period = 0;
+    always @(posedge clock) cyc <= cyc + 1;
     always @(posedge clock) begin
         if (!oe) begin
-            if (last_row == 31 && {re, rd, rc, rb, ra} == 0) refreshes <= refreshes + 1;
+            if (last_row == 31 && {re, rd, rc, rb, ra} == 0) begin
+                refreshes <= refreshes + 1;
+                refresh_period <= cyc - last_refresh_cyc;
+                last_refresh_cyc <= cyc;
+            end
             last_row <= {re, rd, rc, rb, ra};
         end
     end
@@ -274,8 +286,8 @@ module tb_hub75_crop;
             errors++;
             $display("[tb_hub75] FIFO overflow x%0d", overflow);
         end
-        $display("[tb_hub75] %0dx%0d chain %0d: %0d skipped source frames (flip still pending)",
-                 DISP_W, DISP_H, CHAIN_LEN, skips);
+        $display("[tb_hub75] %0dx%0d chain %0d, %0d bit, clkdiv %0d: refresh %0d clocks = %0d Hz at 50 MHz, %0d skipped source frames",
+                 DISP_W, DISP_H, CHAIN_LEN, CB, `CLKDIV, refresh_period, 50_000_000 / refresh_period, skips);
         if (errors != 0) $fatal(1, "[tb_hub75] FAIL (%0d errors)", errors);
         $display("[tb_hub75] PASS");
         $finish;

@@ -30,6 +30,12 @@
 `ifndef DISP_H
 `define DISP_H 128
 `endif
+`ifndef COMPONENT_BITS
+`define COMPONENT_BITS 5      // BCM bit planes per colour (make BITS=6)
+`endif
+`ifndef HUB75_CLKDIV
+`define HUB75_CLKDIV 1        // HUB75 CLK = 50 MHz / (2 * (N + 1)) (make HUB75_CLKDIV=0)
+`endif
 module top (
     input  wire clock,            // on-board 50 MHz oscillator
     input  wire reset_button,
@@ -70,7 +76,7 @@ module top (
 );
     localparam int DISP_W         = `DISP_W;
     localparam int DISP_H         = `DISP_H;
-    localparam int COMPONENT_BITS = 5;
+    localparam int COMPONENT_BITS = `COMPONENT_BITS;
     localparam int CHAIN_LEN      = DISP_W * DISP_H / 64;
     localparam int X_BITS         = $clog2(CHAIN_LEN);
     localparam int ADDR_BITS      = 1 + 5 + X_BITS;
@@ -232,7 +238,7 @@ module top (
         .PANEL_WIDTH   (64),
         .PANEL_HEIGHT  (64),
         .NUM_CHAINED   (CHAIN_LEN / 64),
-        .CLOCK_DIVIDER (1),
+        .CLOCK_DIVIDER (`HUB75_CLKDIV),
         .COMPONENT_BITS(COMPONENT_BITS),
         .BASE_OE_CYCLES(16)
     ) u_hub75 (

@@ -5,9 +5,19 @@ ROOT_DIR ?= $(abspath ../..)
 RTL_DIR ?= $(ROOT_DIR)/rtl
 
 # PANEL=<W>x<H> (64 / 128 each, default 128x128)
+# BITS=<n> BCM bit planes per colour (default 5), HUB75_CLKDIV=<n> (default 1)
+BUILD_SUFFIX :=
 ifneq ($(PANEL),)
-BUILD_SUFFIX := _$(PANEL)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_$(PANEL)
 export PANEL
+endif
+ifneq ($(BITS),)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_b$(BITS)
+export BITS
+endif
+ifneq ($(HUB75_CLKDIV),)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_div$(HUB75_CLKDIV)
+export HUB75_CLKDIV
 endif
 
 CAPTURE_DIR := ../dvi_capture/src/$(TARGET)
