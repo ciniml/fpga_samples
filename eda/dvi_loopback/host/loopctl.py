@@ -11,6 +11,10 @@
   loopctl.py fine  [target]        1-tap scan of target -16..+15
   loopctl.py words                 raw 10-bit words of the three lanes
   loopctl.py send <chars>          send command characters
+  loopctl.py gamma <g> [rgb] [bits]  colour tables (eda/dvi_hub75): out = in^g,
+                                   rounded to `bits` (default 5) displayed bits;
+                                   rgb = channels to write (default rgb)
+  loopctl.py gamma identity        tables back to identity ("i")
 
   target: a = common offset (default), 0 / 1 / 2 = lane trim.
   The port defaults to the Tang Primer 25K USB Debugger's second
@@ -66,11 +70,25 @@ class Loop:
         txt = self.read_for(150, lambda b: (b'\n' + b).count(b'\nS L') >= n and b.endswith(b'\n'))
         return [parse(l) for l in txt.splitlines() if is_line(l, 'S')]
 
+    def send_gamma(self, table, chans='rgb'):
+        """Upload a 256-entry table: "G" <mask> <512 hex digits>."""
+        mask = sum(1 << 'rgb'.index(c) for c in chans)
+        self.send('G%X' % mask)
+        self.p.write(''.join('%02X' % v for v in table).encode())
+        self.p.flush()
+
     def words(self):
         self.fresh()
         self.send('w')
         txt = self.read_for(3, lambda b: b.count(b'\nW2') >= 1 and b.endswith(b'\n'))
         return [l for l in txt.splitlines() if l.startswith('W')]
+
+
+def gamma_table(g, bits=5):
+    """8-bit table for out = in^g, rounded to the `bits` displayed bits
+    (the hardware shows the top `bits` of each entry)."""
+    top = (1 << bits) - 1
+    return [round(((i / 255.0) ** g) * top) << (8 - bits) for i in range(256)]
 
 
 def is_line(l, kind):
@@ -99,6 +117,7 @@ def main():
     ap.add_argument('--port', default=default_port())
     ap.add_argument('cmd')
     ap.add_argument('arg', nargs='?')
+    ap.add_argument('extra', nargs='*')
     a = ap.parse_args()
     lp = Loop(a.port)
     if a.cmd == 'status':
@@ -111,6 +130,14 @@ def main():
         print('\n'.join(lp.words()))
     elif a.cmd == 'send':
         lp.send(a.arg)
+    elif a.cmd == 'gamma':
+        if a.arg == 'identity':
+            lp.send('i')
+        else:
+            g = float(a.arg)
+            chans = a.extra[0] if a.extra else 'rgb'
+            bits = int(a.extra[1]) if len(a.extra) > 1 else 5
+            lp.send_gamma(gamma_table(g, bits), chans)
     else:
         sys.exit(__doc__)
 

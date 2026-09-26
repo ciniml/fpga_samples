@@ -43,6 +43,11 @@
  *     x  same, around a blanking word whose lane 1 or 2 is not a control
  *        symbol, 6 words before it
  *     e  same, around a lane 1 / 2 decode error reported by dvi_in
+ *     G  colour-table upload: "G" <mask hex digit> <512 hex digits>, i.e.
+ *        256 bytes for entries 0..255 of the tables selected by the mask
+ *        (bit 0 R, 1 G, 2 B). Taken even while a line is being printed;
+ *        a non-hex character aborts. -> o_lut_we / o_lut_mask / addr / data
+ *     i  colour tables back to identity (o_lut_init pulse)
  */
 `default_nettype none
 module loop_report #(
@@ -79,6 +84,12 @@ module loop_report #(
     output logic        o_clear,
     output logic        o_words_req,
     output logic [1:0]  o_words_mode,
+    // colour-table writes (eda/dvi_hub75; leave unconnected elsewhere)
+    output logic        o_lut_init,
+    output logic        o_lut_we,
+    output logic [2:0]  o_lut_mask,
+    output logic [7:0]  o_lut_addr,
+    output logic [7:0]  o_lut_data,
     input  wire         i_words_done,
     input  wire  [9:0]  i_words [0:2][0:11]
 );
@@ -242,6 +253,16 @@ module loop_report #(
     logic [1:0]  sel;            // 3 = common offset, 0..2 = lane trim
     logic [7:0]  target_val;     // current value of the selected target
     logic        set_req;        // apply set_val to the selected target next clock
+    logic        g_mode;         // receiving a colour-table upload
+    logic [1:0]  g_stage;        // 0: mask digit, 1: high nibble, 2: low nibble
+    logic [3:0]  g_hi;
+    logic [7:0]  g_count;        // bytes received
+    function automatic logic is_hex(input logic [7:0] c);
+        return (c >= 8'h30 && c <= 8'h39) || (c >= 8'h41 && c <= 8'h46) || (c >= 8'h61 && c <= 8'h66);
+    endfunction
+    function automatic logic [3:0] hex_val(input logic [7:0] c);
+        return c <= 8'h39 ? 4'(c - 8'h30) : c <= 8'h46 ? 4'(c - 8'h37) : 4'(c - 8'h57);
+    endfunction
     logic [7:0]  set_val;
     logic [6:0]  scan_step;
     logic [6:0]  scan_count;     // 64 (coarse) or 32 (fine)
@@ -288,6 +309,15 @@ module loop_report #(
             o_clear      <= 1'b0;
             o_words_req  <= 1'b0;
             o_words_mode <= 2'd0;
+            o_lut_init   <= 1'b0;
+            o_lut_we     <= 1'b0;
+            o_lut_mask   <= '0;
+            o_lut_addr   <= '0;
+            o_lut_data   <= '0;
+            g_mode       <= 1'b0;
+            g_stage      <= '0;
+            g_hi         <= '0;
+            g_count      <= '0;
             line_len     <= LINE_LEN;
             p_wlane      <= '0;
             tx_valid     <= 1'b0;
@@ -303,6 +333,9 @@ module loop_report #(
             o_clear     <= 1'b0;
             o_words_req <= 1'b0;
             set_req     <= 1'b0;
+            o_lut_init  <= 1'b0;
+            o_lut_we    <= 1'b0;
+            if (o_lut_we) o_lut_addr <= o_lut_addr + 1'd1;
             if (rx_valid && (cmd_wp - cmd_rp) != 5'd16) begin
                 cmd_fifo[cmd_wp[3:0]] <= rx_char;
                 cmd_wp <= cmd_wp + 1'd1;
@@ -314,9 +347,31 @@ module loop_report #(
             pll_sync    <= {pll_sync[1:0], i_pll_lock};
             if (period != 0) period <= period - 1'd1;
 
+            // Colour-table upload: consumed in any state (the host streams
+            // 513 characters, more than the FIFO holds during a print).
+            if (g_mode && cmd_valid) begin
+                cmd_rp <= cmd_rp + 1'd1;
+                if (!is_hex(cmd_char)) begin
+                    g_mode <= 1'b0;                        // abort
+                end else if (g_stage == 2'd0) begin
+                    o_lut_mask <= 3'(hex_val(cmd_char));
+                    o_lut_addr <= 8'd0;
+                    g_stage    <= 2'd1;
+                end else if (g_stage == 2'd1) begin
+                    g_hi    <= hex_val(cmd_char);
+                    g_stage <= 2'd2;
+                end else begin
+                    o_lut_data <= {g_hi, hex_val(cmd_char)};
+                    o_lut_we   <= 1'b1;                    // addr advances after the write
+                    g_stage    <= 2'd1;
+                    if (g_count == 8'hFF) g_mode <= 1'b0;  // 256th byte
+                    g_count <= g_count + 1'd1;
+                end
+            end
+
             case (state)
                 S_IDLE: begin
-                    if (cmd_valid && !set_req) begin   // wait for the previous offset update
+                    if (cmd_valid && !set_req && !g_mode) begin   // wait for the previous offset update
                         cmd_rp <= cmd_rp + 1'd1;
                         case (cmd_char)
                             "+": begin set_val <= target_val + 8'd4; set_req <= 1'b1; end
@@ -327,6 +382,12 @@ module loop_report #(
                             "0": sel <= 2'd0;
                             "1": sel <= 2'd1;
                             "2": sel <= 2'd2;
+                            "G": begin
+                                g_mode  <= 1'b1;
+                                g_stage <= 2'd0;
+                                g_count <= 8'd0;
+                            end
+                            "i": o_lut_init <= 1'b1;
                             "d": begin
                                 o_offset      <= OFFSET_DEFAULT;
                                 o_lane_offset <= '{TRIM_DEFAULT[23:16], TRIM_DEFAULT[15:8], TRIM_DEFAULT[7:0]};

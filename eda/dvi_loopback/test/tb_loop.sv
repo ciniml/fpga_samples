@@ -124,6 +124,21 @@ module tb_loop;
     logic [7:0]  sys_lane_offset [0:2], rx_lane_offset [0:2];
     logic        words_req, words_done;
     logic [1:0]  words_mode;
+    logic        lut_init, lut_we;
+    logic [2:0]  lut_mask;
+    logic [7:0]  lut_addr, lut_data;
+    // record the table writes
+    logic [7:0]  lut_seen [0:255];
+    int          lut_writes = 0, lut_inits = 0;
+    logic [2:0]  lut_mask_seen;
+    always @(posedge sys_clk) begin
+        if (lut_we) begin
+            lut_seen[lut_addr] = lut_data;
+            lut_mask_seen      = lut_mask;
+            lut_writes++;
+        end
+        if (lut_init) lut_inits++;
+    end
     logic [9:0]  words [0:2][0:11];
     loop_check u_check (
         .rx_clk(rx_clk), .rx_reset(rx_reset),
@@ -148,7 +163,8 @@ module tb_loop;
         .i_frames(snap_frames), .i_bad(snap_bad), .i_derr(snap_derr), .i_unlock(snap_unlock),
         .i_last_count(snap_count), .i_lane_err(lane_err), .i_rx_cycles(rx_cycles), .i_pix_err(pix_err), .i_bit_err(bit_err),
         .i_lane_bit_err(lane_bit_err), .o_lane_offset(sys_lane_offset), .i_pll_lock(1'b1), .o_clear(clear_req),
-        .o_words_req(words_req), .o_words_mode(words_mode), .i_words_done(words_done), .i_words(words)
+        .o_words_req(words_req), .o_words_mode(words_mode),
+        .o_lut_init(lut_init), .o_lut_we(lut_we), .o_lut_mask(lut_mask), .o_lut_addr(lut_addr), .o_lut_data(lut_data), .i_words_done(words_done), .i_words(words)
     );
 
     // ---------------- UART decode / encode ----------------
@@ -315,6 +331,43 @@ module tb_loop;
         check(r.k == 24'h000804, $sformatf("8 queued > on lane 1 (K=%06h)", r.k));
         send_char("d");
         send_char("+");   // back to O = 24 for the scan checks below
+
+        // 3d. colour-table upload: "G5" + 512 hex digits (R and B tables),
+        //     sent back to back while lines are being printed, then "i"
+        begin
+            string hx;
+            lut_writes = 0;
+            send_char("G");
+            send_char("5");
+            for (int i = 0; i < 256; i++) begin
+                hx = $sformatf("%02x", 8'((i * 7 + 3) ^ 8'h5A));
+                for (int k = 0; k < 2; k++) begin
+                    logic [7:0] ch;
+                    ch = hx[k];
+                    if (i % 3 == 0 && ch >= "a") ch = ch - 8'h20;  // mixed case
+                    uart_to_dut = 0;
+                    repeat (BAUD) @(posedge sys_clk);
+                    for (int b = 0; b < 8; b++) begin
+                        uart_to_dut = ch[b];
+                        repeat (BAUD) @(posedge sys_clk);
+                    end
+                    uart_to_dut = 1;
+                    repeat (BAUD) @(posedge sys_clk);
+                end
+            end
+            repeat (200) @(posedge sys_clk);
+            check(lut_writes == 256, $sformatf("256 table writes (%0d)", lut_writes));
+            check(lut_mask_seen == 3'b101, $sformatf("table mask %03b", lut_mask_seen));
+            for (int i = 0; i < 256; i++)
+                check(lut_seen[i] == 8'((i * 7 + 3) ^ 8'h5A), $sformatf("table entry %0d = %02h", i, lut_seen[i]));
+            send_char("i");
+            repeat (50) @(posedge sys_clk);
+            check(lut_inits == 1, "i: one table-init pulse");
+            // the reporter still works afterwards
+            next_line(r);
+            next_line(r);
+            check(r.kind == "R" && r.o == 8'h24, "reporter alive after the upload");
+        end
 
         // 4. scan
         send_char("s");
