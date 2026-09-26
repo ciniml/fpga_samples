@@ -25,6 +25,10 @@ if {${TARGET} == "tangprimer25k"} {
 # --- Veryl-generated dvi_in core ---
 add_file -type verilog [file normalize ${RTL_DIR}/dvi_in/dvi_in.sv]
 
+# --- Veryl-generated DDC / EDID / HPD side channel ---
+add_file -type verilog [file normalize ${RTL_DIR}/ddc_edid/ddc_edid.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/ddc_edid/edid_rom.sv]
+
 # --- Tang Primer 25K PHY wrappers ---
 add_file -type verilog [file normalize ${SRC_DIR}/iser10_lane.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/dvi_in_phy.sv]

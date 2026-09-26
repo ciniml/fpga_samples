@@ -21,7 +21,9 @@
  */
 `default_nettype none
 module top(
+    input  wire clock,          // 50 MHz board clock (DDC / HPD side channel)
     input  wire reset_button,
+    input  wire button_replug,  // S1: drop HPD for 200 ms (EDID re-read)
 
     // DVI input — four differential pairs (CLK + 3 data) on PMOD1.
     input  wire dvi_clk_p,
@@ -44,8 +46,66 @@ module top(
     //          per corrupted line; timing shows WHICH lines are hit)
     // dbg[2] = recovered video DE
     // dbg[3] = recovered video VSYNC (frame reference, 60 Hz)
-    output logic [3:0] dbg
+    output logic [3:0] dbg,
+
+    // HDMI/DVI side channel (Pmod DVI side-channel pads, wired to pmod2).
+    // DDC is a 5 V bus: use a level shifter / clamp between the Pmod and
+    // these 3.3 V pins.
+    input  wire  ddc_scl,
+    inout  wire  ddc_sda,
+    output logic hpd
 );
+
+    // -----------------------------------------------------------------
+    // Side channel: EDID over DDC and HPD, on the board clock. It has to
+    // work before the source drives TMDS (the pixel clock only exists
+    // after HPD is up and the EDID has been read).
+    // -----------------------------------------------------------------
+    logic reset_sys;
+    reset_seq #(.RESET_DELAY_CYCLES(16)) reset_seq_sys (
+        .clock    (clock),
+        .reset_in (reset_button),
+        .reset_out(reset_sys)
+    );
+
+    wire  ddc_sda_in;
+    logic ddc_sda_oe;
+    IOBUF u_ddc_sda (.O(ddc_sda_in), .IO(ddc_sda), .I(1'b0), .OEN(!ddc_sda_oe));
+
+    logic ddc_busy;
+    logic ddc_read_strobe;
+    logic [7:0] ddc_offset;
+    ddc_edid u_ddc (
+        .i_clk        (clock),
+        .i_rst        (reset_sys),
+        .i_scl        (ddc_scl),
+        .i_sda        (ddc_sda_in),
+        .o_sda_oe     (ddc_sda_oe),
+        .o_busy       (ddc_busy),
+        .o_read_strobe(ddc_read_strobe),
+        .o_offset     (ddc_offset)
+    );
+
+    // No +5V sense line on the Pmod: treat +5V as always present; HPD goes
+    // high once the side channel is out of reset (after the minimum low
+    // time), and S1 forces a replug.
+    logic [1:0] replug_sync;
+    logic       replug_q;
+    always_ff @(posedge clock) begin
+        replug_sync <= {replug_sync[0], button_replug};
+        replug_q    <= replug_sync[1];
+    end
+    hpd_ctrl u_hpd (
+        .i_clk    (clock),
+        .i_rst    (reset_sys),
+        .i_5v     (1'b1),
+        .i_ready  (1'b1),
+        .i_replug (replug_sync[1] && !replug_q),
+        .o_hpd    (hpd),
+        .o_5v_good()
+    );
+
+    wire _unused_ddc = &{1'b0, ddc_busy, ddc_read_strobe, ddc_offset};
 
     // -----------------------------------------------------------------
     // Input buffers. The clock-lane IBUF output fans out to both the

@@ -42,6 +42,22 @@ IO_PORT "dvi_d1_p" PULL_MODE=NONE IO_TYPE=LVDS25 DIFF_RESISTOR=ON;
 IO_LOC "dvi_d2_p"  F5;
 IO_PORT "dvi_d2_p" PULL_MODE=NONE IO_TYPE=LVDS25 DIFF_RESISTOR=ON;
 
+IO_LOC "clock" E2;
+IO_PORT "clock" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+IO_LOC "button_replug" H10;
+IO_PORT "button_replug" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+
+// HDMI/DVI side channel on pmod2's top row (Pmod DVI side-channel pads).
+// DDC is 5 V from the source: level shifter / clamp required.
+//   ddc_sda = pmod2_3 = B11 (open drain), ddc_scl = pmod2_4 = C11 (input),
+//   hpd     = pmod2_2 = D11 (output, ~1 kohm series), CEC = pmod2_1 = G11 (unused)
+IO_LOC "ddc_sda" B11;
+IO_PORT "ddc_sda" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "ddc_scl" C11;
+IO_PORT "ddc_scl" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+IO_LOC "hpd" D11;
+IO_PORT "hpd" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
 IO_LOC "reset_button" H11;
 IO_PORT "reset_button" PULL_MODE=DOWN IO_TYPE=LVCMOS33;
 

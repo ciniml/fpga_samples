@@ -98,7 +98,31 @@ symbols (needed on unterminated slots, harmless on PMOD0):
   isolated corrupted symbol can neither fake DE nor punch a hole in
   active video.
 - HSYNC/VSYNC/CTL update only from words that decode as genuine control
-  symbols.
+  symbols and agree with a neighbouring word (a single bit error turns
+  CTRL_01 into CTRL_11, i.e. a false VSYNC; found on the 1080p loopback).
+
+## HDMI/DVI side channel (DDC / EDID / HPD)
+
+For sources that need a sink (PCs, HDMI products), `rtl/ddc_edid` runs on
+the 50 MHz board clock (E2), independent of the cable clock:
+
+| Signal | Pin | Notes |
+|---|---|---|
+| `ddc_sda` | B11 (pmod2_3) | open drain via `IOBUF` |
+| `ddc_scl` | C11 (pmod2_4) | input only (no clock stretching) |
+| `hpd` | D11 (pmod2_2) | 3.3 V output (HDMI HPD high is >= 2.0 V); ~1 kohm series |
+| CEC | G11 (pmod2_1) | reserved, not used |
+| `button_replug` | H10 (S1) | drops HPD for 200 ms so the source re-reads the EDID |
+
+Pin names follow `eda/targets/tangprimer25k/pmod_ports.csv`; wire the
+Pmod DVI's side-channel pads to them. **DDC is pulled up to 5 V by the
+source: put a level shifter (e.g. PCA9306) or clamp between the Pmod and
+B11/C11.** There is no +5V sense line, so HPD rises 200 ms after the
+side channel leaves reset.
+
+The EDID (DVI-only, 1280x720@60 as the only timing) makes the source
+send plain DVI at the rate the recovery PLL is built for; see
+`rtl/ddc_edid/README.md`.
 
 ## Open work
 

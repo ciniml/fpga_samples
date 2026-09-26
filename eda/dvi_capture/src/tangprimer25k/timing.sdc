@@ -1,5 +1,8 @@
 // timing.sdc — DVI receiver constraints (720p60 source).
 
+// Board clock (DDC / HPD side channel), asynchronous to the cable.
+create_clock -name clock -period 20 -waveform {0 10} [get_ports {clock}]
+
 // Cable pixel clock recovered from the DVI CLK pair (74.25 MHz).
 create_clock -name dvi_pclk -period 13.468 -waveform {0 6.734} [get_ports {dvi_clk_p}]
 
@@ -41,3 +44,7 @@ set_false_path -from [get_pins {reset_seq_pclk/reset_seq_0_s0/Q}] -to [get_pins 
 // is declared false instead — safe because the pulse is 5 fclk wide,
 // comes from a single FF, and is followed by a settle period.)
 set_false_path -from [get_pins {u_phy/u_core/o_align_shift_req*/Q}] -to [get_pins {u_phy/*/u_ides10/CALIB}]
+
+// The side channel (board clock) and the video path (cable clocks) do not
+// exchange data.
+set_clock_groups -asynchronous -group [get_clocks {clock}] -group [get_clocks {dvi_pclk pclk fclk}]
