@@ -1,0 +1,65 @@
+// Tang Primer 25K — DVI 1080p60 TX -> RX loopback (two Sipeed Pmod DVI).
+// Sipeed Pmod DVI signal order (mod/sipeed/pmod_dvi/pmod_pins.csv):
+//   pin1 = TMDS D2, pin2 = D1, pin3 = D0, pin4 = CLK; N = pin + 6.
+
+IO_LOC "clock" E2;
+IO_PORT "clock" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+IO_LOC "reset_button" H11;
+IO_PORT "reset_button" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+
+// TX on PMOD2 (banks 6/7): emulated differential (ELVDS_OBUF), LVPECL33E
+// DRIVE=16 as found best at 1.4875 Gbps in eda/easycdr_bert. At 1.485 Gbps
+//   - LVCMOS33D DRIVE=8 (dvi_out_tpg's setting) loses isolated bits;
+//   - true LVDS (TLVDS_OBUF, LVDS25) never locked through the Pmod DVI
+//     modules (too little swing).
+//   tx_clk     = pmod2_4/10 = C11/C10
+//   tx_data[0] = pmod2_3/9  = B11/B10
+//   tx_data[1] = pmod2_2/8  = D11/D10
+//   tx_data[2] = pmod2_1/7  = G11/G10
+IO_LOC "tx_clk_p" C11;
+IO_PORT "tx_clk_p" IO_TYPE=LVPECL33E PULL_MODE=NONE DRIVE=16;
+IO_LOC "tx_data_p[0]" B11;
+IO_PORT "tx_data_p[0]" IO_TYPE=LVPECL33E PULL_MODE=NONE DRIVE=16;
+IO_LOC "tx_data_p[1]" D11;
+IO_PORT "tx_data_p[1]" IO_TYPE=LVPECL33E PULL_MODE=NONE DRIVE=16;
+IO_LOC "tx_data_p[2]" G11;
+IO_PORT "tx_data_p[2]" IO_TYPE=LVPECL33E PULL_MODE=NONE DRIVE=16;
+
+// RX on PMOD0 (bank 1: on-die 100 ohm differential termination; the
+// slot dvi_capture reached bit-perfect 720p on). CTLE=HIGH: the receiver
+// equalizer is required at 1.4875 Gbps (easycdr_bert: LOW does not lock,
+// MEDIUM 8e-3, HIGH 2.4e-4).
+//   rx_clk = pmod0_4/10 = H5/J5 (feeds the recovery PLL only)
+//   rx_d0  = pmod0_3/9  = H8/H7
+//   rx_d1  = pmod0_2/8  = G7/G8
+//   rx_d2  = pmod0_1/7  = F5/G5
+IO_LOC "rx_clk_p" H5;
+IO_PORT "rx_clk_p" IO_TYPE=LVDS25 PULL_MODE=NONE DIFF_RESISTOR=ON CTLE=HIGH;
+IO_LOC "rx_d0_p" H8;
+IO_PORT "rx_d0_p" IO_TYPE=LVDS25 PULL_MODE=NONE DIFF_RESISTOR=ON CTLE=HIGH;
+IO_LOC "rx_d1_p" G7;
+IO_PORT "rx_d1_p" IO_TYPE=LVDS25 PULL_MODE=NONE DIFF_RESISTOR=ON CTLE=HIGH;
+IO_LOC "rx_d2_p" F5;
+IO_PORT "rx_d2_p" IO_TYPE=LVDS25 PULL_MODE=NONE DIFF_RESISTOR=ON CTLE=HIGH;
+
+// USB-UART (USB Debugger, FT2232 if01), 115200 8N1
+IO_LOC "uart_txd" C3;
+IO_PORT "uart_txd" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "uart_rxd" B3;
+IO_PORT "uart_rxd" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+// Status LEDs (dual-purpose configuration pins, see project.tcl)
+IO_LOC "led_locked" B2;
+IO_PORT "led_locked" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "led_error" C2;
+IO_PORT "led_error" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
+// Scope taps on PMOD1 top row (pmod1_1..4)
+IO_LOC "dbg[0]" A11;
+IO_PORT "dbg[0]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "dbg[1]" E11;
+IO_PORT "dbg[1]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "dbg[2]" K11;
+IO_PORT "dbg[2]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "dbg[3]" L5;
+IO_PORT "dbg[3]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;

@@ -76,6 +76,8 @@ module dvi_in_phy #(
 
     // Bring-up debug taps (scope outputs; safe to leave unconnected).
     output wire [9:0]  o_dbg_word_d0,
+    output wire [9:0]  o_dbg_word_d1,
+    output wire [9:0]  o_dbg_word_d2,
     output wire        o_dbg_align_shift
 );
 
@@ -90,6 +92,8 @@ module dvi_in_phy #(
 
     wire        align_shift_req;
     assign o_dbg_word_d0     = word_d0;
+    assign o_dbg_word_d1     = word_d1;
+    assign o_dbg_word_d2     = word_d2;
     assign o_dbg_align_shift = align_shift_req;
     wire        delay_load;
     wire [4:0]  delay_tap;
