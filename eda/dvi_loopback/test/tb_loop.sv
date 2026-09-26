@@ -295,6 +295,26 @@ module tb_loop;
         // second (after "a") on the common offset
         check(r.k == 24'h000004 && r.o == 8'h24 && r.t == "a", $sformatf("reset + retarget, O=%02h K=%06h T=%s", r.o, r.k, string'(r.t)));
 
+        // 3c. commands arriving back to back (and while a line is being
+        //     printed) are queued, none lost: 8 x ">" on lane 1
+        send_char("1");
+        for (int i = 0; i < 8; i++) begin
+            uart_to_dut = 0;
+            repeat (BAUD) @(posedge sys_clk);
+            for (int b = 0; b < 8; b++) begin
+                uart_to_dut = (8'h3E >> b) & 1;
+                repeat (BAUD) @(posedge sys_clk);
+            end
+            uart_to_dut = 1;
+            repeat (BAUD) @(posedge sys_clk);   // stop bit only, no gap
+        end
+        send_char("a");
+        next_line(r);
+        next_line(r);
+        check(r.k == 24'h000804, $sformatf("8 queued > on lane 1 (K=%06h)", r.k));
+        send_char("d");
+        send_char("+");   // back to O = 24 for the scan checks below
+
         // 4. scan
         send_char("s");
         for (int i = 0; i < 64; i++) begin

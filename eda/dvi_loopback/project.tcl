@@ -78,6 +78,18 @@ if {${TX_SLOT} == "PMOD1"} {
         {IO_LOC "dbg[3]" L5}        {IO_LOC "dbg[3]" C11}] $cst]
 }
 set cst [string map [list "IO_TYPE=LVPECL33E PULL_MODE=NONE DRIVE=16" "IO_TYPE=${TX_IOTYPE} PULL_MODE=NONE DRIVE=${TX_DRIVE}" "CTLE=HIGH" "CTLE=${CTLE}"] $cst]
+#   RX_TERM = ON (default) | OFF        on-die 100 ohm differential termination
+#   CTLE_CLK / CTLE_D0 / CTLE_D1 / CTLE_D2   per-pair override of CTLE
+if {[info exists ::env(RX_TERM)] && $::env(RX_TERM) ne ""} {
+    set cst [string map [list "DIFF_RESISTOR=ON" "DIFF_RESISTOR=$::env(RX_TERM)"] $cst]
+}
+foreach {var port} {CTLE_CLK rx_clk_p CTLE_D0 rx_d0_p CTLE_D1 rx_d1_p CTLE_D2 rx_d2_p} {
+    if {[info exists ::env($var)] && $::env($var) ne ""} {
+        set re [format {(IO_PORT "%s"[^\n]*CTLE=)[A-Z]+} $port]
+        regsub $re $cst "\\1$::env($var)" cst
+    }
+}
+
 set fh [open pins_gen.cst w]; puts -nonewline $fh $cst; close $fh
 add_file -type cst [file normalize pins_gen.cst]
 if {${RATE} == "720P"} {

@@ -93,6 +93,13 @@ module loop_report #(
 
     logic       rx_valid;
     logic [7:0] rx_char;
+
+    // Commands are only executed in S_IDLE; queue them so characters that
+    // arrive while a line is being printed are not lost.
+    logic [7:0] cmd_fifo [0:15];
+    logic [4:0] cmd_wp, cmd_rp;
+    wire        cmd_valid = cmd_wp != cmd_rp;
+    wire [7:0]  cmd_char  = cmd_fifo[cmd_rp[3:0]];
     uart_rx #(.BAUD_DIVIDER(BAUD_DIVIDER)) u_rx (
         .clock     (clock),
         .reset     (reset),
@@ -266,6 +273,8 @@ module loop_report #(
             o_offset     <= OFFSET_DEFAULT;
             o_lane_offset <= '{default: '0};
             sel          <= 2'd3;
+            cmd_wp       <= '0;
+            cmd_rp       <= '0;
             set_req      <= 1'b0;
             set_val      <= '0;
             saved_offset <= OFFSET_DEFAULT;
@@ -287,6 +296,10 @@ module loop_report #(
             o_clear     <= 1'b0;
             o_words_req <= 1'b0;
             set_req     <= 1'b0;
+            if (rx_valid && (cmd_wp - cmd_rp) != 5'd16) begin
+                cmd_fifo[cmd_wp[3:0]] <= rx_char;
+                cmd_wp <= cmd_wp + 1'd1;
+            end
             if (set_req) begin
                 if (sel == 2'd3) o_offset           <= set_val;
                 else             o_lane_offset[sel] <= set_val;
@@ -296,8 +309,9 @@ module loop_report #(
 
             case (state)
                 S_IDLE: begin
-                    if (rx_valid) begin
-                        case (rx_char)
+                    if (cmd_valid && !set_req) begin   // wait for the previous offset update
+                        cmd_rp <= cmd_rp + 1'd1;
+                        case (cmd_char)
                             "+": begin set_val <= target_val + 8'd4; set_req <= 1'b1; end
                             "-": begin set_val <= target_val - 8'd4; set_req <= 1'b1; end
                             ">": begin set_val <= target_val + 8'd1; set_req <= 1'b1; end

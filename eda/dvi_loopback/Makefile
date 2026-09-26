@@ -22,6 +22,15 @@ ifneq ($(TX_CLK),)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_clk$(shell echo $(TX_CLK) | tr A-Z a-z)
 export TX_CLK
 endif
+ifneq ($(RX_TERM),)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_term$(shell echo $(RX_TERM) | tr A-Z a-z)
+export RX_TERM
+endif
+LANE_CTLE := $(foreach v,CTLE_CLK CTLE_D0 CTLE_D1 CTLE_D2,$(if $($(v)),_$(shell echo $(v)$($(v)) | tr A-Z a-z | sed 's/ctle_//')))
+ifneq ($(LANE_CTLE),)
+BUILD_SUFFIX := $(BUILD_SUFFIX)$(subst $(eval) ,,$(LANE_CTLE))
+export CTLE_CLK CTLE_D0 CTLE_D1 CTLE_D2
+endif
 ifneq ($(CTLE),)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_ctle$(shell echo $(CTLE) | tr A-Z a-z)
 export CTLE
