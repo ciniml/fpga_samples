@@ -47,6 +47,7 @@ module loop_check (
     input  wire  [9:0]  i_word1,
     input  wire  [9:0]  i_word2,
     output logic [7:0]  o_rx_offset,
+    output logic [7:0]  o_rx_lane_offset [0:2],
     output logic        o_frame_bad,      // one clock per mismatched frame
 
     // ---- TX domain (quasi-static) ----
@@ -68,6 +69,7 @@ module loop_check (
     output logic [31:0] sys_rx_cycles,    // free-running RX clock count (frequency check)
     output logic [31:0] sys_pix_err,      // active pixels that differ from the pattern
     output logic [31:0] sys_bit_err,      // wrong bits in those pixels
+    output logic [31:0] sys_lane_bit_err [0:2], // wrong bits per lane (0 = B, 1 = G, 2 = R)
     output logic [23:0] sys_lane_err [0:2], // decode errors per lane (low 24 bits)
     input  wire         sys_clear,        // pulse
     // Raw word capture: 12 consecutive words of each lane, starting at the
@@ -75,7 +77,8 @@ module loop_check (
     input  wire         sys_words_req,    // pulse
     output logic        sys_words_done,   // pulse; sys_words valid
     output logic [9:0]  sys_words [0:2][0:11],
-    input  wire  [7:0]  sys_offset
+    input  wire  [7:0]  sys_offset,
+    input  wire  [7:0]  sys_lane_offset [0:2]
 );
     // =================================================================
     // TX reference into the RX domain
@@ -115,6 +118,7 @@ module loop_check (
     logic [2:0] snap_req_sync = '0;             // RX domain
     logic       snap_ack_t = 1'b0;              // RX domain
     logic [7:0] ofs_s0 = '0, ofs_s1 = '0;
+    logic [23:0] lofs_s0 = '0, lofs_s1 = '0;
 
     always_ff @(posedge rx_clk) begin
         clear_sync    <= {clear_sync[1:0], clear_t};
@@ -122,6 +126,9 @@ module loop_check (
         ofs_s0        <= sys_offset;
         ofs_s1        <= ofs_s0;
         if (ofs_s0 == ofs_s1) o_rx_offset <= ofs_s1;
+        lofs_s0 <= {sys_lane_offset[2], sys_lane_offset[1], sys_lane_offset[0]};
+        lofs_s1 <= lofs_s0;
+        if (lofs_s0 == lofs_s1) {o_rx_lane_offset[2], o_rx_lane_offset[1], o_rx_lane_offset[0]} <= lofs_s1;
     end
     wire rx_clear = clear_sync[2] != clear_sync[1];
 
@@ -141,6 +148,14 @@ module loop_check (
     logic        px_cmp = 1'b0, px_cmp_q = 1'b0;
     logic [23:0] px_got = '0, px_exp = '0, px_diff = '0;
     logic [4:0]  px_bits = '0;
+    logic [3:0]  px_lbits [0:2] = '{default: '0};
+    logic [31:0] lane_bit_err [0:2] = '{default: '0};
+    function automatic logic [3:0] popcount8(input logic [7:0] v);
+        logic [3:0] n;
+        n = '0;
+        for (int i = 0; i < 8; i++) n += 4'(v[i]);
+        return n;
+    endfunction
     logic        px_bad_q = 1'b0;
     logic [31:0] pix_err = '0, bit_err = '0;
     function automatic logic [4:0] popcount24(input logic [23:0] v);
@@ -175,6 +190,7 @@ module loop_check (
         px_diff  <= px_cmp ? (px_got ^ px_exp) : '0;
         // stage 2: popcount
         px_bits  <= popcount24(px_diff);
+        for (int l = 0; l < 3; l++) px_lbits[l] <= popcount8(px_diff[l * 8 +: 8]);
         px_bad_q <= px_cmp_q && px_diff != '0;
     end
     logic        locked_q   = 1'b0;
@@ -200,6 +216,7 @@ module loop_check (
             lane_err   <= '{default: '0};
             pix_err    <= '0;
             bit_err    <= '0;
+            lane_bit_err <= '{default: '0};
         end else begin
             if (cmp_stb_q) begin
                 frames     <= frames + 1'd1;
@@ -217,6 +234,7 @@ module loop_check (
             if (px_bad_q) begin
                 pix_err <= pix_err + 1'd1;
                 bit_err <= bit_err + 32'(px_bits);
+                for (int l = 0; l < 3; l++) lane_bit_err[l] <= lane_bit_err[l] + 32'(px_lbits[l]);
             end
             if (locked_q && !i_locked && unlock != '1) unlock <= unlock + 1'd1;
         end
@@ -228,12 +246,14 @@ module loop_check (
     logic [31:0]  rx_cycles = '0;
     logic [31:0]  rx_snap_cycles = '0;
     logic [63:0]  rx_snap_px = '0;
+    logic [31:0]  rx_snap_lbits [0:2] = '{default: '0};
     always_ff @(posedge rx_clk) begin
         if (snap_req_sync[2] != snap_req_sync[1]) begin
             rx_snap      <= {i_locked, frames, bad, derr, unlock, last_count};
             rx_snap_lane   <= lane_err;
             rx_snap_cycles <= rx_cycles;
             rx_snap_px     <= {pix_err, bit_err};
+            rx_snap_lbits  <= lane_bit_err;
             snap_ack_t     <= ~snap_ack_t;
         end
     end
@@ -288,6 +308,7 @@ module loop_check (
             sys_lane_err  <= rx_snap_lane;
             sys_rx_cycles <= rx_snap_cycles;
             {sys_pix_err, sys_bit_err} <= rx_snap_px;
+            sys_lane_bit_err <= rx_snap_lbits;
             sys_snap_done <= 1'b1;
         end
     end

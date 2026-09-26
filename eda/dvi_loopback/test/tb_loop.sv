@@ -120,6 +120,8 @@ module tb_loop;
     logic [7:0]  sys_offset, rx_offset;
     logic [23:0] lane_err [0:2];
     logic [31:0] rx_cycles, pix_err, bit_err;
+    logic [31:0] lane_bit_err [0:2];
+    logic [7:0]  sys_lane_offset [0:2], rx_lane_offset [0:2];
     logic        words_req, words_done;
     logic [9:0]  words [0:2][0:11];
     loop_check u_check (
@@ -130,7 +132,8 @@ module tb_loop;
         .i_tx_s1(ref_s1), .i_tx_s2(ref_s2), .i_tx_count(ref_count), .i_tx_ref_valid(ref_valid),
         .sys_clk(sys_clk), .sys_snap_req(snap_req), .sys_snap_done(snap_done),
         .sys_locked(snap_locked), .sys_frames(snap_frames), .sys_bad(snap_bad), .sys_derr(snap_derr),
-        .sys_unlock(snap_unlock), .sys_last_count(snap_count), .sys_lane_err(lane_err), .sys_rx_cycles(rx_cycles), .sys_pix_err(pix_err), .sys_bit_err(bit_err), .sys_clear(clear_req),
+        .sys_unlock(snap_unlock), .sys_last_count(snap_count), .sys_lane_err(lane_err), .sys_rx_cycles(rx_cycles), .sys_pix_err(pix_err), .sys_bit_err(bit_err),
+        .sys_lane_bit_err(lane_bit_err), .sys_lane_offset(sys_lane_offset), .o_rx_lane_offset(rx_lane_offset), .sys_clear(clear_req),
         .sys_words_req(words_req), .sys_words_done(words_done), .sys_words(words), .sys_offset(sys_offset)
     );
 
@@ -142,7 +145,8 @@ module tb_loop;
         .clock(sys_clk), .reset(reset), .uart_rxd(uart_to_dut), .uart_txd(uart_from_dut),
         .o_offset(sys_offset), .o_snap_req(snap_req), .i_snap_done(snap_done), .i_locked(snap_locked),
         .i_frames(snap_frames), .i_bad(snap_bad), .i_derr(snap_derr), .i_unlock(snap_unlock),
-        .i_last_count(snap_count), .i_lane_err(lane_err), .i_rx_cycles(rx_cycles), .i_pix_err(pix_err), .i_bit_err(bit_err), .i_pll_lock(1'b1), .o_clear(clear_req),
+        .i_last_count(snap_count), .i_lane_err(lane_err), .i_rx_cycles(rx_cycles), .i_pix_err(pix_err), .i_bit_err(bit_err),
+        .i_lane_bit_err(lane_bit_err), .o_lane_offset(sys_lane_offset), .i_pll_lock(1'b1), .o_clear(clear_req),
         .o_words_req(words_req), .i_words_done(words_done), .i_words(words)
     );
 
@@ -184,7 +188,8 @@ module tb_loop;
     typedef struct {
         byte  kind;
         byte  lock;
-        int unsigned f, b, e, e0, e1, e2, u, n, o, x, y;
+        int unsigned f, b, e, e0, e1, e2, u, n, o, x, y, z0, z1, z2, k;
+        byte  t;
     } rep_t;
 
     function automatic int unsigned hexval(input string s);
@@ -212,6 +217,11 @@ module tb_loop;
         r.o = hexval(s.substr(79, 80));
         r.x = hexval(s.substr(96, 103));
         r.y = hexval(s.substr(106, 113));
+        r.z0 = hexval(s.substr(117, 124));
+        r.z1 = hexval(s.substr(128, 135));
+        r.z2 = hexval(s.substr(139, 146));
+        r.k = hexval(s.substr(149, 154));
+        r.t = s[157];
         return r;
     endfunction
 
@@ -254,6 +264,8 @@ module tb_loop;
         next_line(r);
         check(r.kind == "R" && r.b == 1, $sformatf("one mismatched frame after injection (B=%0d)", r.b));
         check(r.x == 1 && r.y >= 1, $sformatf("one wrong pixel after injection (X=%0d Y=%0d)", r.x, r.y));
+        // the injected bit is in lane 1 (G)
+        check(r.z0 == 0 && r.z1 == r.y && r.z2 == 0, $sformatf("lane bit errors Z0=%0d Z1=%0d Z2=%0d", r.z0, r.z1, r.z2));
         check(r.lock == "1" && r.u == 0, "still locked after a data error");
 
         // 3. clear, offset +4
@@ -264,6 +276,24 @@ module tb_loop;
         next_line(r);
         check(r.b == 0 && r.f < prev_f, $sformatf("counters cleared (F=%0d B=%0d)", r.f, r.b));
         check(r.o == 8'h24, $sformatf("offset after + is %02h", r.o));
+
+        // 3b. per-lane trim: select lane 2, +1 twice, back to common
+        send_char("2");
+        send_char(">");
+        send_char(">");
+        next_line(r);
+        next_line(r);
+        check(r.k == 24'h000002 && r.t == "2", $sformatf("lane 2 trim (K=%06h T=%s)", r.k, string'(r.t)));
+        check(u_check.o_rx_lane_offset[2] == 8'd2, "lane 2 trim reached the RX domain");
+        send_char("d");
+        send_char("+");
+        send_char("a");
+        send_char("+");
+        next_line(r);
+        next_line(r);
+        // "d" resets everything; the first "+" still acts on lane 2, the
+        // second (after "a") on the common offset
+        check(r.k == 24'h000004 && r.o == 8'h24 && r.t == "a", $sformatf("reset + retarget, O=%02h K=%06h T=%s", r.o, r.k, string'(r.t)));
 
         // 4. scan
         send_char("s");

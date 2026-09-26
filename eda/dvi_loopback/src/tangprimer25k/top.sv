@@ -265,6 +265,7 @@ module top (
     // ~48 taps (~14 ps/tap); use the "s" scan to find the eye.
     dvi_in_phy #(.DELAY_TAP_INIT(24)) u_phy (
         .i_delay_offset   (rx_offset),
+        .i_delay_offset_lane(rx_lane_offset),
         .i_pclk           (rx_pclk),
         .i_fclk           (rx_fclk),
         .i_reset          (reset_rx),
@@ -298,6 +299,9 @@ module top (
     logic [9:0]  words [0:2][0:11];
     logic [31:0] snap_rx_cycles;
     logic [31:0] snap_pix_err, snap_bit_err;
+    logic [31:0] snap_lane_bit_err [0:2];
+    logic [7:0]  sys_lane_offset [0:2];
+    logic [7:0]  rx_lane_offset [0:2];
 
     loop_check u_check (
         .rx_clk        (rx_pclk),
@@ -312,6 +316,7 @@ module top (
         .i_word1       (dbg_word_d1),
         .i_word2       (dbg_word_d2),
         .o_rx_offset   (rx_offset),
+        .o_rx_lane_offset(rx_lane_offset),
         .o_frame_bad   (rx_frame_bad),
         .i_tx_s1       (tx_ref_s1),
         .i_tx_s2       (tx_ref_s2),
@@ -330,6 +335,8 @@ module top (
         .sys_rx_cycles (snap_rx_cycles),
         .sys_pix_err   (snap_pix_err),
         .sys_bit_err   (snap_bit_err),
+        .sys_lane_bit_err(snap_lane_bit_err),
+        .sys_lane_offset(sys_lane_offset),
         .sys_clear     (clear_req),
         .sys_words_req (words_req),
         .sys_words_done(words_done),
@@ -355,6 +362,8 @@ module top (
         .i_rx_cycles (snap_rx_cycles),
         .i_pix_err   (snap_pix_err),
         .i_bit_err   (snap_bit_err),
+        .i_lane_bit_err(snap_lane_bit_err),
+        .o_lane_offset(sys_lane_offset),
         .i_pll_lock  (rx_pll_lock),
         .o_clear     (clear_req),
         .o_words_req (words_req),

@@ -28,7 +28,14 @@
  *     s  sampling-phase scan: for O = 00, 04, .. FC, settle SETTLE_CYCLES,
  *        then print an "S" line with the counter deltas over DWELL_CYCLES
  *        (L = lock at the end of the dwell). The offset is restored after.
- *     f  fine scan: offsets O-16 .. O+15 in steps of 1, same "S" lines
+ *     f  fine scan: target value -16 .. +15 in steps of 1, same "S" lines
+ *     a / 0 / 1 / 2   select the target of + - > < s f: a = common
+ *        offset O, 0/1/2 = per-lane trim added to O for that lane
+ *        (0 = B, 1 = G, 2 = R). "d" resets O and all trims.
+ *     > / <  target += 1 / -= 1
+ *
+ *   Per-lane fields: Z0/Z1/Z2 wrong bits per lane, K = trims of lanes
+ *   0, 1, 2 (hex bytes), T = selected target.
  *     w  raw words: 12 consecutive deserializer words of each lane from
  *        the first lane-0 control symbol, one "Wn" line per lane, hex,
  *        bit 0 = first bit received. Control symbols: 354 0AB 154 2AB.
@@ -49,6 +56,7 @@ module loop_report #(
     output logic        uart_txd,
 
     output logic [7:0]  o_offset,
+    output logic [7:0]  o_lane_offset [0:2],
     output logic        o_snap_req,
     input  wire         i_snap_done,
     input  wire         i_locked,
@@ -61,6 +69,7 @@ module loop_report #(
     input  wire  [31:0] i_rx_cycles,
     input  wire  [31:0] i_pix_err,
     input  wire  [31:0] i_bit_err,
+    input  wire  [31:0] i_lane_bit_err [0:2],
     input  wire         i_pll_lock,       // RX PLL lock (asynchronous)
     output logic        o_clear,
     output logic        o_words_req,
@@ -99,7 +108,7 @@ module loop_report #(
     //   "K Lx Fxxxxxxxx Bxxxxxxxx Exxxxxxxx E0xxxxxx E1xxxxxx E2xxxxxx Uxxxx Nxxxxxxxx Oxx\r\n"
     //   "Wn www www ... (12 words)\r\n"
     // -----------------------------------------------------------------
-    localparam int LINE_LEN  = 116;
+    localparam int LINE_LEN  = 160;
     localparam int WLINE_LEN = 53;
 
     logic [7:0]  p_kind;
@@ -114,7 +123,10 @@ module loop_report #(
     logic [2:0]  pll_sync;
     logic [1:0]  p_wlane;
     logic [9:0]  p_wline [0:11];
-    logic [6:0]  line_len;
+    logic [7:0]  line_len;
+    logic [31:0] p_lbit [0:2];
+    logic [23:0] p_trim;
+    logic [7:0]  p_target;
 
     function automatic logic [7:0] hex(input logic [3:0] n);
         return n < 4'd10 ? 8'h30 + 8'(n) : 8'h37 + 8'(n);
@@ -172,13 +184,29 @@ module loop_report #(
         if (i >= 96 && i <= 103) return nib32(p_pix, i - 96);
         if (i == 105)            return "Y";
         if (i >= 106 && i <= 113) return nib32(p_bit, i - 106);
-        if (i == 114)            return 8'h0D;
-        if (i == 115)            return 8'h0A;
+        if (i == 115 || i == 126 || i == 137) return "Z";
+        if (i == 116)            return "0";
+        if (i >= 117 && i <= 124) return nib32(p_lbit[0], i - 117);
+        if (i == 127)            return "1";
+        if (i >= 128 && i <= 135) return nib32(p_lbit[1], i - 128);
+        if (i == 138)            return "2";
+        if (i >= 139 && i <= 146) return nib32(p_lbit[2], i - 139);
+        if (i == 148)            return "K";
+        if (i >= 149 && i <= 154) return nib32({8'd0, p_trim}, i - 147);
+        if (i == 156)            return "T";
+        if (i == 157)            return p_target;
+        if (i == 158)            return 8'h0D;
+        if (i == 159)            return 8'h0A;
         return " ";
     endfunction
 
     // -----------------------------------------------------------------
     // Control FSM
+    // -----------------------------------------------------------------
+    // Selected adjustment target (common offset or one lane's trim)
+    always_comb target_val = sel == 2'd3 ? o_offset : o_lane_offset[sel];
+
+    // -----------------------------------------------------------------
     // -----------------------------------------------------------------
     typedef enum logic [3:0] {
         S_IDLE,
@@ -197,7 +225,11 @@ module loop_report #(
     state_t      print_ret;
     logic [31:0] timer;
     logic [31:0] period;
-    logic [6:0]  char_idx;
+    logic [7:0]  char_idx;
+    logic [1:0]  sel;            // 3 = common offset, 0..2 = lane trim
+    logic [7:0]  target_val;     // current value of the selected target
+    logic        set_req;        // apply set_val to the selected target next clock
+    logic [7:0]  set_val;
     logic [6:0]  scan_step;
     logic [6:0]  scan_count;     // 64 (coarse) or 32 (fine)
     logic [7:0]  scan_base;
@@ -215,6 +247,8 @@ module loop_report #(
     logic [23:0] s_lane [0:2];
     logic [23:0] a_lane [0:2];
     logic [31:0] s_pix, s_bit, a_pix, a_bit;
+    logic [31:0] s_lbit [0:2];
+    logic [31:0] a_lbit [0:2];
     logic [9:0]  words [0:2][0:11];
 
     always_ff @(posedge clock) begin
@@ -230,6 +264,10 @@ module loop_report #(
             scan_base    <= '0;
             scan_stride  <= 3'd4;
             o_offset     <= OFFSET_DEFAULT;
+            o_lane_offset <= '{default: '0};
+            sel          <= 2'd3;
+            set_req      <= 1'b0;
+            set_val      <= '0;
             saved_offset <= OFFSET_DEFAULT;
             o_snap_req   <= 1'b0;
             o_clear      <= 1'b0;
@@ -248,6 +286,11 @@ module loop_report #(
             o_snap_req  <= 1'b0;
             o_clear     <= 1'b0;
             o_words_req <= 1'b0;
+            set_req     <= 1'b0;
+            if (set_req) begin
+                if (sel == 2'd3) o_offset           <= set_val;
+                else             o_lane_offset[sel] <= set_val;
+            end
             pll_sync    <= {pll_sync[1:0], i_pll_lock};
             if (period != 0) period <= period - 1'd1;
 
@@ -255,12 +298,21 @@ module loop_report #(
                 S_IDLE: begin
                     if (rx_valid) begin
                         case (rx_char)
-                            "+": o_offset <= o_offset + 8'd4;
-                            "-": o_offset <= o_offset - 8'd4;
-                            "d": o_offset <= OFFSET_DEFAULT;
+                            "+": begin set_val <= target_val + 8'd4; set_req <= 1'b1; end
+                            "-": begin set_val <= target_val - 8'd4; set_req <= 1'b1; end
+                            ">": begin set_val <= target_val + 8'd1; set_req <= 1'b1; end
+                            "<": begin set_val <= target_val - 8'd1; set_req <= 1'b1; end
+                            "a": sel <= 2'd3;
+                            "0": sel <= 2'd0;
+                            "1": sel <= 2'd1;
+                            "2": sel <= 2'd2;
+                            "d": begin
+                                o_offset      <= OFFSET_DEFAULT;
+                                o_lane_offset <= '{default: '0};
+                            end
                             "c": o_clear  <= 1'b1;
                             "s": begin
-                                saved_offset <= o_offset;
+                                saved_offset <= target_val;
                                 scan_step    <= '0;
                                 scan_count   <= 7'd64;
                                 scan_base    <= '0;
@@ -268,10 +320,10 @@ module loop_report #(
                                 state        <= S_SCAN_SET;
                             end
                             "f": begin
-                                saved_offset <= o_offset;
+                                saved_offset <= target_val;
                                 scan_step    <= '0;
                                 scan_count   <= 7'd32;
-                                scan_base    <= o_offset - 8'd16;
+                                scan_base    <= target_val - 8'd16;
                                 scan_stride  <= 3'd1;
                                 state        <= S_SCAN_SET;
                             end
@@ -306,6 +358,7 @@ module loop_report #(
                             s_lane   <= i_lane_err;
                             s_pix    <= i_pix_err;
                             s_bit    <= i_bit_err;
+                            s_lbit   <= i_lane_bit_err;
                         end
                         case (snap_ret)
                             S_IDLE: begin
@@ -322,6 +375,9 @@ module loop_report #(
                                 p_pll     <= pll_sync[2] ? "1" : "0";
                                 p_pix     <= i_snap_done ? i_pix_err : s_pix;
                                 p_bit     <= i_snap_done ? i_bit_err : s_bit;
+                                p_lbit    <= i_snap_done ? i_lane_bit_err : s_lbit;
+                                p_trim    <= {o_lane_offset[0], o_lane_offset[1], o_lane_offset[2]};
+                                p_target  <= sel == 2'd3 ? "a" : 8'h30 + 8'(sel);
                                 p_offset  <= o_offset;
                                 line_len  <= LINE_LEN;
                                 char_idx  <= '0;
@@ -352,10 +408,10 @@ module loop_report #(
 
                 S_SCAN_SET: begin
                     if (scan_step == scan_count) begin
-                        o_offset <= saved_offset;
+                        begin set_val <= saved_offset; set_req <= 1'b1; end
                         state    <= S_IDLE;
                     end else begin
-                        o_offset   <= scan_base + 8'(scan_step) * 8'(scan_stride);
+                        begin set_val <= scan_base + 8'(scan_step) * 8'(scan_stride); set_req <= 1'b1; end
                         timer      <= SETTLE_CYCLES;
                         state      <= S_SCAN_A;
                         scan_a_req <= 1'b0;
@@ -380,6 +436,7 @@ module loop_report #(
                         a_lane   <= s_lane;
                         a_pix    <= s_pix;
                         a_bit    <= s_bit;
+                        a_lbit   <= s_lbit;
                         timer    <= DWELL_CYCLES;
                         state    <= S_SCAN_DWELL;
                     end
@@ -409,6 +466,9 @@ module loop_report #(
                     p_pll     <= pll_sync[2] ? "1" : "0";
                     p_pix     <= s_pix - a_pix;
                     p_bit     <= s_bit - a_bit;
+                    for (int l = 0; l < 3; l++) p_lbit[l] <= s_lbit[l] - a_lbit[l];
+                    p_trim    <= {o_lane_offset[0], o_lane_offset[1], o_lane_offset[2]};
+                    p_target  <= sel == 2'd3 ? "a" : 8'h30 + 8'(sel);
                     p_offset  <= o_offset;
                     line_len  <= LINE_LEN;
                     char_idx  <= '0;

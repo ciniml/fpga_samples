@@ -63,6 +63,9 @@ module dvi_in_phy #(
     // Bring-up: static sampling-phase offset added to every lane's
     // IODELAY tap (full 8-bit DLYSTEP range).
     input  wire [7:0]  i_delay_offset,
+    // Per-lane trim added to i_delay_offset (lane 0, 1, 2). Tie to 0 for
+    // a shared sampling phase.
+    input  wire [7:0]  i_delay_offset_lane [0:2],
 
     // Recovered video
     output wire [23:0] o_video_data,
@@ -90,6 +93,12 @@ module dvi_in_phy #(
     wire [9:0] word_d1;
     wire [9:0] word_d2;
 
+    // Per-lane IODELAY offset (quasi-static; mod-256 like the tap sum).
+    logic [7:0] lane_offset [0:2];
+    always_ff @(posedge i_pclk) begin
+        for (int l = 0; l < 3; l++) lane_offset[l] <= i_delay_offset + i_delay_offset_lane[l];
+    end
+
     wire        align_shift_req;
     assign o_dbg_word_d0     = word_d0;
     assign o_dbg_word_d1     = word_d1;
@@ -111,7 +120,7 @@ module dvi_in_phy #(
         .i_delay_tap     (delay_tap),
         .i_delay_inc     (delay_inc),
         .i_delay_dec     (delay_dec),
-        .i_delay_offset  (i_delay_offset),
+        .i_delay_offset  (lane_offset[0]),
         .o_delay_saturate(delay_saturate[0]),
         .o_word          (word_d0)
     );
@@ -125,7 +134,7 @@ module dvi_in_phy #(
         .i_delay_tap     (delay_tap),
         .i_delay_inc     (delay_inc),
         .i_delay_dec     (delay_dec),
-        .i_delay_offset  (i_delay_offset),
+        .i_delay_offset  (lane_offset[1]),
         .o_delay_saturate(delay_saturate[1]),
         .o_word          (word_d1)
     );
@@ -139,7 +148,7 @@ module dvi_in_phy #(
         .i_delay_tap     (delay_tap),
         .i_delay_inc     (delay_inc),
         .i_delay_dec     (delay_dec),
-        .i_delay_offset  (i_delay_offset),
+        .i_delay_offset  (lane_offset[2]),
         .o_delay_saturate(delay_saturate[2]),
         .o_word          (word_d2)
     );

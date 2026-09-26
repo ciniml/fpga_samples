@@ -122,6 +122,7 @@ module top(
     // up VSYNC falling-edge jitter observed at tap 16 (2026-08 bring-up).
     dvi_in_phy #(.DELAY_TAP_INIT(24)) u_phy (
         .i_delay_offset(cal_offset),
+        .i_delay_offset_lane('{default: 8'd0}),
         .i_pclk       (pclk),
         .i_fclk       (fclk),
         .i_reset      (reset_pclk),
