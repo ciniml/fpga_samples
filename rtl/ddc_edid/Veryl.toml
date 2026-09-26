@@ -1,0 +1,20 @@
+[project]
+name    = "ddc_edid"
+version = "0.1.0"
+
+[build]
+clock_type          = "posedge"
+reset_type          = "sync_high"
+omit_project_prefix = true
+
+[test.verilator]
+compile_args = [
+    "-Wno-WIDTHEXPAND",
+    "-Wno-WIDTHTRUNC",
+    "-Wno-CASEINCOMPLETE",
+    "-Wno-UNUSEDSIGNAL",
+    "-Wno-UNDRIVEN",
+    "-Wno-PINMISSING",
+    "-Wno-INITIALDLY",
+    "-Wno-TIMESCALEMOD",
+]

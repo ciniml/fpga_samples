@@ -1,0 +1,423 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_ddc_edid.veryl
+ * @brief Tests for ddc_edid / hpd_ctrl.
+ *
+ *  - ddc_edid_read: bit-banged I2C master on an open-drain (wired-AND) bus
+ *                   at 100kHz and 400kHz. Random read of the whole EDID
+ *                   (header / checksum / DTD checked), current-address
+ *                   read, wrap at 256, NACK for 0x30 (E-DDC segment) and
+ *                   0x3A (HDCP), NACK for data written after the offset,
+ *                   and SCL/SDA spikes shorter than the filter.
+ *  - hpd_ctrl_seq : +5V debounce, minimum HPD low time, replug, ready.
+ */
+
+module TbDdcEdid {}
+
+#[test(ddc_edid_read)]
+embed (inline) sv{{{
+`timescale 1ns/1ps
+
+module ddc_edid_read;
+    logic clock;
+    logic reset;
+
+    // Open-drain bus: the master drives SCL and SDA low via *_oe, the
+    // target drives SDA low via dut_sda_oe; pull-ups make the rest high.
+    logic m_scl_oe;
+    logic m_sda_oe;
+    logic dut_sda_oe;
+    logic glitch_scl;
+    logic glitch_sda;
+    wire  scl = !(m_scl_oe || glitch_scl);
+    wire  sda = !(m_sda_oe || dut_sda_oe || glitch_sda);
+
+    logic       busy;
+    logic       read_strobe;
+    logic [7:0] offset;
+
+    ddc_edid dut (
+        .i_clk        (clock),
+        .i_rst        (reset),
+        .i_scl        (scl),
+        .i_sda        (sda),
+        .o_sda_oe     (dut_sda_oe),
+        .o_busy       (busy),
+        .o_read_strobe(read_strobe),
+        .o_offset     (offset)
+    );
+
+    // Reference copy of the ROM for comparison.
+    logic [7:0] ref_addr;
+    logic [7:0] ref_data;
+    edid_rom u_ref (.i_addr(ref_addr), .o_data(ref_data));
+
+    logic [7:0] ref_rom [0:127];
+
+    function automatic logic [7:0] rom(input logic [7:0] a);
+        return ref_rom[a[6:0]];
+    endfunction
+
+    initial begin
+        clock = 0;
+        forever #10 clock = ~clock; // 50MHz
+    end
+
+    // ----------------------------------------------------------------
+    // I2C master (quarter-bit timing)
+    // ----------------------------------------------------------------
+    integer tq; // quarter bit period in ns
+
+    task automatic bus_idle();
+        m_scl_oe = 0;
+        m_sda_oe = 0;
+        #(tq * 4);
+    endtask
+
+    task automatic i2c_start();
+        // SCL and SDA high here (idle or after a data bit with SDA released)
+        m_sda_oe = 0;
+        #tq;
+        m_scl_oe = 0;
+        #tq;
+        m_sda_oe = 1;  // SDA falls while SCL high
+        #tq;
+        m_scl_oe = 1;
+        #tq;
+    endtask
+
+    task automatic i2c_stop();
+        m_sda_oe = 1;
+        #tq;
+        m_scl_oe = 0;
+        #tq;
+        m_sda_oe = 0;  // SDA rises while SCL high
+        #(tq * 2);
+    endtask
+
+    task automatic clock_bit(input logic b, output logic sampled);
+        // Enter with SCL low.
+        m_sda_oe = !b;
+        #tq;
+        m_scl_oe = 0;
+        #tq;
+        sampled = sda;
+        #tq;
+        m_scl_oe = 1;
+        #tq;
+    endtask
+
+    task automatic write_byte(input logic [7:0] d, output logic ack);
+        logic s;
+        for (int i = 7; i >= 0; i--) clock_bit(d[i], s);
+        clock_bit(1'b1, s);
+        ack = !s;
+    endtask
+
+    task automatic read_byte(input logic ack, output logic [7:0] d);
+        logic s;
+        for (int i = 7; i >= 0; i--) begin
+            clock_bit(1'b1, s);
+            d[i] = s;
+        end
+        clock_bit(!ack, s);
+    endtask
+
+    integer errors;
+
+    task automatic expect_ack(input logic ack, input logic want, input string what);
+        if (ack !== want) begin
+            errors++;
+            $display("[tb_ddc_edid] %s: %s expected, got %s", what,
+                     want ? "ACK" : "NACK", ack ? "ACK" : "NACK");
+        end
+    endtask
+
+    // Random read: S A0 off Sr A1 d0..dn-1 P
+    task automatic random_read(input logic [7:0] off, input int n, output logic [7:0] buf_out [0:255]);
+        logic ack;
+        i2c_start();
+        write_byte(8'hA0, ack); expect_ack(ack, 1, "random read addr W");
+        write_byte(off, ack);   expect_ack(ack, 1, "random read offset");
+        i2c_start();
+        write_byte(8'hA1, ack); expect_ack(ack, 1, "random read addr R");
+        for (int i = 0; i < n; i++) read_byte(i != n - 1, buf_out[i]);
+        i2c_stop();
+    endtask
+
+    task automatic check_bytes(input logic [7:0] off, input int n, input logic [7:0] got [0:255], input string what);
+        for (int i = 0; i < n; i++) begin
+            logic [7:0] a;
+            a = off + i[7:0];
+            if (got[i] !== rom({1'b0, a[6:0]})) begin
+                errors++;
+                $display("[tb_ddc_edid] %s: byte %0d (offset %02h) = %02h, expected %02h",
+                         what, i, a, got[i], rom({1'b0, a[6:0]}));
+            end
+        end
+    endtask
+
+    logic [7:0] rbuf [0:255];
+
+    task automatic run_suite(input int khz);
+        logic ack;
+        logic [7:0] sum;
+        tq = 1_000_000 / khz / 4;
+        bus_idle();
+
+        // 1. Whole EDID by random read from 0
+        random_read(8'h00, 128, rbuf);
+        check_bytes(8'h00, 128, rbuf, "full read");
+        sum = 0;
+        for (int i = 0; i < 128; i++) sum += rbuf[i];
+        if (sum != 0) begin
+            errors++;
+            $display("[tb_ddc_edid] checksum: sum = %02h", sum);
+        end
+        if ({rbuf[0], rbuf[1], rbuf[6], rbuf[7]} != 32'h00FF_FF00 || rbuf[18] != 8'h01 || rbuf[19] != 8'h03) begin
+            errors++;
+            $display("[tb_ddc_edid] header / version mismatch");
+        end
+        // Preferred DTD: 1280x720@60, 74.25MHz
+        if ({rbuf[54], rbuf[55], rbuf[56], rbuf[58]} != 32'h011D_0051 || rbuf[126] != 8'h00) begin
+            errors++;
+            $display("[tb_ddc_edid] DTD / extension count mismatch");
+        end
+        if (offset != 8'h80) begin
+            errors++;
+            $display("[tb_ddc_edid] offset after 128-byte read = %02h", offset);
+        end
+
+        // 2. Current-address read continues at 0x80 (mirror of block 0)
+        i2c_start();
+        write_byte(8'hA1, ack); expect_ack(ack, 1, "current read addr");
+        for (int i = 0; i < 4; i++) read_byte(i != 3, rbuf[i]);
+        i2c_stop();
+        check_bytes(8'h80, 4, rbuf, "current-address read");
+
+        // 3. Sequential read wraps at 256
+        random_read(8'hFE, 4, rbuf);
+        check_bytes(8'hFE, 4, rbuf, "wrap read");
+
+        // 4. E-DDC segment pointer and HDCP are not answered
+        i2c_start();
+        write_byte(8'h60, ack); expect_ack(ack, 0, "segment pointer 0x30");
+        i2c_stop();
+        i2c_start();
+        write_byte(8'h74, ack); expect_ack(ack, 0, "HDCP 0x3A");
+        i2c_stop();
+
+        // 5. Offset is ACKed, data after it is NACKed (read-only)
+        i2c_start();
+        write_byte(8'hA0, ack); expect_ack(ack, 1, "write addr");
+        write_byte(8'h10, ack); expect_ack(ack, 1, "write offset");
+        write_byte(8'h55, ack); expect_ack(ack, 0, "write data");
+        i2c_stop();
+        // ...and the EDID is unchanged
+        random_read(8'h10, 2, rbuf);
+        check_bytes(8'h10, 2, rbuf, "read after write attempt");
+
+        // 6. Spikes shorter than the filter (8 clocks = 160ns) are ignored:
+        //    an SDA spike on an idle bus (would be START+STOP) and an SCL
+        //    spike in the middle of a data bit (would be an extra clock).
+        #(tq);
+        glitch_sda = 1; #60; glitch_sda = 0;
+        #(tq);
+        i2c_start();
+        write_byte(8'hA0, ack); expect_ack(ack, 1, "glitch addr W");
+        write_byte(8'h08, ack); expect_ack(ack, 1, "glitch offset");
+        i2c_start();
+        write_byte(8'hA1, ack); expect_ack(ack, 1, "glitch addr R");
+        fork
+            begin
+                // SCL high phase of the 3rd bit of the first data byte
+                #(tq * 4 * 2 + tq * 2 + tq / 2);
+                glitch_scl = 1; #60; glitch_scl = 0;
+            end
+            begin
+                for (int i = 0; i < 4; i++) read_byte(i != 3, rbuf[i]);
+            end
+        join
+        i2c_stop();
+        check_bytes(8'h08, 4, rbuf, "read with spikes");
+
+        if (busy) begin
+            errors++;
+            $display("[tb_ddc_edid] still busy after STOP");
+        end
+    endtask
+
+    initial begin
+        errors     = 0;
+        m_scl_oe   = 0;
+        m_sda_oe   = 0;
+        glitch_scl = 0;
+        glitch_sda = 0;
+        tq         = 2500;
+        for (int i = 0; i < 128; i++) begin
+            ref_addr = i[7:0];
+            #1;
+            ref_rom[i] = ref_data;
+        end
+        reset      = 1;
+        repeat (16) @(posedge clock);
+        reset = 0;
+        repeat (16) @(posedge clock);
+
+        run_suite(100);
+        run_suite(400);
+
+        if (errors != 0) begin
+            $fatal(1, "[tb_ddc_edid] %0d errors", errors);
+        end
+        $display("[tb_ddc_edid] PASS (100kHz and 400kHz)");
+        $finish;
+    end
+
+    initial begin
+        #200_000_000;
+        $fatal(1, "[tb_ddc_edid] timeout");
+    end
+endmodule
+}}}
+
+#[test(hpd_ctrl_seq)]
+embed (inline) sv{{{
+`timescale 1ns/1ps
+
+module hpd_ctrl_seq;
+    logic clock;
+    logic reset;
+    logic v5;
+    logic ready;
+    logic replug;
+    logic hpd;
+    logic v5_good;
+
+    // 1MHz clock scaling: DEBOUNCE 1ms = 1000 cycles, LOW 2ms = 2000 cycles
+    localparam int DEB = 1000;
+    localparam int LOW = 2000;
+
+    hpd_ctrl #(
+        .CLK_HZ     (1_000_000),
+        .DEBOUNCE_MS(1),
+        .HPD_LOW_MS (2)
+    ) dut (
+        .i_clk    (clock),
+        .i_rst    (reset),
+        .i_5v     (v5),
+        .i_ready  (ready),
+        .i_replug (replug),
+        .o_hpd    (hpd),
+        .o_5v_good(v5_good)
+    );
+
+    initial begin
+        clock = 0;
+        forever #500 clock = ~clock;
+    end
+
+    integer errors;
+
+    // Returns the number of cycles until hpd == want (or -1 on timeout).
+    task automatic cycles_until(input logic want, input int limit, output int n);
+        n = -1;
+        for (int i = 0; i < limit; i++) begin
+            @(posedge clock);
+            if (hpd == want) begin
+                n = i;
+                return;
+            end
+        end
+    endtask
+
+    task automatic hold_check(input logic want, input int cycles, input string what);
+        for (int i = 0; i < cycles; i++) begin
+            @(posedge clock);
+            if (hpd !== want) begin
+                errors++;
+                $display("[tb_hpd] %s: hpd = %0b after %0d cycles", what, hpd, i);
+                return;
+            end
+        end
+    endtask
+
+    int n;
+
+    initial begin
+        errors = 0;
+        v5     = 0;
+        ready  = 0;
+        replug = 0;
+        reset  = 1;
+        repeat (4) @(posedge clock);
+        reset = 0;
+
+        // No +5V: HPD stays low even when ready
+        ready = 1;
+        hold_check(0, 5000, "no +5V");
+
+        // +5V applied: high after debounce + low time
+        v5 = 1;
+        cycles_until(1, 10000, n);
+        if (n < DEB + LOW - 10 || n > DEB + LOW + 10) begin
+            errors++;
+            $display("[tb_hpd] rise after +5V took %0d cycles (expected ~%0d)", n, DEB + LOW);
+        end
+
+        // Short +5V dropout (< debounce) is ignored
+        v5 = 0;
+        repeat (DEB / 2) @(posedge clock);
+        v5 = 1;
+        hold_check(1, 3000, "short +5V dropout");
+
+        // Replug: low for at least LOW cycles, then high again
+        @(negedge clock) replug = 1;
+        @(negedge clock) replug = 0;
+        cycles_until(0, 4, n);
+        if (n < 0) begin
+            errors++;
+            $display("[tb_hpd] replug did not drop HPD");
+        end
+        cycles_until(1, 10000, n);
+        if (n < LOW - 4) begin
+            errors++;
+            $display("[tb_hpd] replug low time %0d cycles < %0d", n, LOW);
+        end
+
+        // Not ready: drop immediately
+        ready = 0;
+        cycles_until(0, 4, n);
+        if (n < 0) begin
+            errors++;
+            $display("[tb_hpd] !ready did not drop HPD");
+        end
+        ready = 1;
+        cycles_until(1, 10000, n);
+
+        // +5V removed: low after debounce
+        v5 = 0;
+        cycles_until(0, 10000, n);
+        if (n < DEB - 10 || n > DEB + 10) begin
+            errors++;
+            $display("[tb_hpd] fall after +5V removal took %0d cycles (expected ~%0d)", n, DEB);
+        end
+        hold_check(0, 5000, "+5V removed");
+
+        if (errors != 0) begin
+            $fatal(1, "[tb_hpd] %0d errors", errors);
+        end
+        $display("[tb_hpd] PASS");
+        $finish;
+    end
+
+    initial begin
+        #100_000_000;
+        $fatal(1, "[tb_hpd] timeout");
+    end
+endmodule
+}}}

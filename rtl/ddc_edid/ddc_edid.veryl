@@ -1,0 +1,272 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file ddc_edid.veryl
+ * @brief HDMI/DVI sink side channel: DDC (I2C) EDID target and HPD control.
+ *
+ *   ddc_edid : read-only I2C target at 7'h50 serving edid_rom.
+ *              - random read   : S 0xA0 A offset A Sr 0xA1 A data... NA P
+ *              - current read  : S 0xA1 A data... NA P (continues from the
+ *                                last offset)
+ *              - sequential reads auto-increment and wrap at 256
+ *              Only the first byte of a write (the offset) is ACKed; the
+ *              E-DDC segment pointer (7'h30) and HDCP (7'h3A) are not
+ *              answered, so sources treat the EDID as <= 2 blocks and
+ *              skip HDCP. SCL is never stretched.
+ *   hpd_ctrl : HPD is driven high only while +5V from the source is
+ *              present (debounced) and the sink is ready; a replug request
+ *              holds it low for HPD_LOW_MS (HDMI: >= 100ms signals an EDID
+ *              change).
+ *
+ * Pads are open drain: the top level ties the pad's output to 0 and uses
+ * o_sda_oe as the output enable. DDC is a 5V bus - the FPGA pins need a
+ * level shifter or clamp. Everything runs on a free-running board clock,
+ * not the TMDS-derived pixel clock (which is absent before HPD is up).
+ */
+
+pub module ddc_edid #(
+    param I2C_ADDR    : bit<7> = 7'h50,
+    param FILTER_DEPTH: u32    = 8    , // glitch filter length in clocks (>= 50ns spike suppression)
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_scl   : input  logic, // raw pad inputs (asynchronous)
+    i_sda   : input  logic,
+    o_sda_oe: output logic, // 1 = pull SDA low
+
+    // Debug / status
+    o_busy       : output logic   , // addressed transaction in progress
+    o_read_strobe: output logic   , // one clock per byte handed to the source
+    o_offset     : output logic<8>, // current EDID offset
+) {
+    // -------------------------------------------------------------------
+    // Synchronise and filter. A filtered line only changes once the raw
+    // input has held the new level for FILTER_DEPTH clocks; SCL and SDA
+    // get the same delay, so their relative order is preserved.
+    // -------------------------------------------------------------------
+    var scl_sync: logic<2>           ;
+    var sda_sync: logic<2>           ;
+    var scl_hist: logic<FILTER_DEPTH>;
+    var sda_hist: logic<FILTER_DEPTH>;
+    var scl_f   : logic              ;
+    var sda_f   : logic              ;
+    var scl_q   : logic              ;
+    var sda_q   : logic              ;
+
+    always_ff {
+        if_reset {
+            scl_sync = 2'b11;
+            sda_sync = 2'b11;
+            scl_hist = '1;
+            sda_hist = '1;
+            scl_f    = 1;
+            sda_f    = 1;
+            scl_q    = 1;
+            sda_q    = 1;
+        } else {
+            scl_sync = {scl_sync[0], i_scl};
+            sda_sync = {sda_sync[0], i_sda};
+            scl_hist = {scl_hist[FILTER_DEPTH - 2:0], scl_sync[1]};
+            sda_hist = {sda_hist[FILTER_DEPTH - 2:0], sda_sync[1]};
+            if &scl_hist {
+                scl_f = 1;
+            } else if ~|scl_hist {
+                scl_f = 0;
+            }
+            if &sda_hist {
+                sda_f = 1;
+            } else if ~|sda_hist {
+                sda_f = 0;
+            }
+            scl_q = scl_f;
+            sda_q = sda_f;
+        }
+    }
+
+    let start_cond: logic = scl_f && scl_q && sda_q && !sda_f;
+    let stop_cond : logic = scl_f && scl_q && !sda_q && sda_f;
+    let scl_rise  : logic = scl_f && !scl_q;
+    let scl_fall  : logic = !scl_f && scl_q;
+
+    // -------------------------------------------------------------------
+    // Protocol FSM. SDA is only changed right after a (filtered) SCL fall,
+    // i.e. while SCL is low.
+    // -------------------------------------------------------------------
+    enum State: logic<3> {
+        IDLE, // wait for START
+        ADDR, // receiving the address byte
+        ADDR_ACK, // driving ACK for our address
+        WR, // receiving a written byte
+        WR_ACK, // driving ACK for the offset byte
+        RD, // shifting out a data byte
+        RD_ACK, // released SDA, sampling the source's ACK/NACK
+    }
+
+    var state   : State   ;
+    var bit_cnt : logic<4>;
+    var shreg   : logic<8>;
+    var is_read : logic   ;
+    var wr_count: logic<2>; // bytes written in this transaction (saturating)
+    var offset  : logic<8>;
+    var host_ack: logic   ;
+    var rom_data: logic<8>;
+
+    inst u_rom: edid_rom (
+        i_addr: offset  ,
+        o_data: rom_data,
+    );
+
+    assign o_busy   = state != State::IDLE && state != State::ADDR;
+    assign o_offset = offset;
+
+    always_ff {
+        if_reset {
+            state         = State::IDLE;
+            bit_cnt       = 0;
+            shreg         = 0;
+            is_read       = 0;
+            wr_count      = 0;
+            offset        = 0;
+            host_ack      = 0;
+            o_sda_oe      = 0;
+            o_read_strobe = 0;
+        } else {
+            o_read_strobe = 0;
+            if start_cond {
+                // START or repeated START: always (re)listen for an address.
+                state    = State::ADDR;
+                bit_cnt  = 0;
+                wr_count = 0;
+                o_sda_oe = 0;
+            } else if stop_cond {
+                state    = State::IDLE;
+                o_sda_oe = 0;
+            } else {
+                case state {
+                    State::ADDR, State::WR: {
+                        if scl_rise && bit_cnt <: 8 {
+                            shreg   = {shreg[6:0], sda_f};
+                            bit_cnt = bit_cnt + 1;
+                        } else if scl_fall && bit_cnt == 8 {
+                            if state == State::ADDR {
+                                if shreg[7:1] == I2C_ADDR {
+                                    is_read  = shreg[0];
+                                    o_sda_oe = 1;
+                                    state    = State::ADDR_ACK;
+                                } else {
+                                    state = State::IDLE; // not us: ignore until next START
+                                }
+                            } else if wr_count == 0 {
+                                offset   = shreg;
+                                wr_count = 1;
+                                o_sda_oe = 1;
+                                state    = State::WR_ACK;
+                            } else {
+                                // Read-only: NACK any data byte after the offset.
+                                state = State::IDLE;
+                            }
+                        }
+                    }
+                    State::ADDR_ACK, State::WR_ACK: {
+                        if scl_fall {
+                            bit_cnt = 0;
+                            if state == State::ADDR_ACK && is_read {
+                                shreg         = rom_data;
+                                o_sda_oe      = !rom_data[7];
+                                o_read_strobe = 1;
+                                state         = State::RD;
+                            } else {
+                                o_sda_oe = 0;
+                                state    = State::WR;
+                            }
+                        }
+                    }
+                    State::RD: {
+                        if scl_fall {
+                            bit_cnt = bit_cnt + 1;
+                            if bit_cnt == 7 {
+                                o_sda_oe = 0; // release for the source's ACK
+                                offset   = offset + 1;
+                                state    = State::RD_ACK;
+                            } else {
+                                // Non-blocking: shreg[6] is the next bit.
+                                shreg    = {shreg[6:0], 1'b0};
+                                o_sda_oe = !shreg[6];
+                            }
+                        }
+                    }
+                    State::RD_ACK: {
+                        if scl_rise {
+                            host_ack = !sda_f;
+                        } else if scl_fall {
+                            bit_cnt = 0;
+                            if host_ack {
+                                shreg         = rom_data;
+                                o_sda_oe      = !rom_data[7];
+                                o_read_strobe = 1;
+                                state         = State::RD;
+                            } else {
+                                state = State::IDLE; // NACK: wait for STOP / Sr
+                            }
+                        }
+                    }
+                    default: {}
+                }
+            }
+        }
+    }
+}
+
+pub module hpd_ctrl #(
+    param CLK_HZ     : u32 = 50_000_000,
+    param DEBOUNCE_MS: u32 = 10        , // +5V must be stable this long
+    param HPD_LOW_MS : u32 = 200       , // HPD low time on replug (HDMI: >= 100ms)
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_5v     : input  logic, // +5V from the source (raw, asynchronous)
+    i_ready  : input  logic, // sink ready (EDID valid, receiver up)
+    i_replug : input  logic, // pulse: force an HPD low period (EDID changed)
+    o_hpd    : output logic,
+    o_5v_good: output logic, // debounced +5V
+) {
+    const DEBOUNCE_CYCLES: u32 = CLK_HZ / 1000 * DEBOUNCE_MS;
+    const LOW_CYCLES     : u32 = CLK_HZ / 1000 * HPD_LOW_MS;
+
+    var v5_sync: logic<2> ;
+    var v5_cnt : logic<32>;
+    var low_cnt: logic<32>;
+
+    always_ff {
+        if_reset {
+            v5_sync   = 0;
+            v5_cnt    = 0;
+            o_5v_good = 0;
+            low_cnt   = LOW_CYCLES;
+            o_hpd     = 0;
+        } else {
+            v5_sync = {v5_sync[0], i_5v};
+            if v5_sync[1] == o_5v_good {
+                v5_cnt = 0;
+            } else if v5_cnt >= DEBOUNCE_CYCLES - 1 {
+                v5_cnt    = 0;
+                o_5v_good = v5_sync[1];
+            } else {
+                v5_cnt = v5_cnt + 1;
+            }
+
+            // Any reason to drop HPD restarts the minimum low period.
+            if i_replug || !o_5v_good || !i_ready {
+                low_cnt = LOW_CYCLES;
+            } else if low_cnt != 0 {
+                low_cnt = low_cnt - 1;
+            }
+            o_hpd = low_cnt == 0 && !i_replug && o_5v_good && i_ready;
+        }
+    }
+}
