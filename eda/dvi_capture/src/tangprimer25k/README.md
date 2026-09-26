@@ -101,6 +101,39 @@ symbols (needed on unterminated slots, harmless on PMOD0):
   symbols and agree with a neighbouring word (a single bit error turns
   CTRL_01 into CTRL_11, i.e. a false VSYNC; found on the 1080p loopback).
 
+## HDMI sources
+
+`dvi_in` also copes with sources that send HDMI although the EDID is
+DVI-only: a lane-0 data run that follows a data-island preamble (CTL3..0
+= 0101) is not video, and a run that follows the video preamble (0001)
+*and* opens with the video guard band loses those 2 words. A notebook PC
+seen on hardware keeps CTL0 = 1 through the whole blanking but sends no
+guard bands: that stays plain DVI (no pixels dropped).
+
+## UART (diagnostics and phase tuning)
+
+`eda/dvi_loopback`'s checker (`loop_check`, `EXT_CHECK=1`) and reporter
+(`loop_report`) run here too: USB-UART C3 (TX) / B3 (RX), 115200 8N1,
+host script `eda/dvi_loopback/host/loopctl.py`. Same line format and
+commands as the loopback (see its README), with these differences:
+
+- F = frames, B = frame-CRC mismatches against the previous frame (a
+  static screen gives 0; a taskbar clock bumps it once a minute),
+  N = DE pixels in the last frame (720p: 921600)
+- X = EDID bytes read by the source, Y = {HPD, 23'b0, DDC offset}
+- Z0-Z2 = 0 (no pixel reference)
+- `w` / `v` / `x` / `e`: raw words around a control symbol / a run start
+  / a blanking word with lane 1 or 2 not a control symbol / a lane 1-2
+  decode error
+
+Build variants: `make CTLE=OFF|LOW|MEDIUM|HIGH` (default HIGH).
+
+Result with a notebook PC (HDMI cable, Pmod DVI on pmod0, 2026-09-27):
+it reads the EDID and sends 720p60. Error-free phase window (4-tap
+steps): CTLE OFF 0x30..0x5C, HIGH / MEDIUM 0x20..0x58 (half a bit).
+The default offset 0x3C gives 0 decode errors and no CRC change except
+the clock over 8000 frames.
+
 ## HDMI/DVI side channel (DDC / EDID / HPD)
 
 For sources that need a sink (PCs, HDMI products), `rtl/ddc_edid` runs on
@@ -126,7 +159,6 @@ send plain DVI at the rate the recovery PLL is built for; see
 
 ## Open work
 
-- Per-lane delay taps (all three lanes currently share one DLYSTEP).
 - Route the recovered video somewhere useful (HDMI re-out on a second
   Pmod DVI, frame capture to memory, ethernet_video, …).
 - Widen the `dvi_in` tap interface beyond 5 bits so the full 8-bit

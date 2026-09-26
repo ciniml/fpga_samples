@@ -56,7 +56,8 @@ module top(
     output logic hpd,
 
     // Status line once per second (USB-UART, 115200 8N1; cap_status.sv)
-    output wire  uart_txd
+    output wire  uart_txd,
+    input  wire  uart_rxd
 );
 
     // -----------------------------------------------------------------
@@ -167,7 +168,10 @@ module top(
     // clean spot (minimal delay-line jitter). The dvi_in tap interface
     // is 5 bits wide, hence the extra fixed offset here rather than a
     // larger DELAY_TAP_INIT.
-    wire [7:0] cal_offset = 8'd32;
+    // (The offset now comes from the UART reporter, default 0x3C; per-lane
+    //  trims are added on top.)
+    logic [7:0] rx_offset;
+    logic [7:0] rx_lane_offset [0:2];
 
     // -----------------------------------------------------------------
     // DVI receiver PHY
@@ -184,8 +188,8 @@ module top(
     // DELAY_TAP_INIT = 24: slightly later than the minimal 16 — cleans
     // up VSYNC falling-edge jitter observed at tap 16 (2026-08 bring-up).
     dvi_in_phy #(.DELAY_TAP_INIT(24)) u_phy (
-        .i_delay_offset(cal_offset),
-        .i_delay_offset_lane('{default: 8'd0}),
+        .i_delay_offset(rx_offset),
+        .i_delay_offset_lane(rx_lane_offset),
         .i_pclk       (pclk),
         .i_fclk       (fclk),
         .i_reset      (reset_pclk),
@@ -201,10 +205,14 @@ module top(
         .o_decode_err (decode_err),
         .o_locked     (locked),
         .o_dbg_word_d0    (dbg_word_d0),
+        .o_dbg_word_d1    (dbg_word_d1),
+        .o_dbg_word_d2    (dbg_word_d2),
         .o_dbg_align_shift(dbg_align_shift)
     );
 
     wire [9:0] dbg_word_d0;
+    wire [9:0] dbg_word_d1;
+    wire [9:0] dbg_word_d2;
     wire       dbg_align_shift;
 
     // Raw lane-0 control-symbol hit — the signal dvi_in now aligns on.
@@ -381,21 +389,99 @@ module top(
         end
     end
 
-    cap_status u_status (
-        .clock            (clock),
-        .reset            (reset_sys),
-        .i_ddc_read_strobe(ddc_read_strobe),
-        .i_ddc_offset     (ddc_offset),
-        .i_hpd            (hpd),
-        .i_pll_lock       (pll_lock),
-        .uart_txd         (uart_txd),
-        .pclk             (pclk),
-        .i_locked         (locked),
-        .i_valid          (video_valid),
-        .i_de             (video_de),
-        .i_vsync          (video_vsync),
-        .i_decode_err     (|decode_err),
-        .i_crc_mismatch   (crc_mismatch)
+    // -----------------------------------------------------------------
+    // Diagnostics over the USB-UART: eda/dvi_loopback's checker (without a
+    // transmitter reference) and reporter. See README "UART".
+    // Repurposed fields: X = EDID bytes read by the source,
+    // Y = {HPD, 23'b0, DDC offset}. Z0-Z2 stay 0 (no pixel reference).
+    // -----------------------------------------------------------------
+    logic        snap_req, snap_done, snap_locked, clear_req;
+    logic [31:0] snap_frames, snap_bad, snap_derr, snap_last_count, snap_rx_cycles;
+    logic [15:0] snap_unlock;
+    logic [23:0] snap_lane_err [0:2];
+    logic [7:0]  sys_offset;
+    logic [7:0]  sys_lane_offset [0:2];
+    logic        words_req, words_done;
+    logic [1:0]  words_mode;
+    logic [9:0]  words [0:2][0:11];
+    logic [15:0] ddc_reads;
+
+    always_ff @(posedge clock) begin
+        if (reset_sys)            ddc_reads <= '0;
+        else if (ddc_read_strobe) ddc_reads <= ddc_reads + 1'd1;
+    end
+
+    loop_check #(.EXT_CHECK(1'b1)) u_check (
+        .rx_clk          (pclk),
+        .rx_reset        (reset_pclk),
+        .i_video_data    (video_data),
+        .i_video_de      (video_de),
+        .i_video_vsync   (video_vsync),
+        .i_video_valid   (video_valid),
+        .i_decode_err    (decode_err),
+        .i_locked        (locked),
+        .i_word0         (dbg_word_d0),
+        .i_word1         (dbg_word_d1),
+        .i_word2         (dbg_word_d2),
+        .o_rx_offset     (rx_offset),
+        .o_rx_lane_offset(rx_lane_offset),
+        .o_frame_bad     (),
+        .i_ext_bad       (crc_mismatch),
+        .i_tx_s1         ('0),
+        .i_tx_s2         ('0),
+        .i_tx_count      ('0),
+        .i_tx_ref_valid  (1'b0),
+        .sys_clk         (clock),
+        .sys_snap_req    (snap_req),
+        .sys_snap_done   (snap_done),
+        .sys_locked      (snap_locked),
+        .sys_frames      (snap_frames),
+        .sys_bad         (snap_bad),
+        .sys_derr        (snap_derr),
+        .sys_unlock      (snap_unlock),
+        .sys_last_count  (snap_last_count),
+        .sys_lane_err    (snap_lane_err),
+        .sys_rx_cycles   (snap_rx_cycles),
+        .sys_pix_err     (),
+        .sys_bit_err     (),
+        .sys_lane_bit_err(),
+        .sys_clear       (clear_req),
+        .sys_words_req   (words_req),
+        .sys_words_done  (words_done),
+        .sys_words       (words),
+        .sys_words_mode  (words_mode),
+        .sys_offset      (sys_offset),
+        .sys_lane_offset (sys_lane_offset)
+    );
+
+    // Default offset 0x3C (DLYSTEP 24 + 60): centre of the error-free
+    // window 0x20..0x58 measured with a notebook PC source and CTLE=HIGH.
+    loop_report #(.OFFSET_DEFAULT(8'd60)) u_report (
+        .clock         (clock),
+        .reset         (reset_sys),
+        .uart_rxd      (uart_rxd),
+        .uart_txd      (uart_txd),
+        .o_offset      (sys_offset),
+        .o_lane_offset (sys_lane_offset),
+        .o_snap_req    (snap_req),
+        .i_snap_done   (snap_done),
+        .i_locked      (snap_locked),
+        .i_frames      (snap_frames),
+        .i_bad         (snap_bad),
+        .i_derr        (snap_derr),
+        .i_unlock      (snap_unlock),
+        .i_last_count  (snap_last_count),
+        .i_lane_err    (snap_lane_err),
+        .i_rx_cycles   (snap_rx_cycles),
+        .i_pll_lock    (pll_lock),
+        .i_pix_err     ({16'd0, ddc_reads}),
+        .i_bit_err     ({hpd, 23'd0, ddc_offset}),
+        .i_lane_bit_err('{default: '0}),
+        .o_clear       (clear_req),
+        .o_words_req   (words_req),
+        .o_words_mode  (words_mode),
+        .i_words_done  (words_done),
+        .i_words       (words)
     );
 
     assign led_locked     = locked;

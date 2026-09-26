@@ -33,9 +33,13 @@ add_file -type verilog [file normalize ${RTL_DIR}/ddc_edid/edid_rom.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/iser10_lane.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/dvi_in_phy.sv]
 
-# --- Status UART ---
+# --- Diagnostics UART (checker / reporter shared with eda/dvi_loopback) ---
+set LOOP_DIR [file normalize ${SRC_DIR}/../../../dvi_loopback/src/${TARGET}]
 add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_tx.sv]
-add_file -type verilog [file normalize ${SRC_DIR}/cap_status.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_rx.sv]
+add_file -type verilog ${LOOP_DIR}/frame_sum.sv
+add_file -type verilog ${LOOP_DIR}/loop_check.sv
+add_file -type verilog ${LOOP_DIR}/loop_report.sv
 
 # --- Top + reset ---
 add_file -type verilog [file normalize ${SRC_DIR}/reset_seq.sv]
@@ -47,7 +51,14 @@ if {${TARGET} == "tangprimer25k"} {
     add_file -type verilog [file normalize ${SRC_DIR}/ip/gowin_pll_dvi/gowin_pll_dvi.v]
 }
 
-add_file -type cst [file normalize ${SRC_DIR}/pins.cst]
+# RX equalizer from the environment: CTLE = HIGH (default) | MEDIUM | LOW | OFF
+# (HIGH / MEDIUM give the widest error-free phase window with a notebook PC
+#  source; the 1080p loopback also needs HIGH)
+set CTLE [expr {[info exists ::env(CTLE)] && $::env(CTLE) ne "" ? $::env(CTLE) : "HIGH"}]
+set fh [open ${SRC_DIR}/pins.cst r]; set cst [read $fh]; close $fh
+set cst [string map [list "CTLE=OFF" "CTLE=${CTLE}"] $cst]
+set fh [open pins_gen.cst w]; puts -nonewline $fh $cst; close $fh
+add_file -type cst [file normalize pins_gen.cst]
 add_file -type sdc [file normalize ${SRC_DIR}/timing.sdc]
 
 run all
