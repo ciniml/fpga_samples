@@ -49,6 +49,13 @@ module top(
     // dbg[3] = recovered video VSYNC (frame reference, 60 Hz)
     output logic [3:0] dbg,
 
+    // Pass-through: the received video re-encoded on a second Pmod (pmod1),
+    // clocked by the recovered pclk / fclk (no frame buffer, no CDC).
+    output wire        tx_clk_p,
+    output wire        tx_clk_n,
+    output wire [2:0]  tx_data_p,
+    output wire [2:0]  tx_data_n,
+
     // HDMI/DVI side channel (Pmod DVI side-channel pads, wired to pmod2).
     // DDC is a 5 V bus: use a level shifter / clamp between the Pmod and
     // these 3.3 V pins.
@@ -329,10 +336,11 @@ module top(
     // Defaults from a notebook PC source over HDMI with CTLE=HIGH:
     //  720p:  offset 0x3C (DLYSTEP 24 + 60), centre of the error-free
     //         window 0x20..0x58; no lane trims needed.
-    //  1080p: offset 0x30 with trims B -1 / G +3 / R -7 (the window is
-    //         only ~2 steps wide and lane 2 sits ~7 taps early).
+    //  1080p: offset 0x30 with trims B -1 / G +3 / R -5 (the window is
+    //         only ~2 steps wide and lane 2 sits early; with the pass-
+    //         through TX running the R window is -10..-1, centre ~-5).
 `ifdef RATE_1080P
-    loop_report #(.OFFSET_DEFAULT(8'h30), .TRIM_DEFAULT(24'hFF03F9)) u_report (
+    loop_report #(.OFFSET_DEFAULT(8'h30), .TRIM_DEFAULT(24'hFF03FB)) u_report (
 `else
     loop_report #(.OFFSET_DEFAULT(8'd60)) u_report (
 `endif
@@ -362,6 +370,44 @@ module top(
         .i_words_done  (words_done),
         .i_words       (words)
     );
+
+    // -----------------------------------------------------------------
+    // Pass-through TX. dvi_in's outputs go straight into dvi_out on the
+    // same pixel clock; while not locked the output is blanking (DE = 0,
+    // syncs held). The serializers use the recovery PLL's fclk, so the
+    // output has exactly the input's pixel rate.
+    // -----------------------------------------------------------------
+    logic [9:0] tx_word [0:3];
+    dvi_out u_dvi_out (
+        .clock      (pclk),
+        .reset      (reset_pclk),
+        .video_data (video_data),
+        .video_de   (video_valid && video_de),
+        .video_hsync(video_hsync),
+        .video_vsync(video_vsync),
+        .dvi_clock  (tx_word[3]),
+        .dvi_data0  (tx_word[0]),
+        .dvi_data1  (tx_word[1]),
+        .dvi_data2  (tx_word[2])
+    );
+    wire [3:0] tx_ser;
+    generate
+        for (genvar i = 0; i < 4; i++) begin : g_oser
+            OSER10 u_oser (
+                .Q    (tx_ser[i]),
+                .D0   (tx_word[i][0]), .D1(tx_word[i][1]), .D2(tx_word[i][2]), .D3(tx_word[i][3]),
+                .D4   (tx_word[i][4]), .D5(tx_word[i][5]), .D6(tx_word[i][6]), .D7(tx_word[i][7]),
+                .D8   (tx_word[i][8]), .D9(tx_word[i][9]),
+                .FCLK (fclk),
+                .PCLK (pclk),
+                .RESET(reset_pclk)
+            );
+        end
+        for (genvar i = 0; i < 3; i++) begin : g_tx_obuf
+            ELVDS_OBUF u_obuf (.I(tx_ser[i]), .O(tx_data_p[i]), .OB(tx_data_n[i]));
+        end
+    endgenerate
+    ELVDS_OBUF u_obuf_clk (.I(tx_ser[3]), .O(tx_clk_p), .OB(tx_clk_n));
 
     assign led_locked     = locked;
     assign led_decode_err = err_stretch[22];

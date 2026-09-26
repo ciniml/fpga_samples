@@ -48,3 +48,6 @@ set_false_path -from [get_pins {u_phy/u_core/o_align_shift_req*/Q}] -to [get_pin
 // The side channel (board clock) and the video path (cable clocks) do not
 // exchange data.
 set_clock_groups -asynchronous -group [get_clocks {clock}] -group [get_clocks {dvi_pclk pclk fclk}]
+
+// Pass-through serializers: reset_seq output into OSER10 RESET (fclk).
+set_false_path -from [get_pins {reset_seq_pclk/reset_seq_0_s0/Q}] -to [get_pins {g_oser*u_oser/RESET}]

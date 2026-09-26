@@ -144,9 +144,27 @@ the clock over 8000 frames.
 about 2 coarse steps wide (e.g. 0x2C..0x30, repeating every 0x34 taps)
 and lane 2 (R) samples ~7 taps early: with a shared phase every frame
 still had a few wrong R pixels without any decode error. Offset 0x30
-with lane trims B -1 / G +3 / R -7 (the RATE=1080P defaults) gives 7440
+with lane trims B -1 / G +3 / R -7 gives 7440
 frames with 0 decode errors, 0 lock losses, 2073600 DE pixels per frame
-and frame changes only at the clock's minute ticks.
+and frame changes only at the clock's minute ticks. With the pass-through
+TX running the RATE=1080P default is R -5 (see below).
+
+## Pass-through output
+
+The received video is re-encoded on pmod1 (CLK L5, D0 K11, D1 E11,
+D2 A11; a TX Pmod DVI / HDMI, LVPECL33E DRIVE=16) by `dvi_out` + OSER10
+on the recovery PLL's pclk / fclk: no frame buffer and no clock-domain
+crossing, the output has exactly the input's pixel rate. While the
+receiver is not locked the output is blanking (DE = 0).
+
+Scope taps moved to pmod2's bottom row (G10 / D10 / B10 / C10).
+
+Checked with the notebook PC at 1080p60: a monitor on the pass-through
+shows the picture, and the receiver stays error-free with the TX running
+once lane 2's trim is re-centred (-5 instead of -7: the R window with the
+TX running is -10..-1). After each reprogram the PC redraws its screen
+for about 35 s (HPD toggled), so frame changes right after loading a
+bitstream are not errors.
 
 ## HDMI/DVI side channel (DDC / EDID / HPD)
 

@@ -69,14 +69,27 @@ IO_LOC "reset_button" H11;
 IO_PORT "reset_button" PULL_MODE=DOWN IO_TYPE=LVCMOS33;
 
 // Bring-up debug taps on PMOD1 top row (pmod1_1..4). Scope points.
-IO_LOC "dbg[0]" A11;
+// Scope taps on pmod2's bottom row (pmod2_7..10; the top row is DDC/HPD)
+IO_LOC "dbg[0]" G10;
 IO_PORT "dbg[0]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
-IO_LOC "dbg[1]" E11;
+IO_LOC "dbg[1]" D10;
 IO_PORT "dbg[1]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
-IO_LOC "dbg[2]" K11;
+IO_LOC "dbg[2]" B10;
 IO_PORT "dbg[2]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
-IO_LOC "dbg[3]" L5;
+IO_LOC "dbg[3]" C10;
 IO_PORT "dbg[3]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
+// Pass-through TX on pmod1 (a TX Pmod DVI / HDMI; order pin1 = D2,
+// pin2 = D1, pin3 = D0, pin4 = CLK). Emulated differential, LVPECL33E
+// DRIVE=16 as on the 1080p loopback.
+IO_LOC "tx_clk_p" L5;
+IO_PORT "tx_clk_p" IO_TYPE=LVPECL33E PULL_MODE=NONE DRIVE=16;
+IO_LOC "tx_data_p[0]" K11;
+IO_PORT "tx_data_p[0]" IO_TYPE=LVPECL33E PULL_MODE=NONE DRIVE=16;
+IO_LOC "tx_data_p[1]" E11;
+IO_PORT "tx_data_p[1]" IO_TYPE=LVPECL33E PULL_MODE=NONE DRIVE=16;
+IO_LOC "tx_data_p[2]" A11;
+IO_PORT "tx_data_p[2]" IO_TYPE=LVPECL33E PULL_MODE=NONE DRIVE=16;
 
 // Status outputs. Same pads gowin_easycdr_sample uses for its lock /
 // error indicators (B2 / C2, LVCMOS33).

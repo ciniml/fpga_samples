@@ -22,8 +22,9 @@ if {${TARGET} == "tangprimer25k"} {
     set_option -use_sspi_as_gpio 1
 }
 
-# --- Veryl-generated dvi_in core ---
+# --- Veryl-generated dvi_in / dvi_out cores ---
 add_file -type verilog [file normalize ${RTL_DIR}/dvi_in/dvi_in.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/dvi_out/dvi_out.sv]
 
 # Build variant: RATE=1080P (1920x1080p60, 148.5 MHz; default 720p60)
 set RATE [expr {[info exists ::env(RATE)] && $::env(RATE) ne "" ? $::env(RATE) : "720P"}]
