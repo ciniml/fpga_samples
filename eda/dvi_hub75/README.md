@@ -80,7 +80,7 @@ addr    = {half, scan, chain_x}
 |---|---|
 | DVI RX | pmod0 (H5 / H8 / G7 / F5、LVDS25 + 内蔵終端 + CTLE HIGH) |
 | DDC SCL / SDA / HPD | 40 ピンヘッダ 15 (F1) / 16 (F2) / 17 (A1)。18 (E1) は CEC 用に予約。11 = +5V、12 = GND |
-| HUB75 | pmod1 + pmod2 (`pins.cst`) |
+| HUB75 | pmod1 + pmod2 (`pins.cst`)。ベースボードのモジュール側 pmod0 (RGB / E / B) が pmod2 (G11 側)、pmod1 (LAT / CLK / OE / A / C / D) が pmod1 (A11 側) |
 | UART | C3 (TX) / B3 (RX)、115200 8N1 |
 | 状態出力 | B2 = ワードロック、C2 = デコードエラー (40 ピンヘッダ 14 / 13) |
 | S1 (H10) | HPD を 200 ms 下げて EDID を読み直させる |
@@ -89,7 +89,7 @@ DDC はソース側で 5 V にプルアップされるので、レベル変換 (
 
 ## UART
 
-`eda/dvi_capture` と同じ診断 (`eda/dvi_loopback/host/loopctl.py`)。X = EDID 読み出しバイト数、
+`eda/dvi_capture` と同じ診断 (`eda/dvi_loopback/host/loopctl.py`)。X = {DDC SCL 立ち下がり回数 (14), SCL, SDA, EDID 読み出しバイト数 (16)}、
 Y = {HPD (1), FIFO オーバーフロー回数 (15), 捨てたフレーム数 (8), DDC オフセット (8)}。
 
 ## シミュレーション

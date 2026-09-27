@@ -45,40 +45,42 @@ IO_PORT "reset_button" PULL_MODE=DOWN IO_TYPE=LVCMOS33;
 
 // ---------------------------------------------------------------------
 // HUB75 Pmod baseboard on PMOD1 + PMOD2 (module port pmod0 → board
-// PMOD1, module port pmod1 → board PMOD2), signal layout per
+// PMOD2, module port pmod1 → board PMOD1: the same orientation as
+// eda/ethernet_video on PMOD0 + PMOD1, shifted by one slot; confirmed on
+// hardware), signal layout per
 // mod/pmod_hub75/pmod_pins.csv:
 //   module pmod0: 1=r[0] 2=b[0] 3=r[1] 4=b[1] 7=g[0] 8=g[1] 9=row_e 10=row_b
 //   module pmod1: 1=row_d 2=lat 7=row_a 8=row_c 9=clk 10=oe
 // Board pin lookup: eda/targets/tangprimer25k/pmod_ports.csv.
 // ---------------------------------------------------------------------
-IO_LOC "hub75_r[0]"  A11;
+IO_LOC "hub75_r[0]"  G11;
 IO_PORT "hub75_r[0]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
-IO_LOC "hub75_b[0]"  E11;
+IO_LOC "hub75_b[0]"  D11;
 IO_PORT "hub75_b[0]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
-IO_LOC "hub75_r[1]"  K11;
+IO_LOC "hub75_r[1]"  B11;
 IO_PORT "hub75_r[1]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
-IO_LOC "hub75_b[1]"  L5;
+IO_LOC "hub75_b[1]"  C11;
 IO_PORT "hub75_b[1]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
-IO_LOC "hub75_g[0]"  A10;
+IO_LOC "hub75_g[0]"  G10;
 IO_PORT "hub75_g[0]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
-IO_LOC "hub75_g[1]"  E10;
+IO_LOC "hub75_g[1]"  D10;
 IO_PORT "hub75_g[1]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
-IO_LOC "hub75_row_e" L11;
+IO_LOC "hub75_row_e" B10;
 IO_PORT "hub75_row_e" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
-IO_LOC "hub75_row_b" K5;
+IO_LOC "hub75_row_b" C10;
 IO_PORT "hub75_row_b" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
 
-IO_LOC "hub75_row_d" G11;
+IO_LOC "hub75_row_d" A11;
 IO_PORT "hub75_row_d" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
-IO_LOC "hub75_lat"   D11;
+IO_LOC "hub75_lat"   E11;
 IO_PORT "hub75_lat" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
-IO_LOC "hub75_row_a" G10;
+IO_LOC "hub75_row_a" A10;
 IO_PORT "hub75_row_a" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
-IO_LOC "hub75_row_c" D10;
+IO_LOC "hub75_row_c" E10;
 IO_PORT "hub75_row_c" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
-IO_LOC "hub75_clk"   B10;
+IO_LOC "hub75_clk"   L11;
 IO_PORT "hub75_clk" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
-IO_LOC "hub75_oe"    C10;
+IO_LOC "hub75_oe"    K5;
 IO_PORT "hub75_oe" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
 
 // Status outputs (same pads as dvi_capture / gowin_easycdr_sample).

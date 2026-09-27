@@ -267,8 +267,9 @@ module top (
 
     // =================================================================
     // Diagnostics over the USB-UART (as eda/dvi_capture). Repurposed
-    // fields: X = EDID bytes read, Y = {HPD, FIFO overflow count (15),
-    // skipped frames (8), DDC offset}.
+    // fields: X = {SCL falling edges (14), SCL level, SDA level, EDID bytes
+    // read (16)}, Y = {HPD, FIFO overflow count (15), skipped frames (8),
+    // DDC offset}.
     // =================================================================
     logic        snap_req, snap_done, snap_locked, clear_req;
     logic [31:0] snap_frames, snap_bad, snap_derr, snap_last_count, snap_rx_cycles;
@@ -283,6 +284,15 @@ module top (
     always_ff @(posedge clock) begin
         if (reset_sys)            ddc_reads <= '0;
         else if (ddc_read_strobe) ddc_reads <= ddc_reads + 1'd1;
+    end
+    // DDC line monitor: synchronized levels and SCL falling edges
+    logic [2:0]  scl_s, sda_s;
+    logic [13:0] scl_falls;
+    always_ff @(posedge clock) begin
+        scl_s <= {scl_s[1:0], ddc_scl};
+        sda_s <= {sda_s[1:0], ddc_sda_in};
+        if (reset_sys)                                 scl_falls <= '0;
+        else if (scl_s[2] && !scl_s[1] && scl_falls != '1) scl_falls <= scl_falls + 1'd1;
     end
 
     // FIFO overflow / skipped frames, counted in pclk and read quasi-statically
@@ -359,7 +369,7 @@ module top (
         .i_lane_err    (snap_lane_err),
         .i_rx_cycles   (snap_rx_cycles),
         .i_pll_lock    (pll_lock),
-        .i_pix_err     ({16'd0, ddc_reads}),
+        .i_pix_err     ({scl_falls, scl_s[1], sda_s[1], ddc_reads}),
         .i_bit_err     ({hpd, ovf_cnt, skip_cnt, ddc_offset}),
         .i_lane_bit_err('{default: '0}),
         .o_clear       (clear_req),
