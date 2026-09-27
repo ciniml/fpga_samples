@@ -84,9 +84,9 @@ module crop_to_hub75 #(
     wire [X_BITS-1:0] chain_x = CHAIN_REVERSE ? X_BITS'(CHAIN_LEN - 1) - cx_raw : cx_raw;
     wire [ADDR_BITS-1:0] addr = {yy[5], yy[4:0], chain_x};
     // ---------------- colour tables ----------------
-    (* syn_ramstyle = "block_ram" *) logic [7:0] lut_r [0:255];
-    (* syn_ramstyle = "block_ram" *) logic [7:0] lut_g [0:255];
-    (* syn_ramstyle = "block_ram" *) logic [7:0] lut_b [0:255];
+    // One color_lut instance per channel: with the three arrays in this
+    // module, Gowin 1.9.12 merged them into one 32-bit-wide SDPB whose read
+    // address was the R input alone (all channels showed R: grey picture).
     logic       init_run;
     logic [7:0] init_addr;
     wire        w_en   = init_run || (i_lut_we && !init_run);
@@ -103,17 +103,13 @@ module crop_to_hub75 #(
         end
     end
     assign o_lut_busy = init_run;
-    always_ff @(posedge i_clk) begin
-        if (w_en && w_mask[0]) lut_r[w_addr] <= w_data;
-        if (w_en && w_mask[1]) lut_g[w_addr] <= w_data;
-        if (w_en && w_mask[2]) lut_b[w_addr] <= w_data;
-    end
     logic [7:0] lr, lg, lb;          // table outputs, one pclk after the lookup
-    always_ff @(posedge i_pclk) begin
-        lr <= lut_r[i_data[23:16]];
-        lg <= lut_g[i_data[15:8]];
-        lb <= lut_b[i_data[7:0]];
-    end
+    color_lut u_lut_r (.i_wclk(i_clk), .i_we(w_en && w_mask[0]), .i_waddr(w_addr), .i_wdata(w_data),
+                       .i_rclk(i_pclk), .i_raddr(i_data[23:16]), .o_rdata(lr));
+    color_lut u_lut_g (.i_wclk(i_clk), .i_we(w_en && w_mask[1]), .i_waddr(w_addr), .i_wdata(w_data),
+                       .i_rclk(i_pclk), .i_raddr(i_data[15:8]),  .o_rdata(lg));
+    color_lut u_lut_b (.i_wclk(i_clk), .i_we(w_en && w_mask[2]), .i_waddr(w_addr), .i_wdata(w_data),
+                       .i_rclk(i_pclk), .i_raddr(i_data[7:0]),   .o_rdata(lb));
     wire [PX_BITS-1:0] px = {lr[7 -: COMPONENT_BITS], lg[7 -: COMPONENT_BITS], lb[7 -: COMPONENT_BITS]};
 
     // Commands are formed one clock ahead (s1) and completed with the
@@ -179,6 +175,35 @@ module crop_to_hub75 #(
                 end
             end
         end
+    end
+endmodule
+
+// 256 x 8 dual-clock table (one BSRAM), registered read; writes land one
+// i_wclk later.
+module color_lut (
+    input  wire        i_wclk,
+    input  wire        i_we,
+    input  wire  [7:0] i_waddr,
+    input  wire  [7:0] i_wdata,
+    input  wire        i_rclk,
+    input  wire  [7:0] i_raddr,
+    output logic [7:0] o_rdata
+);
+    // The write port is re-registered per instance and kept: with the
+    // write port shared, Gowin merges the three instances again.
+    (* syn_preserve = 1, syn_keep = 1 *) logic       we;
+    (* syn_preserve = 1, syn_keep = 1 *) logic [7:0] waddr, wdata;
+    always_ff @(posedge i_wclk) begin
+        we    <= i_we;
+        waddr <= i_waddr;
+        wdata <= i_wdata;
+    end
+    (* syn_ramstyle = "block_ram", syn_keep = 1 *) logic [7:0] mem [0:255];
+    always_ff @(posedge i_wclk) begin
+        if (we) mem[waddr] <= wdata;
+    end
+    always_ff @(posedge i_rclk) begin
+        o_rdata <= mem[i_raddr];
     end
 endmodule
 
