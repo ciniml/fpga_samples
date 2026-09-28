@@ -1,0 +1,52 @@
+set SRC_DIR       [lindex $argv 0]
+set RTL_DIR       [lindex $argv 1]
+set TARGET        [lindex $argv 2]
+set DEVICE_FAMILY [lindex $argv 3]
+set DEVICE_PART   [lindex $argv 4]
+set PROJECT_NAME  [lindex $argv 5]
+
+set_option -output_base_name ${PROJECT_NAME}
+set_option -verilog_std sysv2017
+set_option -print_all_synthesis_warning 1
+set_option -top_module top
+set_option -gen_verilog_sim_netlist 1
+set_device -name $DEVICE_FAMILY $DEVICE_PART
+if {${TARGET} == "tangprimer25k"} {
+    set_option -use_cpu_as_gpio 1
+    set_option -use_i2c_as_gpio 1
+}
+
+add_file -type verilog [file normalize ${SRC_DIR}/top.v]
+add_file -type verilog [file normalize ${SRC_DIR}/pll_usb/pll_usb.v]
+# USB core (rtl/usb, Veryl output - run `veryl build` there after edits)
+foreach f {usb_pkg usb_phy_rx usb_phy_tx usb_phy usb_sie usb_descriptor_rom usb_device} {
+    add_file -type verilog [file normalize ${RTL_DIR}/usb/${f}.sv]
+}
+add_file -type verilog [file normalize ${RTL_DIR}/usb/gowin/usb_phy_gowin.v]
+add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_tx.sv]
+
+# Pmod slot assignment: USB_PMOD_A / USB_PMOD_B = pmod0 | pmod1 | pmod2 (Dock silkscreen),
+# resolved through eda/targets/tangprimer25k/pmod_ports.csv into pins_gen.cst
+set PMOD_A [expr {[info exists ::env(USB_PMOD_A)] ? $::env(USB_PMOD_A) : "pmod1"}]
+set PMOD_B [expr {[info exists ::env(USB_PMOD_B)] ? $::env(USB_PMOD_B) : "pmod2"}]
+set fh [open [file normalize ${SRC_DIR}/../../../targets/tangprimer25k/pmod_ports.csv] r]
+array set BALL {}
+foreach line [split [read $fh] "\n"] {
+    if {[regexp {^(pmod[0-2]_[0-9]+),([A-Z][0-9]+)} $line -> k v]} { set BALL($k) $v }
+}
+close $fh
+proc ball {slot pin} { global BALL; return $BALL(${slot}_${pin}) }
+set fh [open ${SRC_DIR}/pins.cst r]; set cst [read $fh]; close $fh
+set cst [string map [list \
+    @RX_DP@   [ball $PMOD_A 1]  @RX_DN@   [ball $PMOD_A 7] \
+    @RXDP_P@  [ball $PMOD_A 2]  @RXDP_N@  [ball $PMOD_A 8] \
+    @RXDN_P@  [ball $PMOD_A 3]  @RXDN_N@  [ball $PMOD_A 9] \
+    @TERM_DP@ [ball $PMOD_A 4]  @TERM_DN@ [ball $PMOD_A 10] \
+    @TX_DP@   [ball $PMOD_B 1]  @TX_DN@   [ball $PMOD_B 7] \
+    @PULLUP@  [ball $PMOD_B 2]  @VBUS@    [ball $PMOD_B 3]] $cst]
+set fh [open pins_gen.cst w]; puts -nonewline $fh $cst; close $fh
+puts "usb_device: Pmod A = ${PMOD_A}, Pmod B = ${PMOD_B}"
+add_file -type cst [file normalize pins_gen.cst]
+add_file -type sdc [file normalize ${SRC_DIR}/timing.sdc]
+
+run all
