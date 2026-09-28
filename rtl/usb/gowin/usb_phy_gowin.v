@@ -39,10 +39,30 @@
 // detect SE0 (both low, 24-sample majority), and J/K are taken from the
 // differential receiver, which is clean in FS as well as HS. The data path
 // is delayed by two words to line up with the SE0 filter.
+// DYN_DLY = 1: an IODELAY in dynamic mode (SDTAP=0: DLYSTEP loaded as the
+// absolute tap count, 12.5 ps/tap) on each of the three receive paths,
+// controlled by i_dly_dd / i_dly_dp / i_dly_dn (bring-up experiments and the
+// future HS phase tracking). o_mon_* expose the raw 8-sample words.
+// HS_CDR = 1 (needs DYN_DLY = 1): 3x blind-oversampling clock/data recovery
+// for HS. The three receivers see the same HS data; with the D+ / D-
+// comparator paths delayed by 1/3 and 2/3 UI (i_dly_dp / i_dly_dn, measured
+// intrinsic offset ~ +16 taps vs. the differential receiver) the 24 samples
+// per word are 3 per bit. OsCdr (rtl/oscdr, OSR=3) tracks the transition
+// phase and emits 7..9 bits per word; BitGearbox re-packs them into 8-bit
+// words with a valid strobe that stalls the PHY (i_rx_dd_valid) on clocks
+// without a full word. Idle (SE0) resets the gearbox and freezes the CDR.
 module usb_phy_gowin #(
-    parameter SE_FROM_DIFF = 1
+    parameter SE_FROM_DIFF = 1,
+    parameter DYN_DLY      = 0,
+    parameter HS_CDR       = 0
 ) (
     input  wire        clk_i,        // 60 MHz
+    input  wire [7:0]  i_dly_dd,
+    input  wire [7:0]  i_dly_dp,
+    input  wire [7:0]  i_dly_dn,
+    output wire [7:0]  o_mon_dd,
+    output wire [7:0]  o_mon_dp,
+    output wire [7:0]  o_mon_dn,
     input  wire        fclk_i,       // 240 MHz (DDR -> 480 Msps)
     input  wire        rst_i,
     input  wire        pll_locked_i,
@@ -94,15 +114,33 @@ module usb_phy_gowin #(
     end
     // majority over the 24 samples surrounding the (2-word delayed) output word
     wire se0_f = ({1'b0, se0_c0} + {1'b0, se0_c1} + {1'b0, se0_c2}) >= 5'd12;
+    wire       rx_dd_valid;
+    wire [7:0] rx_dp_se0, rx_dn_se0;      // SE0-conditioned single-ended view (FS/LS and the HS bus states)
     generate
         if (SE_FROM_DIFF) begin : g_se_diff
-            assign rx_dd = dd_d2;
-            assign rx_dp = dd_d2  & {8{~se0_f}};
-            assign rx_dn = ~dd_d2 & {8{~se0_f}};
+            assign rx_dp_se0 = dd_d2  & {8{~se0_f}};
+            assign rx_dn_se0 = ~dd_d2 & {8{~se0_f}};
         end else begin : g_se_raw
-            assign rx_dd = rx_dd_raw;
-            assign rx_dp = rx_dp_raw;
-            assign rx_dn = rx_dn_raw;
+            assign rx_dp_se0 = rx_dp_raw;
+            assign rx_dn_se0 = rx_dn_raw;
+        end
+        if (HS_CDR) begin : g_cdr
+            // in FS/LS the PHY uses sample 0 of rx_dp/rx_dn only; the CDR
+            // path is selected by the PHY's transceiver mode (usb_hs_cdr.v)
+            wire hs_sel = (utmi_xcvrselect_i == 2'b00) && !utmi_termselect_i;
+            wire [7:0] cdr_byte, cdr_dp, cdr_dn; wire cdr_valid;
+            usb_hs_cdr u_hs_cdr(
+                .clk_i(clk_i), .rst_i(rst), .i_dd(dd_d2), .i_dp(dp_d2), .i_dn(dn_d2), .i_se0(se0_f),
+                .o_byte(cdr_byte), .o_valid(cdr_valid), .o_dp(cdr_dp), .o_dn(cdr_dn), .o_lock());
+            assign rx_dd       = hs_sel ? cdr_byte  : dd_d2;
+            assign rx_dd_valid = hs_sel ? cdr_valid : 1'b1;
+            assign rx_dp       = hs_sel ? cdr_dp    : rx_dp_se0;
+            assign rx_dn       = hs_sel ? cdr_dn    : rx_dn_se0;
+        end else begin : g_nocdr
+            assign rx_dd       = dd_d2;
+            assign rx_dd_valid = 1'b1;
+            assign rx_dp       = rx_dp_se0;
+            assign rx_dn       = rx_dn_se0;
         end
     endgenerate
 
@@ -123,6 +161,7 @@ module usb_phy_gowin #(
         .i_rx_dp          (rx_dp),
         .i_rx_dn          (rx_dn),
         .i_rx_dd          (rx_dd),
+        .i_rx_dd_valid    (rx_dd_valid),
         .o_tx_dp          (tx_dp),
         .o_tx_dn          (tx_dn),
         .o_tx_oe          (tx_oe),
@@ -133,10 +172,27 @@ module usb_phy_gowin #(
     );
 
     // ---- receivers: LVDS input buffers -> 1:8 deserialisers (Q0 first) ----
-    wire rx_dd_se, rx_dp_se, rx_dn_se;
-    TLVDS_IBUF u_ibuf_dd (.I(usb_rx_dp_i),  .IB(usb_rx_dn_i),  .O(rx_dd_se));
-    TLVDS_IBUF u_ibuf_dp (.I(usb_rxdp_p_i), .IB(usb_rxdp_n_i), .O(rx_dp_se));
-    TLVDS_IBUF u_ibuf_dn (.I(usb_rxdn_p_i), .IB(usb_rxdn_n_i), .O(rx_dn_se));
+    wire rx_dd_ib, rx_dp_ib, rx_dn_ib, rx_dd_se, rx_dp_se, rx_dn_se;
+    TLVDS_IBUF u_ibuf_dd (.I(usb_rx_dp_i),  .IB(usb_rx_dn_i),  .O(rx_dd_ib));
+    TLVDS_IBUF u_ibuf_dp (.I(usb_rxdp_p_i), .IB(usb_rxdp_n_i), .O(rx_dp_ib));
+    TLVDS_IBUF u_ibuf_dn (.I(usb_rxdn_p_i), .IB(usb_rxdn_n_i), .O(rx_dn_ib));
+    generate
+        if (DYN_DLY) begin : g_dly
+            IODELAY #(.C_STATIC_DLY(0), .DYN_DLY_EN("TRUE"), .ADAPT_EN("FALSE")) u_dly_dd(
+                .DO(rx_dd_se), .DF(), .DI(rx_dd_ib), .SDTAP(1'b0), .VALUE(1'b0), .DLYSTEP(i_dly_dd));
+            IODELAY #(.C_STATIC_DLY(0), .DYN_DLY_EN("TRUE"), .ADAPT_EN("FALSE")) u_dly_dp(
+                .DO(rx_dp_se), .DF(), .DI(rx_dp_ib), .SDTAP(1'b0), .VALUE(1'b0), .DLYSTEP(i_dly_dp));
+            IODELAY #(.C_STATIC_DLY(0), .DYN_DLY_EN("TRUE"), .ADAPT_EN("FALSE")) u_dly_dn(
+                .DO(rx_dn_se), .DF(), .DI(rx_dn_ib), .SDTAP(1'b0), .VALUE(1'b0), .DLYSTEP(i_dly_dn));
+        end else begin : g_nodly
+            assign rx_dd_se = rx_dd_ib;
+            assign rx_dp_se = rx_dp_ib;
+            assign rx_dn_se = rx_dn_ib;
+        end
+    endgenerate
+    assign o_mon_dd = rx_dd_raw;
+    assign o_mon_dp = rx_dp_raw;
+    assign o_mon_dn = rx_dn_raw;
 
     IDES8 u_ides_dd (
         .D(rx_dd_se), .FCLK(fclk_i), .PCLK(clk_i), .CALIB(1'b0), .RESET(rst),

@@ -50,6 +50,7 @@ pub module UsbPhy #(
     i_rx_dp: input  logic<8>, // single-ended D+ comparator
     i_rx_dn: input  logic<8>, // single-ended D- comparator
     i_rx_dd: input  logic<8>, // differential D+/D- receiver (HS data); tie to i_rx_dp for FS-only
+    i_rx_dd_valid: input logic, // 1 normally; an external HS CDR + gearbox drops it on clocks without 8 new bits
     o_tx_dp: output logic<8>,
     o_tx_dn: output logic<8>,
     o_tx_oe: output logic   ,
@@ -95,6 +96,7 @@ pub module UsbPhy #(
         i_dp       : i_rx_dp          ,
         i_dn       : i_rx_dn          ,
         i_dd       : i_rx_dd          ,
+        i_dd_valid : i_rx_dd_valid    ,
         i_xcvr     : i_utmi_xcvrselect,
         i_termsel  : i_utmi_termselect,
         i_tx_oe    : tx_oe            ,

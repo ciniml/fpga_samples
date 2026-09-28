@@ -11,10 +11,15 @@ module oscdr_link_body #(
     parameter real PHASE0 = 0.11,     // initial sampling offset [ns]
     parameter int  NWORDS = 20000,    // clocks to run after lock
     parameter bit  SCAN   = 0,
+    parameter int  SAMPLES = 32,      // samples per clock (32: OSIDES32 @1Gbps, 24: USB HS 3 receivers @480Mbps)
+    parameter int  OSR    = 4,        // samples per UI
+    parameter real UI_NS  = 1.0,      // nominal unit interval [ns]
     parameter bit  RUN    = 0
 ) ();
+    localparam real CLK_NS = UI_NS * SAMPLES / OSR;   // 8ns (1Gbps/32) or 16.667ns (480Mbps/24)
+    localparam real SP_NS  = UI_NS / OSR;             // sample spacing
     logic clk = 0, rst = 1;
-    always #4 clk = ~clk;   // 125MHz
+    always #(CLK_NS / 2) clk = ~clk;
 
     // ---- TX bit source: PRBS7 as a function of bit index ----
     logic [6:0] lfsr = 7'h5a;
@@ -29,10 +34,10 @@ module oscdr_link_body #(
     endfunction
 
     // ---- sampler ----
-    real ui_tx = 1.0 * (1.0 + PPM / 1e6);
+    real ui_tx = UI_NS * (1.0 + PPM / 1e6);
     real tnow  = 0.0;               // time of sample 0 of the current word
     real scan_off = 0.0;            // extra sample offset (eye scan)
-    logic [31:0] samples;
+    logic [SAMPLES-1:0] samples;
     function automatic logic sample_at(input real t);
         // bit index whose interval contains t, with per-edge jitter on the boundary
         longint n = longint'($floor(t / ui_tx));
@@ -44,8 +49,8 @@ module oscdr_link_body #(
         return prbs_bit(n);
     endfunction
     always @(posedge clk) begin
-        for (int k = 0; k < 32; k++) samples[k] <= sample_at(tnow + PHASE0 + scan_off + 0.25 * k);
-        tnow <= tnow + 8.0;
+        for (int k = 0; k < SAMPLES; k++) samples[k] <= sample_at(tnow + PHASE0 + scan_off + SP_NS * k);
+        tnow <= tnow + CLK_NS;
     end
 
     // ---- DUT ----
@@ -53,7 +58,7 @@ module oscdr_link_body #(
     logic [8:0] bits;
     logic [3:0] nbits;
     logic [1:0] phase;
-    OsCdr #(.SAMPLES(32), .OSR(4)) cdr (
+    OsCdr #(.SAMPLES(SAMPLES), .OSR(OSR)) cdr (
         .i_clk(clk), .i_rst(rst), .i_samples(samples), .i_freeze(freeze),
         .o_bits(bits), .o_nbits(nbits), .o_phase(phase), .o_lock(lock), .o_slip(slip));
     logic        w_valid;
@@ -120,7 +125,7 @@ module oscdr_link_body #(
         check("zero errors", nerr == 0);
         begin
             // expected slips ~ |ppm| * bits / 1e6 / (1/OSR) = |ppm|*bits*4/1e6
-            real exp_slips = (PPM < 0 ? -PPM : PPM) * nbits_chk * 4.0 / 1e6;
+            real exp_slips = (PPM < 0 ? -PPM : PPM) * nbits_chk * OSR / 1e6;
             check($sformatf("slip count plausible (exp ~%0.0f)", exp_slips),
                   (PPM == 0.0) ? slips <= 2 : (slips > exp_slips * 0.7 && slips < exp_slips * 1.3 + 2));
         end

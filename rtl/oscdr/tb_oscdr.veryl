@@ -36,6 +36,18 @@ module oscdr_m5000; oscdr_link_body #(.PPM(-5000), .RUN(1)) body(); endmodule
 embed (inline) sv{{{
 module oscdr_jitter; oscdr_link_body #(.JITTER(0.15), .RUN(1)) body(); endmodule
 }}}
+#[test(oscdr3_0ppm)]
+embed (inline) sv{{{
+module oscdr3_0ppm; oscdr_link_body #(.SAMPLES(24), .OSR(3), .UI_NS(2.0833), .PHASE0(0.3), .RUN(1)) body(); endmodule
+}}}
+#[test(oscdr3_p500)]
+embed (inline) sv{{{
+module oscdr3_p500; oscdr_link_body #(.SAMPLES(24), .OSR(3), .UI_NS(2.0833), .PPM(500), .PHASE0(0.1), .RUN(1)) body(); endmodule
+}}}
+#[test(oscdr3_m500)]
+embed (inline) sv{{{
+module oscdr3_m500; oscdr_link_body #(.SAMPLES(24), .OSR(3), .UI_NS(2.0833), .PPM(-500), .JITTER(0.1), .RUN(1)) body(); endmodule
+}}}
 #[test(oscdr_scan)]
 embed (inline) sv{{{
 module oscdr_scan; oscdr_link_body #(.JITTER(0.10), .SCAN(1), .NWORDS(2000), .RUN(1)) body(); endmodule

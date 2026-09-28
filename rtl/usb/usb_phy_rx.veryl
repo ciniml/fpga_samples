@@ -49,6 +49,7 @@ pub module UsbPhyRx #(
     i_dp: input logic<8>, // single-ended D+ comparator (vs. ~130 mV reference)
     i_dn: input logic<8>, // single-ended D- comparator
     i_dd: input logic<8>, // differential receiver D+ - D- (HS data; TN710 USB_RX_D+/-)
+    i_dd_valid: input logic, // HS: i_dd carries 8 new bits this clock (0 = stall, e.g. an external CDR/gearbox had none)
 
     i_xcvr   : input logic<2>, // usb_pkg::XCVR_*
     i_termsel: input logic   , // 0: HS termination, 1: FS/LS pull-up
@@ -103,7 +104,7 @@ pub module UsbPhyRx #(
                 // substitute) from both single-ended comparators low.
                 fe_j      = i_dd;
                 fe_se0    = ~i_dp & ~i_dn;
-                fe_n      = 4'd8;
+                fe_n      = if i_dd_valid ? 4'd8 : 4'd0;
                 linestate = if hs_all_se0 ? LINE_SE0 : {i_dn[7], i_dp[7]};
                 s_prev    = s_raw;
                 phase     = 0;

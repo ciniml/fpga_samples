@@ -86,8 +86,12 @@ module top (
         .o_vendor_reg(vendor_reg),
         .i_vendor_status({8'h25, 3'b0, vbus_s, 3'b0, high_speed, sof_cnt}));   // 0x25 = "25K", flags, SOF count
 
-    usb_phy_gowin u_phy(
+    // dynamic IODELAY taps on the three receive paths (UART 'd'/'p'/'n' + value)
+    reg  [7:0] dly_dd, dly_dp, dly_dn;
+    wire [7:0] mon_dd, mon_dp, mon_dn;
+    usb_phy_gowin #(.SE_FROM_DIFF(1), .DYN_DLY(1), .HS_CDR(1)) u_phy(
         .clk_i(pclk_60m), .fclk_i(fclk_240m), .rst_i(usb_rst), .pll_locked_i(pll_lock),
+        .i_dly_dd(dly_dd), .i_dly_dp(dly_dp), .i_dly_dn(dly_dn), .o_mon_dd(mon_dd), .o_mon_dp(mon_dp), .o_mon_dn(mon_dn),
         .utmi_data_out_i(utmi_data_out), .utmi_txvalid_i(utmi_txvalid), .utmi_txready_o(utmi_txready),
         .utmi_data_in_o(utmi_data_in), .utmi_rxactive_o(utmi_rxactive), .utmi_rxvalid_o(utmi_rxvalid),
         .utmi_rxerror_o(utmi_rxerror), .utmi_linestate_o(utmi_linestate),
@@ -147,18 +151,64 @@ module top (
     //------------------------------------------------------------------
     uart_rx #(.NUMBER_OF_BITS(8), .BAUD_DIVIDER(60_000_000 / 115200)) u_uart_rx(
         .clock(pclk_60m), .reset(rst), .data_valid(h_rx_valid), .data_ready(1'b1), .data_bits(h_rx_data), .rx(uart_rxd), .overrun());
-    wire [47:0] cap_word = {4'b0, utmi_rxerror, utmi_rxvalid, utmi_rxactive, u_phy.tx_oe, u_phy.tx_dn, u_phy.tx_dp, u_phy.rx_dd, u_phy.rx_dn, u_phy.rx_dp};
+    // capture word (6 bytes): raw dp, raw dn, raw dd, CDR byte, {se0_f, valid, nbits[3:0], dsel[1:0]}, {rxerror, rxvalid, rxactive, tx_oe, lock, 3'b0}
+    wire [47:0] cap_word = {3'b0, u_phy.g_cdr.u_hs_cdr.o_lock, u_phy.tx_oe, utmi_rxactive, utmi_rxvalid, utmi_rxerror,
+                            u_phy.g_cdr.u_hs_cdr.u_cdr.dsel, u_phy.g_cdr.u_hs_cdr.u_cdr.o_nbits, u_phy.g_cdr.u_hs_cdr.o_valid, u_phy.se0_f,
+                            u_phy.g_cdr.u_hs_cdr.o_byte, mon_dd, mon_dn, mon_dp};
     reg  [47:0] capmem [0:2047] /* synthesis syn_ramstyle = "block_ram" */;
     reg  [10:0] cap_wp, cap_rp;
     reg  [10:0] cap_left;
     reg  [1:0]  cap_state;      // 0 idle, 1 armed (ring), 2 post-trigger, 3 dumping
+    //------------------------------------------------------------------
+    // sample-stream agreement measurement: 'm' counts, over 2^20 words in
+    // which the single-ended comparators are not both idle, the samples where
+    // dp == dd and where ~dn == dd; reply 'M' + active(32) + match_dp(32) + match_dn(32)
+    //------------------------------------------------------------------
+    reg  [1:0] cmd_sel; reg cmd_val;    // 'd'/'p'/'n' then one value byte
+    always @(posedge pclk_60m or posedge rst) begin
+        // defaults: dp / dn comparators +16 taps intrinsic offset, +56 / +111 taps = 1/3 / 2/3 UI (usb_dlyscan.py)
+        if (rst) begin dly_dd <= 8'd0; dly_dp <= 8'd72; dly_dn <= 8'd127; cmd_sel <= 2'd0; cmd_val <= 1'b0; end
+        else if (h_rx_valid) begin
+            if (cmd_val) begin
+                cmd_val <= 1'b0;
+                case (cmd_sel) 2'd1: dly_dd <= h_rx_data; 2'd2: dly_dp <= h_rx_data; 2'd3: dly_dn <= h_rx_data; default: ; endcase
+            end else if (h_rx_data == "d") begin cmd_sel <= 2'd1; cmd_val <= 1'b1; end
+            else if (h_rx_data == "p") begin cmd_sel <= 2'd2; cmd_val <= 1'b1; end
+            else if (h_rx_data == "n") begin cmd_sel <= 2'd3; cmd_val <= 1'b1; end
+        end
+    end
+    function [3:0] cnt8(input [7:0] v); integer k; begin cnt8 = 0; for (k = 0; k < 8; k = k + 1) cnt8 = cnt8 + v[k]; end endfunction
+    reg        meas_run; reg [19:0] meas_left;
+    reg [31:0] m_active, m_dp, m_dn;
+    reg [103:0] m_shift; reg [3:0] m_left; reg m_valid;
+    wire       m_ready;
+    wire       m_word_active = |(mon_dp | mon_dn);
+    always @(posedge pclk_60m or posedge rst) begin
+        if (rst) begin meas_run <= 1'b0; meas_left <= 20'd0; m_active <= 0; m_dp <= 0; m_dn <= 0; m_shift <= 0; m_left <= 0; m_valid <= 1'b0; end
+        else begin
+            if (!meas_run && !cmd_val && h_rx_valid && h_rx_data == "m") begin
+                meas_run <= 1'b1; meas_left <= 20'hfffff; m_active <= 0; m_dp <= 0; m_dn <= 0;
+            end else if (meas_run) begin
+                if (m_word_active) begin
+                    m_active <= m_active + 8;
+                    m_dp <= m_dp + cnt8(~(mon_dp ^ mon_dd));
+                    m_dn <= m_dn + cnt8(mon_dn ^ mon_dd);
+                end
+                meas_left <= meas_left - 1'b1;
+                if (meas_left == 0) begin meas_run <= 1'b0; m_shift <= {m_dn, m_dp, m_active, 8'h4d}; m_left <= 4'd13; m_valid <= 1'b1; end
+            end else if (m_valid && m_ready) begin
+                m_shift <= {8'd0, m_shift[103:8]}; m_left <= m_left - 1'b1;
+                if (m_left == 4'd1) m_valid <= 1'b0;
+            end
+        end
+    end
     reg  [2:0]  dump_byte;
     reg  [47:0] cap_rdata;
     reg         cap_rd_pending;
     // trigger: any edge on either single-ended comparator (line state change) or host 'S'
     reg  [7:0]  rx_dp_q, rx_dn_q;
-    always @(posedge pclk_60m) begin rx_dp_q <= u_phy.rx_dp; rx_dn_q <= u_phy.rx_dn; end
-    wire        cap_trig = (u_phy.rx_dp != rx_dp_q) || (u_phy.rx_dn != rx_dn_q) || (h_rx_valid && h_rx_data == "S");
+    always @(posedge pclk_60m) begin rx_dp_q <= mon_dp; rx_dn_q <= mon_dn; end
+    wire        cap_trig = (mon_dp != rx_dp_q) || (mon_dn != rx_dn_q) || (h_rx_valid && h_rx_data == "S");
     always @(posedge pclk_60m) if (cap_state == 2'd1 || cap_state == 2'd2) capmem[cap_wp] <= cap_word;
     always @(posedge pclk_60m) cap_rdata <= capmem[cap_rp];
     reg dump_valid; wire dump_ready;
@@ -198,12 +248,13 @@ module top (
     end
     wire [7:0] dump_data = cap_rdata[dump_byte*8 +: 8];
 
-    // UART TX mux: the dump has priority over the status frames
-    wire        mux_valid = (cap_state == 2'd3) ? dump_valid : tx_valid;
-    wire [7:0]  mux_data  = (cap_state == 2'd3) ? dump_data  : shift[7:0];
+    // UART TX mux: dump > measurement reply > status frames
+    wire        mux_valid = (cap_state == 2'd3) ? dump_valid : m_valid ? m_valid : tx_valid;
+    wire [7:0]  mux_data  = (cap_state == 2'd3) ? dump_data  : m_valid ? m_shift[7:0] : shift[7:0];
     wire        mux_ready;
     assign dump_ready = (cap_state == 2'd3) & mux_ready;
-    assign tx_ready   = (cap_state != 2'd3) & mux_ready;
+    assign m_ready    = (cap_state != 2'd3) & mux_ready;
+    assign tx_ready   = (cap_state != 2'd3) & ~m_valid & mux_ready;
     uart_tx #(.NUMBER_OF_BITS(8), .BAUD_DIVIDER(60_000_000 / 115200)) u_uart_tx(
         .clock(pclk_60m), .reset(rst), .data_valid(mux_valid), .data_ready(mux_ready), .data_bits(mux_data), .tx(uart_txd));
 endmodule

@@ -41,5 +41,18 @@ python3 host/usb_echo.py                          # pyusb: ベンダリクエス
   単端コンパレータは SE0 (24 サンプル多数決) の検出のみ。これで **FS は列挙・ベンダ IN/OUT・バルク 8〜2048 B とも 100%**
   (往復 0.53 MB/s)。HS は同条件で列挙は通るが、上記の位相追従問題は残る (set_configuration が失敗することもある)
 - 状態表示 (`usb_status.py`) は開いた直後に OS バッファを捨てる (溜まった古いフレームを最新と誤読した)
+- **HS 3 相 CDR (2026-09-29 実装、実機は未達)**: 3 系統の受信 (差動 dd、単端 D+/D− コンパレータ) に動的 IODELAY を入れ
+  (`DYN_DLY=1`、UART `d`/`p`/`n` + 値で設定、`host/usb_dlyscan.py` で一致率を掃引)、dp/dn を dd に対し +1/3 / +2/3 UI 遅らせて
+  24 サンプル/語 = 3 サンプル/ビットにし、`rtl/oscdr` の OsCdr (OSR=3) + BitGearbox + バイト FIFO で位相追従する
+  `rtl/usb/gowin/usb_hs_cdr.v` (`HS_CDR=1`)。PHY には `i_rx_dd_valid` (語ストール) を追加。
+  - 実測: dp/dn は dd より約 16 タップ (200 ps) 早い → 既定 dp=+72, dn=+127 タップ。一致率は整列で最大 91%
+  - IODELAY は信号を遅らせるので、遅延を足した経路のサンプルはライン上で**前**の時刻: 時間順は [dn, dp, dd] (最初は逆順にしていて
+    追従が逆方向に働いた)。OsCdr の OSR=3 対応 (argmin の 3 クラス化、dsel の mod OSR) も修正
+  - `test/hs_cdr_tb.sv` (パケット + アイドル + ppm) で ±200 ppm 39〜40/40、`test/hs_cdr_replay.sv` は実機キャプチャ
+    (`usb_capture.py` → `cap2hex.py`) を CDR モデルに再生し PID 検査で評価: 実機サンプルで 14/15
+  - 実機: HS 列挙でアドレスまで進むが SOF 受信率 約 91%、ディスクリプタ/コンフィグで -71 が出て安定しない。
+    残る誤りは単端コンパレータ (しきい値 132 mV) をデータサンプラに使う位相で起きており、3 サンプル/UI では
+    エッジから 1/3 UI しか離れられないのが本質。次の一手: dd 側の IODELAY を追従させて常に差動レシーバで
+    データを取る (1 UI 折返し時のビット重複処理が必要) か、Gowin IP 相当の TX Delay 方式の検討
 - 次の課題: HS の位相追従。候補は差動レシーバ (rx_dd) と単端 D+ コンパレータの 2 系統に半 UI の IODELAY 差を付けた
   バンバン位相検出 + データ側 IODELAY の動的制御 (単体 IODELAY の動的モードは easycdr_bert で動作確認済み)

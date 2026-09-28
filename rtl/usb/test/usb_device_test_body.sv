@@ -44,7 +44,7 @@ module usb_device_test_body #(parameter HS = 0, parameter ULPI = 0, parameter RU
             .o_utmi_data_in(utmi_data_in), .o_utmi_rxactive(utmi_rxactive), .o_utmi_rxvalid(utmi_rxvalid),
             .o_utmi_rxerror(utmi_rxerror), .o_utmi_linestate(utmi_linestate),
             .i_utmi_opmode(utmi_opmode), .i_utmi_xcvrselect(utmi_xcvr), .i_utmi_termselect(utmi_termsel),
-            .i_rx_dp(rx_dp), .i_rx_dn(rx_dn), .i_rx_dd(rx_dp), .o_tx_dp(tx_dp), .o_tx_dn(tx_dn), .o_tx_oe(tx_oe),
+            .i_rx_dp(rx_dp), .i_rx_dn(rx_dn), .i_rx_dd(rx_dp), .i_rx_dd_valid(1'b1), .o_tx_dp(tx_dp), .o_tx_dn(tx_dn), .o_tx_oe(tx_oe),
             .o_pullup_dp_en(pu_dp), .o_pullup_dn_en(pu_dn), .o_term_dp_en(term_dp), .o_term_dn_en(term_dn)
         );
     end else begin : g_ulpi

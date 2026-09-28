@@ -92,6 +92,8 @@ pub module OsCdr #(
     var acc  : logic<AW> [OSR];
     var dsel : logic<2>;         // data sample class (pointer mod OSR)
     var have : logic;            // acquired once
+    var tot_a: logic<TW>;        // total delayed to line up with the registered argmin (best)
+    var tot_b: logic<TW>;
     var lock : logic;
     var pstep: logic<2>;         // 0 none, 1 +1, 2 -1, 3 jump
     var jump : logic<2>;
@@ -131,17 +133,41 @@ pub module OsCdr #(
         }
     }
     // best (argmin cost) is only used for acquisition: two-stage pairwise
-    // minimum, both stages registered (OSR = 4 assumed here)
+    // minimum, both stages registered (OSR = 4, or 3 with class 2 alone)
     var m01_i: logic<2>;
     var m01_v: logic<CSW>;
     var m23_i: logic<2>;
     var m23_v: logic<CSW>;
+    if OSR == 3 :g_m23_osr3 {
+        always_ff (i_clk, i_rst) {
+            if_reset {
+                m23_i = 2;
+                m23_v = 0;
+            } else {
+                m23_i = 2;
+                m23_v = cost[2];
+            }
+        }
+    } else :g_m23_osr4 {
+        always_ff (i_clk, i_rst) {
+            if_reset {
+                m23_i = 2;
+                m23_v = 0;
+            } else {
+                if cost[3] <: cost[2] {
+                    m23_i = 3;
+                    m23_v = cost[3];
+                } else {
+                    m23_i = 2;
+                    m23_v = cost[2];
+                }
+            }
+        }
+    }
     always_ff (i_clk, i_rst) {
         if_reset {
             m01_i = 0;
             m01_v = 0;
-            m23_i = 2;
-            m23_v = 0;
             best  = 0;
             bestc = 0;
         } else {
@@ -151,13 +177,6 @@ pub module OsCdr #(
             } else {
                 m01_i = 0;
                 m01_v = cost[0];
-            }
-            if cost[3] <: cost[2] {
-                m23_i = 3;
-                m23_v = cost[3];
-            } else {
-                m23_i = 2;
-                m23_v = cost[2];
             }
             if m23_v <: m01_v {
                 best  = m23_i;
@@ -294,6 +313,8 @@ pub module OsCdr #(
             }
             dsel    = 0;
             have    = 1'b0;
+            tot_a   = 0;
+            tot_b   = 0;
             lock    = 1'b0;
             pstep   = 0;
             jump    = 0;
@@ -358,9 +379,14 @@ pub module OsCdr #(
                 }
             }
 
+            // best (2-stage argmin) lags total by two clocks: qualify the
+            // acquisition with the delayed total so the jump uses a histogram
+            // that already contains the transitions it was triggered by
+            tot_a = total;
+            tot_b = tot_a;
             if !i_freeze {
                 if !have {
-                    if total >= ACT as TW {
+                    if tot_b >= ACT as TW {
                         have  = 1'b1;
                         dsel  = best;
                         jump  = best;
@@ -369,11 +395,11 @@ pub module OsCdr #(
                 } else if go_up {
                     pstep = 2'd1;
                     ldir  = 2'd1;
-                    dsel  = dsel + 1;
+                    dsel  = if dsel == (OSR - 1) as 2 ? 0 : dsel + 1;   // mod OSR (OSR = 3 does not wrap by itself)
                 } else if go_dn {
                     pstep = 2'd2;
                     ldir  = 2'd2;
-                    dsel  = dsel - 1;
+                    dsel  = if dsel == 0 ? (OSR - 1) as 2 : dsel - 1;
                 }
             }
         }

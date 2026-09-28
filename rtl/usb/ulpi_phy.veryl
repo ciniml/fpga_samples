@@ -119,6 +119,7 @@ pub module UlpiPhy #(
         i_rx_dp          : i_rx_dp       ,
         i_rx_dn          : i_rx_dn       ,
         i_rx_dd          : i_rx_dd       ,
+        i_rx_dd_valid    : 1'b1          ,
         o_tx_dp          : o_tx_dp       ,
         o_tx_dn          : o_tx_dn       ,
         o_tx_oe          : o_tx_oe       ,

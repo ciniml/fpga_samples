@@ -28,6 +28,10 @@ foreach f {usb_pkg usb_phy_rx usb_phy_tx usb_phy usb_sie usb_descriptor_rom usb_
     add_file -type verilog [file normalize ${RTL_DIR}/usb/${f}.sv]
 }
 add_file -type verilog [file normalize ${RTL_DIR}/usb/gowin/usb_phy_gowin.v]
+add_file -type verilog [file normalize ${RTL_DIR}/usb/gowin/usb_hs_cdr.v]
+# HS clock/data recovery (rtl/oscdr, Veryl output)
+add_file -type verilog [file normalize ${RTL_DIR}/oscdr/os_cdr.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/oscdr/bit_gearbox.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_tx.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_rx.sv]
 
