@@ -57,9 +57,11 @@ module usb_phy_gowin #(
     parameter HS_CDR       = 0
 ) (
     input  wire        clk_i,        // 60 MHz
+    input  wire        i_track_en,   // HS_CDR: 1 = delay tracking loop (i_dly_* ignored except i_dly_dd as the manual base)
     input  wire [7:0]  i_dly_dd,
     input  wire [7:0]  i_dly_dp,
     input  wire [7:0]  i_dly_dn,
+    output wire [7:0]  o_dly_dd,     // taps in use (tracking or manual)
     output wire [7:0]  o_mon_dd,
     output wire [7:0]  o_mon_dp,
     output wire [7:0]  o_mon_dn,
@@ -130,13 +132,16 @@ module usb_phy_gowin #(
             wire hs_sel = (utmi_xcvrselect_i == 2'b00) && !utmi_termselect_i;
             wire [7:0] cdr_byte, cdr_dp, cdr_dn; wire cdr_valid;
             usb_hs_cdr u_hs_cdr(
-                .clk_i(clk_i), .rst_i(rst), .i_dd(dd_d2), .i_dp(dp_d2), .i_dn(dn_d2), .i_se0(se0_f),
+                .clk_i(clk_i), .rst_i(rst), .i_track_en(i_track_en), .i_dly_base(i_dly_dd),
+                .o_dly_dd(dly_dd_w), .o_dly_dp(dly_dp_w), .o_dly_dn(dly_dn_w),
+                .i_dd(dd_d2), .i_dp(dp_d2), .i_dn(dn_d2), .i_se0(se0_f),
                 .o_byte(cdr_byte), .o_valid(cdr_valid), .o_dp(cdr_dp), .o_dn(cdr_dn), .o_lock());
             assign rx_dd       = hs_sel ? cdr_byte  : dd_d2;
             assign rx_dd_valid = hs_sel ? cdr_valid : 1'b1;
             assign rx_dp       = hs_sel ? cdr_dp    : rx_dp_se0;
             assign rx_dn       = hs_sel ? cdr_dn    : rx_dn_se0;
         end else begin : g_nocdr
+            assign dly_dd_w = i_dly_dd; assign dly_dp_w = i_dly_dp; assign dly_dn_w = i_dly_dn;
             assign rx_dd       = dd_d2;
             assign rx_dd_valid = 1'b1;
             assign rx_dp       = rx_dp_se0;
@@ -176,14 +181,19 @@ module usb_phy_gowin #(
     TLVDS_IBUF u_ibuf_dd (.I(usb_rx_dp_i),  .IB(usb_rx_dn_i),  .O(rx_dd_ib));
     TLVDS_IBUF u_ibuf_dp (.I(usb_rxdp_p_i), .IB(usb_rxdp_n_i), .O(rx_dp_ib));
     TLVDS_IBUF u_ibuf_dn (.I(usb_rxdn_p_i), .IB(usb_rxdn_n_i), .O(rx_dn_ib));
+    wire [7:0] dly_dd_w, dly_dp_w, dly_dn_w;      // from the CDR's tracking loop (HS_CDR) or the inputs
+    wire [7:0] dly_dd_u = (HS_CDR && i_track_en) ? dly_dd_w : i_dly_dd;
+    wire [7:0] dly_dp_u = (HS_CDR && i_track_en) ? dly_dp_w : i_dly_dp;
+    wire [7:0] dly_dn_u = (HS_CDR && i_track_en) ? dly_dn_w : i_dly_dn;
+    assign o_dly_dd = dly_dd_u;
     generate
         if (DYN_DLY) begin : g_dly
             IODELAY #(.C_STATIC_DLY(0), .DYN_DLY_EN("TRUE"), .ADAPT_EN("FALSE")) u_dly_dd(
-                .DO(rx_dd_se), .DF(), .DI(rx_dd_ib), .SDTAP(1'b0), .VALUE(1'b0), .DLYSTEP(i_dly_dd));
+                .DO(rx_dd_se), .DF(), .DI(rx_dd_ib), .SDTAP(1'b0), .VALUE(1'b0), .DLYSTEP(dly_dd_u));
             IODELAY #(.C_STATIC_DLY(0), .DYN_DLY_EN("TRUE"), .ADAPT_EN("FALSE")) u_dly_dp(
-                .DO(rx_dp_se), .DF(), .DI(rx_dp_ib), .SDTAP(1'b0), .VALUE(1'b0), .DLYSTEP(i_dly_dp));
+                .DO(rx_dp_se), .DF(), .DI(rx_dp_ib), .SDTAP(1'b0), .VALUE(1'b0), .DLYSTEP(dly_dp_u));
             IODELAY #(.C_STATIC_DLY(0), .DYN_DLY_EN("TRUE"), .ADAPT_EN("FALSE")) u_dly_dn(
-                .DO(rx_dn_se), .DF(), .DI(rx_dn_ib), .SDTAP(1'b0), .VALUE(1'b0), .DLYSTEP(i_dly_dn));
+                .DO(rx_dn_se), .DF(), .DI(rx_dn_ib), .SDTAP(1'b0), .VALUE(1'b0), .DLYSTEP(dly_dn_u));
         end else begin : g_nodly
             assign rx_dd_se = rx_dd_ib;
             assign rx_dp_se = rx_dp_ib;

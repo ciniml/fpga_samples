@@ -20,12 +20,31 @@
 // view for the PHY (o_dp / o_dn) follows the byte stream: J/K while a byte
 // is pending, SE0 otherwise, so the PHY never sees SE0 ahead of the data.
 `timescale 1ns/1ps
+// Delay tracking (i_track_en): the three IODELAY taps move together so that
+// the data transitions fall between the dn and dp samples, which keeps the
+// differential receiver (dd, the clean one) 1/3..2/3 UI inside the eye and
+// makes the CDR pick it as the data sample; the comparators only time the
+// edges. Bang-bang: per transition between dd[k-1] and dd[k], dn[k] already
+// showing the new level = edge before dn -> more delay; dp[k] still showing
+// the old level = edge after dp -> less delay. +/-1 tap (12.5 ps) per word
+// once the votes reach TRACK_TH, base tap 0..BASE_MAX (dn = base + DN_OFF
+// must stay <= 255), re-centred to BASE_MAX/2 in steady idle. The blind CDR
+// keeps working when the range saturates, just with comparator samples.
 module usb_hs_cdr #(
     parameter CDR_IIR  = 2,   // OsCdr histogram smoothing (2^IIR words)
-    parameter CDR_HYST = 2
+    parameter CDR_HYST = 2,
+    parameter DP_OFF   = 60,  // dp tap = base + DP_OFF (+12 intrinsic, +48 = 1/3 UI at the measured ~14.5 ps/tap: 1 UI = 144 taps)
+    parameter DN_OFF   = 108, // dn tap = base + DN_OFF (+12, +96 = 2/3 UI)
+    parameter BASE_MAX = 128,
+    parameter TRACK_TH = 4    // words per tap step (12.5 ps / (4 x 16.7 ns) = 190 ppm max tracking rate; smoother than 2)
 ) (
     input  wire       clk_i,
     input  wire       rst_i,
+    input  wire       i_track_en,  // 1: delay tracking loop, 0: base = i_dly_base
+    input  wire [7:0] i_dly_base,
+    output reg  [7:0] o_dly_dd,
+    output wire [7:0] o_dly_dp,
+    output wire [7:0] o_dly_dn,
     input  wire [7:0] i_dd,       // differential receiver, bit 0 first (phase 0)
     input  wire [7:0] i_dp,       // D+ comparator (phase +1/3 UI)
     input  wire [7:0] i_dn,       // D- comparator (phase +2/3 UI, inverted data)
@@ -58,7 +77,7 @@ module usb_hs_cdr #(
     wire        se0_d8 = se0_sh[7] & i_se0;
     wire [23:0] s24_m  = i_se0 ? 24'hffffff : s24;
 
-    wire [8:0] cdr_bits; wire [3:0] cdr_nbits;
+    wire [8:0] cdr_bits; wire [3:0] cdr_nbits; wire [5:0] acc_first, acc_last;
     // The CDR tracks continuously across packets (frozen while idle): with 3
     // samples per bit every phase is at most one step from the best class,
     // so the drift accumulated over an idle gap is caught up within a few
@@ -66,7 +85,8 @@ module usb_hs_cdr #(
     // registered histogram/argmin pipeline jumps to a stale class.)
     OsCdr #(.SAMPLES(24), .OSR(3), .IIR(CDR_IIR), .HYST(CDR_HYST), .ACT_MIN(2)) u_cdr(
         .i_clk(clk_i), .i_rst(rst_i), .i_samples(s24_m), .i_freeze(i_se0),
-        .o_bits(cdr_bits), .o_nbits(cdr_nbits), .o_phase(), .o_lock(o_lock), .o_slip());
+        .o_bits(cdr_bits), .o_nbits(cdr_nbits), .o_phase(), .o_lock(o_lock), .o_slip(),
+        .o_acc_first(acc_first), .o_acc_last(acc_last));
 
     wire        gb_valid; wire [15:0] gb_word;
     BitGearbox #(.IN_MAX(9), .OUT_W(16)) u_gb(
@@ -83,6 +103,32 @@ module usb_hs_cdr #(
             if (!bf_empty) bf_rp <= bf_rp + 3'd1;
         end
     end
+    // ---- delay tracking loop ----
+    // Uses the CDR's smoothed transition histogram (polarity-agnostic, the
+    // same data the CDR selects the sample with). In time order [dn, dp, dd]
+    // class 0 = transitions between dd[k-1] and dn[k] (edge before dn: the
+    // samples see the line too late -> more delay), class 2 = between dp[k]
+    // and dd[k] (edge after dp -> less delay); the target is class 1 (edge
+    // between dn and dp), which makes dd the CDR's data sample. One tap per
+    // TRACK_TH words while the imbalance exceeds the hysteresis.
+    reg [7:0] step_cnt;
+    wire      edge_early = acc_first > acc_last + 6'd2;
+    wire      edge_late  = acc_last  > acc_first + 6'd2;
+    always @(posedge clk_i) begin
+        if (rst_i) begin o_dly_dd <= BASE_MAX / 2; step_cnt <= 0; end
+        else if (!i_track_en) begin o_dly_dd <= i_dly_base; step_cnt <= 0; end
+        else if (se0_d8) begin o_dly_dd <= BASE_MAX / 2; step_cnt <= 0; end          // re-centre between packets
+        else if (i_se0) step_cnt <= 0;
+        else if (step_cnt != TRACK_TH - 1) step_cnt <= step_cnt + 1'b1;
+        else begin
+            step_cnt <= 0;
+            if (edge_early && o_dly_dd < BASE_MAX) o_dly_dd <= o_dly_dd + 1'b1;
+            else if (edge_late && o_dly_dd != 0)   o_dly_dd <= o_dly_dd - 1'b1;
+        end
+    end
+    assign o_dly_dp = o_dly_dd + DP_OFF;
+    assign o_dly_dn = o_dly_dd + DN_OFF;
+
     wire [7:0] hs_byte = bf[bf_rp];
     assign o_byte  = hs_byte;
     assign o_valid = !bf_empty;

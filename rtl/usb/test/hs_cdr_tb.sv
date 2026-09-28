@@ -3,7 +3,8 @@
 // frequency offset; the recovered byte stream must contain every packet's
 // bit sequence in order.
 `timescale 1ns/1ps
-module hs_cdr_tb #(parameter real PPM = 500.0, parameter real PHASE0 = 0.2, parameter int NPKT = 40, parameter int PKT_BITS = 400, parameter int IIR = 2, parameter int HYST = 2);
+module hs_cdr_tb #(parameter real PPM = 500.0, parameter real PHASE0 = 0.2, parameter int NPKT = 40, parameter int PKT_BITS = 400, parameter int IIR = 2, parameter int HYST = 2, parameter bit TRACK = 1, parameter int TH = 4);
+    localparam real TAP = 0.01447;  // IODELAY tap [ns] (measured on hardware: 1 UI = 144 taps)
     localparam real UI = 2.0833;
     logic clk = 0, rst = 1;
     always #(16.6667 / 2) clk = ~clk;
@@ -35,13 +36,19 @@ module hs_cdr_tb #(parameter real PPM = 500.0, parameter real PHASE0 = 0.2, para
     real tnow = 0.0;
     function automatic int bit_at(input real t); return int'($floor(t / ui_tx)); endfunction
     logic [7:0] dd, dp, dn; logic se0;
+    logic [7:0] o_dly_dd, o_dly_dp, o_dly_dn;
+    // IODELAY model: a path with tap D shows the line D*TAP earlier; the
+    // comparator paths are intrinsically 16 taps shorter than dd (measured)
     always @(posedge clk) begin
         int n; int nse0 = 0;
+        real t_dd = PHASE0 - real'(o_dly_dd) * TAP;
+        real t_dp = PHASE0 - (real'(o_dly_dp) - 12.0) * TAP;
+        real t_dn = PHASE0 - (real'(o_dly_dn) - 12.0) * TAP;
         for (int k = 0; k < 8; k++) begin
-            n = bit_at(tnow + PHASE0 + UI * k);                 dd[k] <= (n < lvl.size() && act[n]) ? lvl[n] : $urandom_range(1);
-            n = bit_at(tnow + PHASE0 + UI * k - UI / 3.0);      dp[k] <= (n < lvl.size() && act[n]) ? lvl[n] : 1'b0;   // sampled 1/3 UI "later" = earlier bit time
-            n = bit_at(tnow + PHASE0 + UI * k - 2.0 * UI / 3.0); dn[k] <= (n < lvl.size() && act[n]) ? ~lvl[n] : 1'b0;
-            n = bit_at(tnow + PHASE0 + UI * k);                 if (!(n < lvl.size() && act[n])) nse0++;
+            n = bit_at(tnow + t_dd + UI * k); dd[k] <= (n < lvl.size() && act[n]) ? lvl[n] : $urandom_range(1);
+            n = bit_at(tnow + t_dp + UI * k); dp[k] <= (n < lvl.size() && act[n]) ? lvl[n] : 1'b0;
+            n = bit_at(tnow + t_dn + UI * k); dn[k] <= (n < lvl.size() && act[n]) ? ~lvl[n] : 1'b0;
+            n = bit_at(tnow + t_dd + UI * k); if (!(n < lvl.size() && act[n])) nse0++;
         end
         se0 <= (nse0 >= 5);
         tnow <= tnow + 16.6667;
@@ -53,17 +60,18 @@ module hs_cdr_tb #(parameter real PPM = 500.0, parameter real PHASE0 = 0.2, para
     // a delayed path gives: dp[k] shows the line at (t_k - 1/3 UI).
 
     logic [7:0] o_byte, o_dp, o_dn; logic o_valid, o_lock;
-    usb_hs_cdr #(.CDR_IIR(IIR), .CDR_HYST(HYST)) dut(.clk_i(clk), .rst_i(rst), .i_dd(dd), .i_dp(dp), .i_dn(dn), .i_se0(se0),
+    usb_hs_cdr #(.CDR_IIR(IIR), .CDR_HYST(HYST), .TRACK_TH(TH)) dut(.clk_i(clk), .rst_i(rst), .i_track_en(TRACK), .i_dly_base(8'd0), .o_dly_dd(o_dly_dd), .o_dly_dp(o_dly_dp), .o_dly_dn(o_dly_dn),
+        .i_dd(dd), .i_dp(dp), .i_dn(dn), .i_se0(se0),
                    .o_byte(o_byte), .o_valid(o_valid), .o_dp(o_dp), .o_dn(o_dn), .o_lock(o_lock));
 
     // ---- collect recovered bits ----
     logic rec[$]; int rec_clk[$]; int clkidx = 0;
     // CDR internals per clock (for diagnosis)
-    int h_dsel[$], h_nbits[$], h_posu[$], h_slip[$], h_lock[$]; logic [23:0] h_s[$];
+    int h_dsel[$], h_nbits[$], h_posu[$], h_slip[$], h_lock[$], h_tap[$]; logic [23:0] h_s[$];
     always @(posedge clk) begin
         if (!rst && o_valid) for (int b = 0; b < 8; b++) begin rec.push_back(o_byte[b]); rec_clk.push_back(clkidx); end
         h_dsel.push_back(dut.u_cdr.dsel); h_nbits.push_back(dut.u_cdr.o_nbits); h_posu.push_back(dut.u_cdr.posu);
-        h_slip.push_back(dut.u_cdr.o_slip); h_lock.push_back(dut.u_cdr.lock); h_s.push_back(dut.s24_m);
+        h_slip.push_back(dut.u_cdr.o_slip); h_lock.push_back(dut.u_cdr.lock); h_s.push_back(dut.s24_m); h_tap.push_back(o_dly_dd);
         clkidx++;
     end
 
@@ -115,7 +123,8 @@ module hs_cdr_tb #(parameter real PPM = 500.0, parameter real PHASE0 = 0.2, para
                     end
                 end
             end
-            $display("ppm=%0.0f phase0=%0.2f IIR=%0d HYST=%0d: %0d / %0d packets recovered, %0d bits out", PPM, PHASE0, IIR, HYST, found, NPKT, rec.size());
+            $display("ppm=%0.0f phase0=%0.2f IIR=%0d HYST=%0d track=%0d: %0d / %0d packets recovered, %0d bits out (final tap %0d)", PPM, PHASE0, IIR, HYST, TRACK, found, NPKT, rec.size(), o_dly_dd);
+            begin string tr = ""; for (int w = 0; w < h_tap.size(); w += 40) tr = {tr, $sformatf("%0d ", h_tap[w])}; $display("  tap every 40 words: %s", tr); end
             if (found != NPKT) $fatal(1, "packets lost");
             $display("PASS");
         end

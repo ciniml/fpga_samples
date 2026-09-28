@@ -86,12 +86,14 @@ module top (
         .o_vendor_reg(vendor_reg),
         .i_vendor_status({8'h25, 3'b0, vbus_s, 3'b0, high_speed, sof_cnt}));   // 0x25 = "25K", flags, SOF count
 
-    // dynamic IODELAY taps on the three receive paths (UART 'd'/'p'/'n' + value)
-    reg  [7:0] dly_dd, dly_dp, dly_dn;
-    wire [7:0] mon_dd, mon_dp, mon_dn;
+    // dynamic IODELAY taps on the three receive paths: tracking loop (UART 't' 1, default)
+    // or manual (UART 't' 0 then 'd'/'p'/'n' + value)
+    reg  [7:0] dly_dd, dly_dp, dly_dn; reg track_en;
+    wire [7:0] mon_dd, mon_dp, mon_dn, dly_dd_now;
     usb_phy_gowin #(.SE_FROM_DIFF(1), .DYN_DLY(1), .HS_CDR(1)) u_phy(
         .clk_i(pclk_60m), .fclk_i(fclk_240m), .rst_i(usb_rst), .pll_locked_i(pll_lock),
-        .i_dly_dd(dly_dd), .i_dly_dp(dly_dp), .i_dly_dn(dly_dn), .o_mon_dd(mon_dd), .o_mon_dp(mon_dp), .o_mon_dn(mon_dn),
+        .i_track_en(track_en), .i_dly_dd(dly_dd), .i_dly_dp(dly_dp), .i_dly_dn(dly_dn), .o_dly_dd(dly_dd_now),
+        .o_mon_dd(mon_dd), .o_mon_dp(mon_dp), .o_mon_dn(mon_dn),
         .utmi_data_out_i(utmi_data_out), .utmi_txvalid_i(utmi_txvalid), .utmi_txready_o(utmi_txready),
         .utmi_data_in_o(utmi_data_in), .utmi_rxactive_o(utmi_rxactive), .utmi_rxvalid_o(utmi_rxvalid),
         .utmi_rxerror_o(utmi_rxerror), .utmi_linestate_o(utmi_linestate),
@@ -151,9 +153,9 @@ module top (
     //------------------------------------------------------------------
     uart_rx #(.NUMBER_OF_BITS(8), .BAUD_DIVIDER(60_000_000 / 115200)) u_uart_rx(
         .clock(pclk_60m), .reset(rst), .data_valid(h_rx_valid), .data_ready(1'b1), .data_bits(h_rx_data), .rx(uart_rxd), .overrun());
-    // capture word (6 bytes): raw dp, raw dn, raw dd, CDR byte, {se0_f, valid, nbits[3:0], dsel[1:0]}, {rxerror, rxvalid, rxactive, tx_oe, lock, 3'b0}
+    // capture word (6 bytes): raw dp, raw dn, raw dd, CDR byte, dd tap in use, {3'b0, lock, tx_oe, rxactive, rxvalid, rxerror}
     wire [47:0] cap_word = {3'b0, u_phy.g_cdr.u_hs_cdr.o_lock, u_phy.tx_oe, utmi_rxactive, utmi_rxvalid, utmi_rxerror,
-                            u_phy.g_cdr.u_hs_cdr.u_cdr.dsel, u_phy.g_cdr.u_hs_cdr.u_cdr.o_nbits, u_phy.g_cdr.u_hs_cdr.o_valid, u_phy.se0_f,
+                            dly_dd_now,
                             u_phy.g_cdr.u_hs_cdr.o_byte, mon_dd, mon_dn, mon_dp};
     reg  [47:0] capmem [0:2047] /* synthesis syn_ramstyle = "block_ram" */;
     reg  [10:0] cap_wp, cap_rp;
@@ -164,17 +166,18 @@ module top (
     // which the single-ended comparators are not both idle, the samples where
     // dp == dd and where ~dn == dd; reply 'M' + active(32) + match_dp(32) + match_dn(32)
     //------------------------------------------------------------------
-    reg  [1:0] cmd_sel; reg cmd_val;    // 'd'/'p'/'n' then one value byte
+    reg  [2:0] cmd_sel; reg cmd_val;    // 'd'/'p'/'n'/'t' then one value byte
     always @(posedge pclk_60m or posedge rst) begin
-        // defaults: dp / dn comparators +16 taps intrinsic offset, +56 / +111 taps = 1/3 / 2/3 UI (usb_dlyscan.py)
-        if (rst) begin dly_dd <= 8'd0; dly_dp <= 8'd72; dly_dn <= 8'd127; cmd_sel <= 2'd0; cmd_val <= 1'b0; end
+        // manual defaults: dp / dn comparators +12 taps intrinsic offset, +48 / +96 taps = 1/3 / 2/3 UI (usb_dlyscan.py: 1 UI = 144 taps)
+        if (rst) begin dly_dd <= 8'd0; dly_dp <= 8'd60; dly_dn <= 8'd108; track_en <= 1'b1; cmd_sel <= 3'd0; cmd_val <= 1'b0; end
         else if (h_rx_valid) begin
             if (cmd_val) begin
                 cmd_val <= 1'b0;
-                case (cmd_sel) 2'd1: dly_dd <= h_rx_data; 2'd2: dly_dp <= h_rx_data; 2'd3: dly_dn <= h_rx_data; default: ; endcase
-            end else if (h_rx_data == "d") begin cmd_sel <= 2'd1; cmd_val <= 1'b1; end
-            else if (h_rx_data == "p") begin cmd_sel <= 2'd2; cmd_val <= 1'b1; end
-            else if (h_rx_data == "n") begin cmd_sel <= 2'd3; cmd_val <= 1'b1; end
+                case (cmd_sel) 3'd1: dly_dd <= h_rx_data; 3'd2: dly_dp <= h_rx_data; 3'd3: dly_dn <= h_rx_data; 3'd4: track_en <= h_rx_data[0]; default: ; endcase
+            end else if (h_rx_data == "d") begin cmd_sel <= 3'd1; cmd_val <= 1'b1; end
+            else if (h_rx_data == "p") begin cmd_sel <= 3'd2; cmd_val <= 1'b1; end
+            else if (h_rx_data == "n") begin cmd_sel <= 3'd3; cmd_val <= 1'b1; end
+            else if (h_rx_data == "t") begin cmd_sel <= 3'd4; cmd_val <= 1'b1; end
         end
     end
     function [3:0] cnt8(input [7:0] v); integer k; begin cnt8 = 0; for (k = 0; k < 8; k = k + 1) cnt8 = cnt8 + v[k]; end endfunction
@@ -183,6 +186,8 @@ module top (
     reg [103:0] m_shift; reg [3:0] m_left; reg m_valid;
     wire       m_ready;
     wire       m_word_active = |(mon_dp | mon_dn);
+    reg  [7:0] mon_dd_q; always @(posedge pclk_60m) mon_dd_q <= mon_dd;
+    wire [7:0] mon_dd_prev = {mon_dd[6:0], mon_dd_q[7]};   // dd[k-1] (the previous sample)
     always @(posedge pclk_60m or posedge rst) begin
         if (rst) begin meas_run <= 1'b0; meas_left <= 20'd0; m_active <= 0; m_dp <= 0; m_dn <= 0; m_shift <= 0; m_left <= 0; m_valid <= 1'b0; end
         else begin
@@ -192,7 +197,7 @@ module top (
                 if (m_word_active) begin
                     m_active <= m_active + 8;
                     m_dp <= m_dp + cnt8(~(mon_dp ^ mon_dd));
-                    m_dn <= m_dn + cnt8(mon_dn ^ mon_dd);
+                    m_dn <= m_dn + cnt8(~(mon_dp ^ mon_dd_prev));   // (was ~dn==dd) now: dp == dd[k-1] -> delay-direction test
                 end
                 meas_left <= meas_left - 1'b1;
                 if (meas_left == 0) begin meas_run <= 1'b0; m_shift <= {m_dn, m_dp, m_active, 8'h4d}; m_left <= 4'd13; m_valid <= 1'b1; end

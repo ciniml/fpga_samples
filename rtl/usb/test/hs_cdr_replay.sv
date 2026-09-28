@@ -25,7 +25,8 @@ module hs_cdr_replay #(parameter string FILE = "cap.hex", parameter int N = 2048
     wire se0_f = ({1'b0, c0} + {1'b0, c1} + {1'b0, c2}) >= 5'd12;
 
     logic [7:0] o_byte, o_dp, o_dn; logic o_valid, o_lock;
-    usb_hs_cdr #(.CDR_IIR(IIR), .CDR_HYST(HYST)) dut(.clk_i(clk), .rst_i(rst), .i_dd(dd_d2), .i_dp(dp_d2), .i_dn(dn_d2), .i_se0(se0_f),
+    usb_hs_cdr #(.CDR_IIR(IIR), .CDR_HYST(HYST)) dut(.clk_i(clk), .rst_i(rst), .i_track_en(1'b0), .i_dly_base(8'd0), .o_dly_dd(), .o_dly_dp(), .o_dly_dn(),
+        .i_dd(dd_d2), .i_dp(dp_d2), .i_dn(dn_d2), .i_se0(se0_f),
         .o_byte(o_byte), .o_valid(o_valid), .o_dp(o_dp), .o_dn(o_dn), .o_lock(o_lock));
 
     // bit stream -> NRZI decode -> SYNC (KJKJ...KK: levels 0101...00) -> PID

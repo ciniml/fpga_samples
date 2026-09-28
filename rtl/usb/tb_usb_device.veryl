@@ -26,6 +26,13 @@ module usb_device_fs;
 endmodule
 }}}
 
+#[test(usb_device_hs_stall)]
+embed (inline) sv{{{
+module usb_device_hs_stall;
+    usb_device_test_body #(.HS(1), .STALL(2000), .RUN(1)) body();
+endmodule
+}}}
+
 #[test(usb_device_hs)]
 embed (inline) sv{{{
 module usb_device_hs;

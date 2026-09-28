@@ -48,6 +48,8 @@ pub module OsCdr #(
     o_phase: output logic<2>                , // current data sample class
     o_lock : output logic                   ,
     o_slip : output logic                   , // pulse: pointer moved
+    o_acc_first: output logic<$clog2(SAMPLES / OSR + 1) + IIR + 1>, // smoothed transition count, class 0 (external phase loops)
+    o_acc_last : output logic<$clog2(SAMPLES / OSR + 1) + IIR + 1>, // class OSR-1
 ) {
     const BPW: u32 = SAMPLES / OSR;             // bits per word, nominal (8)
     const CW : u32 = $clog2(BPW + 1);           // per-word class count (0..8)
@@ -301,8 +303,10 @@ pub module OsCdr #(
         posu_next = posu + (OSR as 4 * nbits) - SAMPLES as 4;
     }
 
-    assign o_phase = dsel;
-    assign o_lock  = lock;
+    assign o_phase     = dsel;
+    assign o_lock      = lock;
+    assign o_acc_first = acc[0];
+    assign o_acc_last  = acc[OSR - 1];
 
     always_ff (i_clk, i_rst) {
         if_reset {

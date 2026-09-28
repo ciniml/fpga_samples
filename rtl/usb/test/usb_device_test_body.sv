@@ -8,7 +8,7 @@
 //   HS   = 0: FS enumeration through UsbPhy;  1: reset + chirp handshake, HS enumeration.
 //   ULPI = 1: UsbDevice -> UlpiLink -> UlpiPhy instead of UsbPhy.
 `timescale 1ns/1ps
-module usb_device_test_body #(parameter HS = 0, parameter ULPI = 0, parameter RUN = 0);
+module usb_device_test_body #(parameter HS = 0, parameter ULPI = 0, parameter RUN = 0, parameter STALL = 0);  // STALL > 0: RxValid dropped 1 clock in STALL (HS CDR word stalls)
     logic clk = 0;
     logic rst = 1;
     always #8.333 clk = ~clk;
@@ -38,13 +38,27 @@ module usb_device_test_body #(parameter HS = 0, parameter ULPI = 0, parameter RU
     );
 
     generate if (ULPI == 0) begin : g_utmi
+        // STALL > 0: the receive words pass through an elastic queue that
+        // withholds a word 1 clock in STALL (as the HS CDR / gearbox does);
+        // nothing is lost, the stream is just delivered later
+        logic dd_valid = 1; logic [7:0] q_dp, q_dn, q_dd; logic [23:0] q[$];
+        always @(posedge clk) begin
+            if (STALL == 0) begin q_dp <= rx_dp; q_dn <= rx_dn; q_dd <= rx_dp; dd_valid <= 1'b1; end
+            else begin
+                q.push_back({rx_dp, rx_dn, rx_dp});
+                if ($urandom_range(STALL - 1) != 0 && q.size() > 0) begin
+                    logic [23:0] w; w = q.pop_front();
+                    q_dp <= w[23:16]; q_dn <= w[15:8]; q_dd <= w[7:0]; dd_valid <= 1'b1;
+                end else dd_valid <= 1'b0;
+            end
+        end
         UsbPhy phy (
             .i_clk(clk), .i_rst(rst),
             .i_utmi_data_out(utmi_data_out), .i_utmi_txvalid(utmi_txvalid), .o_utmi_txready(utmi_txready),
             .o_utmi_data_in(utmi_data_in), .o_utmi_rxactive(utmi_rxactive), .o_utmi_rxvalid(utmi_rxvalid),
             .o_utmi_rxerror(utmi_rxerror), .o_utmi_linestate(utmi_linestate),
             .i_utmi_opmode(utmi_opmode), .i_utmi_xcvrselect(utmi_xcvr), .i_utmi_termselect(utmi_termsel),
-            .i_rx_dp(rx_dp), .i_rx_dn(rx_dn), .i_rx_dd(rx_dp), .i_rx_dd_valid(1'b1), .o_tx_dp(tx_dp), .o_tx_dn(tx_dn), .o_tx_oe(tx_oe),
+            .i_rx_dp(q_dp), .i_rx_dn(q_dn), .i_rx_dd(q_dd), .i_rx_dd_valid(dd_valid), .o_tx_dp(tx_dp), .o_tx_dn(tx_dn), .o_tx_oe(tx_oe),
             .o_pullup_dp_en(pu_dp), .o_pullup_dn_en(pu_dn), .o_term_dp_en(term_dp), .o_term_dn_en(term_dn)
         );
     end else begin : g_ulpi
@@ -409,7 +423,8 @@ module usb_device_test_body #(parameter HS = 0, parameter ULPI = 0, parameter RU
         // ---- SOF
         stage = "sof";
         host.send_sof(11'h123);
-        repeat (20) @(posedge clk);
+        // (with STALL the elastic queue's backlog grows over the run, so allow the delivery delay)
+        for (int w = 0; w < 4000 && frame != 11'h123; w++) @(posedge clk);
         if (frame != 11'h123) fail($sformatf("frame %h", frame));
 
         // ---- wrong address is ignored
