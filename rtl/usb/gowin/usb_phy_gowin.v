@@ -30,7 +30,18 @@
 // 1-sample-per-bit HS receiver (Gowin "TX Delay" / IODELAY) is left to the
 // integrator: sweep an IODELAY on usb_rx_d during bring-up.
 `timescale 1ns/1ps
-module usb_phy_gowin (
+//
+// SE_FROM_DIFF = 1 (default, from hardware bring-up 2026-09-29): the
+// single-ended comparators sit at VREF ~130 mV, which is too close to the
+// FS low level seen at the device (host driver + the 1.5k pull-up gives
+// ~0.1 V), so their edges are late and glitchy (a J->K transition showed
+// ~44 ns of SE1, the EOP SE0 was chopped). They are therefore used only to
+// detect SE0 (both low, 24-sample majority), and J/K are taken from the
+// differential receiver, which is clean in FS as well as HS. The data path
+// is delayed by two words to line up with the SE0 filter.
+module usb_phy_gowin #(
+    parameter SE_FROM_DIFF = 1
+) (
     input  wire        clk_i,        // 60 MHz
     input  wire        fclk_i,       // 240 MHz (DDR -> 480 Msps)
     input  wire        rst_i,
@@ -67,6 +78,34 @@ module usb_phy_gowin (
     wire        tx_oe;
     wire        pullup_dp_en, pullup_dn_en, term_dp_en, term_dn_en;
 
+    // ---- receiver conditioning (see SE_FROM_DIFF above) ----
+    wire [7:0]  rx_dp_raw, rx_dn_raw, rx_dd_raw;
+    reg  [7:0]  dd_d1, dd_d2, dp_d1, dp_d2, dn_d1, dn_d2;
+    reg  [3:0]  se0_c0, se0_c1, se0_c2;    // SE0 samples in the current / previous / older word
+    function [3:0] popcnt8(input [7:0] v);
+        integer k; begin popcnt8 = 0; for (k = 0; k < 8; k = k + 1) popcnt8 = popcnt8 + v[k]; end
+    endfunction
+    wire [7:0] se0_raw = ~rx_dp_raw & ~rx_dn_raw;
+    always @(posedge clk_i) begin
+        dd_d1 <= rx_dd_raw; dd_d2 <= dd_d1;
+        dp_d1 <= rx_dp_raw; dp_d2 <= dp_d1;
+        dn_d1 <= rx_dn_raw; dn_d2 <= dn_d1;
+        se0_c0 <= popcnt8(se0_raw); se0_c1 <= se0_c0; se0_c2 <= se0_c1;
+    end
+    // majority over the 24 samples surrounding the (2-word delayed) output word
+    wire se0_f = ({1'b0, se0_c0} + {1'b0, se0_c1} + {1'b0, se0_c2}) >= 5'd12;
+    generate
+        if (SE_FROM_DIFF) begin : g_se_diff
+            assign rx_dd = dd_d2;
+            assign rx_dp = dd_d2  & {8{~se0_f}};
+            assign rx_dn = ~dd_d2 & {8{~se0_f}};
+        end else begin : g_se_raw
+            assign rx_dd = rx_dd_raw;
+            assign rx_dp = rx_dp_raw;
+            assign rx_dn = rx_dn_raw;
+        end
+    endgenerate
+
     UsbPhy u_phy (
         .i_clk            (clk_i),
         .i_rst            (rst),
@@ -101,18 +140,18 @@ module usb_phy_gowin (
 
     IDES8 u_ides_dd (
         .D(rx_dd_se), .FCLK(fclk_i), .PCLK(clk_i), .CALIB(1'b0), .RESET(rst),
-        .Q0(rx_dd[0]), .Q1(rx_dd[1]), .Q2(rx_dd[2]), .Q3(rx_dd[3]),
-        .Q4(rx_dd[4]), .Q5(rx_dd[5]), .Q6(rx_dd[6]), .Q7(rx_dd[7])
+        .Q0(rx_dd_raw[0]), .Q1(rx_dd_raw[1]), .Q2(rx_dd_raw[2]), .Q3(rx_dd_raw[3]),
+        .Q4(rx_dd_raw[4]), .Q5(rx_dd_raw[5]), .Q6(rx_dd_raw[6]), .Q7(rx_dd_raw[7])
     );
     IDES8 u_ides_dp (
         .D(rx_dp_se), .FCLK(fclk_i), .PCLK(clk_i), .CALIB(1'b0), .RESET(rst),
-        .Q0(rx_dp[0]), .Q1(rx_dp[1]), .Q2(rx_dp[2]), .Q3(rx_dp[3]),
-        .Q4(rx_dp[4]), .Q5(rx_dp[5]), .Q6(rx_dp[6]), .Q7(rx_dp[7])
+        .Q0(rx_dp_raw[0]), .Q1(rx_dp_raw[1]), .Q2(rx_dp_raw[2]), .Q3(rx_dp_raw[3]),
+        .Q4(rx_dp_raw[4]), .Q5(rx_dp_raw[5]), .Q6(rx_dp_raw[6]), .Q7(rx_dp_raw[7])
     );
     IDES8 u_ides_dn (
         .D(rx_dn_se), .FCLK(fclk_i), .PCLK(clk_i), .CALIB(1'b0), .RESET(rst),
-        .Q0(rx_dn[0]), .Q1(rx_dn[1]), .Q2(rx_dn[2]), .Q3(rx_dn[3]),
-        .Q4(rx_dn[4]), .Q5(rx_dn[5]), .Q6(rx_dn[6]), .Q7(rx_dn[7])
+        .Q0(rx_dn_raw[0]), .Q1(rx_dn_raw[1]), .Q2(rx_dn_raw[2]), .Q3(rx_dn_raw[3]),
+        .Q4(rx_dn_raw[4]), .Q5(rx_dn_raw[5]), .Q6(rx_dn_raw[6]), .Q7(rx_dn_raw[7])
     );
 
     // ---- transmitter: one OSER8 per line, tri-stated together ----

@@ -14,7 +14,10 @@ def main():
     a = ap.parse_args()
     LS = ["SE0", "J(D+)", "K(D-)", "SE1"]
     with serial.Serial(a.port, a.baud, timeout=2) as s:
-        s.reset_input_buffer(); n = 0; buf = b""
+        # drain everything already buffered (the OS/FTDI buffers hold minutes of old frames)
+        s.timeout = 0.05
+        while s.read(4096): pass
+        s.timeout = 2; n = 0; buf = b""
         while n < a.frames:
             buf += s.read(64)
             i = buf.find(b"U")
@@ -25,7 +28,7 @@ def main():
             fl = f[1]
             print(f"linestate={LS[fl & 3]:6s} hs={(fl >> 2) & 1} cfg={(fl >> 3) & 1} susp={(fl >> 4) & 1} "
                   f"vbus={(fl >> 5) & 1} pll={(fl >> 6) & 1} rxact={(fl >> 7) & 1} addr={f[2] >> 1} "
-                  f"frame={f[3] | (f[4] << 8)} resets={f[5]} rxerr={f[6]} sofs={f[7] | (f[8] << 8)} vreg={f[9]:02x}")
+                  f"frame={f[3] | (f[4] << 8)} resets={f[5]} rxerr={f[6]} sofs={f[7] | (f[8] << 8)} cap={f[9]}")
             n += 1
 
 if __name__ == "__main__":
