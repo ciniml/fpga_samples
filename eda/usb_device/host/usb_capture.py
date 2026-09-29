@@ -21,12 +21,15 @@ def main():
     ap.add_argument("-p", "--port", default="/dev/ttyUSB1"); ap.add_argument("--out", default="cap.bin")
     ap.add_argument("--wait", type=float, default=3.0, help="seconds to wait for the trigger before dumping")
     ap.add_argument("--reset", type=float, default=-1, help="send R (soft reset -> re-enumeration) and arm this many seconds later")
+    ap.add_argument("--on-error", action="store_true", help="arm with 'E': trigger on utmi_rxerror (ring keeps ~1800 words of history)")
+    ap.add_argument("--on-tx", action="store_true", help="arm with 'T': trigger on the device's first transmission (500 words of history)")
+    ap.add_argument("--on-ping", action="store_true", help="arm with 'P': trigger on a received PING (history like --on-error)")
     a = ap.parse_args()
     with serial.Serial(a.port, 115200, timeout=0.05) as s:
         while s.read(4096): pass
         if a.reset >= 0:
             s.write(b"R"); time.sleep(a.reset)
-        s.write(b"C"); time.sleep(a.wait)
+        s.write(b"E" if a.on_error else b"P" if a.on_ping else b"T" if a.on_tx else b"C"); time.sleep(a.wait)
         while s.read(4096): pass                  # status frames while waiting
         s.timeout = 3; s.write(b"D")
         raw = b""

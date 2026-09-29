@@ -59,7 +59,7 @@ module oscdr_link_body #(
     logic [3:0] nbits;
     logic [1:0] phase;
     OsCdr #(.SAMPLES(SAMPLES), .OSR(OSR)) cdr (
-        .i_clk(clk), .i_rst(rst), .i_samples(samples), .i_freeze(freeze),
+        .i_clk(clk), .i_rst(rst), .i_samples(samples), .i_freeze(freeze), .i_reacq(1'b0),
         .o_bits(bits), .o_nbits(nbits), .o_phase(phase), .o_lock(lock), .o_slip(slip));
     logic        w_valid;
     logic [15:0] w_data;

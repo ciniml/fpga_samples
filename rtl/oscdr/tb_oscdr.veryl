@@ -9,6 +9,8 @@
  *  oscdr_0ppm / _p1000 / _m1000 / _p5000 / _m5000 : frequency offsets
  *  oscdr_jitter : 0 ppm with 0.15 UI peak edge jitter
  *  oscdr_scan   : frozen-phase eye scan printout (informational)
+ *  oscdr_burst_* : packets with idle gaps and random phase per packet
+ *                  (OSR 8, ACT_MIN 1, DLY 9, i_reacq; test/oscdr_burst_body.sv)
  */
 module TbOscdr {}
 
@@ -47,6 +49,34 @@ module oscdr3_p500; oscdr_link_body #(.SAMPLES(24), .OSR(3), .UI_NS(2.0833), .PP
 #[test(oscdr3_m500)]
 embed (inline) sv{{{
 module oscdr3_m500; oscdr_link_body #(.SAMPLES(24), .OSR(3), .UI_NS(2.0833), .PPM(-500), .JITTER(0.1), .RUN(1)) body(); endmodule
+}}}
+#[test(oscdr8_0ppm)]
+embed (inline) sv{{{
+module oscdr8_0ppm; oscdr_link_body #(.SAMPLES(32), .OSR(8), .UI_NS(2.0833), .PHASE0(0.3), .RUN(1)) body(); endmodule
+}}}
+#[test(oscdr8_p500)]
+embed (inline) sv{{{
+module oscdr8_p500; oscdr_link_body #(.SAMPLES(32), .OSR(8), .UI_NS(2.0833), .PPM(500), .PHASE0(0.1), .JITTER(0.1), .RUN(1)) body(); endmodule
+}}}
+#[test(oscdr8_m2600)]
+embed (inline) sv{{{
+module oscdr8_m2600; oscdr_link_body #(.SAMPLES(32), .OSR(8), .UI_NS(2.0833), .PPM(-2600), .JITTER(0.15), .RUN(1)) body(); endmodule
+}}}
+#[test(oscdr8_p3100)]
+embed (inline) sv{{{
+module oscdr8_p3100; oscdr_link_body #(.SAMPLES(32), .OSR(8), .UI_NS(2.0833), .PPM(3100), .PHASE0(0.9), .RUN(1)) body(); endmodule
+}}}
+#[test(oscdr_burst_0ppm)]
+embed (inline) sv{{{
+module oscdr_burst_0ppm; oscdr_burst_body #(.RUN(1)) body(); endmodule
+}}}
+#[test(oscdr_burst_p500)]
+embed (inline) sv{{{
+module oscdr_burst_p500; oscdr_burst_body #(.PPM(500), .JITTER(0.1), .RUN(1)) body(); endmodule
+}}}
+#[test(oscdr_burst_m2000)]
+embed (inline) sv{{{
+module oscdr_burst_m2000; oscdr_burst_body #(.PPM(-2000), .JITTER(0.15), .RUN(1)) body(); endmodule
 }}}
 #[test(oscdr_scan)]
 embed (inline) sv{{{

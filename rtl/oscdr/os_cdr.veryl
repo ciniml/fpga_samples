@@ -27,8 +27,17 @@
  *
  * i_freeze holds the phase (for eye scans: with the phase frozen, sweeping
  * the IODELAY taps moves the sample point across the eye while the BERT
- * counts errors). o_lock: the eclass histogram is concentrated (>= half the
- * transitions in one class) and the line is toggling.
+ * counts errors). While i_reacq is high the phase is re-acquired on every
+ * word that carries enough transitions (jump to the best class) instead of
+ * tracked (burst links: hold it while the line is idle, and for as long as
+ * the idle detector lags the line; the phase drifts arbitrarily between
+ * packets and the smoothed histogram would otherwise keep the old phase).
+ * DLY delays the extraction data path by DLY words behind the histogram, so
+ * the acquisition made from the first active words is applied to those same
+ * words: with DLY = 9 (the acquisition latency) the first word of a burst is
+ * already extracted at the right phase and no bit is duplicated or lost
+ * inside a preamble/SYNC. o_lock: the eclass histogram is concentrated
+ * (>= half the transitions in one class) and the line is toggling.
  */
 pub module OsCdr #(
     param SAMPLES: u32 = 32,
@@ -36,16 +45,18 @@ pub module OsCdr #(
     param IIR    : u32 = 1 , // smoothing: time constant 2^IIR words
     param HYST   : u32 = 2 , // step when the neighbour cost is lower by more than this
     param ACT_MIN: u32 = 2 , // minimum transitions per word (smoothed) for lock
+    param DLY    : u32 = 0 , // extraction delay in words (9 = acquisition latency, burst links)
 ) (
     i_clk: input clock,
     i_rst: input reset,
 
     i_samples: input logic<SAMPLES>,
     i_freeze : input logic         ,
+    i_reacq  : input logic         , // level: re-acquire the phase on every active word
 
     o_bits : output logic<SAMPLES / OSR + 1>,
     o_nbits: output logic<4>                ,
-    o_phase: output logic<2>                , // current data sample class
+    o_phase: output logic<$clog2(OSR)>      , // current data sample class
     o_lock : output logic                   ,
     o_slip : output logic                   , // pulse: pointer moved
     o_acc_first: output logic<$clog2(SAMPLES / OSR + 1) + IIR + 1>, // smoothed transition count, class 0 (external phase loops)
@@ -57,11 +68,12 @@ pub module OsCdr #(
     const CSW: u32 = AW + 1;                    // cost width
     const TW : u32 = AW + 2;                    // total width
     const ACT: u32 = ACT_MIN << IIR;
+    const DW : u32 = $clog2(OSR);               // class index width
 
     // ---- transitions and per-class counts ----
     var prev_last: logic;          // s[-1]
     var trans    : logic<SAMPLES>;
-    var cnt      : logic<CW> [OSR];
+    var cnt      : logic<OSR, CW>;
     always_comb {
         trans[0] = i_samples[0] ^ prev_last;
         for i in 1..SAMPLES {
@@ -77,116 +89,150 @@ pub module OsCdr #(
 
     // stage 1: registered per-class counts (keeps the 32-sample XOR +
     // popcount tree out of the accumulator's cycle)
-    var cnt_r: logic<CW> [OSR];
+    var cnt_r: logic<OSR, CW>;
     always_ff (i_clk, i_rst) {
         if_reset {
-            for c in 0..OSR {
-                cnt_r[c] = 0;
-            }
+            cnt_r = 0;
         } else {
-            for c in 0..OSR {
-                cnt_r[c] = cnt[c];
-            }
+            cnt_r = cnt;
         }
     }
 
     // ---- smoothed histogram and cost of the data-sample classes ----
-    var acc  : logic<AW> [OSR];
-    var dsel : logic<2>;         // data sample class (pointer mod OSR)
+    var acc  : logic<OSR, AW>;
+    var acc_c: logic<OSR, AW>;   // IIR histogram update (whole-vector register below)
+    var dsel : logic<DW>;        // data sample class (pointer mod OSR)
     var have : logic;            // acquired once
-    var tot_a: logic<TW>;        // total delayed to line up with the registered argmin (best)
+    var tot_a: logic<TW>;        // total delayed to line up with the registered argmin (best, 4 stages)
     var tot_b: logic<TW>;
+    var tot_c: logic<TW>;
+    var tot_d: logic<TW>;
     var lock : logic;
     var pstep: logic<2>;         // 0 none, 1 +1, 2 -1, 3 jump
-    var jump : logic<2>;
+    var jump : logic<DW>;
     var ldir : logic<2>;         // last step direction (1 = +1, 2 = -1): a
                                  // step in the same direction needs no
                                  // hysteresis (frequency offset tracking),
                                  // a reversal needs the full HYST (no dither)
     var badc : logic<4>;         // consecutive words with a bad eye
 
+    always_comb {
+        for c in 0..OSR {
+            acc_c[c] = acc[c] - (acc[c] >> IIR) + (cnt_r[c] as AW);
+        }
+    }
+
     // cost/total: the combinational values feed the (registered) decision
     // flags directly; the registered copies feed the acquisition argmin and
     // the activity check (latency-insensitive users)
-    var cost_c : logic<CSW> [OSR];
+    var cost_c : logic<OSR, CSW>;
     var total_c: logic<TW>;
-    var cost   : logic<CSW> [OSR];
+    var cost   : logic<OSR, CSW>;
     var total  : logic<TW>;
-    var best   : logic<2>;
-    var bestc  : logic<CSW>;
+    // acquisition cost: the adjacent classes weighted 3, the next ring 2, the
+    // next 1 (OSR >= 8), so that with all transitions in one class (a
+    // preamble / USB SYNC) the argmin lands in the middle of the eye instead
+    // of on the first zero-cost class next to the edge. Two register stages:
+    // the three ring pair-sums, then the weighted sum.
+    const CCW: u32 = CSW + 3;
+    var best   : logic<DW>;
+    var bestc  : logic<CCW>;
+    // (packed: the Gowin synthesizer maps unpacked arrays of this shape to register "RAM")
+    var ring1_c: logic<OSR, CSW>;   // acc[d-1] + acc[d+2]
+    var ring2_c: logic<OSR, CSW>;   // acc[d-2] + acc[d+3]
+    var ring1  : logic<OSR, CSW>;
+    var ring2  : logic<OSR, CSW>;
+    var ccost_c: logic<OSR, CCW>;
+    var ccost  : logic<OSR, CCW>;
     always_comb {
         total_c = 0;
         for d in 0..OSR {
-            cost_c[d] = acc[d] + acc[(d + 1) % OSR];
-            total_c   = total_c + acc[d];
+            cost_c[d]  = acc[d] + acc[(d + 1) % OSR];
+            total_c    = total_c + acc[d];
+            ring1_c[d] = acc[(d + OSR - 1) % OSR] + acc[(d + 2) % OSR];
+            ring2_c[d] = acc[(d + OSR - 2) % OSR] + acc[(d + 3) % OSR];
+            ccost_c[d] = cost[d] as CCW;
+            if OSR >= 8 {
+                ccost_c[d] = (cost[d] as CCW) * 3 + (ring1[d] as CCW) * 2 + (ring2[d] as CCW);
+            } else if OSR >= 4 {
+                ccost_c[d] = (cost[d] as CCW) * 2 + (ring1[d] as CCW);
+            }
         }
     }
     always_ff (i_clk, i_rst) {
         if_reset {
-            for d in 0..OSR {
-                cost[d] = 0;
-            }
+            cost  = 0;
+            ring1 = 0;
+            ring2 = 0;
+            ccost = 0;
             total = 0;
         } else {
-            for d in 0..OSR {
-                cost[d] = cost_c[d];
-            }
+            cost  = cost_c;
+            ring1 = ring1_c;
+            ring2 = ring2_c;
+            ccost = ccost_c;
             total = total_c;
         }
     }
-    // best (argmin cost) is only used for acquisition: two-stage pairwise
-    // minimum, both stages registered (OSR = 4, or 3 with class 2 alone)
-    var m01_i: logic<2>;
-    var m01_v: logic<CSW>;
-    var m23_i: logic<2>;
-    var m23_v: logic<CSW>;
-    if OSR == 3 :g_m23_osr3 {
-        always_ff (i_clk, i_rst) {
-            if_reset {
-                m23_i = 2;
-                m23_v = 0;
+    // best (argmin ccost) is only used for acquisition: three-stage minimum
+    // (pairs, pairs of winners, final), all registered, any OSR;
+    // best lags total by four clocks (ccost, mp, mq, best)
+    const NP: u32 = (OSR + 1) / 2;
+    var mp_i: logic<NP, DW>;
+    var mp_v: logic<NP, CCW>;
+    var mp_i_c: logic<NP, DW>;
+    var mp_v_c: logic<NP, CCW>;
+    // second stage: pairs of pair winners (registered), third: final (registered)
+    const NQ: u32 = (NP + 1) / 2;
+    var mq_i: logic<NQ, DW>;
+    var mq_v: logic<NQ, CCW>;
+    var mq_i_c: logic<NQ, DW>;
+    var mq_v_c: logic<NQ, CCW>;
+    var best_c : logic<DW>;
+    var bestc_c: logic<CCW>;
+    always_comb {
+        for p in 0..NP {
+            if (2 * p + 1 <: OSR) && (ccost[(2 * p + 1) % OSR] <: ccost[2 * p]) {
+                mp_i_c[p] = (2 * p + 1) as DW;
+                mp_v_c[p] = ccost[(2 * p + 1) % OSR];
             } else {
-                m23_i = 2;
-                m23_v = cost[2];
+                mp_i_c[p] = (2 * p) as DW;
+                mp_v_c[p] = ccost[2 * p];
             }
         }
-    } else :g_m23_osr4 {
-        always_ff (i_clk, i_rst) {
-            if_reset {
-                m23_i = 2;
-                m23_v = 0;
+        for q in 0..NQ {
+            if (2 * q + 1 <: NP) && (mp_v[(2 * q + 1) % NP] <: mp_v[2 * q]) {
+                mq_i_c[q] = mp_i[(2 * q + 1) % NP];
+                mq_v_c[q] = mp_v[(2 * q + 1) % NP];
             } else {
-                if cost[3] <: cost[2] {
-                    m23_i = 3;
-                    m23_v = cost[3];
-                } else {
-                    m23_i = 2;
-                    m23_v = cost[2];
-                }
+                mq_i_c[q] = mp_i[2 * q];
+                mq_v_c[q] = mp_v[2 * q];
+            }
+        }
+        best_c  = mq_i[0];
+        bestc_c = mq_v[0];
+        for q in 1..NQ {
+            if mq_v[q] <: bestc_c {
+                best_c  = mq_i[q];
+                bestc_c = mq_v[q];
             }
         }
     }
     always_ff (i_clk, i_rst) {
         if_reset {
-            m01_i = 0;
-            m01_v = 0;
+            mp_i  = 0;
+            mp_v  = 0;
+            mq_i  = 0;
+            mq_v  = 0;
             best  = 0;
             bestc = 0;
         } else {
-            if cost[1] <: cost[0] {
-                m01_i = 1;
-                m01_v = cost[1];
-            } else {
-                m01_i = 0;
-                m01_v = cost[0];
-            }
-            if m23_v <: m01_v {
-                best  = m23_i;
-                bestc = m23_v;
-            } else {
-                best  = m01_i;
-                bestc = m01_v;
-            }
+            mp_i  = mp_i_c;
+            mp_v  = mp_v_c;
+            mq_i  = mq_i_c;
+            mq_v  = mq_v_c;
+            best  = best_c;
+            bestc = bestc_c;
         }
     }
     // Decision flags computed for every candidate class in parallel (constant
@@ -240,6 +286,27 @@ pub module OsCdr #(
     let eye_bad: logic = bad[dsel];
     let eye_ok : logic = good[dsel];
 
+    // ---- delayed data path (see DLY) ----
+    var s_x: logic<SAMPLES>;
+    if DLY == 0 :g_nodly {
+        assign s_x = i_samples;
+    } else :g_dly {
+        var s_d: logic<SAMPLES> [DLY];
+        always_ff (i_clk, i_rst) {
+            if_reset {
+                for k in 0..DLY {
+                    s_d[k] = 0;
+                }
+            } else {
+                s_d[0] = i_samples;
+                for k in 1..DLY {
+                    s_d[k] = s_d[k - 1];
+                }
+            }
+        }
+        assign s_x = s_d[DLY - 1];
+    }
+
     // ---- sample pointer and extraction ----
     // posu = (index of the first data sample of this word) + 1, range 0..OSR+1
     // (0 means sample -1 = the previous word's last sample).
@@ -273,30 +340,12 @@ pub module OsCdr #(
         return n;
     }
     always_comb {
-        case posu {
-            4'd0: {
-                bits  = extract(0, i_samples, prev_tail);
-                nbits = nbits_of(0);
-            }
-            4'd1: {
-                bits  = extract(1, i_samples, prev_tail);
-                nbits = nbits_of(1);
-            }
-            4'd2: {
-                bits  = extract(2, i_samples, prev_tail);
-                nbits = nbits_of(2);
-            }
-            4'd3: {
-                bits  = extract(3, i_samples, prev_tail);
-                nbits = nbits_of(3);
-            }
-            4'd4: {
-                bits  = extract(4, i_samples, prev_tail);
-                nbits = nbits_of(4);
-            }
-            default: {
-                bits  = extract(5, i_samples, prev_tail);
-                nbits = nbits_of(5);
+        bits  = 0;
+        nbits = 0;
+        for p in 0..(OSR + 2) {
+            if posu == p as 4 {
+                bits  = extract(p, s_x, prev_tail);
+                nbits = nbits_of(p);
             }
         }
         // (posu-1) + OSR*nbits - SAMPLES + 1
@@ -312,13 +361,13 @@ pub module OsCdr #(
         if_reset {
             prev_last = 1'b0;
             prev_tail = 1'b0;
-            for c in 0..OSR {
-                acc[c] = 0;
-            }
+            acc     = 0;
             dsel    = 0;
             have    = 1'b0;
             tot_a   = 0;
             tot_b   = 0;
+            tot_c   = 0;
+            tot_d   = 0;
             lock    = 1'b0;
             pstep   = 0;
             jump    = 0;
@@ -330,7 +379,7 @@ pub module OsCdr #(
             o_slip  = 1'b0;
         } else {
             prev_last = i_samples[SAMPLES - 1];
-            prev_tail = i_samples[SAMPLES - 1];
+            prev_tail = s_x[SAMPLES - 1];
 
             // output this word's bits
             o_bits  = bits;
@@ -348,7 +397,17 @@ pub module OsCdr #(
                     o_slip = 1'b1;
                 }
                 2'd3: {
-                    posu   = (jump as 4) + 1;
+                    // classes 0 and OSR-1 have two pointer representations
+                    // (OSR+1 / 0 = the tail sample): take the one nearest the
+                    // natural continuation, so a jump by one class is a one
+                    // sample step and does not duplicate or drop a bit
+                    if jump == (OSR - 1) as DW && posu_next <= (OSR / 2) as 4 {
+                        posu = 0;
+                    } else if jump == 0 && posu_next >= (OSR / 2 + 1) as 4 {
+                        posu = (OSR + 1) as 4;
+                    } else {
+                        posu = (jump as 4) + 1;
+                    }
                     o_slip = 1'b1;
                 }
                 default: posu = posu_next;
@@ -356,9 +415,7 @@ pub module OsCdr #(
             pstep = 0;
 
             // IIR histogram
-            for c in 0..OSR {
-                acc[c] = acc[c] - (acc[c] >> IIR) + (cnt_r[c] as AW);
-            }
+            acc = acc_c;
             // lock (Schmitt): set when transitions are present and few of
             // them sit next to the chosen data sample (<= 1/4 in the two
             // adjacent classes); clear when more than half do (random
@@ -383,15 +440,21 @@ pub module OsCdr #(
                 }
             }
 
-            // best (2-stage argmin) lags total by two clocks: qualify the
-            // acquisition with the delayed total so the jump uses a histogram
-            // that already contains the transitions it was triggered by
+            // best lags total by four clocks: qualify the acquisition with
+            // the delayed total so the jump uses a histogram that already
+            // contains the transitions it was triggered by
             tot_a = total;
             tot_b = tot_a;
+            tot_c = tot_b;
+            tot_d = tot_c;
+            if i_reacq {
+                have = 1'b0;
+            }
             if !i_freeze {
-                if !have {
-                    if tot_b >= ACT as TW {
-                        have  = 1'b1;
+                if !have || i_reacq {
+                    // acquisition (a jump to the current class leaves the pointer alone)
+                    if tot_d >= ACT as TW {
+                        have  = !i_reacq;
                         dsel  = best;
                         jump  = best;
                         pstep = 2'd3;
@@ -399,11 +462,11 @@ pub module OsCdr #(
                 } else if go_up {
                     pstep = 2'd1;
                     ldir  = 2'd1;
-                    dsel  = if dsel == (OSR - 1) as 2 ? 0 : dsel + 1;   // mod OSR (OSR = 3 does not wrap by itself)
+                    dsel  = if dsel == (OSR - 1) as DW ? 0 : dsel + 1;   // mod OSR
                 } else if go_dn {
                     pstep = 2'd2;
                     ldir  = 2'd2;
-                    dsel  = if dsel == 0 ? (OSR - 1) as 2 : dsel - 1;
+                    dsel  = if dsel == 0 ? (OSR - 1) as DW : dsel - 1;
                 }
             }
         }

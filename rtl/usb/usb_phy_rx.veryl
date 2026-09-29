@@ -23,13 +23,34 @@
  *    re-centres on every D+/D- transition picks one sample per bit.
  *  - The decoder is speed-agnostic: it consumes 0..8 line bits per
  *    clock, NRZI-decodes them (bit = no transition), looks for the SYNC
- *    pattern (>= 3 decoded zeros followed by a one, USB 2.0 §7.1.10,
- *    allowing hub-shortened HS SYNCs), removes stuffed zeros after six
+ *    pattern (>= FS_SYNC_ZEROS / HS_SYNC_ZEROS decoded zeros followed by
+ *    a one, USB 2.0 §7.1.10: a HS SYNC is 32 bits and hubs may shorten it
+ *    to 12, so 6 zeros still accept every legal SYNC while rejecting the
+ *    short bursts of line noise a lenient detector would take for a
+ *    packet), removes stuffed zeros after six
  *    ones (§7.1.9) and emits one byte per 8 data bits, LSB first.
  *  - End of packet: FS/LS = SE0 (§7.1.13.2); HS = intentional bit-stuff
  *    error 0111111|1 (§7.1.13.2.2). A stuff error that lands exactly on
  *    the 7-bit EOP boundary ends the packet cleanly; any other stuff
  *    error or a non byte-aligned SE0 raises o_rxerror.
+ *
+ * HS stall: an external CDR/gearbox front end delivers no bits while it
+ * is squelched. If a packet (as far as this decoder can tell: a SYNC was
+ * seen) delivers no bits for HS_STALL clocks, the packet is abandoned with
+ * rxerror; otherwise a noise burst mistaken for a SYNC would keep RxActive
+ * asserted until the next real packet, which then would be lost too.
+ *
+ * HS blanking: after a packet ends (EOP or error) the rest of that word and
+ * the next HS_BLANK_WORDS words (16..23 bit times) are ignored, and so are
+ * HS_BLANK_WORDS words after our own transmitter releases the bus. A real
+ * HS PHY squelches the receiver within a few ns when the differential
+ * amplitude collapses; the differential receiver used here keeps toggling
+ * for ~10-20 ns while the line rings down to SE0 after the driver turns
+ * off, which would otherwise look like a short garbage packet (false SYNC,
+ * rxerror) right behind every real one. The inter-packet gap is >= 8 bit
+ * times and a SYNC survives losing its first bits, so this cannot hide the
+ * next packet. (Per word, not per bit: the per-bit decoder loop is the
+ * critical path at 60 MHz.)
  *
  * Bit stuffing accounting starts with the SYNC's final one (ones = 1).
  * o_rxactive rises with the SYNC's final K-K and falls at the first
@@ -41,6 +62,10 @@ import usb_pkg::*;
 pub module UsbPhyRx #(
     param FS_CLOCKS_PER_BIT: u32 = 5 , // 60 MHz / 12 Mbps
     param LS_CLOCKS_PER_BIT: u32 = 40, // 60 MHz / 1.5 Mbps
+    param HS_BLANK_WORDS   : u32 = 2 , // HS: whole words ignored after a packet end / own transmission
+    param FS_SYNC_ZEROS    : u32 = 3 , // decoded zeros required before the SYNC's final one
+    param HS_SYNC_ZEROS    : u32 = 6 ,
+    param HS_STALL         : u32 = 24, // clocks (400 ns) without line bits inside a HS packet -> abandon
 ) (
     i_clk: input clock,
     i_rst: input reset,
@@ -146,6 +171,8 @@ pub module UsbPhyRx #(
     var bitcnt  : logic<3>;
     var sh      : logic<8>;
     var err_wait: logic; // FS: ignore line until next SE0 after an error
+    var blank   : logic<2>; // HS: remaining blanked words
+    var stall   : logic<6>; // HS: clocks without bits inside a packet
     var rxvalid : logic;
     var rxerror : logic;
     var rxdata  : logic<8>;
@@ -157,6 +184,8 @@ pub module UsbPhyRx #(
     var n_bitcnt  : logic<3>;
     var n_sh      : logic<8>;
     var n_err_wait: logic;
+    var n_blank   : logic<2>;
+    var n_done    : logic;   // packet ended in this word: ignore its remaining bits
     var n_valid   : logic;
     var n_error   : logic;
     var n_data    : logic<8>;
@@ -170,19 +199,34 @@ pub module UsbPhyRx #(
         n_bitcnt   = bitcnt;
         n_sh       = sh;
         n_err_wait = err_wait;
+        n_blank    = blank;
+        n_done     = 0;
         n_valid    = 0;
         n_error    = 0;
         n_data     = rxdata;
         b          = 0;
+        if fe_n != 0 && blank != 0 {
+            // HS post-packet blanking: whole word dropped, keep the NRZI reference
+            n_blank    = blank - 1;
+            n_prev_j   = fe_j[7];
+            n_zero_run = 0;
+            n_done     = 1;
+        }
         for i in 0..8 {
             if (i as 4) <: fe_n {
-                if fe_se0[i] {
+                if n_done {
+                    // (blanked word, or the packet ended earlier in this word)
+                } else if fe_se0[i] {
                     if n_active {
                         // FS/LS EOP, or an unexpected SE0 inside an HS
                         // packet (HS packets end with the EOP stuff
                         // error before the line returns to SE0).
                         n_error  = (n_bitcnt != 0) || fe_hs;
                         n_active = 0;
+                        if fe_hs {
+                            n_blank = HS_BLANK_WORDS as 2;
+                            n_done  = 1;
+                        }
                     }
                     n_err_wait = 0;
                     n_zero_run = 0;
@@ -201,6 +245,8 @@ pub module UsbPhyRx #(
                                     // HS EOP = 0 + 7 ones with no stuffing:
                                     // the error fires after 7 data bits.
                                     n_error = n_bitcnt != 3'd7;
+                                    n_blank = HS_BLANK_WORDS as 2;
+                                    n_done  = 1;
                                 } else {
                                     n_error    = 1;
                                     n_err_wait = 1;
@@ -224,7 +270,7 @@ pub module UsbPhyRx #(
                     } else if !n_err_wait {
                         // SYNC search: zeros (KJ alternation) then a one.
                         if b {
-                            if n_zero_run >= 3'd3 {
+                            if n_zero_run >= (if fe_hs ? HS_SYNC_ZEROS as 3 : FS_SYNC_ZEROS as 3) {
                                 n_active = 1;
                                 n_ones   = 1; // SYNC's final one counts
                                 n_bitcnt = 0;
@@ -249,6 +295,8 @@ pub module UsbPhyRx #(
             bitcnt   = 0;
             sh       = 0;
             err_wait = 0;
+            blank    = 0;
+            stall    = 0;
             rxvalid  = 0;
             rxerror  = 0;
             rxdata   = 0;
@@ -259,6 +307,8 @@ pub module UsbPhyRx #(
             zero_run = 0;
             bitcnt   = 0;
             err_wait = 0;
+            blank    = if hs_mode ? HS_BLANK_WORDS as 2 : 0;
+            stall    = 0;
             rxvalid  = 0;
             rxerror  = 0;
         } else {
@@ -269,9 +319,22 @@ pub module UsbPhyRx #(
             bitcnt   = n_bitcnt;
             sh       = n_sh;
             err_wait = n_err_wait;
+            blank    = n_blank;
             rxvalid  = n_valid;
             rxerror  = n_error;
             rxdata   = n_data;
+            if fe_hs && n_active && fe_n == 0 {
+                if stall == (HS_STALL - 1) as 6 {
+                    active  = 0;
+                    rxerror = 1;
+                    blank   = HS_BLANK_WORDS as 2;
+                    stall   = 0;
+                } else {
+                    stall = stall + 1;
+                }
+            } else {
+                stall = 0;
+            }
         }
     }
 

@@ -10,11 +10,13 @@ omit_project_prefix = true
 [test]
 include_files = [
     "test/oscdr_link_body.sv",
+    "test/oscdr_burst_body.sv",
 ]
 
 [test.verilator]
 compile_args = [
     "oscdr_link_body.sv",
+    "oscdr_burst_body.sv",
     "-Wno-WIDTHEXPAND",
     "-Wno-WIDTHTRUNC",
     "-Wno-CASEINCOMPLETE",

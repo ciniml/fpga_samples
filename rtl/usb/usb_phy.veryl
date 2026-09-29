@@ -69,10 +69,12 @@ pub module UsbPhy #(
 
     // Inter-packet guard, measured from RxActive falling (= first SE0 of
     // the FS EOP / HS EOP stuff error). FS: EOP(2 SE0 + 1 J) + 2 bit gap
-    // = 25 bit-clocks -> 26; LS scaled x8; HS: 8 bit times = 1 clock -> 3.
+    // = 25 bit-clocks -> 26; LS scaled x8; HS: 8 bit times = 1 clock. (The
+    // HS front end's own pipeline already puts RxActive well past the EOP;
+    // the device response must start within 192 bit times of it.)
     const GUARD_FS: u32 = FS_CLOCKS_PER_BIT * 5 + 1;
     const GUARD_LS: u32 = LS_CLOCKS_PER_BIT * 5 + 1;
-    const GUARD_HS: u32 = 3;
+    const GUARD_HS: u32 = 1;
     var   gap_cnt : logic<9>;
     let   guard   : logic<9> = if hs_mode ? GUARD_HS as 9 : (if ls_mode ? GUARD_LS as 9 : GUARD_FS as 9);
 

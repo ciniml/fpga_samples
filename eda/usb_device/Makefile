@@ -17,7 +17,7 @@ USB_VERYL_SV := $(addprefix ../../rtl/usb/,usb_pkg.sv usb_phy_rx.sv usb_phy_tx.s
 
 SRCS := src/$(TARGET)/pins.cst $(wildcard src/$(TARGET)/*.sdc) \
         $(wildcard src/$(TARGET)/*.v) $(wildcard src/$(TARGET)/*/*.v) \
-        $(USB_VERYL_SV) ../../rtl/oscdr/os_cdr.sv ../../rtl/oscdr/bit_gearbox.sv ../../rtl/usb/gowin/usb_phy_gowin.v ../../rtl/usb/gowin/usb_hs_cdr.v ../../rtl/uart/uart_tx.sv ../../rtl/uart/uart_rx.sv project.tcl
+        $(USB_VERYL_SV) ../../rtl/oscdr/os_cdr.sv ../../rtl/oscdr/bit_gearbox.sv ../../rtl/usb/gowin/usb_phy_gowin.v ../../rtl/usb/gowin/usb_hs_cdr.v ../../rtl/usb/gowin/usb_hs_os32.v ../../rtl/uart/uart_tx.sv ../../rtl/uart/uart_rx.sv project.tcl
 
 include ../build_gowin.mk
 

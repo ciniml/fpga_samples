@@ -51,11 +51,27 @@
 // phase and emits 7..9 bits per word; BitGearbox re-packs them into 8-bit
 // words with a valid strobe that stalls the PHY (i_rx_dd_valid) on clocks
 // without a full word. Idle (SE0) resets the gearbox and freezes the CDR.
+// HS_OS32 = 1: the differential receiver goes to an OSIDES32 4-phase
+// oversampler (8 samples per HS bit, usb_hs_os32.v) instead of the IDES8;
+// the 4-phase clocks come from a second PLL (os_fclk*_i, ~481.25 MHz),
+// os_clk_ref_i / os_rstn_ref_i sequence it. The comparator paths stay on
+// IDES8 for SE0 / FS. HS_CDR (3-phase) and HS_OS32 are alternatives.
 module usb_phy_gowin #(
     parameter SE_FROM_DIFF = 1,
     parameter DYN_DLY      = 0,
-    parameter HS_CDR       = 0
+    parameter HS_CDR       = 0,
+    parameter HS_OS32      = 0
 ) (
+    input  wire        os_clk_ref_i,
+    input  wire        os_rstn_ref_i,
+    input  wire        os_pll_lock_i,
+    input  wire        os_fclk0_i,
+    input  wire        os_fclk90_i,
+    input  wire        os_fclk180_i,
+    input  wire        os_fclk270_i,
+    output wire        os_pclk_o,
+    output wire [31:0] os_samples_o,
+    output wire [15:0] os_cmp_o,
     input  wire        clk_i,        // 60 MHz
     input  wire        i_track_en,   // HS_CDR: 1 = delay tracking loop (i_dly_* ignored except i_dly_dd as the manual base)
     input  wire [7:0]  i_dly_dd,
@@ -140,6 +156,13 @@ module usb_phy_gowin #(
             assign rx_dd_valid = hs_sel ? cdr_valid : 1'b1;
             assign rx_dp       = hs_sel ? cdr_dp    : rx_dp_se0;
             assign rx_dn       = hs_sel ? cdr_dn    : rx_dn_se0;
+        end else if (HS_OS32) begin : g_os32_sel
+            assign dly_dd_w = i_dly_dd; assign dly_dp_w = i_dly_dp; assign dly_dn_w = i_dly_dn;
+            wire hs_sel = (utmi_xcvrselect_i == 2'b00) && !utmi_termselect_i;
+            assign rx_dd       = hs_sel ? os_byte  : dd_d2;
+            assign rx_dd_valid = hs_sel ? os_valid : 1'b1;
+            assign rx_dp       = hs_sel ? (os_byte  & {8{os_valid}}) : rx_dp_se0;
+            assign rx_dn       = hs_sel ? (~os_byte & {8{os_valid}}) : rx_dn_se0;
         end else begin : g_nocdr
             assign dly_dd_w = i_dly_dd; assign dly_dp_w = i_dly_dp; assign dly_dn_w = i_dly_dn;
             assign rx_dd       = dd_d2;
@@ -204,41 +227,73 @@ module usb_phy_gowin #(
     assign o_mon_dp = rx_dp_raw;
     assign o_mon_dn = rx_dn_raw;
 
-    IDES8 u_ides_dd (
-        .D(rx_dd_se), .FCLK(fclk_i), .PCLK(clk_i), .CALIB(1'b0), .RESET(rst),
-        .Q0(rx_dd_raw[0]), .Q1(rx_dd_raw[1]), .Q2(rx_dd_raw[2]), .Q3(rx_dd_raw[3]),
-        .Q4(rx_dd_raw[4]), .Q5(rx_dd_raw[5]), .Q6(rx_dd_raw[6]), .Q7(rx_dd_raw[7])
-    );
-    IDES8 u_ides_dp (
-        .D(rx_dp_se), .FCLK(fclk_i), .PCLK(clk_i), .CALIB(1'b0), .RESET(rst),
-        .Q0(rx_dp_raw[0]), .Q1(rx_dp_raw[1]), .Q2(rx_dp_raw[2]), .Q3(rx_dp_raw[3]),
-        .Q4(rx_dp_raw[4]), .Q5(rx_dp_raw[5]), .Q6(rx_dp_raw[6]), .Q7(rx_dp_raw[7])
-    );
-    IDES8 u_ides_dn (
-        .D(rx_dn_se), .FCLK(fclk_i), .PCLK(clk_i), .CALIB(1'b0), .RESET(rst),
-        .Q0(rx_dn_raw[0]), .Q1(rx_dn_raw[1]), .Q2(rx_dn_raw[2]), .Q3(rx_dn_raw[3]),
-        .Q4(rx_dn_raw[4]), .Q5(rx_dn_raw[5]), .Q6(rx_dn_raw[6]), .Q7(rx_dn_raw[7])
-    );
+    wire [7:0] os_byte; wire os_valid, os_level, os_tx_dp, os_tx_dn, os_tx_dp_oen, os_tx_dn_oen;
+    generate
+        if (HS_OS32) begin : g_os32
+            usb_hs_os32 u_os32(
+                .clk_ref_i(os_clk_ref_i), .rstn_ref_i(os_rstn_ref_i), .pll_lock_i(os_pll_lock_i),
+                .fclk0_i(os_fclk0_i), .fclk90_i(os_fclk90_i), .fclk180_i(os_fclk180_i), .fclk270_i(os_fclk270_i),
+                .serial_i(rx_dd_ib), .cmp_dp_i(rx_dp_se), .cmp_dn_i(rx_dn_se), .clk_i(clk_i), .rst_i(rst), .i_se0(~rx_dp_raw[0] & ~rx_dn_raw[0]),
+                .o_byte(os_byte), .o_valid(os_valid), .o_dd_level(os_level), .o_pclk(os_pclk_o), .o_lock(), .o_samples(os_samples_o), .o_cmp_dbg(os_cmp_o),
+                .i_tx_dp(tx_dp), .i_tx_dn(tx_dn), .i_tx_oe(tx_oe), .o_tx_dp(os_tx_dp), .o_tx_dn(os_tx_dn), .o_tx_dp_oen(os_tx_dp_oen), .o_tx_dn_oen(os_tx_dn_oen));
+            assign rx_dd_raw = {8{os_level}};     // FS J/K: one synchronised line sample per clock
+        end else begin : g_ides_dd
+            IDES8 u_ides_dd (
+                .D(rx_dd_se), .FCLK(fclk_i), .PCLK(clk_i), .CALIB(1'b0), .RESET(rst),
+                .Q0(rx_dd_raw[0]), .Q1(rx_dd_raw[1]), .Q2(rx_dd_raw[2]), .Q3(rx_dd_raw[3]),
+                .Q4(rx_dd_raw[4]), .Q5(rx_dd_raw[5]), .Q6(rx_dd_raw[6]), .Q7(rx_dd_raw[7])
+            );
+            assign os_byte = 8'd0; assign os_valid = 1'b0; assign os_level = 1'b0; assign os_pclk_o = 1'b0; assign os_samples_o = 32'd0;
+            assign os_tx_dp = 1'b0; assign os_tx_dn = 1'b0; assign os_tx_dp_oen = 1'b1; assign os_tx_dn_oen = 1'b1;
+        end
+    endgenerate
+    generate
+        if (HS_OS32) begin : g_cmp_ff
+            // comparators: plain fabric flops (the bank's HCLK group belongs to the
+            // oversampler); one line sample per 60 MHz clock, replicated
+            reg [1:0] dp_s, dn_s;
+            always @(posedge clk_i) begin dp_s <= {dp_s[0], rx_dp_se}; dn_s <= {dn_s[0], rx_dn_se}; end
+            assign rx_dp_raw = {8{dp_s[1]}};
+            assign rx_dn_raw = {8{dn_s[1]}};
+        end else begin : g_ides_cmp
+            IDES8 u_ides_dp (
+                .D(rx_dp_se), .FCLK(fclk_i), .PCLK(clk_i), .CALIB(1'b0), .RESET(rst),
+                .Q0(rx_dp_raw[0]), .Q1(rx_dp_raw[1]), .Q2(rx_dp_raw[2]), .Q3(rx_dp_raw[3]),
+                .Q4(rx_dp_raw[4]), .Q5(rx_dp_raw[5]), .Q6(rx_dp_raw[6]), .Q7(rx_dp_raw[7])
+            );
+            IDES8 u_ides_dn (
+                .D(rx_dn_se), .FCLK(fclk_i), .PCLK(clk_i), .CALIB(1'b0), .RESET(rst),
+                .Q0(rx_dn_raw[0]), .Q1(rx_dn_raw[1]), .Q2(rx_dn_raw[2]), .Q3(rx_dn_raw[3]),
+                .Q4(rx_dn_raw[4]), .Q5(rx_dn_raw[5]), .Q6(rx_dn_raw[6]), .Q7(rx_dn_raw[7])
+            );
+        end
+    endgenerate
 
     // ---- transmitter: one OSER8 per line, tri-stated together ----
     // OSER8 TX0..TX3 are the per-bit-pair output enables (active low =
     // drive); Q1 is the serialised OEN for the pad.
     wire tx_oen = ~tx_oe;
     wire tx_dp_q, tx_dn_q, tx_dp_oen, tx_dn_oen;
-    OSER8 u_oser_dp (
-        .D0(tx_dp[0]), .D1(tx_dp[1]), .D2(tx_dp[2]), .D3(tx_dp[3]),
-        .D4(tx_dp[4]), .D5(tx_dp[5]), .D6(tx_dp[6]), .D7(tx_dp[7]),
-        .TX0(tx_oen), .TX1(tx_oen), .TX2(tx_oen), .TX3(tx_oen),
-        .FCLK(fclk_i), .PCLK(clk_i), .RESET(rst),
-        .Q0(tx_dp_q), .Q1(tx_dp_oen)
-    );
-    OSER8 u_oser_dn (
-        .D0(tx_dn[0]), .D1(tx_dn[1]), .D2(tx_dn[2]), .D3(tx_dn[3]),
-        .D4(tx_dn[4]), .D5(tx_dn[5]), .D6(tx_dn[6]), .D7(tx_dn[7]),
-        .TX0(tx_oen), .TX1(tx_oen), .TX2(tx_oen), .TX3(tx_oen),
-        .FCLK(fclk_i), .PCLK(clk_i), .RESET(rst),
-        .Q0(tx_dn_q), .Q1(tx_dn_oen)
-    );
+    generate
+        if (HS_OS32) begin : g_tx_os32
+            assign tx_dp_q = os_tx_dp; assign tx_dn_q = os_tx_dn; assign tx_dp_oen = os_tx_dp_oen; assign tx_dn_oen = os_tx_dn_oen;
+        end else begin : g_tx_oser
+            OSER8 u_oser_dp (
+                .D0(tx_dp[0]), .D1(tx_dp[1]), .D2(tx_dp[2]), .D3(tx_dp[3]),
+                .D4(tx_dp[4]), .D5(tx_dp[5]), .D6(tx_dp[6]), .D7(tx_dp[7]),
+                .TX0(tx_oen), .TX1(tx_oen), .TX2(tx_oen), .TX3(tx_oen),
+                .FCLK(fclk_i), .PCLK(clk_i), .RESET(rst),
+                .Q0(tx_dp_q), .Q1(tx_dp_oen)
+            );
+            OSER8 u_oser_dn (
+                .D0(tx_dn[0]), .D1(tx_dn[1]), .D2(tx_dn[2]), .D3(tx_dn[3]),
+                .D4(tx_dn[4]), .D5(tx_dn[5]), .D6(tx_dn[6]), .D7(tx_dn[7]),
+                .TX0(tx_oen), .TX1(tx_oen), .TX2(tx_oen), .TX3(tx_oen),
+                .FCLK(fclk_i), .PCLK(clk_i), .RESET(rst),
+                .Q0(tx_dn_q), .Q1(tx_dn_oen)
+            );
+        end
+    endgenerate
     // Pseudo-differential LVCMOS33D pair as two tri-state pads (TN710 uses
     // one differential pad pair; the levels are identical). SE0 needs both
     // low, which a true differential driver cannot produce, hence two pads.

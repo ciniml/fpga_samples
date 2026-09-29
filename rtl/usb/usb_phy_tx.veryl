@@ -99,6 +99,24 @@ pub module UsbPhyTx #(
 
     let txready: logic = ((state == State::Data) || (state == State::Raw)) && (cnt <= 6'd22);
 
+    // Input register stage: the byte source (descriptor ROM / bulk FIFO mux
+    // in the SIE) and the bit stuffer's variable-index insert are each deep
+    // enough that back to back they miss 60 MHz on the GW5A. The register
+    // is refilled whenever it is empty or the stuffer takes its byte, so the
+    // UTMI handshake keeps its one-byte-per-clock throughput.
+    var v_r: logic;
+    var d_r: logic<8>;
+    let take: logic = !v_r || txready;
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            v_r = 0;
+            d_r = 0;
+        } else if take {
+            v_r = i_txvalid;
+            d_r = i_data;
+        }
+    }
+
     always_comb {
         n_state    = state;
         n_bl       = bl;
@@ -139,10 +157,13 @@ pub module UsbPhyTx #(
                     n_state = State::Idle;
                 } else {
                     // Underrun: hold the last level (the hub will see a
-                    // stuff error / EOP, terminating the packet).
+                    // stuff error / EOP, terminating the packet). In the
+                    // first Sync cycle nothing is queued yet: keep the
+                    // driver off (oe unchanged) so the packet starts with
+                    // its SYNC instead of a word of J.
                     n_cur_lv = {n_last repeat 8};
                     n_cur_se = 0;
-                    n_oe     = 1;
+                    n_oe     = oe;
                 }
             } else {
                 if n_phase == bit_div {
@@ -176,7 +197,7 @@ pub module UsbPhyTx #(
                 n_last     = 1; // idle = J
                 n_ones     = 0;
                 n_sync_idx = 0;
-                if i_txvalid && i_tx_allowed && (i_opmode != OPMODE_NON_DRIVING) {
+                if v_r && i_tx_allowed && (i_opmode != OPMODE_NON_DRIVING) {
                     n_state = if i_opmode == OPMODE_RAW ? State::Raw : State::Sync;
                 }
             }
@@ -200,9 +221,9 @@ pub module UsbPhyTx #(
                 }
             }
             State::Data: {
-                if i_txvalid && txready {
+                if v_r && txready {
                     for i in 0..8 {
-                        db = i_data[i];
+                        db = d_r[i];
                         // NRZI: 1 = no transition, 0 = transition.
                         if !db {
                             n_last = ~n_last;
@@ -224,7 +245,7 @@ pub module UsbPhyTx #(
                             n_ones = 0;
                         }
                     }
-                } else if !i_txvalid && (n_cnt <= 6'd24) {
+                } else if !v_r && (n_cnt <= 6'd24) {
                     if hs_mode {
                         // 0 then seven 1s: one transition, then hold.
                         n_last = ~n_last;
@@ -248,14 +269,14 @@ pub module UsbPhyTx #(
                 }
             }
             State::Raw: {
-                if i_txvalid && txready {
+                if v_r && txready {
                     for i in 0..8 {
-                        n_bl[n_cnt + (i as 6)] = i_data[i];
+                        n_bl[n_cnt + (i as 6)] = d_r[i];
                         n_bs[n_cnt + (i as 6)] = 1'b0;
                     }
                     n_cnt  = n_cnt + 6'd8;
-                    n_last = i_data[7];
-                } else if !i_txvalid {
+                    n_last = d_r[7];
+                } else if !v_r {
                     n_eop_done = 1;
                     n_state    = State::Drain;
                 }
@@ -303,6 +324,6 @@ pub module UsbPhyTx #(
     }
 
     assign o_oe        = oe;
-    assign o_txready   = txready;
+    assign o_txready   = take;
     assign o_tx_active = state != State::Idle;
 }
