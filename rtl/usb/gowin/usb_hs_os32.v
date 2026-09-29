@@ -56,6 +56,7 @@ module usb_hs_os32 #(
     input  wire [2:0]  i_scan_class,
     input  wire        i_hist_run,    // transition histogram window (60 MHz): cleared on the rising edge, accumulates while high
     output wire [191:0] o_hist,       // 8 x 24-bit transitions per sample class (stable while i_hist_run is low)
+    output wire [31:0]  o_txfifo_dbg, // {overrun count (60 MHz), underrun count (PCLK)} of the transmit FIFO
     output reg  [7:0]  o_byte,
     output reg         o_valid,
     output wire        o_dd_level,    // one line sample per 60 MHz clock (FS J/K, synchronised)
@@ -101,11 +102,19 @@ module usb_hs_os32 #(
         if (!resetn_div) rst_sync <= 3'b111; else rst_sync <= {rst_sync[1:0], 1'b0};
     end
     wire prst = rst_sync[2];
+    // The UTMI-side reset (rst_i, also the soft reset) must reset the PCLK halves of the two FIFOs as
+    // well: otherwise a soft reset leaves the two pointer sets of each FIFO in a random relation, and
+    // the transmit reader may run ahead of the writer and send stale words (the host then never sees
+    // our handshakes: "device not responding to setup address" after some soft resets / builds).
+    reg  [1:0] rst_i_s;
+    always @(posedge pclk) rst_i_s <= {rst_i_s[0], rst_i};
+    wire frst = prst | rst_i_s[1];
 
     // ---- oversampling deserializer (static taps, as the Gowin IP) ----
     wire [31:0] samples;
     assign o_samples = samples;
     assign o_cmp_dbg = {cdp, cdn};
+    assign o_txfifo_dbg = {t_overrun, t_underrun};
     OSIDES32 #(
         .C_STATIC_DLY_0(DLY0), .DYN_DLY_EN_0("FALSE"), .ADAPT_EN_0("FALSE"),
         .C_STATIC_DLY_1(DLY1), .DYN_DLY_EN_1("FALSE"), .ADAPT_EN_1("FALSE")
@@ -145,13 +154,15 @@ module usb_hs_os32 #(
     end
     // Our own transmission is squelched too: the receiver pipeline is ~250 ns
     // deep, so the echo of our ACK / DATA would otherwise come out of it after
-    // tx_oe has fallen and be taken for a host packet. tx_oe is synchronised
-    // (it leads the first line bit by the transmitter's own latency) and
-    // stretched 12 words past its end for the last byte and the ring-down.
-    reg  [1:0]  txoe_s;
-    reg  [11:0] txoe_sh;
-    always @(posedge pclk) begin txoe_s <= {txoe_s[0], i_tx_oe}; txoe_sh <= {txoe_sh[10:0], txoe_s[1]}; end
-    wire tx_mask = txoe_s[1] | |txoe_sh;
+    // tx_oe has fallen and be taken for a host packet.
+    // The stretch must stay short: the host's handshake may start 8 bit times after our EOP and its
+    // SYNC would be eaten (12 words = 100 ns lost every third ACK, forcing retransmissions).
+    // The mask follows the transmitter's own drive enable (toen, PCLK domain, active low) delayed by
+    // the loop OSER -> pad -> receiver -> OSIDES32 -> samples_d2 (measured: the echo lags toen by
+    // 6-7 words and outlasts it by ~7), plus two words of ring-down.
+    reg  [13:0] drv_sh;
+    always @(posedge pclk) drv_sh <= {drv_sh[12:0], ~toen};
+    wire tx_mask = |drv_sh[13:4] | ~toen;
     wire sq = ~(cmp_r | cmp_r2) | tx_mask;       // squelched: idle line or own transmission (aligned with samples_d2)
     // Masked words hold the last level seen, not a fixed J: the HS EOP is a
     // transition followed by a flat run (the bit-stuff violation the decoder
@@ -219,7 +230,7 @@ module usb_hs_os32 #(
     function [4:0] b2g(input [4:0] b); b2g = b ^ (b >> 1); endfunction
     wire w_full = (wp_gray == {~rp_gray_w2[4:3], rp_gray_w2[2:0]});
     always @(posedge pclk) begin
-        if (prst) begin wp_bin <= 0; wp_gray <= 0; rp_gray_w1 <= 0; rp_gray_w2 <= 0; end
+        if (frst) begin wp_bin <= 0; wp_gray <= 0; rp_gray_w1 <= 0; rp_gray_w2 <= 0; end
         else begin
             rp_gray_w1 <= rp_gray; rp_gray_w2 <= rp_gray_w1;
             // Idle words are not queued: the CDR keeps producing (idle-J) bits at exactly the
@@ -315,11 +326,18 @@ module usb_hs_os32 #(
     reg [16:0] tword;
     reg        tstarted;
     wire       t_empty = (trp == twp_r2);
+    // diagnostics: underrun (reader found the FIFO empty after the start: a tri-state gap goes out
+    // mid-stream) and overrun (writer saw it full: a word is lost) counters, cumulative
+    reg  [15:0] t_underrun, t_overrun;
+    wire        t_full_w = (twp == {~trp_w2[3:2], trp_w2[1:0]});
     function [3:0] g2b4(input [3:0] g); g2b4 = {g[3], g[3]^g[2], g[3]^g[2]^g[1], g[3]^g[2]^g[1]^g[0]}; endfunction
     wire [2:0] t_occ = g2b4(twp_r2) - trp_bin;     // words queued as seen through the synchroniser (mod 8)
     wire       t_ready = t_occ >= 3'd4;
+    always @(posedge clk_i) begin
+        if (rst_i) t_overrun <= 16'd0; else if (t_full_w) t_overrun <= t_overrun + 1'b1;
+    end
     always @(posedge pclk) begin
-        if (prst) begin trp_bin <= 0; trp <= 0; twp_r1 <= 0; twp_r2 <= 0; thalf <= 1'b0; tword <= 17'h10000; tstarted <= 1'b0; end
+        if (frst) begin trp_bin <= 0; trp <= 0; twp_r1 <= 0; twp_r2 <= 0; thalf <= 1'b0; tword <= 17'h10000; tstarted <= 1'b0; t_underrun <= 16'd0; end
         else begin
             twp_r1 <= twp; twp_r2 <= twp_r1;
             if (!tstarted) begin
@@ -330,7 +348,7 @@ module usb_hs_os32 #(
             end else begin
                 thalf <= 1'b0;
                 if (!t_empty) begin tword <= tmem[trp_bin[2:0]]; trp_bin <= trp_bin + 1'b1; trp <= g3(trp_bin + 1'b1); end
-                else tword <= 17'h10000;
+                else begin tword <= 17'h10000; t_underrun <= t_underrun + 1'b1; end
             end
         end
     end

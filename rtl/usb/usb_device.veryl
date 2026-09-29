@@ -39,6 +39,7 @@ pub module UsbDevice #(
     param VENDOR_ID      : logic<16> = 16'h1209,
     param PRODUCT_ID     : logic<16> = 16'h0001,
     param BULK_FIFO_DEPTH: u32       = 4096    , // power of two, >= 2 x 512 (one packet is a guard band, see fifo_raddr)
+    param BULK_IN_FULL_ONLY: bit     = 0       , // 1: answer IN with NAK until a full packet is queued (no short packets; test aid)
 ) (
     i_clk: input clock,
     i_rst: input reset,
@@ -562,6 +563,15 @@ pub module UsbDevice #(
             }
 
             // ---------------- tokens ----------------
+            // Any token (ours or another device's: the hub repeats all downstream traffic) ends the
+            // transaction we may still be waiting on. A handshake is only ours if it directly follows our
+            // data packet; otherwise the host's ACK to another device on the hub would be taken for the
+            // missing ACK of our packet, advancing rd_ptr / the toggle and losing that packet and the
+            // next one (seen on hardware: 1024 bytes vanishing while the host polled the FTDI debugger).
+            if rx_token {
+                in_pending   = 0;
+                ctrl_pending = 0;
+            }
             if rx_token && addr_match {
                 in_pending   = 0;
                 ctrl_pending = 0;
@@ -620,7 +630,7 @@ pub module UsbDevice #(
                             if !configured || halt_in {
                                 tx_pid   = PID_STALL;
                                 tx_start = 1;
-                            } else if fifo_count != 0 {
+                            } else if (fifo_count != 0) && (!BULK_IN_FULL_ONLY || (fifo_count >= bulk_mps)) {
                                 in_len     = if fifo_count >= bulk_mps ? bulk_mps : fifo_count;
                                 tx_pid     = if toggle_in ? PID_DATA1 : PID_DATA0;
                                 tx_len     = if fifo_count >= bulk_mps ? bulk_mps[9:0] : fifo_count[9:0];

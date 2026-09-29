@@ -15,7 +15,10 @@ def main():
     ap.add_argument("-p", "--port", default="/dev/ttyUSB1"); ap.add_argument("--out", default="log.bin")
     ap.add_argument("--cmd", default=None, help="shell command to run while the log is armed")
     ap.add_argument("--wait", type=float, default=1.0)
+    ap.add_argument("--decode", default=None, help="decode a previously dumped log file instead of capturing")
     a = ap.parse_args()
+    if a.decode:
+        raw = open(a.decode, "rb").read(); decode(raw); return
     with serial.Serial(a.port, 115200, timeout=0.05) as s:
         while s.read(4096): pass
         s.write(b"L"); time.sleep(0.2)
@@ -24,11 +27,22 @@ def main():
         while s.read(4096): pass
         s.timeout = 3; s.write(b"D")
         raw = b""
-        while len(raw) < 2048 * 6:
-            chunk = s.read(2048 * 6 - len(raw))
+        while len(raw) < 8192 * 6:
+            chunk = s.read(8192 * 6 - len(raw))
             if not chunk: break
             raw += chunk
     open(a.out, "wb").write(raw)
+    decode(raw)
+
+def decode(raw):
+    # status-frame bytes may precede (or trail) the dump on the serial line: pick the byte alignment
+    # under which most words carry a valid tag, and take the last 2048 words
+    best = None
+    for o in range(6):
+        m = (len(raw) - o) // 6
+        ok = sum(1 for k in range(m) if 1 <= ((int.from_bytes(raw[o+6*k:o+6*k+6], "little") >> 44) & 15) <= 4)
+        if best is None or ok > best[0]: best = (ok, o)
+    o = best[1]; m = (len(raw) - o) // 6; raw = raw[o:o+6*m][-8192*6:]
     n = len(raw) // 6
     ents = []
     for i in range(n):
@@ -48,10 +62,11 @@ def main():
             if byte == 0xff and extra == 1: print(f"{dt:10.2f} us  RX error (no packet)")
             else:
                 pid = PID.get(pkt[0], f"?{pkt[0]:02x}") if pkt else "-"
-                print(f"{dt:10.2f} us  RX {pid:6s} n={byte:3d} {'ERR ' if extra & 1 else ''}{' '.join(f'{b:02x}' for b in pkt[:12])}")
+                fl = f"{'ERR ' if byte & 1 else ''}{'DUP ' if byte & 2 else ''}tog_out={byte >> 2 & 1} tog_in={byte >> 3 & 1}{' in_pending' if byte & 16 else ''}"
+                print(f"{dt:10.2f} us  RX {pid:6s} n={extra:4d} {' '.join(f'{b:02x}' for b in pkt[:3]):8s} {fl}")
             pkt = []
         elif tag == 3: print(f"{dt:10.2f} us  TX {PID.get(byte, f'?{byte:02x}')}")
-        elif tag == 4: print(f"{dt:10.2f} us  TX end")
+        elif tag == 4: print(f"{dt:10.2f} us  TX end (sum {byte << 8 | (extra & 0xff):04x})")
 
 if __name__ == "__main__":
     main()

@@ -33,8 +33,8 @@ def main():
         while s.read(4096): pass                  # status frames while waiting
         s.timeout = 3; s.write(b"D")
         raw = b""
-        while len(raw) < 2048 * 6:
-            chunk = s.read(2048 * 6 - len(raw))
+        while len(raw) < 8192 * 6:
+            chunk = s.read(8192 * 6 - len(raw))
             if not chunk: break
             raw += chunk
     open(a.out, "wb").write(raw)

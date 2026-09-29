@@ -1,0 +1,39 @@
+// Tang Primer 25K + Pmod USB (TN710 USB2.0-RC). Template: project.tcl fills the
+// @...@ balls from eda/targets/tangprimer25k/pmod_ports.csv for the slots given by
+// USB_PMOD_A / USB_PMOD_B (default pmod1 / pmod2) and writes pins_gen.cst.
+IO_LOC "clk_in" E2;
+IO_PORT "clk_in" PULL_MODE=NONE DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC "reset_in" H11;
+IO_PORT "reset_in" IO_TYPE=LVCMOS33 PULL_MODE=DOWN DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC "uart_txd" C3;
+IO_PORT "uart_txd" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "uart_rxd" B3;
+IO_PORT "uart_rxd" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC "led_configured" B2;
+IO_PORT "led_configured" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "led_high_speed" C2;
+IO_PORT "led_high_speed" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+
+// Pmod A: three TRUE LVDS input pairs. The board provides the terminations
+// (45 ohm HS terminations through TERM_RXDP/DN, 1.5k pull-up), so the on-chip
+// 100 ohm differential resistor must stay OFF.
+IO_LOC "usb_rx_dp" @RX_DP@,@RX_DN@;
+IO_PORT "usb_rx_dp" IO_TYPE=LVDS25 PULL_MODE=NONE DRIVE=OFF BANK_VCCIO=3.3 DIFF_RESISTOR=OFF;
+IO_LOC "usb_rxdp_p" @RXDP_P@,@RXDP_N@;
+IO_PORT "usb_rxdp_p" IO_TYPE=LVDS25 PULL_MODE=NONE DRIVE=OFF BANK_VCCIO=3.3 DIFF_RESISTOR=OFF;
+IO_LOC "usb_rxdn_p" @RXDN_P@,@RXDN_N@;
+IO_PORT "usb_rxdn_p" IO_TYPE=LVDS25 PULL_MODE=NONE DRIVE=OFF BANK_VCCIO=3.3 DIFF_RESISTOR=OFF;
+IO_LOC "usb_term_dp" @TERM_DP@;
+IO_PORT "usb_term_dp" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "usb_term_dn" @TERM_DN@;
+IO_PORT "usb_term_dn" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+
+// Pmod B: TX pair as two LVCMOS33 tri-state pads (series R on the board), pull-up enable, VBUS detect
+IO_LOC "usb_tx_dp" @TX_DP@;
+IO_PORT "usb_tx_dp" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=@TX_DRIVE@ BANK_VCCIO=3.3;
+IO_LOC "usb_tx_dn" @TX_DN@;
+IO_PORT "usb_tx_dn" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=@TX_DRIVE@ BANK_VCCIO=3.3;
+IO_LOC "usb_pullup_en" @PULLUP@;
+IO_PORT "usb_pullup_en" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "vbus_det" @VBUS@;
+IO_PORT "vbus_det" IO_TYPE=LVCMOS33 PULL_MODE=DOWN DRIVE=OFF BANK_VCCIO=3.3;

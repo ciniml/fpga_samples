@@ -77,6 +77,7 @@ module usb_phy_gowin #(
     input  wire [2:0]  i_scan_class,
     input  wire        i_hist_run,      // HS_OS32 transition histogram window
     output wire [191:0] o_hist,
+    output wire [31:0]  o_txfifo_dbg,
     input  wire        clk_i,        // 60 MHz
     input  wire        i_track_en,   // HS_CDR: 1 = delay tracking loop (i_dly_* ignored except i_dly_dd as the manual base)
     input  wire [7:0]  i_dly_dd,
@@ -239,7 +240,7 @@ module usb_phy_gowin #(
                 .clk_ref_i(os_clk_ref_i), .rstn_ref_i(os_rstn_ref_i), .pll_lock_i(os_pll_lock_i),
                 .fclk0_i(os_fclk0_i), .fclk90_i(os_fclk90_i), .fclk180_i(os_fclk180_i), .fclk270_i(os_fclk270_i),
                 .serial_i(rx_dd_se), .cmp_dp_i(rx_dp_se), .cmp_dn_i(rx_dn_se), .clk_i(clk_i), .rst_i(rst), .i_se0(~rx_dp_raw[0] & ~rx_dn_raw[0]),
-                .i_scan_freeze(i_scan_freeze), .i_scan_ofs(i_scan_ofs), .i_scan_class(i_scan_class), .i_hist_run(i_hist_run), .o_hist(o_hist),
+                .i_scan_freeze(i_scan_freeze), .i_scan_ofs(i_scan_ofs), .i_scan_class(i_scan_class), .i_hist_run(i_hist_run), .o_hist(o_hist), .o_txfifo_dbg(o_txfifo_dbg),
                 .o_byte(os_byte), .o_valid(os_valid), .o_dd_level(os_level), .o_pclk(os_pclk_o), .o_lock(), .o_samples(os_samples_o), .o_cmp_dbg(os_cmp_o),
                 .i_tx_dp(tx_dp), .i_tx_dn(tx_dn), .i_tx_oe(tx_oe), .o_tx_dp(os_tx_dp), .o_tx_dn(os_tx_dn), .o_tx_dp_oen(os_tx_dp_oen), .o_tx_dn_oen(os_tx_dn_oen));
             assign rx_dd_raw = {8{os_level}};     // FS J/K: one synchronised line sample per clock

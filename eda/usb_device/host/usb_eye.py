@@ -12,6 +12,7 @@ The IODELAY sweep ('d') only applies to designs with DYN_DLY=1 (not the OSIDES32
 import argparse, serial, time
 
 HIST = [0] * 8
+TXFIFO = [0, 0]   # cumulative {underrun, overrun} counts of the HS transmit FIFO (from the last frame)
 def meas(s, windows):
     tot = bad = err = 0
     for k in range(8): HIST[k] = 0
@@ -19,13 +20,14 @@ def meas(s, windows):
         while s.read(4096): pass
         s.write(b"m")
         buf = b""; t0 = time.time()
-        while len(buf) < 37 and time.time() - t0 < 1.0:
-            buf += s.read(37 - len(buf))
+        while len(buf) < 41 and time.time() - t0 < 1.0:
+            buf += s.read(41 - len(buf))
         i = buf.find(b"M")
-        if i < 0 or len(buf) < i + 37: continue
-        f = buf[i:i+37]
+        if i < 0 or len(buf) < i + 41: continue
+        f = buf[i:i+41]
         tot += int.from_bytes(f[1:5], "little"); bad += int.from_bytes(f[5:9], "little"); err += int.from_bytes(f[9:13], "little")
         for k in range(8): HIST[k] += int.from_bytes(f[13+3*k:16+3*k], "little")
+        TXFIFO[0] = int.from_bytes(f[37:39], "little"); TXFIFO[1] = int.from_bytes(f[39:41], "little")
     return tot, bad, err
 
 def hist_str():
@@ -48,6 +50,7 @@ def main():
         if a.hist:
             tot, bad, err = meas(s, a.windows)
             print(f"tracking: packets {tot} bad {bad} rxerr {err}\nedge histogram per class 0..7 (1/8 UI = 260 ps bins): {hist_str()}")
+            print(f"HS transmit FIFO: underruns {TXFIFO[0]}, overruns {TXFIFO[1]} (cumulative)")
         elif a.ofs:
             for o in (-4, -3, -2, -1, 0, 1, 2, 3):
                 s.write(b"F" + bytes([0x40 | (o & 7)])); time.sleep(a.dwell)
