@@ -17,8 +17,9 @@
  *    string, device_qualifier, other_speed_configuration), SET_ADDRESS,
  *    SET/GET_CONFIGURATION, GET_STATUS, SET/CLEAR_FEATURE (ENDPOINT_HALT
  *    on EP1), SET/GET_INTERFACE, plus two vendor requests (0x01 IN: read
- *    i_vendor_status, 0x02 OUT: write wValue to o_vendor_reg). Anything
- *    else is STALLed. IN data stages are chunked to 64 bytes with the
+ *    i_vendor_status, 0x02 OUT: write wValue to o_vendor_reg, 0x20 IN with
+ *    wIndex 7: the Microsoft OS 2.0 descriptor set announced by the BOS, so
+ *    Windows binds WinUSB). Anything else is STALLed. IN data stages are chunked to 64 bytes with the
  *    trailing zero-length packet rule (§8.5.3.2).
  *  - Bulk loopback on EP1: OUT data is queued in a byte FIFO (BRAM) and
  *    returned on EP1 IN (64-byte packets at FS, 512 at HS). NAK when the
@@ -532,6 +533,11 @@ pub module UsbDevice #(
                 desc_ok    = HS_CAPABLE;
                 desc_other = 1;
             }
+            8'h0F: { // BOS (Microsoft OS 2.0 platform capability)
+                desc_addr = BOS_ADDR;
+                desc_len  = BOS_LEN;
+                desc_ok   = 1;
+            }
             default: {}
         }
     }
@@ -905,6 +911,16 @@ pub module UsbDevice #(
                                         if !req_in && (w_length == 0) {
                                             vendor_reg = w_value;
                                             ctrl       = Ctrl::StatusIn;
+                                        }
+                                    }
+                                    MS_VENDOR_CODE: { // Microsoft OS 2.0 descriptor set (wIndex 7), from the BOS vendor code
+                                        if req_in && (w_index == 16'd7) {
+                                            src         = TxSrc::Rom;
+                                            ctrl_base   = MSOS_ADDR;
+                                            ctrl_other  = 0;
+                                            ctrl_remain = served_len({2'b0, MSOS_LEN}, w_length);
+                                            ctrl_zlp    = ({8'b0, MSOS_LEN} <: w_length) && (MSOS_LEN[5:0] == 6'd0);
+                                            ctrl        = if w_length == 0 ? Ctrl::StatusIn : Ctrl::DataIn;
                                         }
                                     }
                                     default: {}

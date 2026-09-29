@@ -279,7 +279,7 @@ module usb_device_test_body #(parameter HS = 0, parameter ULPI = 0, parameter RU
         stage = "get device descriptor";
         control_in(8'h80, 8'h06, 16'h0100, 0, 64, stalled);
         if (stalled) fail("device descriptor STALLed");
-        exp[0]=8'h12; exp[1]=8'h01; exp[2]=8'h00; exp[3]=8'h02; exp[4]=8'hFF; exp[5]=8'h00; exp[6]=8'h00; exp[7]=8'h40;
+        exp[0]=8'h12; exp[1]=8'h01; exp[2]=8'h10; exp[3]=8'h02; exp[4]=8'hFF; exp[5]=8'h00; exp[6]=8'h00; exp[7]=8'h40;
         exp[8]=8'h09; exp[9]=8'h12; exp[10]=8'h01; exp[11]=8'h00; exp[12]=8'h00; exp[13]=8'h01; exp[14]=8'h01; exp[15]=8'h02; exp[16]=8'h03; exp[17]=8'h01;
         expect_bytes("device descriptor", 18, exp);
 
@@ -331,6 +331,19 @@ module usb_device_test_body #(parameter HS = 0, parameter ULPI = 0, parameter RU
         // unknown string index -> STALL
         control_in(8'h80, 8'h06, 16'h0309, 16'h0409, 255, stalled);
         if (!stalled) fail("string 9 should STALL");
+
+        // ---- BOS + Microsoft OS 2.0 descriptor set (WinUSB binding on Windows)
+        stage = "bos";
+        control_in(8'h80, 8'h06, 16'h0F00, 0, 255, stalled);
+        if (stalled || ctrl_len != 33 || ctrl_buf[0] != 5 || ctrl_buf[1] != 8'h0F || ctrl_buf[2] != 33 || ctrl_buf[4] != 1) fail("BOS descriptor");
+        if (ctrl_buf[5] != 8'h1C || ctrl_buf[6] != 8'h10 || ctrl_buf[7] != 8'h05 || ctrl_buf[9] != 8'hDF || ctrl_buf[31] != 8'h20) fail("MS OS 2.0 platform capability");
+        control_in(8'hC0, 8'h20, 0, 16'd7, ctrl_buf[29] | (ctrl_buf[30] << 8), stalled);
+        if (stalled || ctrl_len != 30 || ctrl_buf[0] != 10 || ctrl_buf[8] != 30 || ctrl_buf[10] != 20 || ctrl_buf[12] != 3) fail("MS OS 2.0 descriptor set");
+        if (ctrl_buf[14] != "W" || ctrl_buf[15] != "I" || ctrl_buf[19] != "B") fail("Compatible ID WINUSB");
+        control_in(8'hC0, 8'h20, 0, 16'd8, 30, stalled);   // other wIndex -> STALL
+        if (!stalled) fail("MS vendor code with wIndex 8 should STALL");
+        control_in(8'h80, 8'h06, 16'h0100, 0, 18, stalled);
+        if (stalled || ctrl_buf[2] != 8'h10 || ctrl_buf[3] != 8'h02) fail("bcdUSB 2.10");
 
         // ---- GET_CONFIGURATION before configure = 0
         stage = "get configuration";
