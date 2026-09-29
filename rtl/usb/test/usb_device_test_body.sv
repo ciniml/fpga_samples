@@ -8,7 +8,8 @@
 //   HS   = 0: FS enumeration through UsbPhy;  1: reset + chirp handshake, HS enumeration.
 //   ULPI = 1: UsbDevice -> UlpiLink -> UlpiPhy instead of UsbPhy.
 `timescale 1ns/1ps
-module usb_device_test_body #(parameter HS = 0, parameter ULPI = 0, parameter RUN = 0, parameter STALL = 0);  // STALL > 0: RxValid dropped 1 clock in STALL (HS CDR word stalls)
+//   STREAM = 1: EP1_STREAM device (byte-stream ports) - the loopback stages are replaced by stream stages.
+module usb_device_test_body #(parameter HS = 0, parameter ULPI = 0, parameter RUN = 0, parameter STALL = 0, parameter STREAM = 0);  // STALL > 0: RxValid dropped 1 clock in STALL (HS CDR word stalls)
     logic clk = 0;
     logic rst = 1;
     always #8.333 clk = ~clk;
@@ -26,7 +27,13 @@ module usb_device_test_body #(parameter HS = 0, parameter ULPI = 0, parameter RU
     logic [10:0] frame;
     logic [15:0] vendor_reg;
 
-    UsbDevice #(.HS_CAPABLE(1)) dev (
+    // EP1 stream side (STREAM = 1): the test feeds i_tx and collects o_rx
+    logic s_tx_v = 0; logic [7:0] s_tx_d = 0; logic s_tx_rdy; logic s_rx_v; logic [7:0] s_rx_d; logic s_rx_rdy = 1;
+    byte s_rx_q[$];
+    always @(posedge clk) if (s_rx_v && s_rx_rdy) s_rx_q.push_back(s_rx_d);
+    // (the idle time must exceed one bulk transaction: 512 B at HS ~ 9 us, 64 B at FS ~ 50 us)
+    localparam int FLUSH_US = HS ? 20 : 200;
+    UsbDevice #(.HS_CAPABLE(1), .EP1_STREAM(STREAM), .STREAM_FLUSH_US(FLUSH_US)) dev (
         .i_clk(clk), .i_rst(rst),
         .o_utmi_data_out(utmi_data_out), .o_utmi_txvalid(utmi_txvalid), .i_utmi_txready(utmi_txready),
         .i_utmi_data_in(utmi_data_in), .i_utmi_rxactive(utmi_rxactive), .i_utmi_rxvalid(utmi_rxvalid),
@@ -34,7 +41,9 @@ module usb_device_test_body #(parameter HS = 0, parameter ULPI = 0, parameter RU
         .o_utmi_opmode(utmi_opmode), .o_utmi_xcvrselect(utmi_xcvr), .o_utmi_termselect(utmi_termsel),
         .o_high_speed(high_speed), .o_configured(configured), .o_suspended(suspended), .o_reset(dev_reset),
         .o_address(address), .o_frame(frame), .o_sof(sof),
-        .o_vendor_reg(vendor_reg), .i_vendor_status(32'hCAFE1234)
+        .o_vendor_reg(vendor_reg), .i_vendor_status(32'hCAFE1234),
+        .o_rx_valid(s_rx_v), .o_rx_data(s_rx_d), .i_rx_ready(s_rx_rdy),
+        .i_tx_valid(s_tx_v), .i_tx_data(s_tx_d), .o_tx_ready(s_tx_rdy)
     );
 
     generate if (ULPI == 0) begin : g_utmi
@@ -193,6 +202,17 @@ module usb_device_test_body #(parameter HS = 0, parameter ULPI = 0, parameter RU
         end
     endtask
 
+    // stream feed: one byte per clock while the device is ready (values seed + i)
+    task automatic feed(input int n, input int seed);
+        for (int i = 0; i < n; i++) begin
+            s_tx_d = byte'(seed + i); s_tx_v = 1;
+            while (!s_tx_rdy) @(posedge clk);
+            @(posedge clk);
+        end
+        s_tx_v = 0;
+    endtask
+    localparam int FLUSH_CLKS = FLUSH_US * 60 + 100;   // STREAM_FLUSH_US + margin
+
     // ------------------------------------------------------------------
     // Reset / chirp
     // ------------------------------------------------------------------
@@ -349,6 +369,95 @@ module usb_device_test_body #(parameter HS = 0, parameter ULPI = 0, parameter RU
         control_in(8'h80, 8'h07, 0, 0, 2, stalled);
         if (!stalled) fail("SET_DESCRIPTOR should STALL");
 
+        if (STREAM) begin
+        // ---- stream OUT: bytes appear on o_rx
+        stage = "stream out";
+        bulk_out(20, 8'h10, resp);
+        if (resp != 4'b0010) fail($sformatf("EP1 OUT: pid %h", resp));
+        repeat (60) @(posedge clk);
+        if (s_rx_q.size() != 20) fail($sformatf("o_rx got %0d bytes, expected 20", s_rx_q.size()));
+        else for (int i = 0; i < 20; i++) if (s_rx_q[i] != byte'(8'h10 + i * 3)) begin fail("o_rx data"); break; end
+        s_rx_q.delete();
+        // OUT while the consumer stalls: the FIFO holds it, delivered when ready
+        s_rx_rdy = 0;
+        bulk_out(mps, 8'h30, resp);
+        bulk_out(5, 8'h70, resp);
+        repeat (20) @(posedge clk);
+        if (s_rx_q.size() != 0) fail("o_rx delivered while not ready");
+        s_rx_rdy = 1;
+        repeat (mps + 40) @(posedge clk);
+        if (s_rx_q.size() != mps + 5) fail($sformatf("o_rx got %0d bytes, expected %0d", s_rx_q.size(), mps + 5));
+        else begin
+            for (int i = 0; i < mps; i++) if (s_rx_q[i] != byte'(8'h30 + i * 3)) begin fail("o_rx data (stalled, 1st)"); break; end
+            for (int i = 0; i < 5; i++) if (s_rx_q[mps + i] != byte'(8'h70 + i * 3)) begin fail("o_rx data (stalled, 2nd)"); break; end
+        end
+        s_rx_q.delete();
+
+        // ---- stream IN: empty -> NAK; full packets right away, the remainder only after the idle time
+        stage = "stream in";
+        bulk_in(resp);
+        if (resp != 4'b1010) fail($sformatf("EP1 IN empty: pid %h", resp));
+        feed(mps + 10, 8'h20);
+        bulk_in(resp);
+        if (host.rx_len != mps) fail($sformatf("IN full packet len %0d", host.rx_len));
+        else for (int i = 0; i < mps; i++) if (host.rx_buf[i] != byte'(8'h20 + i)) begin fail("IN full packet data"); break; end
+        bulk_in(resp);
+        if (resp != 4'b1010) fail("remainder sent before the idle time");
+        repeat (FLUSH_CLKS) @(posedge clk);
+        bulk_in(resp);
+        if (host.rx_len != 10) fail($sformatf("IN remainder len %0d", host.rx_len));
+        else for (int i = 0; i < 10; i++) if (host.rx_buf[i] != byte'(8'h20 + mps + i)) begin fail("IN remainder data"); break; end
+        bulk_in(resp);
+        if (resp != 4'b1010) fail("NAK expected after a short packet (no ZLP)");
+
+        // ---- message of exactly one full packet: ZLP after the idle time
+        stage = "stream zlp";
+        feed(mps, 8'h40);
+        bulk_in(resp);
+        if (host.rx_len != mps) fail("IN full packet (zlp stage)");
+        bulk_in(resp);
+        if (resp != 4'b1010) fail("ZLP sent before the idle time");
+        repeat (FLUSH_CLKS) @(posedge clk);
+        bulk_in(resp);
+        if (!(resp == 4'b0011 || resp == 4'b1011) || host.rx_len != 0) fail($sformatf("ZLP expected: pid %h len %0d", resp, host.rx_len));
+        bulk_in(resp);
+        if (resp != 4'b1010) fail("NAK expected after the ZLP");
+
+        // ---- IN without ACK: same packet again
+        stage = "stream retransmit";
+        feed(5, 8'h50);
+        repeat (FLUSH_CLKS) @(posedge clk);
+        host.in_transaction(addr, 1, 0);
+        if (host.rx_pid[3] != bulk_toggle_in) fail("retransmit toggle");
+        bulk_in(resp);
+        if (host.rx_len != 5 || host.rx_buf[0] != 8'h50) fail("retransmitted packet");
+
+        // ---- back-pressure: o_tx_ready drops one packet short of the FIFO, everything drains in order
+        stage = "stream backpressure";
+        begin
+            int room = 4096 - mps;       // BULK_FIFO_DEPTH - guard band
+            int got = 0; int k = 0;
+            feed(room, 8'h60);
+            @(posedge clk);
+            if (s_tx_rdy) fail("o_tx_ready still high with the FIFO full");
+            while (got < room) begin
+                if (got + mps > room) repeat (FLUSH_CLKS) @(posedge clk);
+                bulk_in(resp);
+                if (resp == 4'b1010) begin fail($sformatf("NAK while draining at %0d", got)); break; end
+                for (int i = 0; i < host.rx_len; i++) if (host.rx_buf[i] != byte'(8'h60 + got + i)) begin fail($sformatf("drain data at %0d", got + i)); break; end
+                got += host.rx_len; k++;
+                if (k > 100) begin fail("drain did not finish"); break; end
+            end
+            if (!s_tx_rdy) fail("o_tx_ready low after draining");
+            if (room % mps == 0) begin          // ended on a full packet: a ZLP closes the message
+                repeat (FLUSH_CLKS) @(posedge clk);
+                bulk_in(resp);
+                if (!(resp == 4'b0011 || resp == 4'b1011) || host.rx_len != 0) fail("ZLP expected after the drain");
+            end
+            bulk_in(resp);
+            if (resp != 4'b1010) fail("FIFO not empty after drain");
+        end
+        end else begin
         // ---- bulk loopback: empty -> NAK, then data
         stage = "bulk loopback";
         bulk_in(resp);
@@ -419,6 +528,7 @@ module usb_device_test_body #(parameter HS = 0, parameter ULPI = 0, parameter RU
         bulk_out(3, 8'h55, resp);
         bulk_in(resp);
         if (host.rx_len != 3 || resp != 4'b0011) fail("EP1 IN after CLEAR_FEATURE (DATA0 expected)");
+        end
 
         // ---- SOF
         stage = "sof";
@@ -434,7 +544,7 @@ module usb_device_test_body #(parameter HS = 0, parameter ULPI = 0, parameter RU
         if (!host.rx_timeout) fail("device answered a foreign address");
 
         errors += host.errors;
-        if (errors == 0) $display("PASS: usb_device HS=%0d ULPI=%0d", HS, ULPI);
+        if (errors == 0) $display("PASS: usb_device HS=%0d ULPI=%0d STREAM=%0d", HS, ULPI, STREAM);
         else $fatal(1, "FAIL: usb_device HS=%0d ULPI=%0d errors=%0d", HS, ULPI, errors);
         $finish;
     end

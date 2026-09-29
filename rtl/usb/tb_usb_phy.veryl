@@ -15,6 +15,8 @@
  *      the SYNC/NRZI/stuffed stream and EOP correctly.
  *   3. A bit-stuff violation injected by the host raises RxError.
  * usb_phy_chirp: OpMode RAW with data 0x00 drives a steady K.
+ * *_w4: the same loopbacks with the PHY at 120 MHz / 4 line bits per clock
+ *   behind UsbPhyBridge (the internal-PHY configuration).
  */
 
 module TbUsbPhy {}
@@ -37,6 +39,20 @@ endmodule
 embed (inline) sv{{{
 module usb_phy_ls_loopback;
     usb_phy_loopback_body #(.HS(0), .LS(1), .RUN(1)) body();
+endmodule
+}}}
+
+#[test(usb_phy_hs_loopback_w4)]
+embed (inline) sv{{{
+module usb_phy_hs_loopback_w4;
+    usb_phy_loopback_body #(.HS(1), .W(4), .RUN(1)) body();
+endmodule
+}}}
+
+#[test(usb_phy_fs_loopback_w4)]
+embed (inline) sv{{{
+module usb_phy_fs_loopback_w4;
+    usb_phy_loopback_body #(.HS(0), .W(4), .RUN(1)) body();
 endmodule
 }}}
 

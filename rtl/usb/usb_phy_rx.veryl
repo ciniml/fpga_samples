@@ -60,21 +60,22 @@
 import usb_pkg::*;
 
 pub module UsbPhyRx #(
+    param W                : u32 = 8 , // line bits per clock (8 at 60 MHz, 4 at 120 MHz)
     param FS_CLOCKS_PER_BIT: u32 = 5 , // 60 MHz / 12 Mbps
     param LS_CLOCKS_PER_BIT: u32 = 40, // 60 MHz / 1.5 Mbps
-    param HS_BLANK_WORDS   : u32 = 2 , // HS: whole words ignored after a packet end / own transmission
+    param HS_BLANK_WORDS   : u32 = 16 / W, // HS: whole words (16 bit times) ignored after a packet end / own transmission
     param FS_SYNC_ZEROS    : u32 = 3 , // decoded zeros required before the SYNC's final one
     param HS_SYNC_ZEROS    : u32 = 6 ,
-    param HS_STALL         : u32 = 24, // clocks (400 ns) without line bits inside a HS packet -> abandon
+    param HS_STALL         : u32 = 192 / W, // clocks (400 ns) without line bits inside a HS packet -> abandon
 ) (
     i_clk: input clock,
     i_rst: input reset,
 
-    // 8 line samples per clock, [0] = earliest.
-    i_dp: input logic<8>, // single-ended D+ comparator (vs. ~130 mV reference)
-    i_dn: input logic<8>, // single-ended D- comparator
-    i_dd: input logic<8>, // differential receiver D+ - D- (HS data; TN710 USB_RX_D+/-)
-    i_dd_valid: input logic, // HS: i_dd carries 8 new bits this clock (0 = stall, e.g. an external CDR/gearbox had none)
+    // W line samples per clock, [0] = earliest.
+    i_dp: input logic<W>, // single-ended D+ comparator (vs. ~130 mV reference)
+    i_dn: input logic<W>, // single-ended D- comparator
+    i_dd: input logic<W>, // differential receiver D+ - D- (HS data; TN710 USB_RX_D+/-)
+    i_dd_valid: input logic, // HS: i_dd carries W new bits this clock (0 = stall, e.g. an external CDR/gearbox had none)
 
     i_xcvr   : input logic<2>, // usb_pkg::XCVR_*
     i_termsel: input logic   , // 0: HS termination, 1: FS/LS pull-up
@@ -99,8 +100,8 @@ pub module UsbPhyRx #(
     var s_prev   : logic<2>;
     var ls_filt  : logic<2>;
     var phase    : logic<PHASE_BITS>;
-    var fe_j     : logic<8>; // line level per bit, 1 = J (speed polarity applied)
-    var fe_se0   : logic<8>;
+    var fe_j     : logic<W>; // line level per bit, 1 = J (speed polarity applied)
+    var fe_se0   : logic<W>;
     var fe_n     : logic<4>; // number of valid entries in fe_j/fe_se0
     var fe_hs    : logic;
     var linestate: logic<2>;
@@ -129,8 +130,8 @@ pub module UsbPhyRx #(
                 // substitute) from both single-ended comparators low.
                 fe_j      = i_dd;
                 fe_se0    = ~i_dp & ~i_dn;
-                fe_n      = if i_dd_valid ? 4'd8 : 4'd0;
-                linestate = if hs_all_se0 ? LINE_SE0 : {i_dn[7], i_dp[7]};
+                fe_n      = if i_dd_valid ? W as 4 : 4'd0;
+                linestate = if hs_all_se0 ? LINE_SE0 : {i_dn[W - 1], i_dp[W - 1]};
                 s_prev    = s_raw;
                 phase     = 0;
             } else {
@@ -171,7 +172,7 @@ pub module UsbPhyRx #(
     var bitcnt  : logic<3>;
     var sh      : logic<8>;
     var err_wait: logic; // FS: ignore line until next SE0 after an error
-    var blank   : logic<2>; // HS: remaining blanked words
+    var blank   : logic<3>; // HS: remaining blanked words
     var stall   : logic<6>; // HS: clocks without bits inside a packet
     var rxvalid : logic;
     var rxerror : logic;
@@ -184,7 +185,7 @@ pub module UsbPhyRx #(
     var n_bitcnt  : logic<3>;
     var n_sh      : logic<8>;
     var n_err_wait: logic;
-    var n_blank   : logic<2>;
+    var n_blank   : logic<3>;
     var n_done    : logic;   // packet ended in this word: ignore its remaining bits
     var n_valid   : logic;
     var n_error   : logic;
@@ -208,11 +209,11 @@ pub module UsbPhyRx #(
         if fe_n != 0 && blank != 0 {
             // HS post-packet blanking: whole word dropped, keep the NRZI reference
             n_blank    = blank - 1;
-            n_prev_j   = fe_j[7];
+            n_prev_j   = fe_j[W - 1];
             n_zero_run = 0;
             n_done     = 1;
         }
-        for i in 0..8 {
+        for i in 0..W {
             if (i as 4) <: fe_n {
                 if n_done {
                     // (blanked word, or the packet ended earlier in this word)
@@ -224,7 +225,7 @@ pub module UsbPhyRx #(
                         n_error  = (n_bitcnt != 0) || fe_hs;
                         n_active = 0;
                         if fe_hs {
-                            n_blank = HS_BLANK_WORDS as 2;
+                            n_blank = HS_BLANK_WORDS as 3;
                             n_done  = 1;
                         }
                     }
@@ -245,7 +246,7 @@ pub module UsbPhyRx #(
                                     // HS EOP = 0 + 7 ones with no stuffing:
                                     // the error fires after 7 data bits.
                                     n_error = n_bitcnt != 3'd7;
-                                    n_blank = HS_BLANK_WORDS as 2;
+                                    n_blank = HS_BLANK_WORDS as 3;
                                     n_done  = 1;
                                 } else {
                                     n_error    = 1;
@@ -307,7 +308,7 @@ pub module UsbPhyRx #(
             zero_run = 0;
             bitcnt   = 0;
             err_wait = 0;
-            blank    = if hs_mode ? HS_BLANK_WORDS as 2 : 0;
+            blank    = if hs_mode ? HS_BLANK_WORDS as 3 : 0;
             stall    = 0;
             rxvalid  = 0;
             rxerror  = 0;
@@ -327,7 +328,7 @@ pub module UsbPhyRx #(
                 if stall == (HS_STALL - 1) as 6 {
                     active  = 0;
                     rxerror = 1;
-                    blank   = HS_BLANK_WORDS as 2;
+                    blank   = HS_BLANK_WORDS as 3;
                     stall   = 0;
                 } else {
                     stall = stall + 1;

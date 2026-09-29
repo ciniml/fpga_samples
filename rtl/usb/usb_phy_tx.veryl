@@ -34,6 +34,7 @@
 import usb_pkg::*;
 
 pub module UsbPhyTx #(
+    param SW               : u32 = 8 , // line samples per clock (8 at 60 MHz, 4 at 120 MHz)
     param FS_CLOCKS_PER_BIT: u32 = 5 ,
     param LS_CLOCKS_PER_BIT: u32 = 40,
 ) (
@@ -48,9 +49,9 @@ pub module UsbPhyTx #(
     i_opmode    : input logic<2>,
     i_tx_allowed: input logic   ,
 
-    // 8 line samples per clock, [0] = earliest.
-    o_dp: output logic<8>,
-    o_dn: output logic<8>,
+    // SW line samples per clock, [0] = earliest.
+    o_dp: output logic<SW>,
+    o_dn: output logic<SW>,
     o_oe: output logic   ,
 
     o_tx_active: output logic,
@@ -79,9 +80,10 @@ pub module UsbPhyTx #(
     var ones    : logic<3>;
     var sync_idx: logic<2>;
     var eop_done: logic;
-    var cur_lv  : logic<8>;
-    var cur_se  : logic<8>;
+    var cur_lv  : logic<SW>;
+    var cur_se  : logic<SW>;
     var oe      : logic;
+    var half    : logic;           // SW == 4: which nibble of the held byte goes next
 
     var n_state   : State;
     var n_bl      : logic<BUF_BITS>;
@@ -92,10 +94,12 @@ pub module UsbPhyTx #(
     var n_ones    : logic<3>;
     var n_sync_idx: logic<2>;
     var n_eop_done: logic;
-    var n_cur_lv  : logic<8>;
-    var n_cur_se  : logic<8>;
+    var n_cur_lv  : logic<SW>;
+    var n_cur_se  : logic<SW>;
     var n_oe      : logic;
+    var n_half    : logic;
     var db        : logic;
+    var bi        : logic<3>;      // bit index within the held byte
 
     let txready: logic = ((state == State::Data) || (state == State::Raw)) && (cnt <= 6'd22);
 
@@ -104,9 +108,11 @@ pub module UsbPhyTx #(
     // enough that back to back they miss 60 MHz on the GW5A. The register
     // is refilled whenever it is empty or the stuffer takes its byte, so the
     // UTMI handshake keeps its one-byte-per-clock throughput.
+    // At SW == 4 (120 MHz) a byte is stuffed in two nibble steps, which halves the
+    // per-clock chain; the byte is taken from the link when its second nibble goes.
     var v_r: logic;
     var d_r: logic<8>;
-    let take: logic = !v_r || txready;
+    let take: logic = !v_r || (txready && ((SW != 4) || half));
     always_ff (i_clk, i_rst) {
         if_reset {
             v_r = 0;
@@ -130,21 +136,23 @@ pub module UsbPhyTx #(
         n_cur_lv   = cur_lv;
         n_cur_se   = cur_se;
         n_oe       = oe;
+        n_half     = half;
         db         = 0;
+        bi         = 0;
 
         // ---------------- pop / serialise ----------------
         if state != State::Idle {
             if hs_mode {
-                if n_cnt >= 6'd8 {
-                    n_cur_lv = n_bl[7:0];
-                    n_cur_se = n_bs[7:0];
-                    n_bl     = n_bl >> 8;
-                    n_bs     = n_bs >> 8;
-                    n_cnt    = n_cnt - 6'd8;
+                if n_cnt >= SW as 6 {
+                    n_cur_lv = n_bl[SW - 1:0];
+                    n_cur_se = n_bs[SW - 1:0];
+                    n_bl     = n_bl >> SW;
+                    n_bs     = n_bs >> SW;
+                    n_cnt    = n_cnt - SW as 6;
                     n_oe     = 1;
                 } else if n_cnt != 0 {
                     // Partial final word: pad with the last level.
-                    for i in 0..8 {
+                    for i in 0..SW {
                         n_cur_lv[i] = if (i as 6) <: n_cnt ? n_bl[i] : n_last;
                         n_cur_se[i] = if (i as 6) <: n_cnt ? n_bs[i] : 1'b0;
                     }
@@ -161,7 +169,7 @@ pub module UsbPhyTx #(
                     // first Sync cycle nothing is queued yet: keep the
                     // driver off (oe unchanged) so the packet starts with
                     // its SYNC instead of a word of J.
-                    n_cur_lv = {n_last repeat 8};
+                    n_cur_lv = {n_last repeat SW};
                     n_cur_se = 0;
                     n_oe     = oe;
                 }
@@ -169,8 +177,8 @@ pub module UsbPhyTx #(
                 if n_phase == bit_div {
                     n_phase = 0;
                     if n_cnt != 0 {
-                        n_cur_lv = {n_bl[0] repeat 8};
-                        n_cur_se = {n_bs[0] repeat 8};
+                        n_cur_lv = {n_bl[0] repeat SW};
+                        n_cur_se = {n_bs[0] repeat SW};
                         n_bl     = n_bl >> 1;
                         n_bs     = n_bs >> 1;
                         n_cnt    = n_cnt - 1;
@@ -197,6 +205,7 @@ pub module UsbPhyTx #(
                 n_last     = 1; // idle = J
                 n_ones     = 0;
                 n_sync_idx = 0;
+                n_half     = 0;
                 if v_r && i_tx_allowed && (i_opmode != OPMODE_NON_DRIVING) {
                     n_state = if i_opmode == OPMODE_RAW ? State::Raw : State::Sync;
                 }
@@ -222,27 +231,34 @@ pub module UsbPhyTx #(
             }
             State::Data: {
                 if v_r && txready {
+                    if SW == 4 {
+                        n_half = ~half;
+                    }
                     for i in 0..8 {
-                        db = d_r[i];
-                        // NRZI: 1 = no transition, 0 = transition.
-                        if !db {
-                            n_last = ~n_last;
-                        }
-                        n_bl[n_cnt] = n_last;
-                        n_bs[n_cnt] = 1'b0;
-                        n_cnt       = n_cnt + 1;
-                        if db {
-                            n_ones = n_ones + 1;
-                            if n_ones == 3'd6 {
-                                // Stuffed zero.
-                                n_last      = ~n_last;
-                                n_bl[n_cnt] = n_last;
-                                n_bs[n_cnt] = 1'b0;
-                                n_cnt       = n_cnt + 1;
-                                n_ones      = 0;
+                        // SW == 4: only the current nibble (4 bits) this clock
+                        bi = if SW == 4 ? (((i % 4) as 3) + (if half ? 3'd4 : 3'd0)) : (i as 3);
+                        if (SW != 4) || (i <: 4) {
+                            db = d_r[bi];
+                            // NRZI: 1 = no transition, 0 = transition.
+                            if !db {
+                                n_last = ~n_last;
                             }
-                        } else {
-                            n_ones = 0;
+                            n_bl[n_cnt] = n_last;
+                            n_bs[n_cnt] = 1'b0;
+                            n_cnt       = n_cnt + 1;
+                            if db {
+                                n_ones = n_ones + 1;
+                                if n_ones == 3'd6 {
+                                    // Stuffed zero.
+                                    n_last      = ~n_last;
+                                    n_bl[n_cnt] = n_last;
+                                    n_bs[n_cnt] = 1'b0;
+                                    n_cnt       = n_cnt + 1;
+                                    n_ones      = 0;
+                                }
+                            } else {
+                                n_ones = 0;
+                            }
                         }
                     }
                 } else if !v_r && (n_cnt <= 6'd24) {
@@ -270,12 +286,23 @@ pub module UsbPhyTx #(
             }
             State::Raw: {
                 if v_r && txready {
-                    for i in 0..8 {
-                        n_bl[n_cnt + (i as 6)] = d_r[i];
-                        n_bs[n_cnt + (i as 6)] = 1'b0;
+                    if SW == 4 {
+                        // one nibble per clock, like Data (keeps the byte rate at one per 2 clocks)
+                        n_half = ~half;
+                        for i in 0..4 {
+                            n_bl[n_cnt + (i as 6)] = d_r[(i as 3) + (if half ? 3'd4 : 3'd0)];
+                            n_bs[n_cnt + (i as 6)] = 1'b0;
+                        }
+                        n_cnt  = n_cnt + 6'd4;
+                        n_last = if half ? d_r[7] : d_r[3];
+                    } else {
+                        for i in 0..8 {
+                            n_bl[n_cnt + (i as 6)] = d_r[i];
+                            n_bs[n_cnt + (i as 6)] = 1'b0;
+                        }
+                        n_cnt  = n_cnt + 6'd8;
+                        n_last = d_r[7];
                     }
-                    n_cnt  = n_cnt + 6'd8;
-                    n_last = d_r[7];
                 } else if !v_r {
                     n_eop_done = 1;
                     n_state    = State::Drain;
@@ -296,9 +323,10 @@ pub module UsbPhyTx #(
             ones     = 0;
             sync_idx = 0;
             eop_done = 0;
-            cur_lv   = 8'hFF;
+            cur_lv   = '1;
             cur_se   = 0;
             oe       = 0;
+            half     = 0;
         } else {
             state    = n_state;
             bl       = n_bl;
@@ -312,12 +340,13 @@ pub module UsbPhyTx #(
             cur_lv   = n_cur_lv;
             cur_se   = n_cur_se;
             oe       = n_oe;
+            half     = n_half;
         }
     }
 
     // Level -> D+/D- with speed polarity (LS: J = D- high).
     always_comb {
-        for i in 0..8 {
+        for i in 0..SW {
             o_dp[i] = if cur_se[i] ? 1'b0 : (if ls_mode ? ~cur_lv[i] : cur_lv[i]);
             o_dn[i] = if cur_se[i] ? 1'b0 : (if ls_mode ? cur_lv[i] : ~cur_lv[i]);
         }

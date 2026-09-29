@@ -15,6 +15,9 @@
  *                     sequence with 512-byte bulk packets and PING.
  * usb_device_hs_ulpi: the HS sequence with UsbDevice -> UlpiLink ->
  *                     UlpiPhy in place of the UTMI PHY.
+ * usb_device_hs_stream / usb_device_fs_stream: EP1_STREAM = 1 (byte
+ *                     stream ports): OUT drain, full / short / zero-length
+ *                     IN packets, retransmission, back-pressure.
  */
 
 module TbUsbDevice {}
@@ -44,5 +47,19 @@ endmodule
 embed (inline) sv{{{
 module usb_device_hs_ulpi;
     usb_device_test_body #(.HS(1), .ULPI(1), .RUN(1)) body();
+endmodule
+}}}
+
+#[test(usb_device_hs_stream)]
+embed (inline) sv{{{
+module usb_device_hs_stream;
+    usb_device_test_body #(.HS(1), .STREAM(1), .RUN(1)) body();
+endmodule
+}}}
+
+#[test(usb_device_fs_stream)]
+embed (inline) sv{{{
+module usb_device_fs_stream;
+    usb_device_test_body #(.HS(0), .STREAM(1), .RUN(1)) body();
 endmodule
 }}}

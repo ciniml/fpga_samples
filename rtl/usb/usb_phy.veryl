@@ -27,6 +27,7 @@
 import usb_pkg::*;
 
 pub module UsbPhy #(
+    param W                : u32 = 8 , // line samples per clock (8 at 60 MHz, 4 at 120 MHz)
     param FS_CLOCKS_PER_BIT: u32 = 5 ,
     param LS_CLOCKS_PER_BIT: u32 = 40,
 ) (
@@ -46,13 +47,13 @@ pub module UsbPhy #(
     i_utmi_xcvrselect: input  logic<2>,
     i_utmi_termselect: input  logic   ,
 
-    // ---- serial side (8 samples / clock, [0] earliest) ----
-    i_rx_dp: input  logic<8>, // single-ended D+ comparator
-    i_rx_dn: input  logic<8>, // single-ended D- comparator
-    i_rx_dd: input  logic<8>, // differential D+/D- receiver (HS data); tie to i_rx_dp for FS-only
-    i_rx_dd_valid: input logic, // 1 normally; an external HS CDR + gearbox drops it on clocks without 8 new bits
-    o_tx_dp: output logic<8>,
-    o_tx_dn: output logic<8>,
+    // ---- serial side (W samples / clock, [0] earliest) ----
+    i_rx_dp: input  logic<W>, // single-ended D+ comparator
+    i_rx_dn: input  logic<W>, // single-ended D- comparator
+    i_rx_dd: input  logic<W>, // differential D+/D- receiver (HS data); tie to i_rx_dp for FS-only
+    i_rx_dd_valid: input logic, // 1 normally; an external HS CDR + gearbox drops it on clocks without W new bits
+    o_tx_dp: output logic<W>,
+    o_tx_dn: output logic<W>,
     o_tx_oe: output logic   ,
 
     // ---- termination control ----
@@ -74,7 +75,7 @@ pub module UsbPhy #(
     // the device response must start within 192 bit times of it.)
     const GUARD_FS: u32 = FS_CLOCKS_PER_BIT * 5 + 1;
     const GUARD_LS: u32 = LS_CLOCKS_PER_BIT * 5 + 1;
-    const GUARD_HS: u32 = 1;
+    const GUARD_HS: u32 = 8 / W;
     var   gap_cnt : logic<9>;
     let   guard   : logic<9> = if hs_mode ? GUARD_HS as 9 : (if ls_mode ? GUARD_LS as 9 : GUARD_FS as 9);
 
@@ -90,6 +91,7 @@ pub module UsbPhy #(
     let tx_allowed: logic = !rxactive && (gap_cnt >= guard);
 
     inst u_rx: UsbPhyRx #(
+        W                : W                ,
         FS_CLOCKS_PER_BIT: FS_CLOCKS_PER_BIT,
         LS_CLOCKS_PER_BIT: LS_CLOCKS_PER_BIT,
     ) (
@@ -110,6 +112,7 @@ pub module UsbPhy #(
     );
 
     inst u_tx: UsbPhyTx #(
+        SW               : W                ,
         FS_CLOCKS_PER_BIT: FS_CLOCKS_PER_BIT,
         LS_CLOCKS_PER_BIT: LS_CLOCKS_PER_BIT,
     ) (

@@ -25,6 +25,14 @@
  *    FIFO cannot take a full packet / has nothing to send, PING
  *    (§8.5.1) is answered from the FIFO space, data toggles are tracked
  *    and retransmissions are handled by advancing only on ACK.
+ *  - EP1_STREAM = 1: EP1 becomes a byte stream to the user (o_rx_* = the
+ *    OUT data, i_tx_* = the IN data, valid/ready). IN packets are sent
+ *    full (wMaxPacketSize) while data keeps coming; once the stream has
+ *    been idle for STREAM_FLUSH_US the remainder goes out as a short
+ *    packet, or as a zero-length packet if the last packet was full and
+ *    nothing is left, so a host read ends exactly at a message boundary
+ *    (message = bytes followed by a pause). The OUT side is the same
+ *    FIFO as the loopback, drained by o_rx_*.
  *
  * Response timing: RxActive fall -> SIE (2 clocks) -> this core (1) ->
  * SIE TX (1) -> PHY, well inside the 6.5 (FS) / 192 (HS) bit-time
@@ -40,6 +48,8 @@ pub module UsbDevice #(
     param PRODUCT_ID     : logic<16> = 16'h0001,
     param BULK_FIFO_DEPTH: u32       = 4096    , // power of two, >= 2 x 512 (one packet is a guard band, see fifo_raddr)
     param BULK_IN_FULL_ONLY: bit     = 0       , // 1: answer IN with NAK until a full packet is queued (no short packets; test aid)
+    param EP1_STREAM     : bit       = 0       , // 1: EP1 is a byte stream (o_rx_* / i_tx_*) instead of a loopback
+    param STREAM_FLUSH_US: u32       = 1000    , // EP1_STREAM: idle time after which a partial IN packet / ZLP is sent
 ) (
     i_clk: input clock,
     i_rst: input reset,
@@ -69,6 +79,14 @@ pub module UsbDevice #(
     // ---- vendor request scratch ----
     o_vendor_reg   : output logic<16>,
     i_vendor_status: input  logic<32>,
+
+    // ---- EP1 byte stream (EP1_STREAM = 1; idle otherwise) ----
+    o_rx_valid: output logic   , // byte received on EP1 OUT
+    o_rx_data : output logic<8>,
+    i_rx_ready: input  logic   ,
+    i_tx_valid: input  logic   , // byte to send on EP1 IN
+    i_tx_data : input  logic<8>,
+    o_tx_ready: output logic   ,
 ) {
     // =================================================================
     // Timers
@@ -303,36 +321,34 @@ pub module UsbDevice #(
     var fifo_q  : logic<8>;
     var wr_ptr  : ptr_t;
     var wr_tmp  : ptr_t;
-    var rd_ptr  : ptr_t;
+    var rd_ptr  : ptr_t;   // EP1 IN read pointer (loopback: of fifo_mem, stream: of tx_mem)
 
-    let fifo_count: ptr_t = wr_ptr - rd_ptr;
-    let fifo_space: ptr_t = (BULK_FIFO_DEPTH as PTR_BITS) - (wr_ptr - rd_ptr);
+    // EP1_STREAM: a second RAM carries the IN data (written by the user), the OUT data in
+    // fifo_mem is drained by the user through o_rx_* (out_rd).
+    var tx_mem    : logic<8> [BULK_FIFO_DEPTH];
+    var tx_q      : logic<8>;
+    var tx_wr     : ptr_t;
+    var out_rd    : ptr_t;
+    var rx_q      : logic<8>;
+    var rx_q_valid: logic;
+    var zlp_pend  : logic;  // last IN packet was full: a ZLP ends the message if nothing follows
+    var ep1_clear : logic;  // pulse: SET_CONFIGURATION cleared the EP1 pointers
+    const FLUSH_CLKS: u32 = CLK_PER_US * STREAM_FLUSH_US;
+    const FLUSH_W   : u32 = $clog2(FLUSH_CLKS + 1);
+    var idle_cnt  : logic<FLUSH_W>;
+    let flush     : logic = idle_cnt == (FLUSH_CLKS as FLUSH_W);
+
+    let in_wr     : ptr_t = if EP1_STREAM ? tx_wr : wr_ptr;   // IN side write pointer
+    let out_rp    : ptr_t = if EP1_STREAM ? out_rd : rd_ptr;  // OUT side read pointer
+    let fifo_count: ptr_t = in_wr - rd_ptr;                                             // bytes queued for IN
+    let fifo_space: ptr_t = (BULK_FIFO_DEPTH as PTR_BITS) - (wr_ptr - out_rp);          // OUT space
+    let out_count : ptr_t = wr_ptr - out_rp;
     let bulk_mps  : ptr_t = if hs ? (512 as PTR_BITS) : (64 as PTR_BITS);
-    // The read port is only enabled while a packet goes out (the write port is idle then):
-    // the GW5A block RAM returns / stores a wrong byte when both ports hit the same address
-    // in one cycle, which a free-running read (idle at rd_ptr, or at rd_ptr + previous
-    // length) does whenever the next OUT packet lands there (seen on hardware as one random
-    // byte per ~1 GB, always at a packet start). The first byte is fetched during the PID
-    // cycle, before the payload starts.
-    // Idle read address rd_ptr - 1 and an OUT guard band of one extra packet (fifo_space >= 2 x mps):
-    // the mps slots behind rd_ptr are then never written, so the two block RAM ports can never hit
-    // the same address in one cycle. On the GW5A such a collision (a free-running read of the slot
-    // the first byte of an OUT packet is written to) corrupted the stored byte about once per GB,
-    // invisible to both CRCs; with this arrangement 25 GB went through clean. The guard band costs
-    // one packet of capacity, hence the 4096-byte default depth.
-    let fifo_raddr: ptr_t = if tx_busy ? rd_ptr + (tx_idx_next as PTR_BITS) : rd_ptr - 1;
-    let fifo_ok   : logic = fifo_space >= (bulk_mps + bulk_mps);
-    // Write in the cycle the byte arrives (address = current wr_tmp).
-    var fifo_we   : logic;
-
-    always_ff (i_clk) {
-        if fifo_we {
-            fifo_mem[wr_tmp[PTR_BITS - 2:0]] = rx_data;
-        }
-        if tx_busy {
-            fifo_q = fifo_mem[fifo_raddr[PTR_BITS - 2:0]];
-        }
-    }
+    let in_full   : logic = fifo_count >= bulk_mps;
+    // IN packet available: loopback = anything queued; stream = a full packet, or (after the idle
+    // time) the remainder / the terminating ZLP.
+    let in_send   : logic = if EP1_STREAM ? (in_full || (flush && ((fifo_count != 0) || zlp_pend)))
+                                          : ((fifo_count != 0) && (!BULK_IN_FULL_ONLY || in_full));
 
     // =================================================================
     // Protocol engine
@@ -387,6 +403,67 @@ pub module UsbDevice #(
     var ctrl_pending : logic;   // EP0 IN data sent, waiting for ACK
     var status_in_tx : logic;   // status ZLP in flight
     var last_in_ep1  : logic;   // which endpoint the pending IN belonged to
+
+
+    // (EP1 stream logic that needs `configured` / `hs`: after the state declarations)
+    let tx_room   : logic = ((BULK_FIFO_DEPTH as PTR_BITS) - fifo_count) >: bulk_mps;
+    assign o_tx_ready = EP1_STREAM && configured && tx_room;
+    let tx_we     : logic = i_tx_valid && o_tx_ready;
+    assign o_rx_valid = rx_q_valid;
+    assign o_rx_data  = rx_q;
+    // The read port is only enabled while a packet goes out (the write port is idle then):
+    // the GW5A block RAM returns / stores a wrong byte when both ports hit the same address
+    // in one cycle, which a free-running read (idle at rd_ptr, or at rd_ptr + previous
+    // length) does whenever the next OUT packet lands there (seen on hardware as one random
+    // byte per ~1 GB, always at a packet start). The first byte is fetched during the PID
+    // cycle, before the payload starts.
+    // Idle read address rd_ptr - 1 and an OUT guard band of one extra packet (fifo_space >= 2 x mps):
+    // the mps slots behind rd_ptr are then never written, so the two block RAM ports can never hit
+    // the same address in one cycle. On the GW5A such a collision (a free-running read of the slot
+    // the first byte of an OUT packet is written to) corrupted the stored byte about once per GB,
+    // invisible to both CRCs; with this arrangement 25 GB went through clean. The guard band costs
+    // one packet of capacity, hence the 4096-byte default depth.
+    let fifo_raddr: ptr_t = if tx_busy ? rd_ptr + (tx_idx_next as PTR_BITS) : rd_ptr - 1;
+    let fifo_ok   : logic = fifo_space >= (bulk_mps + bulk_mps);
+    // Write in the cycle the byte arrives (address = current wr_tmp).
+    var fifo_we   : logic;
+
+    always_ff (i_clk) {
+        if fifo_we {
+            fifo_mem[wr_tmp[PTR_BITS - 2:0]] = rx_data;
+        }
+        if !EP1_STREAM && tx_busy {
+            fifo_q = fifo_mem[fifo_raddr[PTR_BITS - 2:0]];
+        }
+        // stream: the OUT drain reads below wr_ptr (never the slot being written) and only when
+        // data is queued; the IN RAM is read exactly as the loopback FIFO
+        if EP1_STREAM && (!rx_q_valid || i_rx_ready) && (out_count != 0) {
+            rx_q = fifo_mem[out_rd[PTR_BITS - 2:0]];
+        }
+        if tx_we {
+            tx_mem[tx_wr[PTR_BITS - 2:0]] = i_tx_data;
+        }
+        if EP1_STREAM && tx_busy {
+            tx_q = tx_mem[fifo_raddr[PTR_BITS - 2:0]];
+        }
+    }
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            rx_q_valid = 0;
+            idle_cnt   = 0;
+        } else {
+            if !EP1_STREAM || !configured {
+                rx_q_valid = 0;
+            } else if !rx_q_valid || i_rx_ready {
+                rx_q_valid = out_count != 0;
+            }
+            if tx_we || !configured {
+                idle_cnt = 0;
+            } else if !flush {
+                idle_cnt = idle_cnt + 1;
+            }
+        }
+    }
 
     // Setup packet fields.
     let bm_rt   : logic<8>  = setup[0];
@@ -491,7 +568,7 @@ pub module UsbDevice #(
                 }
             }
             default: {
-                tx_data = fifo_q;
+                tx_data = if EP1_STREAM ? tx_q : fifo_q;
             }
         }
     }
@@ -531,12 +608,15 @@ pub module UsbDevice #(
             wr_ptr       = 0;
             wr_tmp       = 0;
             rd_ptr       = 0;
+            zlp_pend     = 0;
+            ep1_clear    = 0;
             tx_start     = 0;
             tx_pid       = 0;
             tx_len       = 0;
         } else {
-            sof      = 0;
-            tx_start = 0;
+            sof       = 0;
+            tx_start  = 0;
+            ep1_clear = 0;
 
             if reset_evt {
                 dev_addr     = 0;
@@ -554,6 +634,7 @@ pub module UsbDevice #(
                 wr_ptr       = 0;
                 wr_tmp       = 0;
                 rd_ptr       = 0;
+                zlp_pend     = 0;
             }
 
             // ---------------- SOF ----------------
@@ -630,10 +711,10 @@ pub module UsbDevice #(
                             if !configured || halt_in {
                                 tx_pid   = PID_STALL;
                                 tx_start = 1;
-                            } else if (fifo_count != 0) && (!BULK_IN_FULL_ONLY || (fifo_count >= bulk_mps)) {
-                                in_len     = if fifo_count >= bulk_mps ? bulk_mps : fifo_count;
+                            } else if in_send {
+                                in_len     = if in_full ? bulk_mps : fifo_count;   // 0 = ZLP (stream)
                                 tx_pid     = if toggle_in ? PID_DATA1 : PID_DATA0;
-                                tx_len     = if fifo_count >= bulk_mps ? bulk_mps[9:0] : fifo_count[9:0];
+                                tx_len     = if in_full ? bulk_mps[9:0] : fifo_count[9:0];
                                 src        = TxSrc::Fifo;
                                 in_pending = 1;
                                 tx_start   = 1;
@@ -662,6 +743,7 @@ pub module UsbDevice #(
                     rd_ptr     = rd_ptr + in_len;
                     toggle_in  = ~toggle_in;
                     in_pending = 0;
+                    zlp_pend   = in_len == bulk_mps;
                 }
                 if ctrl_pending && !last_in_ep1 {
                     ctrl_pending = 0;
@@ -789,6 +871,8 @@ pub module UsbDevice #(
                                             toggle_out = 0;
                                             wr_ptr     = 0;
                                             rd_ptr     = 0;
+                                            zlp_pend   = 0;
+                                            ep1_clear  = 1;
                                             ctrl       = Ctrl::StatusIn;
                                         }
                                     }
@@ -855,6 +939,24 @@ pub module UsbDevice #(
     }
 
     assign fifo_we = rx_data_valid && (rx_expect == Expect::BulkOut) && (expect_resp == PID_ACK) && !bulk_drop;
+
+    // EP1 stream pointers, cleared with wr_ptr / rd_ptr (bus reset, SET_CONFIGURATION)
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            tx_wr  = 0;
+            out_rd = 0;
+        } else if reset_evt || ep1_clear {
+            tx_wr  = 0;
+            out_rd = 0;
+        } else if configured {
+            if tx_we {
+                tx_wr = tx_wr + 1;
+            }
+            if (!rx_q_valid || i_rx_ready) && (out_count != 0) {
+                out_rd = out_rd + 1;
+            }
+        }
+    }
 
     assign o_high_speed = hs;
     assign o_configured = configured;

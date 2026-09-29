@@ -30,12 +30,11 @@ add_file -type verilog [file normalize ${SRC_DIR}/top.v]
 add_file -type verilog [file normalize ${SRC_DIR}/pll_usb/pll_usb.v]
 add_file -type verilog [file normalize ${SRC_DIR}/pll_usb_os/pll_usb_os.v]
 # USB core (rtl/usb, Veryl output - run `veryl build` there after edits)
-foreach f {usb_pkg usb_phy_rx usb_phy_tx usb_phy usb_sie usb_descriptor_rom usb_device} {
+foreach f {usb_pkg usb_phy_rx usb_phy_tx usb_phy usb_phy_bridge usb_sie usb_descriptor_rom usb_device} {
     add_file -type verilog [file normalize ${RTL_DIR}/usb/${f}.sv]
 }
-add_file -type verilog [file normalize ${RTL_DIR}/usb/gowin/usb_phy_gowin.v]
-add_file -type verilog [file normalize ${RTL_DIR}/usb/gowin/usb_hs_cdr.v]
-add_file -type verilog [file normalize ${RTL_DIR}/usb/gowin/usb_hs_os32.v]
+# PHY front end in the 120 MHz oversampler domain (the 60 MHz UTMI-FIFO variant is usb_phy_gowin.v + usb_hs_os32.v)
+add_file -type verilog [file normalize ${RTL_DIR}/usb/gowin/usb_phy_gowin_p.v]
 # HS clock/data recovery (rtl/oscdr, Veryl output)
 add_file -type verilog [file normalize ${RTL_DIR}/oscdr/os_cdr.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/oscdr/bit_gearbox.sv]

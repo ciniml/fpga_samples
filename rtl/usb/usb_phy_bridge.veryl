@@ -1,0 +1,128 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file usb_phy_bridge.veryl
+ * @brief UTMI-style byte interface bridge between the PHY clock (i_clk,
+ *        e.g. 120 MHz, 4 line bits per clock) and a link clock at exactly
+ *        half its rate whose rising edges coincide with every other i_clk
+ *        rising edge (the two are derived from the same clock: CLKDIV /4 and
+ *        /8 of the oversampling FCLK). No asynchronous FIFOs: everything is
+ *        registered in the i_clk domain with i_ph telling which cycle ends
+ *        on a link clock edge.
+ *
+ *  - i_ph = 1 during the i_clk cycle that ends on a link clock edge E.
+ *  - Outputs to the link update at the end of i_ph = 0 cycles (E - T), so
+ *    they are stable for a full i_clk period at E.
+ *  - Inputs from the link (updated at E) are sampled at the end of the
+ *    i_ph = 0 cycle [E, E + T).
+ *  - RX: the PHY's RxValid pulses are at most one per two i_clk cycles
+ *    (a byte is 8 line bits = two 4-bit words); the two cycles before a
+ *    link edge form a window and a byte received in either is delivered.
+ *  - TX: a two-entry queue. TxReady to the link is "not full" as computed
+ *    at E - T; the byte the link presents at E is enqueued at E + T; the
+ *    PHY pops at its own pace.
+ */
+pub module UsbPhyBridge (
+    i_clk: input clock,
+    i_rst: input reset,
+    i_ph : input logic, // see above
+
+    // ---- PHY side (i_clk) ----
+    o_p_txvalid  : output logic   ,
+    o_p_data_out : output logic<8>,
+    i_p_txready  : input  logic   ,
+    i_p_data_in  : input  logic<8>,
+    i_p_rxactive : input  logic   ,
+    i_p_rxvalid  : input  logic   ,
+    i_p_rxerror  : input  logic   ,
+    i_p_linestate: input  logic<2>,
+
+    // ---- link side (half-rate clock) ----
+    i_l_data_out : input  logic<8>,
+    i_l_txvalid  : input  logic   ,
+    o_l_txready  : output logic   ,
+    o_l_data_in  : output logic<8>,
+    o_l_rxactive : output logic   ,
+    o_l_rxvalid  : output logic   ,
+    o_l_rxerror  : output logic   ,
+    o_l_linestate: output logic<2>,
+) {
+    // ---------------- RX: two-cycle window ----------------
+    var win_v: logic;
+    var win_e: logic;
+    var win_d: logic<8>;
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            win_v         = 0;
+            win_e         = 0;
+            win_d         = 0;
+            o_l_rxvalid   = 0;
+            o_l_rxerror   = 0;
+            o_l_data_in   = 0;
+            o_l_rxactive  = 0;
+            o_l_linestate = 0;
+        } else {
+            if i_ph {
+                win_v = i_p_rxvalid;
+                win_e = i_p_rxerror;
+                win_d = i_p_data_in;
+            } else {
+                o_l_rxvalid   = win_v | i_p_rxvalid;
+                o_l_rxerror   = win_e | i_p_rxerror;
+                o_l_data_in   = if i_p_rxvalid ? i_p_data_in : win_d;
+                o_l_rxactive  = i_p_rxactive;
+                o_l_linestate = i_p_linestate;
+            }
+        }
+    }
+
+    // ---------------- TX: two-entry queue ----------------
+    var q_v : logic<2>;      // [0] = head
+    var q_d0: logic<8>;
+    var q_d1: logic<8>;
+    var rdy : logic;         // o_l_txready as the link sees it at E
+    let pop : logic = q_v[0] && i_p_txready;
+    let push: logic = !i_ph && rdy && i_l_txvalid;   // link data presented at E, taken at E + T
+    var n_v : logic<2>;
+    var n_d0: logic<8>;
+    var n_d1: logic<8>;
+    always_comb {
+        n_v  = q_v;
+        n_d0 = q_d0;
+        n_d1 = q_d1;
+        if pop {
+            n_v  = {1'b0, q_v[1]};
+            n_d0 = q_d1;
+        }
+        if push {
+            if n_v[0] {
+                n_v[1] = 1;
+                n_d1   = i_l_data_out;
+            } else {
+                n_v[0] = 1;
+                n_d0   = i_l_data_out;
+            }
+        }
+    }
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            q_v  = 0;
+            q_d0 = 0;
+            q_d1 = 0;
+            rdy  = 0;
+        } else {
+            q_v  = n_v;
+            q_d0 = n_d0;
+            q_d1 = n_d1;
+            if !i_ph {
+                rdy = !n_v[1]; // room for one more at the coming edge
+            }
+        }
+    }
+    assign o_l_txready  = rdy;
+    assign o_p_txvalid  = q_v[0];
+    assign o_p_data_out = q_d0;
+}
