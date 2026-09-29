@@ -12,3 +12,5 @@ set_false_path -from [get_clocks {clk_in}] -to [get_clocks {os_f0 os_f90 os_f180
 // PCLK <-> 60 MHz: gray-pointer async FIFO and 2FF synchronisers (usb_hs_os32)
 set_false_path -from [get_clocks {os_pclk}] -to [get_clocks {pclk_60m}]
 set_false_path -from [get_clocks {pclk_60m}] -to [get_clocks {os_pclk}]
+# IODELAY DLYSTEP (quasi-static, 60 MHz regs) into the oversampler's IOB path
+set_false_path -from [get_clocks {pclk_60m}] -to [get_clocks {os_f0 os_f90 os_f180 os_f270}]

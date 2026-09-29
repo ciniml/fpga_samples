@@ -51,6 +51,11 @@ module usb_hs_os32 #(
     input  wire        clk_i,         // 60 MHz UTMI clock
     input  wire        rst_i,
     input  wire        i_se0,         // both comparators low, one sample per 60 MHz clock (raw)
+    input  wire        i_scan_freeze, // eye scan: freeze the CDR at class i_scan_class (60 MHz domain, quasi-static)
+    input  wire        i_scan_ofs,    // eye scan: acquire each packet at (best + i_scan_class), no tracking
+    input  wire [2:0]  i_scan_class,
+    input  wire        i_hist_run,    // transition histogram window (60 MHz): cleared on the rising edge, accumulates while high
+    output wire [191:0] o_hist,       // 8 x 24-bit transitions per sample class (stable while i_hist_run is low)
     output reg  [7:0]  o_byte,
     output reg         o_valid,
     output wire        o_dd_level,    // one line sample per 60 MHz clock (FS J/K, synchronised)
@@ -188,9 +193,14 @@ module usb_hs_os32 #(
     // phase found on the first SYNC word is applied from that word on (no bit duplicated/lost in the
     // SYNC, which would trip the SYNC detector). Re-acquisition (jump to the best class every word)
     // is enabled while se0 is still high, i.e. the ~80 ns idle-detector lag into every packet.
+    reg [1:0] scan_fz_s, scan_ofs_s; reg [2:0] scan_cls_s;
+    always @(posedge pclk) begin scan_fz_s <= {scan_fz_s[0], i_scan_freeze}; scan_ofs_s <= {scan_ofs_s[0], i_scan_ofs}; scan_cls_s <= i_scan_class; end
+    wire scan_fz = scan_fz_s[1];
+    wire [23:0] cdr_cnt;   // 8 classes x 3 bits (0..4 transitions per word)
     OsCdr #(.SAMPLES(32), .OSR(8), .IIR(2), .HYST(2), .ACT_MIN(1), .DLY(9)) u_cdr(
-        .i_clk(pclk), .i_rst(prst), .i_samples(samples_m), .i_freeze(1'b0), .i_reacq(reacq),
-        .o_bits(bits), .o_nbits(nbits), .o_phase(), .o_lock(o_lock), .o_slip(), .o_acc_first(), .o_acc_last());
+        .i_clk(pclk), .i_rst(prst), .i_samples(samples_m), .i_freeze(scan_fz), .i_reacq(reacq & ~scan_fz),
+        .i_phase_force(scan_fz), .i_phase_val(scan_cls_s), .i_phase_ofs(scan_ofs_s[1]), .o_cnt(cdr_cnt), .o_phase(cdr_phase), .o_acq(),
+        .o_bits(bits), .o_nbits(nbits), .o_lock(o_lock), .o_slip(cdr_slip), .o_acc_first(), .o_acc_last());
     wire        gb_valid; wire [7:0] gb_word;    // bytes, not 16-bit words: half the gearbox wait, no byte split
     BitGearbox #(.IN_MAX(5), .OUT_W(8)) u_gb(
         .i_clk(pclk), .i_rst(prst), .i_bits({4'b0, bits}), .i_nbits(nbits), .o_valid(gb_valid), .o_word(gb_word));
@@ -244,23 +254,59 @@ module usb_hs_os32 #(
         end
     end
 
+    // ---- transition histogram (eye diagram of the edges, 1/8 UI bins) ----
+    // Bins are relative to the data sample class in use (bin 0 = the sampling instant, bin 4 = half
+    // a UI away), so the histogram is the edge jitter distribution around the eye centre rather than
+    // the (random) packet phases.
+    reg [2:0]  hist_s; always @(posedge pclk) hist_s <= {hist_s[1:0], i_hist_run};
+    wire [2:0] cdr_phase; wire cdr_slip;
+    reg        hist_acq;            // the CDR has jumped to this packet's phase (first jump after idle)
+    always @(posedge pclk) if (sq) hist_acq <= 1'b0; else if (cdr_slip) hist_acq <= 1'b1;
+    // The counts are taken 4 words late and only if the line is still driven 4 words later: the
+    // ring-down after a packet (the driver switching off) still trips the comparators for a few
+    // words and its random transitions would otherwise put a uniform floor under the histogram.
+    reg [23:0] cnt_d [0:3]; reg [3:0] drv_d; reg [2:0] ph_d [0:3];
+    integer di;
+    always @(posedge pclk) begin
+        cnt_d[0] <= cdr_cnt; ph_d[0] <= cdr_phase; drv_d <= {drv_d[2:0], cmp_r2 & ~sq & hist_acq};
+        for (di = 1; di < 4; di = di + 1) begin cnt_d[di] <= cnt_d[di-1]; ph_d[di] <= ph_d[di-1]; end
+    end
+    wire        hist_ok = &drv_d && (cmp_r2 & ~sq);    // this word and the 4 after it are driven, acquired
+    wire [23:0] hist_cnt = cnt_d[3];
+    wire [2:0]  hist_ph  = ph_d[3];
+    reg [23:0] hist [0:7];
+    genvar hc;
+    generate for (hc = 0; hc < 8; hc = hc + 1) begin : g_hist
+        wire [2:0] src = hc + hist_ph;        // class feeding bin hc (mod 8)
+        always @(posedge pclk) begin
+            if (hist_s[1] & ~hist_s[2]) hist[hc] <= 24'd0;
+            else if (hist_s[2] && hist_ok) hist[hc] <= hist[hc] + hist_cnt[src*3 +: 3];
+        end
+        assign o_hist[hc*24 +: 24] = hist[hc];
+    end endgenerate
+
     // ---- FS: one synchronised line sample per 60 MHz clock ----
     reg [1:0] lvl_s;
     always @(posedge clk_i) lvl_s <= {lvl_s[0], samples[0]};
     assign o_dd_level = lvl_s[1];
 
     // ---- transmitter: 60 MHz words -> PCLK (exactly 2x), 4 samples per PCLK, each bit sent twice ----
-    reg  [16:0] tmem [0:3];
-    reg  [2:0]  twp /* synthesis syn_preserve=1 */, trp /* synthesis syn_preserve=1 */;   // gray-coded pointers (4 entries)
-    reg  [2:0]  twp_r1 /* synthesis syn_preserve=1 */, twp_r2 /* synthesis syn_preserve=1 */;
-    reg  [2:0]  trp_w1 /* synthesis syn_preserve=1 */, trp_w2 /* synthesis syn_preserve=1 */;
-    function [2:0] g3(input [2:0] b); g3 = b ^ (b >> 1); endfunction
-    reg  [2:0]  twp_bin, trp_bin;
+    // 8 entries: the reader judges the occupancy through a two-flop synchroniser, i.e. 2-3 PCLK
+    // (1-1.5 words) behind the writer, so it starts only once it sees 4 words queued; the real
+    // occupancy then sits around 5 and neither the synchroniser lag (placement dependent: some
+    // builds inserted a tri-state gap into every packet and lost the handshakes) nor the exact
+    // 2:1 rate can run it empty or full.
+    reg  [16:0] tmem [0:7];
+    reg  [3:0]  twp /* synthesis syn_preserve=1 */, trp /* synthesis syn_preserve=1 */;   // gray-coded pointers (8 entries)
+    reg  [3:0]  twp_r1 /* synthesis syn_preserve=1 */, twp_r2 /* synthesis syn_preserve=1 */;
+    reg  [3:0]  trp_w1 /* synthesis syn_preserve=1 */, trp_w2 /* synthesis syn_preserve=1 */;
+    function [3:0] g3(input [3:0] b); g3 = b ^ (b >> 1); endfunction
+    reg  [3:0]  twp_bin, trp_bin;
     always @(posedge clk_i) begin
         if (rst_i) begin twp_bin <= 0; twp <= 0; trp_w1 <= 0; trp_w2 <= 0; end
         else begin
             trp_w1 <= trp; trp_w2 <= trp_w1;
-            tmem[twp_bin[1:0]] <= {i_tx_oe, i_tx_dn, i_tx_dp};
+            tmem[twp_bin[2:0]] <= {i_tx_oe, i_tx_dn, i_tx_dp};
             twp_bin <= twp_bin + 1'b1; twp <= g3(twp_bin + 1'b1);
         end
     end
@@ -269,11 +315,9 @@ module usb_hs_os32 #(
     reg [16:0] tword;
     reg        tstarted;
     wire       t_empty = (trp == twp_r2);
-    function [2:0] g2b3(input [2:0] g); g2b3 = {g[2], g[2]^g[1], g[2]^g[1]^g[0]}; endfunction
-    wire [1:0] t_occ = g2b3(twp_r2) - trp_bin;     // words queued (mod 4)
-    wire       t_ready = t_occ >= 2'd2;            // start only with two words queued: the reader (one word
-                                                   // per 2 PCLK) then never underruns and never inserts a
-                                                   // tri-state gap mid-packet
+    function [3:0] g2b4(input [3:0] g); g2b4 = {g[3], g[3]^g[2], g[3]^g[2]^g[1], g[3]^g[2]^g[1]^g[0]}; endfunction
+    wire [2:0] t_occ = g2b4(twp_r2) - trp_bin;     // words queued as seen through the synchroniser (mod 8)
+    wire       t_ready = t_occ >= 3'd4;
     always @(posedge pclk) begin
         if (prst) begin trp_bin <= 0; trp <= 0; twp_r1 <= 0; twp_r2 <= 0; thalf <= 1'b0; tword <= 17'h10000; tstarted <= 1'b0; end
         else begin
@@ -285,7 +329,7 @@ module usb_hs_os32 #(
                 thalf <= 1'b1;
             end else begin
                 thalf <= 1'b0;
-                if (!t_empty) begin tword <= tmem[trp_bin[1:0]]; trp_bin <= trp_bin + 1'b1; trp <= g3(trp_bin + 1'b1); end
+                if (!t_empty) begin tword <= tmem[trp_bin[2:0]]; trp_bin <= trp_bin + 1'b1; trp <= g3(trp_bin + 1'b1); end
                 else tword <= 17'h10000;
             end
         end

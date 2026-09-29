@@ -84,7 +84,23 @@ module top (
         .o_high_speed(high_speed), .o_configured(configured), .o_suspended(suspended), .o_reset(bus_reset),
         .o_address(address), .o_frame(frame), .o_sof(sof),
         .o_vendor_reg(vendor_reg),
-        .i_vendor_status({8'h25, 3'b0, vbus_s, 3'b0, high_speed, sof_cnt}));   // 0x25 = "25K", flags, SOF count
+        .i_vendor_status({8'h25, 3'b0, vbus_s, 3'b0, high_speed, vendor_reg[0] ? ck_rd : vendor_reg[1] ? ck_wr : sof_cnt}));   // 0x25 = "25K", flags, SOF count / FIFO checksums
+    // Bulk FIFO checksums (vendor reg bit1: bytes written into the FIFO, bit0: bytes read out for EP1 IN), 16-bit sums;
+    // with the host's own sums of what it sent / received they tell on which side of the FIFO a silent corruption happened.
+    // Only committed bytes count: a packet's bytes are summed while it arrives / goes out and added when the
+    // device advances wr_ptr (OUT accepted, not a repeat) or rd_ptr (our IN packet acknowledged).
+    reg [15:0] ck_wr, ck_rd, ck_wtmp, ck_rtmp; reg [11:0] wr_ptr_q, rd_ptr_q;
+    always @(posedge pclk_60m or posedge rst) begin
+        if (rst) begin ck_wr <= 16'd0; ck_rd <= 16'd0; ck_wtmp <= 16'd0; ck_rtmp <= 16'd0; wr_ptr_q <= 12'd0; rd_ptr_q <= 12'd0; end
+        else if (soft_rst) begin ck_wr <= 16'd0; ck_rd <= 16'd0; ck_wtmp <= 16'd0; ck_rtmp <= 16'd0; end
+        else begin
+            wr_ptr_q <= u_dev.wr_ptr; rd_ptr_q <= u_dev.rd_ptr;
+            if (u_dev.rx_data_start) ck_wtmp <= 16'd0; else if (u_dev.fifo_we) ck_wtmp <= ck_wtmp + u_dev.rx_data;
+            if (u_dev.wr_ptr != wr_ptr_q) ck_wr <= ck_wr + ck_wtmp;
+            if (u_dev.tx_start) ck_rtmp <= 16'd0; else if (u_dev.u_sie.payload_acc && u_dev.last_in_ep1) ck_rtmp <= ck_rtmp + u_dev.u_sie.i_tx_data;
+            if (u_dev.rd_ptr != rd_ptr_q) ck_rd <= ck_rd + ck_rtmp;
+        end
+    end
 
     // dynamic IODELAY taps on the three receive paths: tracking loop (UART 't' 1, default)
     // or manual (UART 't' 0 then 'd'/'p'/'n' + value)
@@ -98,10 +114,28 @@ module top (
     reg  os_tick; always @(posedge os_pclk) os_tick <= ~os_tick;   // exercises the net (status bit)
     pll_usb_os #(.FCLKIN("60"), .MDIV(16), .MDIV_FRAC(0), .ODIV(2)) u_pll_os(
         .lock(os_lock), .clkout0(os_f0), .clkout1(os_f90), .clkout2(os_f180), .clkout3(os_f270), .clkin(pclk_60m),
-        .pssel(3'd0), .psdir(1'b0), .pspulse(1'b0));
-    usb_phy_gowin #(.SE_FROM_DIFF(1), .DYN_DLY(0), .HS_CDR(0), .HS_OS32(1)) u_phy(   // DYN_DLY 0: no IODELAY in front of the IDES8/OSIDES32 (its control inputs were a 60 MHz -> 480 MHz timing path)
+        .pssel(dps_sel), .psdir(dps_dir), .pspulse(dps_pulse));
+    // Eye scan ('Z' + byte, bit 7 = direction): the four oversampling phases are stepped one fine
+    // step each (1/8 VCO period = 130 ps at VCO 960 MHz, 16 steps per HS bit), one channel at a
+    // time, with the CDR frozen ('F'); the packet statistics ('m') then give the error rate per point.
+    // (An IODELAY in front of the OSIDES32 is not allowed: its D must come straight from the IBUF.)
+    reg  [2:0] dps_sel; reg dps_dir, dps_pulse; reg [3:0] dps_st; reg [4:0] dps_cnt;
+    always @(posedge pclk_60m or posedge rst) begin
+        if (rst) begin dps_sel <= 3'd0; dps_dir <= 1'b0; dps_pulse <= 1'b0; dps_st <= 4'd0; dps_cnt <= 5'd0; end
+        else if (dps_st == 4'd0) begin
+            if (dps_go) begin dps_st <= 4'd1; dps_sel <= 3'd0; dps_dir <= dps_dir_req; dps_cnt <= 5'd0; end
+        end else begin
+            dps_cnt <= dps_cnt + 1'b1;
+            if (dps_cnt == 5'd8) dps_pulse <= 1'b1;
+            if (dps_cnt == 5'd24) dps_pulse <= 1'b0;
+            if (dps_cnt == 5'd31) begin
+                if (dps_sel == 3'd3) dps_st <= 4'd0; else dps_sel <= dps_sel + 1'b1;
+            end
+        end
+    end
+    usb_phy_gowin #(.SE_FROM_DIFF(1), .DYN_DLY(0), .HS_CDR(0), .HS_OS32(1)) u_phy(
         .os_clk_ref_i(clk_in), .os_rstn_ref_i(~reset_in), .os_pll_lock_i(os_lock),
-        .os_fclk0_i(os_f0), .os_fclk90_i(os_f90), .os_fclk180_i(os_f180), .os_fclk270_i(os_f270), .os_pclk_o(os_pclk), .os_samples_o(os_samples), .os_cmp_o(os_cmp),
+        .os_fclk0_i(os_f0), .os_fclk90_i(os_f90), .os_fclk180_i(os_f180), .os_fclk270_i(os_f270), .os_pclk_o(os_pclk), .os_samples_o(os_samples), .os_cmp_o(os_cmp), .i_scan_freeze(scan_freeze), .i_scan_ofs(scan_ofs), .i_scan_class(scan_class), .i_hist_run(meas_run), .o_hist(hist),
         .clk_i(pclk_60m), .fclk_i(fclk_240m), .rst_i(usb_rst), .pll_locked_i(pll_lock),
         .i_track_en(track_en), .i_dly_dd(dly_dd), .i_dly_dp(dly_dp), .i_dly_dn(dly_dn), .o_dly_dd(dly_dd_now),
         .o_mon_dd(mon_dd), .o_mon_dp(mon_dp), .o_mon_dn(mon_dn),
@@ -183,44 +217,66 @@ module top (
     // which the single-ended comparators are not both idle, the samples where
     // dp == dd and where ~dn == dd; reply 'M' + active(32) + match_dp(32) + match_dn(32)
     //------------------------------------------------------------------
-    reg  [2:0] cmd_sel; reg cmd_val;    // 'd'/'p'/'n'/'t' then one value byte
+    reg  [2:0] cmd_sel; reg cmd_val;    // 'd'/'p'/'n'/'t'/'F' then one value byte
+    reg        scan_freeze, scan_ofs; reg [2:0] scan_class;   // 'F' value: bit 7 = freeze the HS CDR at class [2:0]; bit 6 = per-packet acquisition at best + [2:0]
+    wire [191:0] hist;
+    reg        dps_go, dps_dir_req;                 // 'Z' value: bit 7 = direction; one fine step on all four phases
     always @(posedge pclk_60m or posedge rst) begin
         // manual defaults: dp / dn comparators +12 taps intrinsic offset, +48 / +96 taps = 1/3 / 2/3 UI (usb_dlyscan.py: 1 UI = 144 taps)
-        if (rst) begin dly_dd <= 8'd0; dly_dp <= 8'd60; dly_dn <= 8'd108; track_en <= 1'b1; cmd_sel <= 3'd0; cmd_val <= 1'b0; end
+        if (rst) begin dly_dd <= 8'd0; dly_dp <= 8'd0; dly_dn <= 8'd0; track_en <= 1'b1; cmd_sel <= 3'd0; cmd_val <= 1'b0; scan_freeze <= 1'b0; scan_ofs <= 1'b0; scan_class <= 3'd0; dps_go <= 1'b0; dps_dir_req <= 1'b0; end
         else if (h_rx_valid) begin
+            dps_go <= 1'b0;
             if (cmd_val) begin
                 cmd_val <= 1'b0;
-                case (cmd_sel) 3'd1: dly_dd <= h_rx_data; 3'd2: dly_dp <= h_rx_data; 3'd3: dly_dn <= h_rx_data; 3'd4: track_en <= h_rx_data[0]; default: ; endcase
+                case (cmd_sel) 3'd1: dly_dd <= h_rx_data; 3'd2: dly_dp <= h_rx_data; 3'd3: dly_dn <= h_rx_data; 3'd4: track_en <= h_rx_data[0];
+                               3'd5: begin scan_freeze <= h_rx_data[7]; scan_ofs <= h_rx_data[6]; scan_class <= h_rx_data[2:0]; end
+                               3'd6: begin dps_go <= 1'b1; dps_dir_req <= h_rx_data[7]; end default: ; endcase
             end else if (h_rx_data == "d") begin cmd_sel <= 3'd1; cmd_val <= 1'b1; end
             else if (h_rx_data == "p") begin cmd_sel <= 3'd2; cmd_val <= 1'b1; end
             else if (h_rx_data == "n") begin cmd_sel <= 3'd3; cmd_val <= 1'b1; end
             else if (h_rx_data == "t") begin cmd_sel <= 3'd4; cmd_val <= 1'b1; end
+            else if (h_rx_data == "F") begin cmd_sel <= 3'd5; cmd_val <= 1'b1; end
+            else if (h_rx_data == "Z") begin cmd_sel <= 3'd6; cmd_val <= 1'b1; end
         end
     end
     function [3:0] cnt8(input [7:0] v); integer k; begin cnt8 = 0; for (k = 0; k < 8; k = k + 1) cnt8 = cnt8 + v[k]; end endfunction
+    // 'm': packet statistics over 2^20 clocks (17.5 ms): 'M' + {packets, bad packets, rxerror pulses} (3 x 32 bit, LSB first).
+    // A packet is bad when it ended with rxerror, its PID check fails, or it is an IN token whose address/CRC bytes
+    // differ from those of the first IN token of the window (the host polls the other devices on the hub with
+    // identical IN tokens some 600k times a second: a free bit-error reference for the eye scan).
     reg        meas_run; reg [19:0] meas_left;
     reg [31:0] m_active, m_dp, m_dn;
-    reg [103:0] m_shift; reg [3:0] m_left; reg m_valid;
+    reg [295:0] m_shift; reg [5:0] m_left; reg m_valid;
     wire       m_ready;
-    wire       m_word_active = |(mon_dp | mon_dn);
-    reg  [7:0] mon_dd_q; always @(posedge pclk_60m) mon_dd_q <= mon_dd;
-    wire [7:0] mon_dd_prev = {mon_dd[6:0], mon_dd_q[7]};   // dd[k-1] (the previous sample)
+    reg        m_rxact_q, m_err, m_ref_v; reg [7:0] m_pid, m_b1, m_b2, m_ref1, m_ref2; reg [2:0] m_idx;
+    wire       m_pid_bad = m_pid[7:4] != ~m_pid[3:0];
+    wire       m_tok_bad = m_ref_v && (m_pid == 8'h69) && ((m_b1 != m_ref1) || (m_b2 != m_ref2));
+    always @(posedge pclk_60m) begin
+        m_rxact_q <= utmi_rxactive;
+        if (!utmi_rxactive) begin m_idx <= 3'd0; if (!m_rxact_q) m_err <= 1'b0; end
+        if (utmi_rxerror) m_err <= 1'b1;
+        if (utmi_rxvalid && m_idx != 3'd7) begin
+            m_idx <= m_idx + 1'b1;
+            case (m_idx) 3'd0: m_pid <= utmi_data_in; 3'd1: m_b1 <= utmi_data_in; 3'd2: m_b2 <= utmi_data_in; default: ; endcase
+        end
+    end
     always @(posedge pclk_60m or posedge rst) begin
-        if (rst) begin meas_run <= 1'b0; meas_left <= 20'd0; m_active <= 0; m_dp <= 0; m_dn <= 0; m_shift <= 0; m_left <= 0; m_valid <= 1'b0; end
+        if (rst) begin meas_run <= 1'b0; meas_left <= 20'd0; m_active <= 0; m_dp <= 0; m_dn <= 0; m_shift <= 0; m_left <= 0; m_valid <= 1'b0; m_ref_v <= 1'b0; m_ref1 <= 0; m_ref2 <= 0; end
         else begin
             if (!meas_run && !cmd_val && h_rx_valid && h_rx_data == "m") begin
-                meas_run <= 1'b1; meas_left <= 20'hfffff; m_active <= 0; m_dp <= 0; m_dn <= 0;
+                meas_run <= 1'b1; meas_left <= 20'hfffff; m_active <= 0; m_dp <= 0; m_dn <= 0; m_ref_v <= 1'b0;
             end else if (meas_run) begin
-                if (m_word_active) begin
-                    m_active <= m_active + 8;
-                    m_dp <= m_dp + cnt8(~(mon_dp ^ mon_dd));
-                    m_dn <= m_dn + cnt8(~(mon_dp ^ mon_dd_prev));   // (was ~dn==dd) now: dp == dd[k-1] -> delay-direction test
+                if (m_rxact_q && !utmi_rxactive && m_idx != 3'd0) begin   // packet end (with at least one byte)
+                    m_active <= m_active + 1'b1;
+                    if (m_err || utmi_rxerror || m_pid_bad || m_tok_bad) m_dp <= m_dp + 1'b1;
+                    else if (!m_ref_v && m_pid == 8'h69 && m_idx == 3'd3) begin m_ref_v <= 1'b1; m_ref1 <= m_b1; m_ref2 <= m_b2; end
                 end
+                if (utmi_rxerror) m_dn <= m_dn + 1'b1;
                 meas_left <= meas_left - 1'b1;
-                if (meas_left == 0) begin meas_run <= 1'b0; m_shift <= {m_dn, m_dp, m_active, 8'h4d}; m_left <= 4'd13; m_valid <= 1'b1; end
+                if (meas_left == 0) begin meas_run <= 1'b0; m_shift <= {hist, m_dn, m_dp, m_active, 8'h4d}; m_left <= 6'd37; m_valid <= 1'b1; end
             end else if (m_valid && m_ready) begin
-                m_shift <= {8'd0, m_shift[103:8]}; m_left <= m_left - 1'b1;
-                if (m_left == 4'd1) m_valid <= 1'b0;
+                m_shift <= {8'd0, m_shift[295:8]}; m_left <= m_left - 1'b1;
+                if (m_left == 6'd1) m_valid <= 1'b0;
             end
         end
     end

@@ -130,7 +130,7 @@ module oscdr_phy_gw5a #(
     wire [8:0] bits;
     wire [3:0] nbits;
     OsCdr #(.SAMPLES(32), .OSR(4)) u_cdr(
-        .i_clk(pclk), .i_rst(reset), .i_samples(samples), .i_freeze(i_freeze), .i_reacq(1'b0),
+        .i_clk(pclk), .i_rst(reset), .i_samples(samples), .i_freeze(i_freeze), .i_reacq(1'b0), .i_phase_force(1'b0), .i_phase_val('0), .i_phase_ofs(1'b0), .o_cnt(), .o_acq(),
         .o_bits(bits), .o_nbits(nbits), .o_phase(o_cdr_phase), .o_lock(o_cdr_lock), .o_slip(o_cdr_slip));
     BitGearbox #(.IN_MAX(9), .OUT_W(16)) u_gearbox(
         .i_clk(pclk), .i_rst(reset), .i_bits(bits), .i_nbits(nbits), .o_valid(o_dout_en), .o_word(o_dout));

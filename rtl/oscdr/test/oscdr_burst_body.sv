@@ -76,7 +76,7 @@ module oscdr_burst_body #(
 
     logic [4:0] bits; logic [3:0] nbits; logic lock, slip; logic [2:0] phase;
     OsCdr #(.SAMPLES(SAMPLES), .OSR(OSR), .IIR(2), .HYST(2), .ACT_MIN(1), .DLY(DLY)) cdr (
-        .i_clk(clk), .i_rst(rst), .i_samples(samples), .i_freeze(1'b0), .i_reacq(reacq),
+        .i_clk(clk), .i_rst(rst), .i_samples(samples), .i_freeze(1'b0), .i_reacq(reacq), .i_phase_force(1'b0), .i_phase_val('0), .i_phase_ofs(1'b0), .o_cnt(), .o_acq(),
         .o_bits(bits), .o_nbits(nbits), .o_phase(phase), .o_lock(lock), .o_slip(slip),
         .o_acc_first(), .o_acc_last());
 

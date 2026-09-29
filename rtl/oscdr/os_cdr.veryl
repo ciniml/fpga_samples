@@ -53,12 +53,17 @@ pub module OsCdr #(
     i_samples: input logic<SAMPLES>,
     i_freeze : input logic         ,
     i_reacq  : input logic         , // level: re-acquire the phase on every active word
+    i_phase_force: input logic          , // with i_freeze: hold the data sample class at i_phase_val (eye scans)
+    i_phase_val  : input logic<$clog2(OSR)>,
+    i_phase_ofs  : input logic          , // acquire at best + i_phase_val (mod OSR) and do not track: eye scan relative to the preamble
 
     o_bits : output logic<SAMPLES / OSR + 1>,
     o_nbits: output logic<4>                ,
     o_phase: output logic<$clog2(OSR)>      , // current data sample class
     o_lock : output logic                   ,
     o_slip : output logic                   , // pulse: pointer moved
+    o_cnt      : output logic<OSR, $clog2(SAMPLES / OSR + 1)>,      // transitions per class in the last word (histograms)
+    o_acq      : output logic                   , // phase acquired and tracking (outside a re-acquisition window)
     o_acc_first: output logic<$clog2(SAMPLES / OSR + 1) + IIR + 1>, // smoothed transition count, class 0 (external phase loops)
     o_acc_last : output logic<$clog2(SAMPLES / OSR + 1) + IIR + 1>, // class OSR-1
 ) {
@@ -353,6 +358,8 @@ pub module OsCdr #(
     }
 
     assign o_phase     = dsel;
+    assign o_cnt       = cnt_r;
+    assign o_acq       = have && !i_reacq;
     assign o_lock      = lock;
     assign o_acc_first = acc[0];
     assign o_acc_last  = acc[OSR - 1];
@@ -450,15 +457,23 @@ pub module OsCdr #(
             if i_reacq {
                 have = 1'b0;
             }
-            if !i_freeze {
+            if i_freeze && i_phase_force {
+                if dsel != i_phase_val {
+                    dsel  = i_phase_val;
+                    jump  = i_phase_val;
+                    pstep = 2'd3;
+                }
+            } else if !i_freeze {
                 if !have || i_reacq {
                     // acquisition (a jump to the current class leaves the pointer alone)
                     if tot_d >= ACT as TW {
                         have  = !i_reacq;
-                        dsel  = best;
-                        jump  = best;
+                        dsel  = if i_phase_ofs ? best + i_phase_val : best;   // (wraps mod OSR)
+                        jump  = if i_phase_ofs ? best + i_phase_val : best;
                         pstep = 2'd3;
                     }
+                } else if i_phase_ofs {
+                    // eye scan: hold the offset class, no tracking
                 } else if go_up {
                     pstep = 2'd1;
                     ldir  = 2'd1;

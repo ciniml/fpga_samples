@@ -84,7 +84,7 @@ module usb_hs_cdr #(
     // words of the next SYNC. (Re-acquiring per packet was worse: the
     // registered histogram/argmin pipeline jumps to a stale class.)
     OsCdr #(.SAMPLES(24), .OSR(3), .IIR(CDR_IIR), .HYST(CDR_HYST), .ACT_MIN(2)) u_cdr(
-        .i_clk(clk_i), .i_rst(rst_i), .i_samples(s24_m), .i_freeze(i_se0), .i_reacq(1'b0),
+        .i_clk(clk_i), .i_rst(rst_i), .i_samples(s24_m), .i_freeze(i_se0), .i_reacq(1'b0), .i_phase_force(1'b0), .i_phase_val('0), .i_phase_ofs(1'b0), .o_cnt(), .o_acq(),
         .o_bits(cdr_bits), .o_nbits(cdr_nbits), .o_phase(), .o_lock(o_lock), .o_slip(),
         .o_acc_first(acc_first), .o_acc_last(acc_last));
 

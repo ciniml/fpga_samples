@@ -38,7 +38,7 @@ pub module UsbDevice #(
     param CLK_PER_US     : u32       = 60      ,
     param VENDOR_ID      : logic<16> = 16'h1209,
     param PRODUCT_ID     : logic<16> = 16'h0001,
-    param BULK_FIFO_DEPTH: u32       = 2048    , // power of two, >= 512
+    param BULK_FIFO_DEPTH: u32       = 4096    , // power of two, >= 2 x 512 (one packet is a guard band, see fifo_raddr)
 ) (
     i_clk: input clock,
     i_rst: input reset,
@@ -307,7 +307,20 @@ pub module UsbDevice #(
     let fifo_count: ptr_t = wr_ptr - rd_ptr;
     let fifo_space: ptr_t = (BULK_FIFO_DEPTH as PTR_BITS) - (wr_ptr - rd_ptr);
     let bulk_mps  : ptr_t = if hs ? (512 as PTR_BITS) : (64 as PTR_BITS);
-    let fifo_raddr: ptr_t = rd_ptr + (tx_idx_next as PTR_BITS);
+    // The read port is only enabled while a packet goes out (the write port is idle then):
+    // the GW5A block RAM returns / stores a wrong byte when both ports hit the same address
+    // in one cycle, which a free-running read (idle at rd_ptr, or at rd_ptr + previous
+    // length) does whenever the next OUT packet lands there (seen on hardware as one random
+    // byte per ~1 GB, always at a packet start). The first byte is fetched during the PID
+    // cycle, before the payload starts.
+    // Idle read address rd_ptr - 1 and an OUT guard band of one extra packet (fifo_space >= 2 x mps):
+    // the mps slots behind rd_ptr are then never written, so the two block RAM ports can never hit
+    // the same address in one cycle. On the GW5A such a collision (a free-running read of the slot
+    // the first byte of an OUT packet is written to) corrupted the stored byte about once per GB,
+    // invisible to both CRCs; with this arrangement 25 GB went through clean. The guard band costs
+    // one packet of capacity, hence the 4096-byte default depth.
+    let fifo_raddr: ptr_t = if tx_busy ? rd_ptr + (tx_idx_next as PTR_BITS) : rd_ptr - 1;
+    let fifo_ok   : logic = fifo_space >= (bulk_mps + bulk_mps);
     // Write in the cycle the byte arrives (address = current wr_tmp).
     var fifo_we   : logic;
 
@@ -315,7 +328,9 @@ pub module UsbDevice #(
         if fifo_we {
             fifo_mem[wr_tmp[PTR_BITS - 2:0]] = rx_data;
         }
-        fifo_q = fifo_mem[fifo_raddr[PTR_BITS - 2:0]];
+        if tx_busy {
+            fifo_q = fifo_mem[fifo_raddr[PTR_BITS - 2:0]];
+        }
     }
 
     // =================================================================
@@ -567,7 +582,7 @@ pub module UsbDevice #(
                         } else if rx_endp == 4'd1 {
                             rx_expect      = Expect::BulkOut;
                             wr_tmp      = wr_ptr;
-                            expect_resp = if (!configured || halt_out) ? PID_STALL : (if fifo_space >= bulk_mps ? PID_ACK : PID_NAK);
+                            expect_resp = if (!configured || halt_out) ? PID_STALL : (if fifo_ok ? PID_ACK : PID_NAK);
                         }
                     }
                     PID_IN: {
@@ -623,7 +638,7 @@ pub module UsbDevice #(
                             tx_pid   = PID_ACK;
                             tx_start = 1;
                         } else if rx_endp == 4'd1 {
-                            tx_pid   = if (configured && !halt_out && (fifo_space >= bulk_mps)) ? PID_ACK : PID_NAK;
+                            tx_pid   = if (configured && !halt_out && (fifo_ok)) ? PID_ACK : PID_NAK;
                             tx_start = 1;
                         }
                     }
