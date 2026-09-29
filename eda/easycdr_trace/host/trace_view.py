@@ -12,15 +12,14 @@ Examples:
 """
 import argparse
 import sys
-import serial
+import trace_transport as tt
 
 K28_1 = 0x3C
 K28_2 = 0x5C
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("-p", "--port", default="/dev/ttyUSB1")
-    ap.add_argument("-b", "--baud", type=int, default=115200)
+    tt.add_args(ap, default="serial")   # -p PORT (default /dev/ttyUSB1) | --usb | --url
     ap.add_argument("--width", type=int, default=16, help="trace width (bits)")
     ap.add_argument("--ts-bits", type=int, default=24)
     ap.add_argument("--addr-bits", type=int, default=14, help="buffer entries = 2^n")
@@ -36,27 +35,27 @@ def main():
     db = args.width // 8
     tb = args.ts_bits // 8
 
-    with serial.Serial(args.port, args.baud, timeout=30) as ser:
-        ser.reset_input_buffer()
-        if args.trigger:
-            mask = int(args.trigger[0], 0)
-            value = int(args.trigger[1], 0)
-            post = args.post if args.post is not None else entries // 2
-            ser.write(b"T" + mask.to_bytes(db, "little") + value.to_bytes(db, "little"))
-            ser.write(b"A" + post.to_bytes(2, "big"))
-            print(f"armed: trigger (data & 0x{mask:0{db*2}x}) == 0x{value:0{db*2}x}, "
-                  f"post={post} entries; waiting...")
-        else:
-            ser.write(b"S")
-            print("armed: immediate capture; waiting...")
-        ack = ser.read(1)
-        if ack != b"K":
-            sys.exit(f"no 'K' ack (got {ack!r}) - link locked? trigger reachable?")
-        print("capture frozen, dumping...")
-        ser.write(b"D")
-        raw = ser.read(entries * 2)
-        if len(raw) != entries * 2:
-            sys.exit(f"short read: {len(raw)}/{entries*2} bytes")
+    T = tt.from_args(args)
+    T.flush()
+    if args.trigger:
+        mask = int(args.trigger[0], 0)
+        value = int(args.trigger[1], 0)
+        post = args.post if args.post is not None else entries // 2
+        T.xfer({"write": list(b"T" + mask.to_bytes(db, "little") + value.to_bytes(db, "little")), "read": 0})
+        arm = b"A" + post.to_bytes(2, "big")
+        print(f"armed: trigger (data & 0x{mask:0{db*2}x}) == 0x{value:0{db*2}x}, "
+              f"post={post} entries; waiting...")
+    else:
+        arm = b"S"
+        print("armed: immediate capture; waiting...")
+    r = T.xfer({"write": list(arm), "read": 1, "timeout_ms": 30000})
+    if r["data"] != [0x4B]:
+        sys.exit(f"no 'K' ack (got {bytes(r['data'])!r}) - link locked? trigger reachable?")
+    print("capture frozen, dumping...")
+    r = T.xfer({"write": [0x44], "read": entries * 2, "timeout_ms": 30000})
+    raw = bytes(r["data"])
+    if len(raw) != entries * 2:
+        sys.exit(f"short read: {len(raw)}/{entries*2} bytes")
 
     ents = [(raw[2*i] & 1, raw[2*i+1]) for i in range(entries)]
     rec_len = tb + db

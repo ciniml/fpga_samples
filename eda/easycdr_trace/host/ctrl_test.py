@@ -8,16 +8,14 @@ util/serial_bridge). Sequence:
   5. RESET -> timestamps restart near zero
 Every step prints what it saw; a failing step says so.
 """
-import argparse, os, json, time, urllib.request
+import argparse, os, time
+import trace_transport as tt
+T = None   # transport (serial_bridge / serial / USB), see trace_transport.py
 
 def api(url, body, to=8000):
-    body = dict(body); body.setdefault("timeout_ms", to)
-    req = urllib.request.Request(url + "/api/xfer", data=json.dumps(body).encode(),
-                                 headers={"content-type": "application/json"}, method="POST")
-    return json.load(urllib.request.urlopen(req, timeout=to / 1000 + 5))
+    return T.xfer(body, to)
 def flush(url):
-    urllib.request.urlopen(urllib.request.Request(url + "/api/flush", data=b"{}",
-                           headers={"content-type": "application/json"}, method="POST"), timeout=5).read()
+    T.flush()
 
 def crc8(a, d):
     c = 0
@@ -33,7 +31,7 @@ def ctrl_frames(addr, data):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--url", default="http://127.0.0.1:8081")
+    tt.add_args(ap)
     ap.add_argument("--addr-bits", type=int, default=14)
     ap.add_argument("--tick-ns", type=float, default=37.037, help="trace sample clock period (Nano9K demo: 27MHz)")
     ap.add_argument("--wait-s2", type=float, default=0.0, help="seconds to wait for an S2 press after arming (0 = skip)")
@@ -42,6 +40,7 @@ def main():
     ap.add_argument("--map", help="signal map file (maps/*.map) to check against the TX descriptor hash")
     ap.add_argument("--fetch-map", action="store_true", help="request the signal-map text from the TX (CTRL.MAP_REQ) and read it with 'N'")
     a = ap.parse_args()
+    global T; T = tt.from_args(a)
     url = a.url
     entries = 1 << a.addr_bits
     ok_all = True

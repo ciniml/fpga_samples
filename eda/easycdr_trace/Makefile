@@ -23,6 +23,12 @@ ifneq ($(DELAY1),)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_d$(DELAY1)
 export DELAY1
 endif
+# USB=1 (25K): host transport over the Pmod USB board (EasyCDR module on pmod0, USB on pmod1/pmod2)
+ifeq ($(USB),1)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_usb
+export USB
+USB_VERYL_SV := $(addprefix ../../rtl/usb/,usb_pkg.sv usb_phy_rx.sv usb_phy_tx.sv usb_phy.sv usb_sie.sv usb_descriptor_rom.sv usb_device.sv)
+endif
 # RATE=742M5: 742.5Mbps link (both boards; e.g. to share a 720p DVI clock on the TX)
 ifneq ($(RATE),)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_$(shell echo $(RATE) | tr A-Z a-z)
@@ -35,7 +41,7 @@ TRACE_VERYL_SV := ../../rtl/trace/tx_link_core.sv ../../rtl/trace/trace_link_tx.
                   ../../rtl/trace/trace_rx_decoder.sv ../../rtl/trace/trace_link_diag.sv ../../rtl/trace/trace_sym_inject.sv ../../rtl/trace/trace_capture.sv
 SRCS := src/$(TARGET)/pins.cst $(wildcard src/$(TARGET)/*.sdc) \
         $(wildcard src/$(TARGET)/*.v) $(wildcard src/$(TARGET)/*/*.v) $(wildcard src/common/*.v) \
-        $(TRACE_VERYL_SV) \
+        $(TRACE_VERYL_SV) $(USB_VERYL_SV) \
         ../../rtl/displayport/src/encoder_8b10b.sv $(wildcard ../../rtl/manchester/*.sv) project.tcl \
         host/tracemap.py $(wildcard maps/*.map)
 
@@ -45,3 +51,6 @@ include ../build_gowin.mk
 $(TRACE_VERYL_SV): $(wildcard ../../rtl/trace/*.veryl) ../../rtl/trace/Veryl.toml
 	cd ../../rtl/trace && veryl build
 
+
+$(USB_VERYL_SV): $(wildcard ../../rtl/usb/*.veryl)
+	cd ../../rtl/usb && veryl build

@@ -1,0 +1,44 @@
+// USB_HOST variant (make USB=1): the Pmod USB board takes pmod2 (A, receivers) + pmod1 (B, transmitter) and its 480 MHz
+// 4-phase clocks the BANK6/7 HCLK group, so the ExtEasyCDR module moves to pmod0 (BANK1, HCLK group
+// fed by PLL_T). Everything else as pins.cst.
+// EasyCDR RX: pmod0 lane L0 = pins 1/7 = F5/G5 (the direct-wire loopback pair of pins.cst).
+IO_LOC "i_serial_p" F5,G5;
+IO_PORT "i_serial_p" PULL_MODE=NONE DRIVE=OFF BANK_VCCIO=3.3 CTLE=HIGH;
+// Reverse control channel TX (2Mbps Manchester): pmod0 lane L1 = pins 2/8 = G7/G8 (the self-test pair)
+IO_LOC "o_serial_p" G7,G8;
+IO_PORT "o_serial_p" IO_TYPE=LVPECL33E PULL_MODE=NONE DRIVE=16 BANK_VCCIO=3.3;
+IO_LOC "o_dat_lock" B2;
+IO_PORT "o_dat_lock" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "o_dat_err" C2;
+IO_PORT "o_dat_err" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "dout_flag_xor" E1;
+IO_PORT "dout_flag_xor" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "reset_in" H11;
+IO_PORT "reset_in" IO_TYPE=LVCMOS33 PULL_MODE=DOWN DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC "clk_in" E2;
+IO_PORT "clk_in" PULL_MODE=NONE DRIVE=OFF BANK_VCCIO=3.3;
+INS_LOC "u_pll_rx/PLLA_inst" PLL_T;
+IO_LOC "uart_txd" C3;
+IO_PORT "uart_txd" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "uart_rxd" B3;
+IO_PORT "uart_rxd" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+
+// Pmod USB board (eda/usb_device/src/tangprimer25k/pins.cst with A = pmod2, B = pmod1, the orientation in use)
+IO_LOC "usb_rx_dp" G11,G10;
+IO_PORT "usb_rx_dp" IO_TYPE=LVDS25 PULL_MODE=NONE DRIVE=OFF BANK_VCCIO=3.3 DIFF_RESISTOR=OFF;
+IO_LOC "usb_rxdp_p" D11,D10;
+IO_PORT "usb_rxdp_p" IO_TYPE=LVDS25 PULL_MODE=NONE DRIVE=OFF BANK_VCCIO=3.3 DIFF_RESISTOR=OFF;
+IO_LOC "usb_rxdn_p" B11,B10;
+IO_PORT "usb_rxdn_p" IO_TYPE=LVDS25 PULL_MODE=NONE DRIVE=OFF BANK_VCCIO=3.3 DIFF_RESISTOR=OFF;
+IO_LOC "usb_term_dp" C11;
+IO_PORT "usb_term_dp" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "usb_term_dn" C10;
+IO_PORT "usb_term_dn" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "usb_tx_dp" A11;
+IO_PORT "usb_tx_dp" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=16 BANK_VCCIO=3.3;
+IO_LOC "usb_tx_dn" A10;
+IO_PORT "usb_tx_dn" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=16 BANK_VCCIO=3.3;
+IO_LOC "usb_pullup_en" E11;
+IO_PORT "usb_pullup_en" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "vbus_det" K11;
+IO_PORT "vbus_det" IO_TYPE=LVCMOS33 PULL_MODE=DOWN DRIVE=OFF BANK_VCCIO=3.3;

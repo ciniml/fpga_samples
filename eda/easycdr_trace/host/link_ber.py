@@ -9,16 +9,14 @@ short when the link is bad.
 
   link_ber.py [--url http://127.0.0.1:8081] [--seconds 10] [--interval 0.1] [--rate-gbps 1.0]
 """
-import argparse, json, time, urllib.request
+import argparse, time
+import trace_transport as tt
+T = None   # transport (serial_bridge / serial / USB), see trace_transport.py
 
 def api(url, body):
-    req = urllib.request.Request(url + "/api/xfer", data=json.dumps(body).encode(),
-                                 headers={"content-type": "application/json"}, method="POST")
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.load(r)
+    return T.xfer(body, 30000)
 def flush(url):
-    urllib.request.urlopen(urllib.request.Request(url + "/api/flush", data=b"{}",
-                           headers={"content-type": "application/json"}, method="POST")).read()
+    T.flush()
 
 def link_diag(url):
     d = api(url, {"write": [0x4C], "read": 14, "timeout_ms": 2000})["data"]
@@ -29,11 +27,12 @@ def link_diag(url):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--url", default="http://127.0.0.1:8081")
+    tt.add_args(ap)
     ap.add_argument("--seconds", type=float, default=10.0)
     ap.add_argument("--interval", type=float, default=0.1)
     ap.add_argument("--rate-gbps", type=float, default=1.0)
     a = ap.parse_args()
+    global T; T = tt.from_args(a)
     flush(a.url); link_diag(a.url)          # clear the counters
     t0 = time.time(); errs = sat = polls = 0; lost = 0; st_or = 0; st_and = 0xff; noalign = 0; commas = recs = 0
     while time.time() - t0 < a.seconds:

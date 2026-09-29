@@ -93,6 +93,29 @@ UARTは top.v 側で外付けしているだけです。USB CDC等のコアは�
 UARTボーレートは top.v の `UART_BAUD` 1箇所。BL616ブリッジ向けに
 921600 / 2000000 のビルド変種を `variants/` (非管理) に作って試行中。
 
+### USB 2.0 HS トランスポート (`make USB=1`, 2026-09-30 実装・実機未確認)
+
+`eda/usb_device` の USB デバイスコア (rtl/usb、EP1 をバイトストリームにする
+`EP1_STREAM=1`) と Gowin PHY を 25K トップに統合した変種。ダンプ 32 KB が
+UART 115200 の約 2.8 s から約 2 ms (20 MB/s) になる。
+
+- 配置: Pmod USB 基板が pmod2 (A、受信側) + pmod1 (B、送信側) を占め、その
+  480 MHz 4 相クロックが BANK6/7 の HCLK グループを使い切るため、ExtEasyCDR
+  モジュールは **pmod0** へ移る (RX = レーン L0 = pins 1/7 = F5/G5、逆方向
+  Manchester = レーン L1 = pins 2/8 = G7/G8、BANK0/1 の HCLK グループ、PLL_T)。
+  自己試験送信器は組み込まない。ピン制約は `pins_usb.cst`、SDC 追加分は
+  `timing_usb.sdc`。
+- `clk_sys` は USB の 60 MHz PLL 出力 (UART 分周と Manchester の周期は
+  `SYS_HZ` から算出)。UART も残り、最後にコマンドを送った側へ応答が返る。
+- EP1 IN は 512 B 揃うたびに送り、約 1 ms 途切れたら残りを短パケットで、
+  直前が満杯パケットなら ZLP を送る (= ホストの読み出しがメッセージ境界で
+  終わる)。ブラウザ UI の WebUSB トランスポートはこの動作を前提にしている。
+- ホストスクリプトは `host/trace_transport.py` 経由で `--usb` (pyusb、
+  1209:0001)、`-p ポート` (pyserial)、`--url` (serial_bridge) を選べる
+  (`trace_view.py --usb`, `ctrl_test.py --usb`, `link_ber.py --usb`,
+  `decoder_probe.py --usb`, `trace_dump.py --usb`)。ベンダ要求 0x01 は
+  `'T'` + {os_tick, vbus, rx_align, hs} を返す。
+
 ## Phase 3: タイムスタンプ付きトレースレコード
 
 TX側が信号の変化を検出してレコード化し、リンクへ流します。

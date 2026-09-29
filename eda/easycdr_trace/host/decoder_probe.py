@@ -71,10 +71,11 @@ def to_bits(v): return "".join(str((v >> i) & 1) for i in range(10))
 def name(k, x, y): return f"{'K' if k else 'D'}{x}.{y}"
 
 # ---------------------------------------------------------------- transport
+import trace_transport as tt
+T = None   # transport (serial_bridge / serial / USB), see trace_transport.py
 def api(url, body, to=8000):
-    req = urllib.request.Request(url + "/api/xfer", data=json.dumps(body).encode(), headers={"content-type": "application/json"})
-    return json.loads(urllib.request.urlopen(req, timeout=to / 1000 + 5).read())
-def flush(url): urllib.request.urlopen(urllib.request.Request(url + "/api/flush", data=b"{}", headers={"content-type": "application/json"})).read()
+    return T.xfer(body, to)
+def flush(url): T.flush()
 
 class Probe:
     def __init__(self, url, entries=1 << 14):
@@ -173,9 +174,10 @@ def run_test(pr, title, syms, labels, exp, settle=0.05):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--url", default="http://127.0.0.1:8081")
+    tt.add_args(ap)
     ap.add_argument("--tests", default="0,1,2,3,4,5,6,7")
     a = ap.parse_args()
+    global T; T = tt.from_args(a)
     pr = Probe(a.url); tests = set(a.tests.split(","))
     pr.raw_mode(True)
     D = lambda x, y: (False, x, y)

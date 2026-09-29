@@ -21,12 +21,38 @@
 // Physical link: ExtEasyCDR modules + passive USB-C cable (see the
 // gowin_easycdr_1g2_sample README); TX on pmod0 lane L1 (G7/G8), RX on
 // pmod2 lane L0 (G11/G10).
+//
+// USB_HOST (make USB=1): the host transport is USB 2.0 high speed through
+// the Pmod USB board (rtl/usb: UsbDevice EP1 byte stream + usb_phy_gowin,
+// 20 MB/s instead of 11 kB/s on the UART; the UART stays as a fallback and
+// the reply goes to whichever transport sent the last command). The USB
+// board takes pmod2 (A, receivers) and pmod1 (B, transmitter) and its
+// 480 MHz 4-phase clocks the whole BANK6/7 HCLK group, so the EasyCDR
+// module moves to pmod0 (RX lane L0 = F5/G5, reverse channel lane L1 =
+// G7/G8, BANK0/1 group) and the self-test transmitter is not built. The
+// system clock (clk_sys) is the USB 60 MHz instead of the 50 MHz crystal.
 module top(
     input            clk_in,          // 50MHz
     input            i_serial_p,
     input            i_serial_n,
+`ifndef USB_HOST
     output           o_selftest_p,   // pmod0 lane L1 (G7/G8): own trace stream for the loopback self-test
     output           o_selftest_n,
+`else
+    // Pmod USB board (TN710 USB2.0-RC circuit): A = pmod2, B = pmod1
+    input            usb_rx_dp,      // USB_RX_D+  (A pin 1)
+    input            usb_rx_dn,      // USB_RX_D-  (A pin 7)
+    input            usb_rxdp_p,     // D+         (A pin 2)
+    input            usb_rxdp_n,     // VREF       (A pin 8)
+    input            usb_rxdn_p,     // D-         (A pin 3)
+    input            usb_rxdn_n,     // VREF       (A pin 9)
+    output           usb_term_dp,    // TERM_RXDP  (A pin 4)
+    output           usb_term_dn,    // TERM_RXDN  (A pin 10)
+    output           usb_tx_dp,      // USB_TX_D+  (B pin 1)
+    output           usb_tx_dn,      // USB_TX_D-  (B pin 7)
+    output           usb_pullup_en,  // PULLUP_EN  (B pin 2)
+    input            vbus_det,       // VBUS_DET   (B pin 3)
+`endif
     output           o_serial_p,
     output           o_serial_n,
     input            reset_in,        // push button, active high (pull-down)
@@ -44,6 +70,26 @@ module top(
     // Host UART baud rate (BL616 bridge). 115200 is the proven default;
     // build variants at 921600 / 2000000 exist for faster dumps.
     localparam UART_BAUD = 115200;
+
+    //------------------------------------------------------------------
+    // System clock (command / dump FSM, UART, reverse channel): the 50 MHz
+    // crystal, or with USB_HOST the USB 60 MHz PLL output.
+    //------------------------------------------------------------------
+`ifdef USB_HOST
+    localparam SYS_HZ = 60_000_000;
+    wire usb_pll_lock, usb_fclk_240m, clk_sys;
+    pll_usb u_pll_usb(.lock(usb_pll_lock), .clkout0(usb_fclk_240m), .clkout1(clk_sys), .clkout2(), .clkout3(),
+                      .clkin(clk_in), .psdir(1'b0), .pspulse(1'b0));
+    reg [3:0] sys_rst_sr;
+    always @(posedge clk_sys or posedge reset_in)
+        if (reset_in) sys_rst_sr <= 4'hf; else sys_rst_sr <= {sys_rst_sr[2:0], ~usb_pll_lock};
+    wire rst_sys  = sys_rst_sr[3];
+`else
+    localparam SYS_HZ = 50_000_000;
+    wire clk_sys = clk_in;
+    wire rst_sys = reset_in;
+`endif
+    wire rstn_sys = ~rst_sys;
 
     //------------------------------------------------------------------
     // RX clocking: 500MHz x 4 phases for the EasyCDR IP (PLL_T)
@@ -112,8 +158,8 @@ module top(
     reg [4:0] cwp, crp;
     wire cf_empty = (cwp == crp);
     wire cf_full  = (cwp[4] != crp[4]) && (cwp[3:0] == crp[3:0]);
-    always @(posedge clk_in or posedge reset_in) begin
-        if (reset_in) begin
+    always @(posedge clk_sys or posedge rst_sys) begin
+        if (rst_sys) begin
             cwp <= 5'd0;
         end else if (fwd_valid && !cf_full) begin
             cfifo[cwp[3:0]] <= fwd_data;
@@ -122,15 +168,15 @@ module top(
     end
 
     wire ctrl_tx_ready;
-    always @(posedge clk_in or posedge reset_in) begin
-        if (reset_in)                            crp <= 5'd0;
+    always @(posedge clk_sys or posedge rst_sys) begin
+        if (rst_sys)                             crp <= 5'd0;
         else if (ctrl_tx_ready && !cf_empty)     crp <= crp + 1'b1;
     end
 
     wire man_txd;
-    ManchesterTx #(.BIT_CYCLES(25)) u_ctrl_tx(   // 50MHz / 25 = 2Mbps
-        .i_clk   (clk_in),
-        .i_rst   (reset_in),
+    ManchesterTx #(.BIT_CYCLES(SYS_HZ / 2_000_000)) u_ctrl_tx(   // 2Mbps
+        .i_clk   (clk_sys),
+        .i_rst   (rst_sys),
         .i_valid (!cf_empty),
         .i_data  (cfifo[crp[3:0]]),
         .o_ready (ctrl_tx_ready),
@@ -142,9 +188,9 @@ module top(
     // Manchester receiver (it just sees link loss for 80us; frames are
     // never sent during a burst because the host waits for the 'P' reply).
     wire pulse_req, pulse_busy, pulse_txd;
-    PulseResetTx #(.HALF_CYCLES(1000), .HALVES(4), .IDLE_HALF(25)) u_pulse_tx(
-        .i_clk  (clk_in),
-        .i_rst  (reset_in),
+    PulseResetTx #(.HALF_CYCLES(SYS_HZ / 50_000), .HALVES(4), .IDLE_HALF(SYS_HZ / 2_000_000)) u_pulse_tx(   // 4 x 20us
+        .i_clk  (clk_sys),
+        .i_rst  (rst_sys),
         .i_req  (pulse_req),
         .o_busy (pulse_busy),
         .o_txd  (pulse_txd)
@@ -260,18 +306,93 @@ module top(
         .o_desc_busy   (desc_busy)
     );
 
-    // Host transport: UART today; a USB CDC core can replace this block by
-    // driving the same byte-stream interface of trace_capture.
+    // Host transport: the UART, and with USB_HOST the USB EP1 byte stream as
+    // well. Commands from either side go to trace_capture; the reply stream
+    // goes to the side that sent the last command.
     wire       h_rx_valid, h_tx_valid, h_tx_ready;
     wire [7:0] h_rx_data,  h_tx_data;
-    uart_rx #(.BAUD_DIVIDER(50_000_000 / UART_BAUD)) u_uart_rx(
-        .clock(clk_in), .reset(reset_in),
-        .data_valid(h_rx_valid), .data_ready(1'b1), .data_bits(h_rx_data),
+    wire       u_rx_valid, u_tx_ready;
+    wire [7:0] u_rx_data;
+    uart_rx #(.BAUD_DIVIDER(SYS_HZ / UART_BAUD)) u_uart_rx(
+        .clock(clk_sys), .reset(rst_sys),
+        .data_valid(u_rx_valid), .data_ready(1'b1), .data_bits(u_rx_data),
         .rx(uart_rxd), .overrun());
-    uart_tx #(.BAUD_DIVIDER(50_000_000 / UART_BAUD)) u_uart_tx(
-        .clock(clk_in), .reset(reset_in),
-        .data_valid(h_tx_valid), .data_ready(h_tx_ready), .data_bits(h_tx_data),
+`ifdef USB_HOST
+    wire       s_rx_valid, s_tx_ready, s_configured;
+    wire [7:0] s_rx_data;
+    reg        use_usb;
+    always @(posedge clk_sys or posedge rst_sys) begin
+        if (rst_sys) use_usb <= 1'b0;
+        else if (s_rx_valid) use_usb <= 1'b1;
+        else if (u_rx_valid) use_usb <= 1'b0;
+    end
+    assign h_rx_valid = s_rx_valid | u_rx_valid;        // (both in one clock: the UART byte is lost)
+    assign h_rx_data  = s_rx_valid ? s_rx_data : u_rx_data;
+    assign h_tx_ready = use_usb ? s_tx_ready : u_tx_ready;
+    wire   uart_tx_valid = h_tx_valid & ~use_usb;
+    wire   usb_tx_valid  = h_tx_valid &  use_usb;
+`else
+    assign h_rx_valid = u_rx_valid;
+    assign h_rx_data  = u_rx_data;
+    assign h_tx_ready = u_tx_ready;
+    wire   uart_tx_valid = h_tx_valid;
+`endif
+    uart_tx #(.BAUD_DIVIDER(SYS_HZ / UART_BAUD)) u_uart_tx(
+        .clock(clk_sys), .reset(rst_sys),
+        .data_valid(uart_tx_valid), .data_ready(u_tx_ready), .data_bits(h_tx_data),
         .tx(uart_txd));
+
+`ifdef USB_HOST
+    //------------------------------------------------------------------
+    // USB 2.0 HS device (rtl/usb): EP1 OUT = host commands, EP1 IN = reply
+    // stream (full packets while data flows, the remainder / a ZLP after
+    // 1 ms of idle). PHY front end and clocking as eda/usb_device (proven
+    // HS_OS32 configuration): 60 MHz -> pll_usb_os -> 480 MHz x 4 phases
+    // on the BANK6/7 HCLK group, oversampler PCLK 120 MHz.
+    //------------------------------------------------------------------
+    wire [7:0] utmi_data_out, utmi_data_in;
+    wire       utmi_txvalid, utmi_txready, utmi_rxactive, utmi_rxvalid, utmi_rxerror, utmi_termselect;
+    wire [1:0] utmi_linestate, utmi_opmode, utmi_xcvrselect;
+    wire       usb_hs, usb_suspended, usb_bus_reset, usb_sof;
+    wire [6:0] usb_address;
+    wire [10:0] usb_frame;
+    wire [15:0] usb_vendor_reg;
+    wire os_lock, os_f0 /* synthesis syn_keep=1 */, os_f90, os_f180, os_f270;
+    wire os_pclk /* synthesis syn_keep=1 */;   // oversampler PCLK: used below so the net survives for the SDC
+    reg  os_tick; always @(posedge os_pclk) os_tick <= ~os_tick;
+    pll_usb_os #(.FCLKIN("60"), .MDIV(16), .MDIV_FRAC(0), .ODIV(2)) u_pll_os(
+        .lock(os_lock), .clkout0(os_f0), .clkout1(os_f90), .clkout2(os_f180), .clkout3(os_f270), .clkin(clk_sys),
+        .pssel(3'd0), .psdir(1'b0), .pspulse(1'b0));
+    reg [1:0] vbus_sr; always @(posedge clk_sys) vbus_sr <= {vbus_sr[0], vbus_det};
+    UsbDevice #(.HS_CAPABLE(1), .CLK_PER_US(60), .EP1_STREAM(1), .STREAM_FLUSH_US(1000)) u_usb_dev(
+        .i_clk(clk_sys), .i_rst(rst_sys),
+        .o_utmi_data_out(utmi_data_out), .o_utmi_txvalid(utmi_txvalid), .i_utmi_txready(utmi_txready),
+        .i_utmi_data_in(utmi_data_in), .i_utmi_rxactive(utmi_rxactive), .i_utmi_rxvalid(utmi_rxvalid),
+        .i_utmi_rxerror(utmi_rxerror), .i_utmi_linestate(utmi_linestate),
+        .o_utmi_opmode(utmi_opmode), .o_utmi_xcvrselect(utmi_xcvrselect), .o_utmi_termselect(utmi_termselect),
+        .o_high_speed(usb_hs), .o_configured(s_configured), .o_suspended(usb_suspended), .o_reset(usb_bus_reset),
+        .o_address(usb_address), .o_frame(usb_frame), .o_sof(usb_sof),
+        .o_vendor_reg(usb_vendor_reg),
+        .i_vendor_status({8'h54, 4'b0, os_tick, vbus_sr[1], rx_align, usb_hs, 16'd0}),   // 'T'race: link / speed flags
+        .o_rx_valid(s_rx_valid), .o_rx_data(s_rx_data), .i_rx_ready(1'b1),
+        .i_tx_valid(usb_tx_valid), .i_tx_data(h_tx_data), .o_tx_ready(s_tx_ready));
+    usb_phy_gowin #(.SE_FROM_DIFF(1), .DYN_DLY(0), .HS_CDR(0), .HS_OS32(1)) u_usb_phy(
+        .os_clk_ref_i(clk_in), .os_rstn_ref_i(~reset_in), .os_pll_lock_i(os_lock),
+        .os_fclk0_i(os_f0), .os_fclk90_i(os_f90), .os_fclk180_i(os_f180), .os_fclk270_i(os_f270), .os_pclk_o(os_pclk), .os_samples_o(), .os_cmp_o(),
+        .i_scan_freeze(1'b0), .i_scan_ofs(1'b0), .i_scan_class(3'd0), .i_hist_run(1'b0), .o_hist(), .o_txfifo_dbg(),
+        .clk_i(clk_sys), .fclk_i(usb_fclk_240m), .rst_i(rst_sys), .pll_locked_i(usb_pll_lock),
+        .i_track_en(1'b0), .i_dly_dd(8'd0), .i_dly_dp(8'd0), .i_dly_dn(8'd0), .o_dly_dd(),
+        .o_mon_dd(), .o_mon_dp(), .o_mon_dn(),
+        .utmi_data_out_i(utmi_data_out), .utmi_txvalid_i(utmi_txvalid), .utmi_txready_o(utmi_txready),
+        .utmi_data_in_o(utmi_data_in), .utmi_rxactive_o(utmi_rxactive), .utmi_rxvalid_o(utmi_rxvalid),
+        .utmi_rxerror_o(utmi_rxerror), .utmi_linestate_o(utmi_linestate),
+        .utmi_opmode_i(utmi_opmode), .utmi_xcvrselect_i(utmi_xcvrselect), .utmi_termselect_i(utmi_termselect),
+        .usb_rx_dp_i(usb_rx_dp), .usb_rx_dn_i(usb_rx_dn),
+        .usb_rxdp_p_i(usb_rxdp_p), .usb_rxdp_n_i(usb_rxdp_n),
+        .usb_rxdn_p_i(usb_rxdn_p), .usb_rxdn_n_i(usb_rxdn_n),
+        .usb_tx_dp_o(usb_tx_dp), .usb_tx_dn_o(usb_tx_dn),
+        .usb_pullup_en_o(usb_pullup_en), .usb_term_dp_o(usb_term_dp), .usb_term_dn_o(usb_term_dn));
+`endif
 
     //------------------------------------------------------------------
     // Link diagnostics (host command 'L') and loopback self-test source
@@ -283,7 +404,7 @@ module top(
         .i_data_en(rx_data_en), .i_word(rx_data[8:0]), .i_decerr(rx_decerr),
         .i_status({3'b0, rx_reset, act_ok, desc_ver != 8'd0, rx_align, pll_rx_lock}),
         .i_desc_ver(desc_ver),
-        .clk_sys(clk_in), .rst_sys(reset_in),
+        .clk_sys(clk_sys), .rst_sys(rst_sys),
         .i_req(diag_req), .o_done(diag_done), .o_data(diag_data));
 
     // Self-test transmitter: a second trace core sending a free-running
@@ -297,7 +418,11 @@ module top(
     wire [9:0] inj_wr_data;
     wire [1:0] inj_mode;
     wire [6:0] inj_len;
-`ifndef RATE_742M5
+`ifdef USB_HOST
+    // (no self-test transmitter: pmod0 carries the EasyCDR module, see the header)
+`elsif RATE_742M5
+    assign st_serial = 1'b0;
+`else
     wire pll_tx_lock;
     wire txclk_500m /* synthesis syn_keep=1 */;
     wire txclk_100m;
@@ -336,10 +461,10 @@ module top(
         .D0(st_sym_out[0]), .D1(st_sym_out[1]), .D2(st_sym_out[2]), .D3(st_sym_out[3]), .D4(st_sym_out[4]),
         .D5(st_sym_out[5]), .D6(st_sym_out[6]), .D7(st_sym_out[7]), .D8(st_sym_out[8]), .D9(st_sym_out[9]),
         .PCLK(txclk_100m), .FCLK(txclk_500m), .RESET(~st_rstn));
-`else
-    assign st_serial = 1'b0;
 `endif
+`ifndef USB_HOST
     ELVDS_OBUF u_st_obuf(.I(st_serial), .O(o_selftest_p), .OB(o_selftest_n));
+`endif
 
     trace_capture #(
         .ADDR_BITS    (14),                 // 16Ki entries ({K,byte})
@@ -358,8 +483,8 @@ module top(
         .i_desc_flags  (desc_flags),
         .i_desc_hash   (desc_hash),
         .i_map_wr(map_wr), .i_map_addr(map_addr), .i_map_data(map_data), .i_map_len(map_len),
-        .clk_sys    (clk_in),
-        .rst_sys    (reset_in),
+        .clk_sys    (clk_sys),
+        .rst_sys    (rst_sys),
         .h_rx_valid (h_rx_valid),
         .h_rx_data  (h_rx_data),
         .h_tx_valid (h_tx_valid),

@@ -41,6 +41,9 @@ if {${TARGET} == "tangnano9k_pmod"} {
     puts "tracemap: $mapout"
     set fh [open trace_map_cfg.vh r]; append defs [read $fh]; close $fh
 }
+# USB=1: host transport over the Pmod USB board (rtl/usb), see top.v
+set USB [expr {[info exists ::env(USB)] && $::env(USB) == "1"}]
+if {$USB} { append defs "`define USB_HOST\n" }
 set RATE [expr {[info exists ::env(RATE)] ? $::env(RATE) : "1G"}]
 if {${RATE} == "742M5"} { append defs "`define RATE_742M5\n" }
 # 25K-only rate variants (self-test loopback, 8b10b stream): line rate = 50MHz x (MDIV + FRAC/8) / ODIV x 2.
@@ -95,7 +98,22 @@ if {${TARGET} == "tangprimer25k"} {
     add_file -type verilog [file normalize trace_map_rom_selftest.v]
     add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_tx.sv]
     add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_rx.sv]
-    add_file -type verilog [file normalize ${SRC_DIR}/pll_tx_500m/pll_tx_500m.v]
+    if {$USB} {
+        # USB 2.0 HS device core + Gowin PHY front end (rtl/usb, Veryl output) and its PLLs (eda/usb_device)
+        set USB_SRC [file normalize ${SRC_DIR}/../../../usb_device/src/tangprimer25k]
+        foreach f {usb_pkg usb_phy_rx usb_phy_tx usb_phy usb_sie usb_descriptor_rom usb_device} {
+            add_file -type verilog [file normalize ${RTL_DIR}/usb/${f}.sv]
+        }
+        add_file -type verilog [file normalize ${RTL_DIR}/usb/gowin/usb_phy_gowin.v]
+        add_file -type verilog [file normalize ${RTL_DIR}/usb/gowin/usb_hs_cdr.v]
+        add_file -type verilog [file normalize ${RTL_DIR}/usb/gowin/usb_hs_os32.v]
+        add_file -type verilog [file normalize ${RTL_DIR}/oscdr/os_cdr.sv]
+        add_file -type verilog [file normalize ${RTL_DIR}/oscdr/bit_gearbox.sv]
+        add_file -type verilog [file normalize ${USB_SRC}/pll_usb/pll_usb.v]
+        add_file -type verilog [file normalize ${USB_SRC}/pll_usb_os/pll_usb_os.v]
+    } else {
+        add_file -type verilog [file normalize ${SRC_DIR}/pll_tx_500m/pll_tx_500m.v]
+    }
 
     # EasyCDR IP: 10bit + Word Alignment + 8B/10B Decoding (K28.5). The IP
     # directory (sampling delay taps) and the RX PLL follow the link rate.
@@ -120,13 +138,18 @@ if {${TARGET} == "tangnano9k_pmod"} {
     }
 }
 
-add_file -type cst [file normalize ${SRC_DIR}/pins.cst]
+if {$USB} {
+    add_file -type cst [file normalize ${SRC_DIR}/pins_usb.cst]
+} else {
+    add_file -type cst [file normalize ${SRC_DIR}/pins.cst]
+}
 if {${RATE} == "742M5"} {
     add_file -type sdc [file normalize ${SRC_DIR}/timing_742m5.sdc]
 } elseif {${TARGET} == "tangprimer25k"} {
     # timing.sdc is a template (@FP@/@FH@ FCLK period, @PM@/@PD@ pclk_rx from 50MHz)
     set fh [open ${SRC_DIR}/timing.sdc r]; set sdc [read $fh]; close $fh
     set sdc [string map [list @FP@ ${R_FPER} @FH@ [expr {${R_FPER} / 2.0}] @PM@ ${R_PMUL} @PD@ ${R_PDIV}] $sdc]
+    if {$USB} { set fh [open ${SRC_DIR}/timing_usb.sdc r]; append sdc "\n" [read $fh]; close $fh }
     set fh [open timing_gen.sdc w]; puts -nonewline $fh $sdc; close $fh
     add_file -type sdc [file normalize timing_gen.sdc]
 } else {
