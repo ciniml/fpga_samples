@@ -43,8 +43,8 @@ add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_rx.sv]
 
 # Pmod slot assignment: USB_PMOD_A / USB_PMOD_B = pmod0 | pmod1 | pmod2 (Dock silkscreen),
 # resolved through eda/targets/tangprimer25k/pmod_ports.csv into pins_gen.cst
-set PMOD_A [expr {[info exists ::env(USB_PMOD_A)] ? $::env(USB_PMOD_A) : "pmod1"}]
-set PMOD_B [expr {[info exists ::env(USB_PMOD_B)] ? $::env(USB_PMOD_B) : "pmod2"}]
+set PMOD_A [expr {[info exists ::env(USB_PMOD_A)] ? $::env(USB_PMOD_A) : "pmod2"}]
+set PMOD_B [expr {[info exists ::env(USB_PMOD_B)] ? $::env(USB_PMOD_B) : "pmod1"}]
 set fh [open [file normalize ${SRC_DIR}/../../../targets/tangprimer25k/pmod_ports.csv] r]
 array set BALL {}
 foreach line [split [read $fh] "\n"] {
