@@ -6,6 +6,7 @@ RTL_DIR ?= $(ROOT_DIR)/rtl
 
 # PANEL=<W>x<H> (64 / 128 each, default 128x128)
 # BITS=<n> BCM bit planes per colour (default 5), HUB75_CLKDIV=<n> (default 1)
+# HUB75_CLKLOW=<n> extra CLK-low ticks per pixel (default 0; CLKDIV=0 CLKLOW=1 -> 16.7 MHz)
 BUILD_SUFFIX :=
 ifneq ($(PANEL),)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_$(PANEL)
@@ -18,6 +19,10 @@ endif
 ifneq ($(HUB75_CLKDIV),)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_div$(HUB75_CLKDIV)
 export HUB75_CLKDIV
+endif
+ifneq ($(HUB75_CLKLOW),)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_low$(HUB75_CLKLOW)
+export HUB75_CLKLOW
 endif
 
 CAPTURE_DIR := ../dvi_capture/src/$(TARGET)

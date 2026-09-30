@@ -34,6 +34,7 @@ pub module Hub75 #(
     param PANEL_HEIGHT  : u32 = 32, // rows per individual panel (must be even, <= 64)
     param NUM_CHAINED   : u32 = 4 , // number of panels chained data-in→data-out
     param CLOCK_DIVIDER : u32 = 1 , // HUB75 clk period = 2 * (N+1) sysclk
+    param CLK_LOW_EXTRA : u32 = 0 , // row shifting: CLK low (data set up) for 1+N ticks, high for 1
     param COMPONENT_BITS: u32 = 5 , // BCM bit planes per colour component
     param BASE_OE_CYCLES: u32 = 16, // OE pulse unit; LSB plane shows 2×this
 ) (
@@ -87,6 +88,7 @@ pub module Hub75 #(
     const OE_MAX     : u32 = BASE_OE_CYCLES << COMPONENT_BITS;
     const OE_BITS    : u32 = $clog2(OE_MAX + 1);
     const CLKDIV_BITS: u32 = $clog2(CLOCK_DIVIDER + 2);
+    const LOW_BITS   : u32 = $clog2(CLK_LOW_EXTRA + 2);
 
     // FSM state encoding (binary).
     const ST_RESET      : logic<4> = 4'd0;
@@ -158,6 +160,7 @@ pub module Hub75 #(
     var clk_reg      : logic                ;
     var clock_counter: logic<CLKDIV_BITS>   ;
     var out_phase    : logic                ;
+    var low_wait     : logic<LOW_BITS>      ; // remaining extra CLK-low ticks
     var latch_line   : logic                ;
     var oe_active    : logic                ;
     // Pixel words latched at the shift-clock rising edge.
@@ -250,6 +253,7 @@ pub module Hub75 #(
             clk_reg       = 1'b0;
             clock_counter = 0 as CLKDIV_BITS;
             out_phase     = 1'b0;
+            low_wait      = 0 as LOW_BITS;
             latch_line    = 1'b0;
             oe_active     = 1'b0;
             pixel_upper   = 0 as PX_BITS;
@@ -386,6 +390,9 @@ pub module Hub75 #(
                     // pixel: CLK low with the pixel's plane bits on the
                     // data lines, then CLK high (the panel samples on the
                     // rising edge) while the VRAM address advances.
+                    // CLK_LOW_EXTRA stretches the low phase: a longer
+                    // period without a shorter high pulse, and more time
+                    // for data re-driven by upstream panels in a chain.
                     if clock_enable {
                         if !out_phase {
                             clk_reg   = 1'b0;
@@ -396,6 +403,9 @@ pub module Hub75 #(
                             rgb_g1    = dplane_g1;
                             rgb_b1    = dplane_b1;
                             out_phase = 1'b1;
+                            low_wait  = CLK_LOW_EXTRA as LOW_BITS;
+                        } else if low_wait != 0 {
+                            low_wait = low_wait - (1 as LOW_BITS);
                         } else {
                             clk_reg   = 1'b1;
                             out_phase = 1'b0;

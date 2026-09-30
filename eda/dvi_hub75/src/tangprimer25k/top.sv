@@ -36,6 +36,9 @@
 `ifndef HUB75_CLKDIV
 `define HUB75_CLKDIV 1        // HUB75 CLK = 50 MHz / (2 * (N + 1)) (make HUB75_CLKDIV=0)
 `endif
+`ifndef HUB75_CLKLOW
+`define HUB75_CLKLOW 0        // extra CLK-low ticks per pixel (make HUB75_CLKDIV=0 HUB75_CLKLOW=1: 16.7 MHz)
+`endif
 module top (
     input  wire clock,            // on-board 50 MHz oscillator
     input  wire reset_button,
@@ -239,6 +242,7 @@ module top (
         .PANEL_HEIGHT  (64),
         .NUM_CHAINED   (CHAIN_LEN / 64),
         .CLOCK_DIVIDER (`HUB75_CLKDIV),
+        .CLK_LOW_EXTRA (`HUB75_CLKLOW),
         .COMPONENT_BITS(COMPONENT_BITS),
         .BASE_OE_CYCLES(16)
     ) u_hub75 (

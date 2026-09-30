@@ -33,6 +33,8 @@ puts $fh "`define DISP_H ${DISP_H}"
 # divider (default 1: 12.5 MHz; 0: 25 MHz)
 if {[info exists ::env(BITS)] && $::env(BITS) ne ""} { puts $fh "`define COMPONENT_BITS $::env(BITS)" }
 if {[info exists ::env(HUB75_CLKDIV)] && $::env(HUB75_CLKDIV) ne ""} { puts $fh "`define HUB75_CLKDIV $::env(HUB75_CLKDIV)" }
+# HUB75_CLKLOW = extra CLK-low ticks per shifted pixel (default 0)
+if {[info exists ::env(HUB75_CLKLOW)] && $::env(HUB75_CLKLOW) ne ""} { puts $fh "`define HUB75_CLKLOW $::env(HUB75_CLKLOW)" }
 close $fh
 add_file -type verilog [file normalize defines_gen.v]
 

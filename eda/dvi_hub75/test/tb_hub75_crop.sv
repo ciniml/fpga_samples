@@ -38,6 +38,9 @@ module tb_hub75_crop;
 `ifndef CLKDIV
 `define CLKDIV 1
 `endif
+`ifndef CLKLOW
+`define CLKLOW 0
+`endif
     localparam int CB     = `CB;
     localparam int CHAIN_LEN = DISP_W * DISP_H / 64;
     localparam int X_BITS    = $clog2(CHAIN_LEN);
@@ -132,7 +135,8 @@ module tb_hub75_crop;
 
     logic ra, rb, rc, rd, re, r0, g0, b0, r1, g1, b1, oe, lat, hclk;
     Hub75 #(.PANEL_WIDTH(64), .PANEL_HEIGHT(64), .NUM_CHAINED(CHAIN_LEN / 64),
-            .CLOCK_DIVIDER(`CLKDIV), .COMPONENT_BITS(CB), .BASE_OE_CYCLES(BASE_OE)) u_hub75 (
+            .CLOCK_DIVIDER(`CLKDIV), .CLK_LOW_EXTRA(`CLKLOW),
+            .COMPONENT_BITS(CB), .BASE_OE_CYCLES(BASE_OE)) u_hub75 (
         .i_clk(clock), .i_rst(reset),
         .i_px_wen(rd_valid && !rd_cmd[CMD_BITS-1]),
         .i_px_addr(rd_cmd[CMD_BITS-2 -: ADDR_BITS]),
@@ -163,6 +167,28 @@ module tb_hub75_crop;
     wire scanning = !reset && u_hub75.state >= 3;
     always @(posedge hclk) if (scanning && (lat || !oe)) rule_errors++;
     always @(posedge lat)  if (scanning && !oe) rule_errors++;
+    // Shift-clock waveform while shifting rows: CLK low / high widths and
+    // data setup (last data change -> CLK rise), in 50 MHz clocks.
+    localparam int EXP_LOW  = (`CLKDIV + 1) * (1 + `CLKLOW);
+    localparam int EXP_HIGH = `CLKDIV + 1;
+    int clk_low_min = 1 << 30, clk_high_min = 1 << 30, setup_min = 1 << 30;
+    int clk_lvl_cyc = 0, data_cyc = 0;
+    logic hclk_q = 0;
+    logic [5:0] data_q = 0;
+    always @(posedge clock) begin
+        if (hclk != hclk_q) begin
+            if (scanning && u_hub75.state == 5) begin   // ST_OUTPUT_ROW
+                if (hclk) begin
+                    if (clk_lvl_cyc < clk_low_min) clk_low_min = clk_lvl_cyc;
+                    if (data_cyc < setup_min)      setup_min   = data_cyc;
+                end else if (clk_lvl_cyc < clk_high_min) clk_high_min = clk_lvl_cyc;
+            end
+            clk_lvl_cyc = 1;
+        end else clk_lvl_cyc++;
+        data_cyc = ({r0, g0, b0, r1, g1, b1} != data_q) ? 1 : data_cyc + 1;
+        hclk_q = hclk;
+        data_q = {r0, g0, b0, r1, g1, b1};
+    end
     always @(posedge lat) begin
         // ex = position counted from the first shifted pixel
         for (int ex = 0; ex < CHAIN_LEN; ex++) latch[ex] = sr[CHAIN_LEN - 1 - ex];
@@ -286,6 +312,13 @@ module tb_hub75_crop;
             errors++;
             $display("[tb_hub75] FIFO overflow x%0d", overflow);
         end
+        if (clk_low_min != EXP_LOW || clk_high_min != EXP_HIGH || setup_min < EXP_LOW) begin
+            errors++;
+            $display("[tb_hub75] shift clock: low %0d high %0d setup %0d (expected %0d / %0d / >= %0d)",
+                     clk_low_min, clk_high_min, setup_min, EXP_LOW, EXP_HIGH, EXP_LOW);
+        end
+        $display("[tb_hub75] shift clock %0.2f MHz: low %0d / high %0d clocks, data setup >= %0d",
+                 50.0 / (EXP_LOW + EXP_HIGH), clk_low_min, clk_high_min, setup_min);
         $display("[tb_hub75] %0dx%0d chain %0d, %0d bit, clkdiv %0d: refresh %0d clocks = %0d Hz at 50 MHz, %0d skipped source frames",
                  DISP_W, DISP_H, CHAIN_LEN, CB, `CLKDIV, refresh_period, 50_000_000 / refresh_period, skips);
         if (errors != 0) $fatal(1, "[tb_hub75] FAIL (%0d errors)", errors);
