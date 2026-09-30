@@ -44,6 +44,7 @@ if {${TARGET} == "tangnano9k_pmod"} {
 # USB=1: host transport over the Pmod USB board (rtl/usb), see top.v
 set USB [expr {[info exists ::env(USB)] && $::env(USB) == "1"}]
 if {$USB} { append defs "`define USB_HOST\n" }
+if {[info exists ::env(USB_DBG)] && $::env(USB_DBG) == "1"} { append defs "`define USB_DBG\n" }
 set RATE [expr {[info exists ::env(RATE)] ? $::env(RATE) : "1G"}]
 if {${RATE} == "742M5"} { append defs "`define RATE_742M5\n" }
 # 25K-only rate variants (self-test loopback, 8b10b stream): line rate = 50MHz x (MDIV + FRAC/8) / ODIV x 2.
@@ -104,9 +105,8 @@ if {${TARGET} == "tangprimer25k"} {
         foreach f {usb_pkg usb_phy_rx usb_phy_tx usb_phy usb_sie usb_descriptor_rom usb_device} {
             add_file -type verilog [file normalize ${RTL_DIR}/usb/${f}.sv]
         }
-        add_file -type verilog [file normalize ${RTL_DIR}/usb/gowin/usb_phy_gowin.v]
-        add_file -type verilog [file normalize ${RTL_DIR}/usb/gowin/usb_hs_cdr.v]
-        add_file -type verilog [file normalize ${RTL_DIR}/usb/gowin/usb_hs_os32.v]
+        add_file -type verilog [file normalize ${RTL_DIR}/usb/usb_phy_bridge.sv]
+        add_file -type verilog [file normalize ${RTL_DIR}/usb/gowin/usb_phy_gowin_p.v]
         add_file -type verilog [file normalize ${RTL_DIR}/oscdr/os_cdr.sv]
         add_file -type verilog [file normalize ${RTL_DIR}/oscdr/bit_gearbox.sv]
         add_file -type verilog [file normalize ${USB_SRC}/pll_usb/pll_usb.v]

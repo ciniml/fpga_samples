@@ -76,13 +76,17 @@ module top(
     // crystal, or with USB_HOST the USB 60 MHz PLL output.
     //------------------------------------------------------------------
 `ifdef USB_HOST
+    // pll_usb makes the 60 MHz reference of the USB 4-phase PLL; clk_sys itself is that PLL's
+    // 480 MHz divided by 8 inside the PHY wrapper (synchronous to the oversampler PCLK).
     localparam SYS_HZ = 60_000_000;
-    wire usb_pll_lock, usb_fclk_240m, clk_sys;
-    pll_usb u_pll_usb(.lock(usb_pll_lock), .clkout0(usb_fclk_240m), .clkout1(clk_sys), .clkout2(), .clkout3(),
+    wire usb_pll_lock, usb_pll_60m /* synthesis syn_keep=1 */;
+    wire clk_sys /* synthesis syn_keep=1 */;
+    wire os_lock, usb_rst60;
+    pll_usb u_pll_usb(.lock(usb_pll_lock), .clkout0(), .clkout1(usb_pll_60m), .clkout2(), .clkout3(),
                       .clkin(clk_in), .psdir(1'b0), .pspulse(1'b0));
     reg [3:0] sys_rst_sr;
     always @(posedge clk_sys or posedge reset_in)
-        if (reset_in) sys_rst_sr <= 4'hf; else sys_rst_sr <= {sys_rst_sr[2:0], ~usb_pll_lock};
+        if (reset_in) sys_rst_sr <= 4'hf; else sys_rst_sr <= {sys_rst_sr[2:0], ~usb_pll_lock | ~os_lock | usb_rst60};
     wire rst_sys  = sys_rst_sr[3];
 `else
     localparam SYS_HZ = 50_000_000;
@@ -337,18 +341,47 @@ module top(
     assign h_tx_ready = u_tx_ready;
     wire   uart_tx_valid = h_tx_valid;
 `endif
+`ifdef USB_DBG
+    // USB_DBG=1: the UART carries a usb_device-style status frame every 140 ms instead of the host
+    // protocol ('U' flags addr frame_l frame_h resets rxerr sof_l sof_h 0; eda/usb_device/host/usb_status.py)
+    reg [22:0] dbg_tick; reg dbg_go; reg [15:0] dbg_sof; reg [7:0] dbg_rst, dbg_err; reg dbg_rxact;
+    always @(posedge clk_sys or posedge rst_sys) begin
+        if (rst_sys) begin dbg_tick <= 0; dbg_go <= 0; dbg_sof <= 0; dbg_rst <= 0; dbg_err <= 0; dbg_rxact <= 0; end
+        else begin
+            dbg_tick <= dbg_tick + 1'b1; dbg_go <= dbg_tick == 0;
+            if (usb_sof) dbg_sof <= dbg_sof + 1'b1;
+            if (usb_bus_reset) dbg_rst <= dbg_rst + 1'b1;
+            if (utmi_rxerror && dbg_err != 8'hff) dbg_err <= dbg_err + 1'b1;
+            if (utmi_rxactive) dbg_rxact <= 1'b1;
+            if (dbg_go) dbg_rxact <= 1'b0;
+        end
+    end
+    wire [79:0] dbg_status = {8'h00, dbg_sof[15:8], dbg_sof[7:0], dbg_err, dbg_rst, {5'b0, usb_frame[10:8]}, usb_frame[7:0], usb_address, 1'b0,
+                              dbg_rxact, usb_pll_lock, vbus_sr[1], usb_suspended, s_configured, usb_hs, utmi_linestate, 8'h55};
+    reg [79:0] dbg_sh; reg [3:0] dbg_left; reg dbg_v;
+    always @(posedge clk_sys or posedge rst_sys) begin
+        if (rst_sys) begin dbg_sh <= 0; dbg_left <= 0; dbg_v <= 0; end
+        else if (dbg_go && dbg_left == 0) begin dbg_sh <= dbg_status; dbg_left <= 4'd10; dbg_v <= 1'b1; end
+        else if (dbg_v && u_tx_ready) begin dbg_sh <= {8'd0, dbg_sh[79:8]}; dbg_left <= dbg_left - 1'b1; if (dbg_left == 4'd1) dbg_v <= 1'b0; end
+    end
+    uart_tx #(.BAUD_DIVIDER(SYS_HZ / UART_BAUD)) u_uart_tx(
+        .clock(clk_sys), .reset(rst_sys),
+        .data_valid(dbg_v), .data_ready(u_tx_ready), .data_bits(dbg_sh[7:0]),
+        .tx(uart_txd));
+`else
     uart_tx #(.BAUD_DIVIDER(SYS_HZ / UART_BAUD)) u_uart_tx(
         .clock(clk_sys), .reset(rst_sys),
         .data_valid(uart_tx_valid), .data_ready(u_tx_ready), .data_bits(h_tx_data),
         .tx(uart_txd));
+`endif
 
 `ifdef USB_HOST
     //------------------------------------------------------------------
     // USB 2.0 HS device (rtl/usb): EP1 OUT = host commands, EP1 IN = reply
     // stream (full packets while data flows, the remainder / a ZLP after
-    // 1 ms of idle). PHY front end and clocking as eda/usb_device (proven
-    // HS_OS32 configuration): 60 MHz -> pll_usb_os -> 480 MHz x 4 phases
-    // on the BANK6/7 HCLK group, oversampler PCLK 120 MHz.
+    // 1 ms of idle). PHY front end and clocking as eda/usb_device
+    // (usb_phy_gowin_p: 60 MHz PLL -> pll_usb_os -> 480 MHz x 4 phases on
+    // the BANK6/7 HCLK group, PCLK 120 MHz and clk_sys 60 MHz by CLKDIV).
     //------------------------------------------------------------------
     wire [7:0] utmi_data_out, utmi_data_in;
     wire       utmi_txvalid, utmi_txready, utmi_rxactive, utmi_rxvalid, utmi_rxerror, utmi_termselect;
@@ -357,11 +390,11 @@ module top(
     wire [6:0] usb_address;
     wire [10:0] usb_frame;
     wire [15:0] usb_vendor_reg;
-    wire os_lock, os_f0 /* synthesis syn_keep=1 */, os_f90, os_f180, os_f270;
+    wire os_f0 /* synthesis syn_keep=1 */, os_f90, os_f180, os_f270;
     wire os_pclk /* synthesis syn_keep=1 */;   // oversampler PCLK: used below so the net survives for the SDC
     reg  os_tick; always @(posedge os_pclk) os_tick <= ~os_tick;
     pll_usb_os #(.FCLKIN("60"), .MDIV(16), .MDIV_FRAC(0), .ODIV(2)) u_pll_os(
-        .lock(os_lock), .clkout0(os_f0), .clkout1(os_f90), .clkout2(os_f180), .clkout3(os_f270), .clkin(clk_sys),
+        .lock(os_lock), .clkout0(os_f0), .clkout1(os_f90), .clkout2(os_f180), .clkout3(os_f270), .clkin(usb_pll_60m),
         .pssel(3'd0), .psdir(1'b0), .pspulse(1'b0));
     reg [1:0] vbus_sr; always @(posedge clk_sys) vbus_sr <= {vbus_sr[0], vbus_det};
     UsbDevice #(.HS_CAPABLE(1), .CLK_PER_US(60), .EP1_STREAM(1), .STREAM_FLUSH_US(1000)) u_usb_dev(
@@ -376,13 +409,12 @@ module top(
         .i_vendor_status({8'h54, 4'b0, os_tick, vbus_sr[1], rx_align, usb_hs, 16'd0}),   // 'T'race: link / speed flags
         .o_rx_valid(s_rx_valid), .o_rx_data(s_rx_data), .i_rx_ready(1'b1),
         .i_tx_valid(usb_tx_valid), .i_tx_data(h_tx_data), .o_tx_ready(s_tx_ready));
-    usb_phy_gowin #(.SE_FROM_DIFF(1), .DYN_DLY(0), .HS_CDR(0), .HS_OS32(1)) u_usb_phy(
-        .os_clk_ref_i(clk_in), .os_rstn_ref_i(~reset_in), .os_pll_lock_i(os_lock),
-        .os_fclk0_i(os_f0), .os_fclk90_i(os_f90), .os_fclk180_i(os_f180), .os_fclk270_i(os_f270), .os_pclk_o(os_pclk), .os_samples_o(), .os_cmp_o(),
-        .i_scan_freeze(1'b0), .i_scan_ofs(1'b0), .i_scan_class(3'd0), .i_hist_run(1'b0), .o_hist(), .o_txfifo_dbg(),
-        .clk_i(clk_sys), .fclk_i(usb_fclk_240m), .rst_i(rst_sys), .pll_locked_i(usb_pll_lock),
-        .i_track_en(1'b0), .i_dly_dd(8'd0), .i_dly_dp(8'd0), .i_dly_dn(8'd0), .o_dly_dd(),
-        .o_mon_dd(), .o_mon_dp(), .o_mon_dn(),
+    usb_phy_gowin_p u_usb_phy(
+        .clk_ref_i(clk_in), .rstn_ref_i(~reset_in), .pll_lock_i(os_lock),
+        .fclk0_i(os_f0), .fclk90_i(os_f90), .fclk180_i(os_f180), .fclk270_i(os_f270),
+        .pclk_o(os_pclk), .clk60_o(clk_sys), .rst60_o(usb_rst60), .rst_i(rst_sys),
+        .i_scan_freeze(1'b0), .i_scan_ofs(1'b0), .i_scan_class(3'd0), .i_hist_run(1'b0), .o_hist(),
+        .o_samples(), .o_cmp_dbg(), .o_tx_oe(), .o_mon_line(),
         .utmi_data_out_i(utmi_data_out), .utmi_txvalid_i(utmi_txvalid), .utmi_txready_o(utmi_txready),
         .utmi_data_in_o(utmi_data_in), .utmi_rxactive_o(utmi_rxactive), .utmi_rxvalid_o(utmi_rxvalid),
         .utmi_rxerror_o(utmi_rxerror), .utmi_linestate_o(utmi_linestate),

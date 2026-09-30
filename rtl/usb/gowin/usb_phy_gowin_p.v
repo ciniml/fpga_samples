@@ -250,10 +250,16 @@ module usb_phy_gowin_p #(
     // (SE_FROM_DIFF of usb_phy_gowin.v: J/K from the differential receiver, SE0 from the comparators;
     // in HS the line state is SE0 while idle, else the last recovered level)
     wire       hs_sel = (utmi_xcvrselect_i == 2'b00) && !utmi_termselect_i;
-    wire [7:0] rx_dd = hs_sel ? l_word : {8{l_dd}};
-    wire       rx_dd_valid = hs_sel ? l_valid : 1'b1;
-    wire [7:0] rx_dp = hs_sel ? ( l_word & {8{l_act}}) : {8{ l_dd & ~l_se0}};
-    wire [7:0] rx_dn = hs_sel ? (~l_word & {8{l_act}}) : {8{~l_dd & ~l_se0}};
+    // The pclk registers above are launched at E + T and sampled at the clk60 edge E'; the two CLKDIVs
+    // can leave reset one FCLK apart (2 ns) and the placement adds skew, so the crossing must stay a
+    // plain register-to-register path: the mux below is quasi-static (hs_sel) and its result is
+    // re-registered in clk60 before any PHY logic sees it (one clk60 of extra receive latency).
+    wire [7:0] m_dd = hs_sel ? l_word : {8{l_dd}};
+    wire       m_dd_valid = hs_sel ? l_valid : 1'b1;
+    wire [7:0] m_dp = hs_sel ? ( l_word & {8{l_act}}) : {8{ l_dd & ~l_se0}};
+    wire [7:0] m_dn = hs_sel ? (~l_word & {8{l_act}}) : {8{~l_dd & ~l_se0}};
+    reg  [7:0] rx_dd, rx_dp, rx_dn; reg rx_dd_valid;
+    always @(posedge clk60) begin rx_dd <= m_dd; rx_dd_valid <= m_dd_valid; rx_dp <= m_dp; rx_dn <= m_dn; end
     wire [7:0] tx_dp8, tx_dn8; wire tx_oe;
     wire       pullup_dp_en, pullup_dn_en, term_dp_en, term_dn_en;
     reg        rst60_l; always @(posedge clk60) rst60_l <= rst60_o | rst_i;
@@ -286,8 +292,12 @@ module usb_phy_gowin_p #(
     );
     // transmit word (launched on a clk60 edge E) -> pclk register at E + T -> nibble 0 in the cycle
     // ending at E + 2T, nibble 1 in the one after; each bit goes out twice at 960 Mbps
+    // (the PHY's line outputs are re-registered in clk60 first, so the crossing into pclk is
+    // register-to-register as well; one clk60 of extra transmit latency)
+    reg [7:0] t_dp8, t_dn8; reg t_oe;
+    always @(posedge clk60) begin t_dp8 <= tx_dp8; t_dn8 <= tx_dn8; t_oe <= tx_oe; end
     reg [7:0] w_dp, w_dn; reg w_oe;
-    always @(posedge pclk) if (!ph) begin w_dp <= tx_dp8; w_dn <= tx_dn8; w_oe <= tx_oe; end
+    always @(posedge pclk) if (!ph) begin w_dp <= t_dp8; w_dn <= t_dn8; w_oe <= t_oe; end
     wire [3:0] tx_dp = ph ? w_dp[3:0] : w_dp[7:4];
     wire [3:0] tx_dn = ph ? w_dn[3:0] : w_dn[7:4];
     wire       tx_oen = ~w_oe;

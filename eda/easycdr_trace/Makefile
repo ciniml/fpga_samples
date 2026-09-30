@@ -27,7 +27,8 @@ endif
 ifeq ($(USB),1)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_usb
 export USB
-USB_VERYL_SV := $(addprefix ../../rtl/usb/,usb_pkg.sv usb_phy_rx.sv usb_phy_tx.sv usb_phy.sv usb_sie.sv usb_descriptor_rom.sv usb_device.sv)
+USB_WRAPPER_V := ../../rtl/usb/gowin/usb_phy_gowin_p.v
+USB_VERYL_SV := $(addprefix ../../rtl/usb/,usb_pkg.sv usb_phy_rx.sv usb_phy_tx.sv usb_phy.sv usb_phy_bridge.sv usb_sie.sv usb_descriptor_rom.sv usb_device.sv)
 endif
 # RATE=742M5: 742.5Mbps link (both boards; e.g. to share a 720p DVI clock on the TX)
 ifneq ($(RATE),)
@@ -41,7 +42,7 @@ TRACE_VERYL_SV := ../../rtl/trace/tx_link_core.sv ../../rtl/trace/trace_link_tx.
                   ../../rtl/trace/trace_rx_decoder.sv ../../rtl/trace/trace_link_diag.sv ../../rtl/trace/trace_sym_inject.sv ../../rtl/trace/trace_capture.sv
 SRCS := src/$(TARGET)/pins.cst $(wildcard src/$(TARGET)/*.sdc) \
         $(wildcard src/$(TARGET)/*.v) $(wildcard src/$(TARGET)/*/*.v) $(wildcard src/common/*.v) \
-        $(TRACE_VERYL_SV) $(USB_VERYL_SV) \
+        $(TRACE_VERYL_SV) $(USB_VERYL_SV) $(USB_WRAPPER_V) \
         ../../rtl/displayport/src/encoder_8b10b.sv $(wildcard ../../rtl/manchester/*.sv) project.tcl \
         host/tracemap.py $(wildcard maps/*.map)
 
