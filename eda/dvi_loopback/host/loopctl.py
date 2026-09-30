@@ -12,7 +12,7 @@
   loopctl.py words                 raw 10-bit words of the three lanes
   loopctl.py send <chars>          send command characters
   loopctl.py gamma <g> [rgb] [bits]  colour tables (eda/dvi_hub75): out = in^g,
-                                   rounded to `bits` (default 5) displayed bits;
+                                   rounded to `bits` (default 6) displayed bits;
                                    rgb = channels to write (default rgb)
   loopctl.py gamma identity        tables back to identity ("i")
 
@@ -84,7 +84,7 @@ class Loop:
         return [l for l in txt.splitlines() if l.startswith('W')]
 
 
-def gamma_table(g, bits=5):
+def gamma_table(g, bits=6):
     """8-bit table for out = in^g, rounded to the `bits` displayed bits
     (the hardware shows the top `bits` of each entry)."""
     top = (1 << bits) - 1
@@ -136,7 +136,7 @@ def main():
         else:
             g = float(a.arg)
             chans = a.extra[0] if a.extra else 'rgb'
-            bits = int(a.extra[1]) if len(a.extra) > 1 else 5
+            bits = int(a.extra[1]) if len(a.extra) > 1 else 6
             lp.send_gamma(gamma_table(g, bits), chans)
     else:
         sys.exit(__doc__)

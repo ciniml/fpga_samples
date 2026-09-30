@@ -31,13 +31,13 @@
 `define DISP_H 128
 `endif
 `ifndef COMPONENT_BITS
-`define COMPONENT_BITS 5      // BCM bit planes per colour (make BITS=6)
+`define COMPONENT_BITS 6      // BCM bit planes per colour (make BITS=5)
 `endif
 `ifndef HUB75_CLKDIV
-`define HUB75_CLKDIV 1        // HUB75 CLK = 50 MHz / (2 * (N + 1)) (make HUB75_CLKDIV=0)
+`define HUB75_CLKDIV 0        // HUB75 CLK = 50 MHz / (2 * (N + 1) + CLKLOW) (make HUB75_CLKDIV=1)
 `endif
 `ifndef HUB75_CLKLOW
-`define HUB75_CLKLOW 0        // extra CLK-low ticks per pixel (make HUB75_CLKDIV=0 HUB75_CLKLOW=1: 16.7 MHz)
+`define HUB75_CLKLOW 1        // extra CLK-low ticks per pixel: 16.7 MHz (25 MHz loses the far panels' B2)
 `endif
 module top (
     input  wire clock,            // on-board 50 MHz oscillator

@@ -5,8 +5,8 @@ ROOT_DIR ?= $(abspath ../..)
 RTL_DIR ?= $(ROOT_DIR)/rtl
 
 # PANEL=<W>x<H> (64 / 128 each, default 128x128)
-# BITS=<n> BCM bit planes per colour (default 5), HUB75_CLKDIV=<n> (default 1)
-# HUB75_CLKLOW=<n> extra CLK-low ticks per pixel (default 0; CLKDIV=0 CLKLOW=1 -> 16.7 MHz)
+# BITS=<n> BCM bit planes per colour (default 6), HUB75_CLKDIV=<n> (default 0)
+# HUB75_CLKLOW=<n> extra CLK-low ticks per pixel (default 1; CLKDIV=0 CLKLOW=1 -> 16.7 MHz)
 BUILD_SUFFIX :=
 ifneq ($(PANEL),)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_$(PANEL)
