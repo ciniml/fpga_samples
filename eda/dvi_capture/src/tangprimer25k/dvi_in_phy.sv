@@ -77,6 +77,12 @@ module dvi_in_phy #(
     output wire [2:0]  o_decode_err,
     output wire        o_locked,
 
+    // HDMI data islands (see dvi_in; safe to leave unconnected)
+    output wire        o_island,
+    output wire        o_island_first,
+    output wire [11:0] o_terc4,
+    output wire [2:0]  o_terc4_err,
+
     // Bring-up debug taps (scope outputs; safe to leave unconnected).
     output wire [9:0]  o_dbg_word_d0,
     output wire [9:0]  o_dbg_word_d1,
@@ -183,6 +189,10 @@ module dvi_in_phy #(
         .o_video_ctl      (o_video_ctl),
         .o_video_valid    (o_video_valid),
         .o_decode_err     (o_decode_err),
+        .o_island         (o_island),
+        .o_island_first   (o_island_first),
+        .o_terc4          (o_terc4),
+        .o_terc4_err      (o_terc4_err),
         .o_locked         (o_locked),
         .o_align_shift_req(align_shift_req),
         .o_delay_inc      (delay_inc),

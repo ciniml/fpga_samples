@@ -35,6 +35,8 @@ if {[info exists ::env(BITS)] && $::env(BITS) ne ""} { puts $fh "`define COMPONE
 if {[info exists ::env(HUB75_CLKDIV)] && $::env(HUB75_CLKDIV) ne ""} { puts $fh "`define HUB75_CLKDIV $::env(HUB75_CLKDIV)" }
 # HUB75_CLKLOW = extra CLK-low ticks per shifted pixel (default 1)
 if {[info exists ::env(HUB75_CLKLOW)] && $::env(HUB75_CLKLOW) ne ""} { puts $fh "`define HUB75_CLKLOW $::env(HUB75_CLKLOW)" }
+# HDMI_AUDIO = 1 (default): HDMI EDID + audio DAC; 0: DVI-only EDID
+if {[info exists ::env(HDMI_AUDIO)] && $::env(HDMI_AUDIO) ne ""} { puts $fh "`define HDMI_AUDIO $::env(HDMI_AUDIO)" }
 close $fh
 add_file -type verilog [file normalize defines_gen.v]
 
@@ -47,6 +49,11 @@ add_file -type verilog [file normalize ${RTL_DIR}/hub75/hub75.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/ddc_edid/ddc_edid.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/ddc_edid/edid_rom.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/ddc_edid/edid_rom_1080p.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/ddc_edid/edid_rom_hdmi.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/hdmi_rx/hdmi_packet_rx.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/hdmi_rx/hdmi_audio_rx.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/hdmi_rx/delta_sigma_dac.sv]
+add_file -type verilog [file normalize ${RTL_DIR}/hdmi_rx/rgb_range_expand.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_tx.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_rx.sv]
 

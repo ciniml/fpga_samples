@@ -31,6 +31,7 @@ pub module ddc_edid #(
     param I2C_ADDR    : bit<7> = 7'h50,
     param FILTER_DEPTH: u32    = 8    , // glitch filter length in clocks (>= 50ns spike suppression)
     param EDID_1080P  : bit    = 1'b0 , // 1: serve edid_rom_1080p (1920x1080@60) instead of edid_rom (1280x720@60)
+    param EDID_HDMI   : bit    = 1'b0 , // 1: serve edid_rom_hdmi (720p, HDMI + 2ch audio, 256 bytes); overrides EDID_1080P
 ) (
     i_clk: input clock,
     i_rst: input reset,
@@ -116,7 +117,12 @@ pub module ddc_edid #(
     var host_ack: logic   ;
     var rom_data: logic<8>;
 
-    if EDID_1080P :g_rom {
+    if EDID_HDMI :g_rom {
+        inst u_rom: edid_rom_hdmi (
+            i_addr: offset  ,
+            o_data: rom_data,
+        );
+    } else if EDID_1080P {
         inst u_rom: edid_rom_1080p (
             i_addr: offset  ,
             o_data: rom_data,

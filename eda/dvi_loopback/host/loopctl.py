@@ -15,6 +15,7 @@
                                    rounded to `bits` (default 6) displayed bits;
                                    rgb = channels to write (default rgb)
   loopctl.py gamma identity        tables back to identity ("i")
+  loopctl.py audio [sec]           HDMI audio / packet status (eda/dvi_hub75)
 
   target: a = common offset (default), 0 / 1 / 2 = lane trim.
   The port defaults to the Tang Primer 25K USB Debugger's second
@@ -112,6 +113,17 @@ def fmt(r):
             f"X{r['X']:6d} Y{r['Y']:08X} Z[{r['Z0']} {r['Z1']} {r['Z2']}]")
 
 
+def audio(r, pclk):
+    """eda/dvi_hub75 packs the HDMI packet / audio state into Z0..Z2."""
+    z0, z1, z2 = r['Z0'], r['Z1'], r['Z2']
+    n, cts = z1 >> 12, z2 >> 12
+    fs = pclk * n / (128 * cts) if cts else 0
+    return (f"pkts {z0 >> 16:5d} hdr_err {(z0 >> 8) & 0xFF:3d} sub_err {z0 & 0xFF:3d} "
+            f"sym_err {z1 & 1} | N {n} CTS {cts} fs {fs:8.1f} Hz | "
+            f"running {(z1 >> 1) & 1} level {((z1 >> 3) & 0x1FF) * 2:3d} "
+            f"underrun {(z2 >> 6) & 0x3F} overflow {z2 & 0x3F} | limited_range {(z1 >> 2) & 1}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--port', default=default_port())
@@ -126,6 +138,12 @@ def main():
     elif a.cmd in ('scan', 'fine'):
         for r in lp.scan(a.arg or 'a', fine=a.cmd == 'fine'):
             print(fmt(r))
+    elif a.cmd == 'audio':
+        rs = lp.lines(float(a.arg or 3))
+        for prev, r in zip(rs, rs[1:]):
+            # C = pixel clocks, R lines are 1 s apart
+            pclk = ((r['C'] - prev['C']) & 0xFFFFFFFF) or 74.25e6
+            print(audio(r, pclk))
     elif a.cmd == 'words':
         print('\n'.join(lp.words()))
     elif a.cmd == 'send':

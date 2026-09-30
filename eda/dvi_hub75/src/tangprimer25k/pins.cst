@@ -34,6 +34,14 @@ IO_PORT "ddc_sda" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
 IO_LOC "hpd" A1;
 IO_PORT "hpd" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
 
+// Audio: 1-bit delta-sigma DAC outputs (pin 19 = D1 left, pin 20 = E3
+// right), each into R 1k / C 3.3n / R 10k / C 330p and a DC-blocking
+// capacitor (see README).
+IO_LOC "dac_l" D1;
+IO_PORT "dac_l" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "dac_r" E3;
+IO_PORT "dac_r" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
 // USB-UART (USB Debugger, FT2232 if01), 115200 8N1
 IO_LOC "uart_txd" C3;
 IO_PORT "uart_txd" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;

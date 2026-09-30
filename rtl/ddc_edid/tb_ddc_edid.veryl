@@ -285,6 +285,61 @@ module ddc_edid_read;
 endmodule
 }}}
 
+#[test(edid_rom_hdmi_check)]
+embed (inline) sv{{{
+`timescale 1ns/1ps
+
+// edid_rom_hdmi: both block checksums, one extension, CEA-861 rev 3 with
+// the audio / HDMI VSDB data blocks the audio path relies on.
+module edid_rom_hdmi_check;
+    logic [7:0] addr;
+    logic [7:0] data;
+    logic [7:0] e [0:255];
+    edid_rom_hdmi u_rom (.i_addr(addr), .o_data(data));
+
+    initial begin
+        int errors, d, i;
+        logic [7:0] sum0, sum1;
+        bit vsdb, audio;
+        errors = 0;
+        for (int a = 0; a < 256; a++) begin
+            addr = a[7:0];
+            #1;
+            e[a] = data;
+        end
+        sum0 = 0; sum1 = 0;
+        for (int a = 0; a < 128; a++) begin
+            sum0 += e[a];
+            sum1 += e[128 + a];
+        end
+        if (sum0 != 0 || sum1 != 0) begin
+            errors++;
+            $display("[tb_edid_hdmi] checksums %02h / %02h", sum0, sum1);
+        end
+        if (e[126] != 8'd1 || e[128] != 8'h02 || e[129] != 8'h03) begin
+            errors++;
+            $display("[tb_edid_hdmi] extension count / CEA tag / revision: %02h %02h %02h", e[126], e[128], e[129]);
+        end
+        // walk the data block collection
+        d = e[130];
+        vsdb = 0; audio = 0;
+        i = 132;
+        while (i < 128 + d) begin
+            if (e[i][7:5] == 3'd3 && {e[i+3], e[i+2], e[i+1]} == 24'h000C03) vsdb = 1;
+            if (e[i][7:5] == 3'd1 && e[i+1] == 8'h09) audio = 1;   // LPCM, 2ch
+            i += 1 + e[i][4:0];
+        end
+        if (i != 128 + d || !vsdb || !audio) begin
+            errors++;
+            $display("[tb_edid_hdmi] data blocks: end %0d (d = %0d), VSDB %0d, audio %0d", i, 128 + d, vsdb, audio);
+        end
+        if (errors != 0) $fatal(1, "[tb_edid_hdmi] %0d errors", errors);
+        $display("[tb_edid_hdmi] PASS");
+        $finish;
+    end
+endmodule
+}}}
+
 #[test(hpd_ctrl_seq)]
 embed (inline) sv{{{
 `timescale 1ns/1ps

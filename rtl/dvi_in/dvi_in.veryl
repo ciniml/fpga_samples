@@ -59,6 +59,17 @@ pub module dvi_in #(
     // Per-lane decode error flag, registered alongside o_video_valid.
     o_decode_err: output logic<3>,
 
+    // HDMI data islands, registered alongside o_video_valid: o_island marks
+    // every word of a data-island run (leading guard band, packets,
+    // trailing guard band), o_island_first its first word. o_terc4 is the
+    // TERC4-decoded nibble per lane ({lane 2, lane 1, lane 0}) and
+    // o_terc4_err flags words that are not TERC4 symbols (the guard band
+    // on lanes 1 / 2, or bit errors).
+    o_island      : output logic    ,
+    o_island_first: output logic    ,
+    o_terc4       : output logic<12>,
+    o_terc4_err   : output logic<3> ,
+
     // Word alignment status / control.
     o_locked         : output logic,
     o_align_shift_req: output logic,
@@ -117,6 +128,33 @@ pub module dvi_in #(
                 r.is_ctrl = 0;
                 r.ctrl    = 2'b00;
             }
+        }
+        return r;
+    }
+
+    // TERC4 (HDMI 1.4 Table 5-6): {valid, nibble}.
+    function decodeTerc4 (
+        s: input logic<10>,
+    ) -> logic<5> {
+        var r: logic<5>;
+        case s {
+            10'b1010011100: r = 5'h10;
+            10'b1001100011: r = 5'h11;
+            10'b1011100100: r = 5'h12;
+            10'b1011100010: r = 5'h13;
+            10'b0101110001: r = 5'h14;
+            10'b0100011110: r = 5'h15;
+            10'b0110001110: r = 5'h16;
+            10'b0100111100: r = 5'h17;
+            10'b1011001100: r = 5'h18;
+            10'b0100111001: r = 5'h19;
+            10'b0110011100: r = 5'h1A;
+            10'b1011000110: r = 5'h1B;
+            10'b1010001110: r = 5'h1C;
+            10'b1001110001: r = 5'h1D;
+            10'b0101100011: r = 5'h1E;
+            10'b1011000011: r = 5'h1F;
+            default       : r = 5'h00;
         }
         return r;
     }
@@ -323,6 +361,9 @@ pub module dvi_in #(
     var cur_kind: RunKind   ; // same for word t-1
     var cur_idx : logic  <2>;
     var all_ctrl: logic     ; // word t-1 is a control symbol on all three lanes
+    var terc4_0 : logic  <5>;
+    var terc4_1 : logic  <5>;
+    var terc4_2 : logic  <5>;
 
     always_comb {
         ctrl0_decode = isControlSymbol(d0_q);
@@ -371,6 +412,9 @@ pub module dvi_in #(
         err_next[0] = !hdmi_mask && decodeTmdsErr(d0_q, de_next);
         err_next[1] = !hdmi_mask && decodeTmdsErr(d1_q, de_next);
         err_next[2] = !hdmi_mask && decodeTmdsErr(d2_q, de_next);
+        terc4_0     = decodeTerc4(d0_q);
+        terc4_1     = decodeTerc4(d1_q);
+        terc4_2     = decodeTerc4(d2_q);
     }
 
     always_ff (r#clock) {
@@ -392,6 +436,11 @@ pub module dvi_in #(
             o_video_ctl   = 0;
             o_video_valid = 0;
             o_decode_err  = 0;
+
+            o_island       = 0;
+            o_island_first = 0;
+            o_terc4        = 0;
+            o_terc4_err    = 0;
         } else {
             // HDMI run tracking (state of word t-1 becomes the t-2 state).
             run_kind = cur_kind;
@@ -417,10 +466,14 @@ pub module dvi_in #(
 
             // Stage 2: emit only while locked. While not locked, hold.
             if locked_q && valid_q {
-                o_video_data  = data_next;
-                o_video_de    = de_next;
-                o_video_valid = 1;
-                o_decode_err  = err_next;
+                o_video_data   = data_next;
+                o_video_de     = de_next;
+                o_video_valid  = 1;
+                o_decode_err   = err_next;
+                o_island       = !ctrl0_decode.is_ctrl && cur_kind == RunKind::ISLAND;
+                o_island_first = !ctrl0_decode.is_ctrl && cur_kind == RunKind::ISLAND && cur_idx == 2'd0;
+                o_terc4        = {terc4_2[3:0], terc4_1[3:0], terc4_0[3:0]};
+                o_terc4_err    = {!terc4_2[4], !terc4_1[4], !terc4_0[4]};
                 // hsync/vsync/ctl only update during blanking (de == 0),
                 // and only from a word that decodes as a genuine control
                 // symbol that agrees with a neighbouring word — a corrupted
@@ -438,8 +491,10 @@ pub module dvi_in #(
                     o_video_ctl   = ctl_next;
                 }
             } else {
-                o_video_valid = 0;
-                o_decode_err  = 0;
+                o_video_valid  = 0;
+                o_decode_err   = 0;
+                o_island       = 0;
+                o_island_first = 0;
             }
         }
     }

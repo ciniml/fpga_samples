@@ -8,7 +8,8 @@
  * @brief DVI / HDMI input (720p60) -> HUB75 LED matrix, Tang Primer 25K.
  *
  *   pmod0        : Pmod DVI (RX; the eda/dvi_capture PHY, CTLE HIGH)
- *   40-pin header: DDC SCL F1 (pin 15), SDA F2 (pin 16), HPD A1 (pin 17)
+ *   40-pin header: DDC SCL F1 (pin 15), SDA F2 (pin 16), HPD A1 (pin 17),
+ *                  audio DAC L D1 (pin 19), R E3 (pin 20)
  *   pmod1+pmod2  : HUB75 Pmod baseboard -> 64x64 panels (1/32 scan)
  *   USB-UART     : diagnostics / sampling-phase tuning (loop_report)
  *
@@ -17,8 +18,14 @@
  *   the right of the first in the shift chain (128x128 = 256x64).
  *
  *   pclk (74.25 MHz, recovered)               clock (50 MHz, on-board)
- *   dvi_in_phy -> crop_to_hub75 --async FIFO--> Hub75 (double-buffered
- *                                               VRAM, BCM, 5 bit/colour)
+ *   dvi_in_phy -> rgb_range_expand -> crop_to_hub75 --async FIFO--> Hub75
+ *                                     (double-buffered VRAM, BCM)
+ *        \-> hdmi_packet_rx -> hdmi_audio_rx -> delta_sigma_dac x 2
+ *
+ *   HDMI_AUDIO (default 1) serves the HDMI EDID (CEA-861 extension with
+ *   2ch LPCM), so the source sends HDMI with audio in data islands; the
+ *   AVI InfoFrame selects limited -> full range expansion of the RGB.
+ *   HDMI_AUDIO 0 serves the DVI-only EDID (no audio, no range expansion).
  *
  *   The HUB75 side runs from the board oscillator, so the panel keeps
  *   refreshing (last picture) when the source goes away.
@@ -35,6 +42,9 @@
 `endif
 `ifndef HUB75_CLKDIV
 `define HUB75_CLKDIV 0        // HUB75 CLK = 50 MHz / (2 * (N + 1) + CLKLOW) (make HUB75_CLKDIV=1)
+`endif
+`ifndef HDMI_AUDIO
+`define HDMI_AUDIO 1          // HDMI EDID + audio DAC (make HDMI_AUDIO=0: DVI only)
 `endif
 `ifndef HUB75_CLKLOW
 `define HUB75_CLKLOW 1        // extra CLK-low ticks per pixel: 16.7 MHz (25 MHz loses the far panels' B2)
@@ -58,6 +68,10 @@ module top (
     input  wire  ddc_scl,
     inout  wire  ddc_sda,
     output logic hpd,
+
+    // Audio: 1-bit delta-sigma outputs (40-pin header 19 / 20), RC filter
+    output logic dac_l,
+    output logic dac_r,
 
     // HUB75 on pmod1 + pmod2
     output logic       hub75_row_a,
@@ -101,7 +115,7 @@ module top (
     IOBUF u_ddc_sda (.O(ddc_sda_in), .IO(ddc_sda), .I(1'b0), .OEN(!ddc_sda_oe));
     logic       ddc_read_strobe;
     logic [7:0] ddc_offset;
-    ddc_edid u_ddc (
+    ddc_edid #(.EDID_HDMI(1'(`HDMI_AUDIO))) u_ddc (
         .i_clk        (clock),
         .i_rst        (reset_sys),
         .i_scl        (ddc_scl),
@@ -159,6 +173,9 @@ module top (
     logic [3:0]  video_ctl;
     logic [2:0]  decode_err;
     wire  [9:0]  dbg_word_d0, dbg_word_d1, dbg_word_d2;
+    logic        island, island_first;
+    logic [11:0] terc4;
+    logic [2:0]  terc4_err;
     wire         dbg_align_shift;
     dvi_in_phy #(.DELAY_TAP_INIT(24)) u_phy (
         .i_delay_offset     (rx_offset),
@@ -177,10 +194,104 @@ module top (
         .o_video_valid      (video_valid),
         .o_decode_err       (decode_err),
         .o_locked           (locked),
+        .o_island           (island),
+        .o_island_first     (island_first),
+        .o_terc4            (terc4),
+        .o_terc4_err        (terc4_err),
         .o_dbg_word_d0      (dbg_word_d0),
         .o_dbg_word_d1      (dbg_word_d1),
         .o_dbg_word_d2      (dbg_word_d2),
         .o_dbg_align_shift  (dbg_align_shift)
+    );
+
+    // =================================================================
+    // HDMI data islands: audio, AVI InfoFrame
+    // =================================================================
+    logic        pkt_valid, pkt_hb_ok, pkt_sym_err;
+    logic [23:0] pkt_hb;
+    logic [55:0] pkt_sb [0:3];
+    logic [3:0]  pkt_sb_ok;
+    hdmi_packet_rx u_pkt (
+        .clk           (pclk),
+        .rst           (reset_pclk),
+        .i_valid       (video_valid),
+        .i_island      (island),
+        .i_island_first(island_first),
+        .i_terc4       (terc4),
+        .i_terc4_err   (terc4_err),
+        .o_pkt_valid   (pkt_valid),
+        .o_hb          (pkt_hb),
+        .o_sb          (pkt_sb),
+        .o_hb_ok       (pkt_hb_ok),
+        .o_sb_ok       (pkt_sb_ok),
+        .o_sym_err     (pkt_sym_err)
+    );
+
+    // (sticky) a packet had a non-TERC4 payload word
+    logic pkt_sym_err_seen;
+    always_ff @(posedge pclk) begin
+        if (reset_pclk)                    pkt_sym_err_seen <= 1'b0;
+        else if (pkt_valid && pkt_sym_err) pkt_sym_err_seen <= 1'b1;
+    end
+
+    // DAC update rate: 74.25 MHz / 12 = 6.1875 MHz
+    logic [3:0] dac_div;
+    wire        dac_en = dac_div == 4'd11;
+    always_ff @(posedge pclk) dac_div <= (reset_pclk || dac_en) ? 4'd0 : dac_div + 1'd1;
+
+    logic signed [17:0] audio_l, audio_r;
+    logic        avi_limited, audio_running;
+    logic [19:0] audio_n, audio_cts;
+    logic [9:0]  audio_level;
+    logic [15:0] pkt_count;
+    logic [7:0]  pkt_hdr_err, pkt_sub_err;
+    logic [5:0]  audio_underrun, audio_overflow;
+    hdmi_audio_rx u_audio (
+        .clk            (pclk),
+        .rst            (reset_pclk),
+        .i_locked       (locked),
+        .i_pkt_valid    (pkt_valid),
+        .i_hb           (pkt_hb),
+        .i_sb           (pkt_sb),
+        .i_hb_ok        (pkt_hb_ok),
+        .i_sb_ok        (pkt_sb_ok),
+        .i_out_en       (dac_en),
+        .o_left         (audio_l),
+        .o_right        (audio_r),
+        .o_avi_seen     (),
+        .o_avi_y        (),
+        .o_avi_q        (),
+        .o_avi_vic      (),
+        .o_limited_range(avi_limited),
+        .o_n            (audio_n),
+        .o_cts          (audio_cts),
+        .o_running      (audio_running),
+        .o_level        (audio_level),
+        .o_pkt_count    (pkt_count),
+        .o_hdr_err      (pkt_hdr_err),
+        .o_sub_err      (pkt_sub_err),
+        .o_underrun     (audio_underrun),
+        .o_overflow     (audio_overflow),
+        .o_pop          (),
+        .o_pop_data     ()
+    );
+    delta_sigma_dac u_dac_l (.clk(pclk), .rst(reset_pclk), .i_en(dac_en), .i_x(audio_l), .o_dac(dac_l));
+    delta_sigma_dac u_dac_r (.clk(pclk), .rst(reset_pclk), .i_en(dac_en), .i_x(audio_r), .o_dac(dac_r));
+
+    // Limited-range RGB (AVI InfoFrame) -> full range
+    logic [23:0] pix_data;
+    logic        pix_de, pix_vsync, pix_valid;
+    rgb_range_expand u_range (
+        .clk      (pclk),
+        .i_limited(avi_limited && 1'(`HDMI_AUDIO)),
+        .i_data   (video_data),
+        .i_de     (video_de),
+        .i_vsync  (video_vsync),
+        .i_valid  (video_valid),
+        .o_data   (pix_data),
+        .o_de     (pix_de),
+        .o_vsync  (pix_vsync),
+        .o_valid  (pix_valid)
     );
 
     // =================================================================
@@ -200,10 +311,10 @@ module top (
     ) u_crop (
         .i_pclk         (pclk),
         .i_reset        (reset_pclk),
-        .i_valid        (video_valid),
-        .i_de           (video_de),
-        .i_vsync        (video_vsync),
-        .i_data         (video_data),
+        .i_valid        (pix_valid),
+        .i_de           (pix_de),
+        .i_vsync        (pix_vsync),
+        .i_data         (pix_data),
         .i_flip_pending (flip_pending),
         .o_cmd_wen      (cmd_wen),
         .o_cmd          (cmd),
@@ -375,7 +486,9 @@ module top (
         .i_pll_lock    (pll_lock),
         .i_pix_err     ({scl_falls, scl_s[1], sda_s[1], ddc_reads}),
         .i_bit_err     ({hpd, ovf_cnt, skip_cnt, ddc_offset}),
-        .i_lane_bit_err('{default: '0}),
+        .i_lane_bit_err('{{pkt_count, pkt_hdr_err, pkt_sub_err},
+                          {audio_n, audio_level[9:1], avi_limited, audio_running, pkt_sym_err_seen},
+                          {audio_cts, audio_underrun, audio_overflow}}),
         .o_clear       (clear_req),
         .o_words_req   (words_req),
         .o_words_mode  (words_mode),

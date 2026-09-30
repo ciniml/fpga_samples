@@ -2,10 +2,13 @@
 
 Tang Primer 25K で受信した 720p60 の左上 `W × H` 画素を、そのまま (等倍で) 64x64 HUB75 パネルに表示する。
 パネル構成は 64x64 / 128x64 / 64x128 / 128x128 (`make PANEL=<W>x<H>`、既定 128x128)。
+HDMI の音声 (2ch LPCM) も受けて、1 bit ΔΣ DAC で GPIO 2 本から出す (`rtl/hdmi_rx`)。
 
 ```
 HDMI/DVI source ─► pmod0 (Pmod DVI) ─► dvi_in_phy (pclk 74.25 MHz, eda/dvi_capture と共通)
-   DDC / HPD  ◄─► 40 ピンヘッダ (F1 / F2 / A1)             │ RGB24 / DE / VSYNC
+   DDC / HPD  ◄─► 40 ピンヘッダ (F1 / F2 / A1)             │ RGB24 / DE / VSYNC     │ データアイランド
+                                           rgb_range_expand (AVI)       hdmi_packet_rx → hdmi_audio_rx
+                                                           │              → delta_sigma_dac ×2 → D1 / E3 → RC LPF
                                     crop_to_hub75: 左上 W×H を切り出し、チェーン上のアドレスへ
                                                            │ {flip, addr, RGB555}
                                                 async FIFO (pclk → 50 MHz)
@@ -22,6 +25,7 @@ HDMI/DVI source ─► pmod0 (Pmod DVI) ─► dvi_in_phy (pclk 74.25 MHz, eda/d
 | `PANEL` | `64x64` / `128x64` / `64x128` / `128x128` (既定) | 表示サイズ |
 | `BITS` | `5` / `6` (既定) | 色あたりの BCM ビットプレーン数 |
 | `HUB75_CLKDIV` | `0` (既定) / `1` | HUB75 のシフトクロック分周。CLK = 50 MHz / (2 × (N + 1) + `HUB75_CLKLOW`)、`HUB75_CLKDIV=1 HUB75_CLKLOW=0` で 12.5 MHz |
+| `HDMI_AUDIO` | `1` (既定) / `0` | 1: HDMI 用 EDID (CEA-861 拡張、2ch LPCM) で音声を受ける。0: DVI 専用 EDID (音声なし、レンジ変換なし) |
 | `HUB75_CLKLOW` | `0` / `1` (既定) | 1 画素あたり CLK Low を延ばすティック数。既定の組み合わせで 16.7 MHz (Low 40 ns / High 20 ns) |
 
 128x128 の比較 (リフレッシュはシミュレーションで測った 1 走査の長さ、合成は Gowin 1.9.12):
@@ -92,13 +96,48 @@ addr    = {half, scan, chain_x}
 | UART | C3 (TX) / B3 (RX)、115200 8N1 |
 | 状態出力 | B2 = ワードロック、C2 = デコードエラー (40 ピンヘッダ 14 / 13) |
 | S1 (H10) | HPD を 200 ms 下げて EDID を読み直させる |
+| 音声 DAC L / R | 40 ピンヘッダ 19 (D1) / 20 (E3)、LVCMOS33 DRIVE=8 |
 
 DDC はソース側で 5 V にプルアップされるので、レベル変換 (PCA9306 等) かクランプを入れる。
+
+## 音声
+
+`HDMI_AUDIO=1` (既定) では EDID に CEA-861 拡張 (2ch LPCM 32 / 44.1 / 48 kHz、HDMI VSDB、RGB レンジ選択可) を
+載せるので、ソースは HDMI で送り、データアイランドに音声を載せる。再生レートは ACR の N / CTS から
+fs = f_TMDS × N / (128 × CTS) で再現する (詳細は `rtl/hdmi_rx/README.md`)。
+
+- ΔΣ DAC は 2 次 1 bit、更新は 74.25 MHz / 12 = 6.1875 MHz。数値モデルとシミュレーションでの帯域内
+  (20 Hz–20 kHz) SNR は 88 dB (フルスケール正弦波)。実際はピンの電源ノイズとエッジの非対称で決まる
+- AVI InfoFrame がリミテッドレンジ (Q = 1、または Q = 0 で CE フォーマット) なら RGB をフルレンジに伸ばしてから
+  色テーブルに入れる。VCDB で QS = 1 を宣言しているので、多くのソースはフルレンジで送る
+- 実機 (ノート PC、2026-10-01): HDMI として認識、N = 11648 / CTS = 140625 (fs = 48000.4 Hz)、パケットの
+  パリティ誤り 0、FIFO のアンダーラン / オーバーランなし、フルレンジ
+
+### LPF (チャネルごと)
+
+```
+D1 / E3 ─ R1 1kΩ ─┬─ R2 10kΩ ─┬─ C3 1µF ─→ 出力 (入力インピーダンス 47kΩ 以上のアンプ / ライン入力)
+                  C1 3.3nF     C2 330pF
+                  │            │
+                 GND          GND
+```
+
+- 1 段目・2 段目ともカットオフ約 48 kHz。2 段目の R を 1 段目の 10 倍にして段間の干渉を減らす
+- 周波数特性 (ピンの出力インピーダンス 30 Ω 込みの計算): −3 dB が 28.5 kHz、20 kHz で −1.6 dB、100 kHz で −15 dB、
+  1 MHz で −53 dB、6.19 MHz で −85 dB
+- 20 kHz まで平坦にするなら C1 = 2.2 nF、C2 = 220 pF (−3 dB 約 43 kHz、20 kHz で −0.7 dB、6.19 MHz で約 −77 dB)
+- C3 は直流カット (出力の中心は 1.65 V)。47 kΩ 負荷で低域 −3 dB は 3.4 Hz
+- フルスケール正弦波で約 1.1 Vrms (ラインレベル相当)。出力インピーダンスが約 10 kΩ なのでヘッドホンは直接駆動できない
+- さらに良くするなら、静かな電源の 74LVC1G74 などでピンの出力を打ち直してから LPF に入れる (I/O 電源のノイズが
+  そのまま出力に乗るため)
 
 ## UART
 
 `eda/dvi_capture` と同じ診断 (`eda/dvi_loopback/host/loopctl.py`)。X = {DDC SCL 立ち下がり回数 (14), SCL, SDA, EDID 読み出しバイト数 (16)}、
 Y = {HPD (1), FIFO オーバーフロー回数 (15), 捨てたフレーム数 (8), DDC オフセット (8)}。
+Z0 = {パケット数 (16), ヘッダのパリティ誤り (8), サブパケットのパリティ誤り (8)}、
+Z1 = {N (20), 音声 FIFO の水位 / 2 (9), リミテッドレンジ, 再生中, TERC4 異常あり}、
+Z2 = {CTS (20), アンダーラン (6), オーバーラン (6)}。`loopctl.py audio` で解読して fs も出す。
 
 ## シミュレーション
 
