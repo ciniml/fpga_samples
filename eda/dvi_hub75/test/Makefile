@@ -4,7 +4,7 @@
 SRC  := ../src/tangprimer25k
 RTL  := ../../../rtl
 SRCS := tb_hub75_crop.sv $(SRC)/crop_to_hub75.sv $(SRC)/async_fifo.sv $(RTL)/hub75/hub75.sv
-CONFIGS := 128x128 64x64 128x64 64x128 128x128_b6 64x64_b6 128x128_b6_d0 128x128_b6_d0_l1 128x128_b6_d0_l1_g22
+CONFIGS := 128x128 64x64 128x64 64x128 128x128_b6 64x64_b6 128x128_b6_d0 128x128_b6_d0_l1 128x128_b6_d0_l1_g22 128x128_b6_l1 128x128_b6_d0_l2 128x128_b6_d0_l3
 
 .PHONY: all clean $(CONFIGS)
 all: $(CONFIGS)

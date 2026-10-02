@@ -7,6 +7,7 @@ PC (Ubuntu、Xorg) の HDMI 出力を Tang Primer 25K につなぎ、動画を 1
 |---|---|
 | `dvi_hub75_gamma2.2.fs` | 展示用ビットストリーム。色テーブルが最初からガンマ 2.2 (UART 不要) |
 | `dvi_hub75.fs` | 同じデザインで色テーブルが恒等 (ガンマ 1.0) |
+| `dvi_hub75_gamma2.2_{12m5,8m3,l60h20,l80h20}.fs` | シフトクロックを変えた版 (下の「パネルの色が怪しいとき」)。展示機ではどれも 16.7 MHz より悪かった |
 | `program.sh` | FPGA への書き込み (`--flash` でフラッシュへ) |
 | `prepare.sh` | 動画を 128x128 / 30 fps / 48 kHz ステレオに変換して `videos/` に置く |
 | `play.sh` | `videos/` の動画をループ再生 (`--pattern` でテストパターン + 1 kHz) |
@@ -95,8 +96,24 @@ python3 demos/gen_demos.py --out /tmp/demos --preview              # 開発機: 
 `[daemon]` に `AutomaticLoginEnable=true` / `AutomaticLogin=kenta`)。基板を `--flash` で書いておけば、
 電源投入だけで FPGA 側は動く。
 
+## パネルの色が怪しいとき
+
+上段パネル (チェーンの遠い側) の下半分で、まれに色が怪しい箇所が残る。HUB75 の CLK の波形を変えた版を試した結果
+(2026-10-03、展示機): 16.7 MHz (Low 40 / High 20 ns、既定) が最良。
+
+| ファイル | CLK | Low / High | 結果 |
+|---|---|---|---|
+| (25 MHz、未配布) | 25 MHz | 20 / 20 ns | 遠い側で B2 が全く出ない |
+| `dvi_hub75_gamma2.2.fs` | 16.7 MHz | 40 / 20 ns | 最良 (フラッシュに書き込み済み) |
+| `dvi_hub75_gamma2.2_l60h20.fs` | 12.5 MHz | 60 / 20 ns | 悪化 |
+| `dvi_hub75_gamma2.2_12m5.fs` | 12.5 MHz | 40 / 40 ns | 悪化 |
+| `dvi_hub75_gamma2.2_l80h20.fs` | 10 MHz | 80 / 20 ns | 未確認 |
+| `dvi_hub75_gamma2.2_8m3.fs` | 8.3 MHz | 80 / 40 ns | 悪化 |
+
+周期を延ばしても悪化するので、単純なタイミング余裕の問題ではない (反射・クロストーク・パネル側の要因を疑う)。
+
 ## 注意
 
-- このマシンの openFPGALoader は v0.12.1 (開発機は v0.13.1)。書き込めないときは開発機から `--flash` で書いておく
+- このマシンの openFPGALoader は v0.12.1 (開発機は v0.13.1)。SRAM・フラッシュとも書き込めた (フラッシュは 2026-10-03 に 16.7 MHz 版を書き込み済み、電源投入だけで起動する)
 - `prepare.sh` は libx264 を使う (Ubuntu の ffmpeg で可)
 - 生成元: `eda/dvi_hub75` (`make GAMMA=2.2` / `make`)
