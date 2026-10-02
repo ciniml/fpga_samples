@@ -27,7 +27,7 @@ PC (Ubuntu、Xorg) の HDMI 出力を Tang Primer 25K につなぎ、動画を 1
 ```sh
 cd ~/exhibit/dvi_hub75
 ./program.sh                       # 書き込み (電源を切ると消える)。基板だけで起動させるなら ./program.sh --flash
-./prepare.sh ~/Videos/demo.mp4     # 動画を変換 (中央の正方形を切り出し。全体を入れるなら --fit)
+./prepare.sh --fit ~/Videos/demo.mp4   # 動画を変換 (--fit: 全体を縮小して上下に黒帯。省略すると中央の正方形を切り出し。速い動きは --fps 60000/1001)
 ./play.sh                          # デスクトップの端末から実行。止めるときは再生ウィンドウで q
 ```
 

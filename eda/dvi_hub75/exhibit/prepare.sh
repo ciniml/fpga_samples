@@ -5,26 +5,34 @@
 #    (See accompanying file LICENSE_1_0.txt or copy at
 #          https://www.boost.org/LICENSE_1_0.txt)
 #
-# Convert videos for the panels: 128x128, 30 fps, H.264 4:4:4, AAC 48 kHz
+# Convert videos for the panels: 128x128, 30 fps (--fps), H.264 4:4:4, AAC 48 kHz
 # stereo (a silent track is added when the input has none), all with the
 # same parameters so that play.sh can loop them seamlessly.
 #
-#   ./prepare.sh [--fit] input.mp4 ...     -> videos/<name>.mp4
+#   ./prepare.sh [--fit] [--fps <rate>] input.mp4 ...     -> videos/<name>.mp4
 #
 #   default: the centre square of the picture, scaled to 128x128
 #   --fit  : the whole picture, letterboxed (black bars)
+#   --fps  : frame rate (default 30; e.g. 60000/1001 for fast motion)
 set -eu
 dir=$(cd "$(dirname "$0")" && pwd)
 mode=crop
-if [ "${1:-}" = "--fit" ]; then mode=fit; shift; fi
-[ $# -gt 0 ] || { sed -n '8,15p' "$0"; exit 1; }
+fps=30
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --fit) mode=fit; shift ;;
+        --fps) fps="$2"; shift 2 ;;
+        *) break ;;
+    esac
+done
+[ $# -gt 0 ] || { sed -n '8,16p' "$0"; exit 1; }
 mkdir -p "$dir/videos"
 for in in "$@"; do
     out="$dir/videos/$(basename "${in%.*}").mp4"
     if [ $mode = crop ]; then
-        vf="crop='min(iw,ih)':'min(iw,ih)',scale=128:128:flags=area,fps=30,format=yuv444p"
+        vf="crop='min(iw,ih)':'min(iw,ih)',scale=128:128:flags=area,fps=$fps,format=yuv444p"
     else
-        vf="scale=128:128:force_original_aspect_ratio=decrease:flags=area,pad=128:128:(ow-iw)/2:(oh-ih)/2:black,fps=30,format=yuv444p"
+        vf="scale=128:128:force_original_aspect_ratio=decrease:flags=area,pad=128:128:(ow-iw)/2:(oh-ih)/2:black,fps=$fps,format=yuv444p"
     fi
     if ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 "$in" | grep -q .; then
         ffmpeg -hide_banner -loglevel error -y -i "$in" -vf "$vf" \
