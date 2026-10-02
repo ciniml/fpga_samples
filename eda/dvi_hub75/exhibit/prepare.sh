@@ -9,26 +9,29 @@
 # stereo (a silent track is added when the input has none), all with the
 # same parameters so that play.sh can loop them seamlessly.
 #
-#   ./prepare.sh [--fit] [--fps <rate>] input.mp4 ...     -> videos/<name>.mp4
+#   ./prepare.sh [--fit] [--fps <rate>] [--out <dir>] input.mp4 ...  -> videos/<name>.mp4
 #
 #   default: the centre square of the picture, scaled to 128x128
 #   --fit  : the whole picture, letterboxed (black bars)
 #   --fps  : frame rate (default 30; e.g. 60000/1001 for fast motion)
+#   --out  : output directory (default videos/ next to this script)
 set -eu
 dir=$(cd "$(dirname "$0")" && pwd)
 mode=crop
 fps=30
+outdir="$dir/videos"
 while [ $# -gt 0 ]; do
     case "$1" in
         --fit) mode=fit; shift ;;
         --fps) fps="$2"; shift 2 ;;
+        --out) outdir="$2"; shift 2 ;;
         *) break ;;
     esac
 done
-[ $# -gt 0 ] || { sed -n '8,16p' "$0"; exit 1; }
-mkdir -p "$dir/videos"
+[ $# -gt 0 ] || { sed -n '8,17p' "$0"; exit 1; }
+mkdir -p "$outdir"
 for in in "$@"; do
-    out="$dir/videos/$(basename "${in%.*}").mp4"
+    out="$outdir/$(basename "${in%.*}").mp4"
     if [ $mode = crop ]; then
         vf="crop='min(iw,ih)':'min(iw,ih)',scale=128:128:flags=area,fps=$fps,format=yuv444p"
     else

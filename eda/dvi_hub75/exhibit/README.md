@@ -40,6 +40,26 @@ cd ~/exhibit/dvi_hub75
 
 動画が 1 本ならそのままループ、複数なら連結して切れ目なくループする。
 
+## デモ映像
+
+`demos/gen_demos.py` (開発機で実行、numpy / Pillow) が 128x128・59.94 fps・30 秒の生成パターンを作る。
+暗い背景にゆっくり動く柔らかい光で、どれも継ぎ目なくループする。
+
+| 名前 | 内容 |
+|---|---|
+| `aurora` | 夜空にゆらめくオーロラ (緑 / 青緑 / 紫)、瞬く星、山の影 |
+| `fireflies` | 暗い森のホタル。暖色と黄緑の光がゆっくり漂い明滅する |
+| `lava` | ラバーランプ。オレンジ〜ピンクの塊がくっついたり離れたりする |
+| `ripples` | 夜の水面に落ちる雨粒の波紋 |
+| `sunset` | 夕日と海面のきらめき |
+| `title` | "HDMI ↓ HUB75" / "Tang Primer 25K" / "128 × 128 LED" / "FPGA DVI / HDMI receiver" を順にフェード表示 |
+
+```sh
+python3 demos/gen_demos.py --out /tmp/demos --preview              # 開発機: .mkv (FFV1) と見本の PNG
+./prepare.sh --fps 60000/1001 --out demos /tmp/demos/*.mkv         # 展示機: demos/*.mp4 に変換
+./play.sh demos/*.mp4                                              # 順に再生 (ループ)
+```
+
 ## 調整・確認
 
 - テストパターン: `./play.sh --pattern` (文字と色の位置でパネルの向き・チェーン順を確認、1 kHz で音を確認)
