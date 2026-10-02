@@ -37,8 +37,18 @@ if {[info exists ::env(HUB75_CLKDIV)] && $::env(HUB75_CLKDIV) ne ""} { puts $fh 
 if {[info exists ::env(HUB75_CLKLOW)] && $::env(HUB75_CLKLOW) ne ""} { puts $fh "`define HUB75_CLKLOW $::env(HUB75_CLKLOW)" }
 # HDMI_AUDIO = 1 (default): HDMI EDID + audio DAC; 0: DVI-only EDID
 if {[info exists ::env(HDMI_AUDIO)] && $::env(HDMI_AUDIO) ne ""} { puts $fh "`define HDMI_AUDIO $::env(HDMI_AUDIO)" }
+# GAMMA = <g>: colour tables start as out = in^g (rounded to the displayed
+# bits) instead of the identity - for running without the UART
+set LUT_INIT ""
+if {[info exists ::env(GAMMA)] && $::env(GAMMA) ne ""} {
+    set bits [expr {[info exists ::env(BITS)] && $::env(BITS) ne "" ? $::env(BITS) : 6}]
+    exec python3 [file normalize ${SRC_DIR}/../../gen_lut_init.py] --gamma $::env(GAMMA) --bits $bits --out lut_init_rom.sv
+    puts $fh "`define LUT_INIT_GAMMA"
+    set LUT_INIT [file normalize lut_init_rom.sv]
+}
 close $fh
 add_file -type verilog [file normalize defines_gen.v]
+if {${LUT_INIT} ne ""} { add_file -type verilog ${LUT_INIT} }
 
 set CAPTURE_DIR [file normalize ${SRC_DIR}/../../../dvi_capture/src/${TARGET}]
 set LOOP_DIR    [file normalize ${SRC_DIR}/../../../dvi_loopback/src/${TARGET}]

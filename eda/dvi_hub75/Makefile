@@ -8,6 +8,7 @@ RTL_DIR ?= $(ROOT_DIR)/rtl
 # BITS=<n> BCM bit planes per colour (default 6), HUB75_CLKDIV=<n> (default 0)
 # HUB75_CLKLOW=<n> extra CLK-low ticks per pixel (default 1; CLKDIV=0 CLKLOW=1 -> 16.7 MHz)
 # HDMI_AUDIO=0: DVI-only EDID, no audio (default 1: HDMI EDID + audio DAC)
+# GAMMA=<g>: colour tables start as gamma <g> instead of the identity
 BUILD_SUFFIX :=
 ifneq ($(PANEL),)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_$(PANEL)
@@ -20,6 +21,10 @@ endif
 ifneq ($(HUB75_CLKDIV),)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_div$(HUB75_CLKDIV)
 export HUB75_CLKDIV
+endif
+ifneq ($(GAMMA),)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_gamma$(GAMMA)
+export GAMMA
 endif
 ifneq ($(HDMI_AUDIO),)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_audio$(HDMI_AUDIO)
@@ -38,7 +43,7 @@ VERYL_SV := $(RTL_DIR)/dvi_in/dvi_in.sv $(RTL_DIR)/hub75/hub75.sv \
             $(RTL_DIR)/ddc_edid/ddc_edid.sv $(RTL_DIR)/ddc_edid/edid_rom.sv $(RTL_DIR)/ddc_edid/edid_rom_1080p.sv \
             $(RTL_DIR)/ddc_edid/edid_rom_hdmi.sv
 
-SRCS := src/$(TARGET)/pins.cst $(wildcard src/$(TARGET)/*.sdc) $(wildcard src/$(TARGET)/*.sv) project.tcl $(VERYL_SV) \
+SRCS := gen_lut_init.py src/$(TARGET)/pins.cst $(wildcard src/$(TARGET)/*.sdc) $(wildcard src/$(TARGET)/*.sv) project.tcl $(VERYL_SV) \
         $(CAPTURE_DIR)/iser10_lane.sv $(CAPTURE_DIR)/dvi_in_phy.sv $(CAPTURE_DIR)/reset_seq.sv \
         $(LOOP_DIR)/frame_sum.sv $(LOOP_DIR)/loop_check.sv $(LOOP_DIR)/loop_report.sv \
         $(wildcard $(RTL_DIR)/hdmi_rx/*.sv)

@@ -25,6 +25,7 @@ HDMI/DVI source ─► pmod0 (Pmod DVI) ─► dvi_in_phy (pclk 74.25 MHz, eda/d
 | `PANEL` | `64x64` / `128x64` / `64x128` / `128x128` (既定) | 表示サイズ |
 | `BITS` | `5` / `6` (既定) | 色あたりの BCM ビットプレーン数 |
 | `HUB75_CLKDIV` | `0` (既定) / `1` | HUB75 のシフトクロック分周。CLK = 50 MHz / (2 × (N + 1) + `HUB75_CLKLOW`)、`HUB75_CLKDIV=1 HUB75_CLKLOW=0` で 12.5 MHz |
+| `GAMMA` | 例 `2.2` (既定は恒等) | 色テーブルの初期値 (リセット後と `i`) をガンマ `<g>` にする (`gen_lut_init.py`、表示ビット数で丸め)。UART なしで動かす展示用 |
 | `HDMI_AUDIO` | `1` (既定) / `0` | 1: HDMI 用 EDID (CEA-861 拡張、2ch LPCM) で音声を受ける。0: DVI 専用 EDID (音声なし、レンジ変換なし) |
 | `HUB75_CLKLOW` | `0` / `1` (既定) | 1 画素あたり CLK Low を延ばすティック数。既定の組み合わせで 16.7 MHz (Low 40 ns / High 20 ns) |
 
@@ -150,3 +151,8 @@ CLK 立ち上がりでシフト、LAT でラッチ、OE が Low の間 (ビッ�
 データのセットアップ時間 (データ変化 → CLK 立ち上がり) が設定どおりかも測る。色テーブルは R 反転 / G ガンマ 2.2 を
 書き込んで全画素がテーブルどおりになること、`init` で恒等に戻ることを確認する。
 UART の `G` / `i` の解析は `eda/dvi_loopback` の `make sim` で確認している。
+
+## 展示キット
+
+`exhibit/`: ビットストリームの書き込み、動画の変換 (128x128)、FPGA 側の HDMI 出力を EDID 名で探して全画面再生、
+音声出力の切り換え、自動起動のスクリプト (`exhibit/README.md`)。

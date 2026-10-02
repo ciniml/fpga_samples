@@ -102,8 +102,15 @@ module tb_hub75_crop;
 
     // ---------------- colour tables (reference copy) ----------------
     logic [7:0] ref_lut [0:2][0:255];     // [R, G, B]
+    // power-on / "init" contents: identity, or gamma GAMMA_REAL rounded to
+    // the displayed bits (make GAMMA=<g>)
     task automatic set_identity();
+`ifdef LUT_INIT_GAMMA
+        for (int c = 0; c < 3; c++) for (int i = 0; i < 256; i++)
+            ref_lut[c][i] = 8'($rtoi(((real'(i) / 255.0) ** `GAMMA_REAL) * real'((1 << CB) - 1) + 0.5) << (8 - CB));
+`else
         for (int c = 0; c < 3; c++) for (int i = 0; i < 256; i++) ref_lut[c][i] = 8'(i);
+`endif
     endtask
     task automatic lut_write_all(input int c);  // copy ref_lut[c] into the hardware
         for (int i = 0; i < 256; i++) begin
@@ -303,7 +310,7 @@ module tb_hub75_crop;
         set_identity();
         wait (!lut_busy);
         wait_refreshes(3);
-        check_picture(1, "picture B, tables reset to identity");
+        check_picture(1, "picture B, tables back to the power-on contents");
         if (rule_errors != 0) begin
             errors++;
             $display("[tb_hub75] %0d CLK/LAT/OE timing-rule violations", rule_errors);

@@ -26,8 +26,10 @@
  *   tables are dual-clock block RAM: written from the board clock domain
  *   (i_lut_*), read at the pixel rate (one clock of latency). After
  *   i_lut_init (and reset) the board side rewrites them to the identity
- *   (gamma 1.0: the top bits of the input, as without tables); writes
- *   through i_lut_we are ignored while that runs (o_lut_busy).
+ *   (gamma 1.0: the top bits of the input, as without tables), or with
+ *   LUT_INIT_GAMMA defined to lut_init_rom (gen_lut_init.py, make
+ *   GAMMA=<g>); writes through i_lut_we are ignored while that runs
+ *   (o_lut_busy).
  *
  *   Commands {flip, addr, pixel} go through an async FIFO to the Hub75
  *   clock domain. FLIP is sent right after the last pixel of the crop
@@ -91,7 +93,13 @@ module crop_to_hub75 #(
     logic [7:0] init_addr;
     wire        w_en   = init_run || (i_lut_we && !init_run);
     wire [7:0]  w_addr = init_run ? init_addr : i_lut_addr;
-    wire [7:0]  w_data = init_run ? init_addr : i_lut_data;
+`ifdef LUT_INIT_GAMMA
+    logic [7:0] init_value;
+    lut_init_rom u_init (.i_addr(init_addr), .o_data(init_value));
+`else
+    wire  [7:0] init_value = init_addr;          // identity
+`endif
+    wire [7:0]  w_data = init_run ? init_value : i_lut_data;
     wire [2:0]  w_mask = init_run ? 3'b111 : i_lut_mask;
     always_ff @(posedge i_clk) begin
         if (i_rst || i_lut_init) begin
