@@ -10,6 +10,8 @@ PC (Ubuntu、Xorg) の HDMI 出力を Tang Primer 25K につなぎ、動画を 1
 | `program.sh` | FPGA への書き込み (`--flash` でフラッシュへ) |
 | `prepare.sh` | 動画を 128x128 / 30 fps / 48 kHz ステレオに変換して `videos/` に置く |
 | `play.sh` | `videos/` の動画をループ再生 (`--pattern` でテストパターン + 1 kHz) |
+| `show.sh` | 表示の切り換え: `hanshin` (videos/) / `demos` / `all` / `pattern` / `stop` |
+| `install-launchers.sh` | 切り換えをアプリ一覧 (「HUB75: …」、ドックに固定可) と Ctrl+Alt+1〜5 に登録 |
 | `status.sh` | UART で受信状態・音声状態を見る、ガンマを変える (`./status.sh gamma 1.8`) |
 | `install-autostart.sh` | ログイン時に `play.sh` を自動起動し、画面のブランク / ロック / サスペンドを止める |
 | `loopctl.py` | UART のホストツール (`eda/dvi_loopback/host`) |
@@ -39,6 +41,19 @@ cd ~/exhibit/dvi_hub75
    (全画面なので GNOME のトップバーやドックは載らない。RGB で渡すので色の間引きもない)
 
 動画が 1 本ならそのままループ、複数なら連結して切れ目なくループする。
+
+## 表示の切り換え
+
+| キー | ランチャー | `show.sh` | 内容 |
+|---|---|---|---|
+| Ctrl+Alt+1 | HUB75: 阪神高速 | `hanshin` | `videos/*.mp4` |
+| Ctrl+Alt+2 | HUB75: デモ | `demos` | `demos/*.mp4` |
+| Ctrl+Alt+3 | HUB75: 全部 | `all` | デモのあと videos |
+| Ctrl+Alt+4 | HUB75: テストパターン | `pattern` | テストパターン + 1 kHz |
+| Ctrl+Alt+5 | HUB75: 停止 | `stop` | 止める |
+
+`./install-launchers.sh` で登録 (deltaflyer は登録済み)、`--remove` で削除。`show.sh` は今の再生
+(ウィンドウ名 dvi_hub75 の ffplay) を止めてから `play.sh` をバックグラウンドで起動する (ログは play.log)。
 
 ## デモ映像
 
