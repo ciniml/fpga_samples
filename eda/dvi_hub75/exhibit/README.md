@@ -56,7 +56,7 @@ cd ~/exhibit/dvi_hub75
 
 ```sh
 python3 demos/gen_demos.py --out /tmp/demos --preview              # 開発機: .mkv (FFV1) と見本の PNG
-./prepare.sh --fps 60000/1001 --out demos /tmp/demos/*.mkv         # 展示機: demos/*.mp4 に変換
+./prepare.sh --fps 60000/1001 --gamma 1.6 --out demos /tmp/demos/*.mkv   # 展示機: demos/*.mp4 に変換 (パネル上でガンマ 1.6)
 ./play.sh demos/*.mp4                                              # 順に再生 (ループ)
 ```
 
