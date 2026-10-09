@@ -470,4 +470,131 @@ module usb3_host_bfm (
         #10000;
         if (hmode == HM_IDLE && link_stage >= 8 && txq.size() == 0) push_lc(11'h580);
     end
+    // ---------------------------------------------------------------- protocol-level helpers (host side)
+    logic [6:0] dev_address = 0;
+    logic [4:0] ep0_seq = 0;           // DP sequence numbers of the current control data stage
+    logic [4:0] ep1_in_seq = 0, ep1_out_seq = 0;
+    int   proto_err = 0;
+    int   tp_timeout = 20000;          // clocks to wait for a device response
+
+    function automatic logic [95:0] h_tp(logic [3:0] sub, logic dir, logic [3:0] ept, logic [4:0] nump, logic [4:0] seq, logic rty = 0);
+        return {32'h0, 6'h0, seq, nump, 4'h0, ept, dir, rty, 2'b00, sub, dev_address, 20'h0, 5'b00100};
+    endfunction
+    function automatic logic [95:0] h_dp(logic [3:0] ept, logic [4:0] seq, logic [15:0] len, logic setup = 0);
+        return {32'h0, len, setup, 3'h0, ept, 1'b0, 1'b0, 1'b0, seq, dev_address, 20'h0, 5'b01000};
+    endfunction
+
+    // wait for the next TP/DP header from the device
+    task automatic wait_tp(output logic [95:0] h, output logic ok);
+        int n = 0;
+        ok = 0;
+        while (rx_tp.size() == 0 && n < tp_timeout) begin @(posedge clk); n++; end
+        if (rx_tp.size() != 0) begin h = rx_tp.pop_front(); ok = 1; end
+        else begin h = 0; proto_err++; $display("t=%0t host: timeout waiting for a TP", $time); end
+    endtask
+    function automatic logic [3:0] tp_sub(logic [95:0] h); return h[35:32]; endfunction
+    function automatic logic [4:0] tp_seq(logic [95:0] h); return h[57:53]; endfunction
+    function automatic logic [4:0] tp_nump(logic [95:0] h); return h[52:48]; endfunction
+    function automatic logic tp_rty(logic [95:0] h); return h[38]; endfunction
+    function automatic logic [15:0] dp_len(logic [95:0] h); return h[63:48]; endfunction
+    function automatic logic [4:0] dp_seq(logic [95:0] h); return h[36:32]; endfunction
+
+    // control transfer: returns the IN data (or sends OUT data) and the status result
+    // result: 0 ok, 1 stall, 2 protocol error
+    task automatic control_xfer(logic [7:0] bmreq, logic [7:0] breq, logic [15:0] wvalue, logic [15:0] windex,
+                                logic [15:0] wlength, inout logic [7:0] data[$], output int result);
+        logic [95:0] h; logic ok; logic [7:0] setup[$];
+        int got = 0;
+        result = 2;
+        setup.delete();
+        setup.push_back(bmreq); setup.push_back(breq);
+        setup.push_back(wvalue[7:0]); setup.push_back(wvalue[15:8]);
+        setup.push_back(windex[7:0]); setup.push_back(windex[15:8]);
+        setup.push_back(wlength[7:0]); setup.push_back(wlength[15:8]);
+        send_dp(h_dp(0, 0, 8, 1), setup);
+        wait_tp(h, ok); if (!ok) return;
+        if (tp_sub(h) != 4'b0001 || tp_seq(h) != 1) begin proto_err++; $display("t=%0t host: bad SETUP ack %024x", $time, h); return; end
+        ep0_seq = 0;
+        if (wlength != 0 && bmreq[7]) begin
+            // data stage IN
+            data.delete();
+            while (got < wlength) begin
+                send_hp(h_tp(4'b0001, 0, 0, 1, ep0_seq));
+                wait_tp(h, ok); if (!ok) return;
+                if (tp_sub(h) == 4'b0101) begin result = 1; return; end   // STALL
+                if (h[4:0] != 5'b01000) begin proto_err++; $display("t=%0t host: expected DP, got %024x", $time, h); return; end
+                if (dp_seq(h) != ep0_seq) begin proto_err++; $display("t=%0t host: DP seq %0d exp %0d", $time, dp_seq(h), ep0_seq); return; end
+                if (!ev_dpp_ok) begin proto_err++; $display("t=%0t host: control DPP bad", $time); return; end
+                for (int i = 0; i < ev_dpp.size(); i++) data.push_back(ev_dpp[i]);
+                got += dp_len(h);
+                ep0_seq++;
+                if (dp_len(h) < 512 || got >= wlength) begin
+                    send_hp(h_tp(4'b0001, 0, 0, 0, ep0_seq));   // acknowledge the last DP, no more wanted
+                    break;
+                end
+            end
+        end else if (wlength != 0) begin
+            // data stage OUT (single DP)
+            send_dp(h_dp(0, 0, wlength), data);
+            wait_tp(h, ok); if (!ok) return;
+            if (tp_sub(h) == 4'b0101) begin result = 1; return; end
+            if (tp_sub(h) != 4'b0001 || tp_seq(h) != 1) begin proto_err++; $display("t=%0t host: bad OUT ack %024x", $time, h); return; end
+        end
+        // status stage
+        send_hp(h_tp(4'b0100, 0, 0, 0, 0));
+        wait_tp(h, ok); if (!ok) return;
+        if (tp_sub(h) == 4'b0101) begin result = 1; return; end
+        if (tp_sub(h) != 4'b0001) begin proto_err++; $display("t=%0t host: bad STATUS ack %024x", $time, h); return; end
+        result = 0;
+    endtask
+
+    // bulk OUT: one DP; result 0 ok, 1 NRDY (then waits for ERDY and retries), 2 error
+    task automatic bulk_out(logic [7:0] data[$], output int result);
+        logic [95:0] h; logic ok;
+        result = 2;
+        for (int attempt = 0; attempt < 3; attempt++) begin
+            send_dp(h_dp(1, ep1_out_seq, data.size()), data);
+            wait_tp(h, ok); if (!ok) return;
+            if (tp_sub(h) == 4'b0001 && tp_seq(h) == ep1_out_seq + 5'd1 && !tp_rty(h)) begin ep1_out_seq++; result = 0; return; end
+            if (tp_sub(h) == 4'b0010) begin
+                // NRDY: wait for ERDY
+                wait_tp(h, ok); if (!ok) return;
+                if (tp_sub(h) != 4'b0011) begin proto_err++; return; end
+                continue;
+            end
+            if (tp_sub(h) == 4'b0001 && tp_rty(h)) continue;   // retry requested
+            proto_err++; $display("t=%0t host: bulk out bad response %024x", $time, h); return;
+        end
+    endtask
+
+    // bulk IN: request one DP (NumP 1); data returned; result 0 ok (data), 1 NRDY->ERDY handled, 2 error
+    task automatic bulk_in(output logic [7:0] data[$], output int result);
+        logic [95:0] h; logic ok;
+        result = 2;
+        data.delete();
+        for (int attempt = 0; attempt < 3; attempt++) begin
+            send_hp(h_tp(4'b0001, 1, 1, 1, ep1_in_seq));
+            wait_tp(h, ok); if (!ok) return;
+            if (h[4:0] == 5'b01000) begin
+                if (dp_seq(h) != ep1_in_seq) begin proto_err++; $display("t=%0t host: bulk in seq %0d exp %0d", $time, dp_seq(h), ep1_in_seq); return; end
+                if (!ev_dpp_ok) begin
+                    // ask for a retry
+                    send_hp(h_tp(4'b0001, 1, 1, 1, ep1_in_seq, 1));
+                    continue;
+                end
+                for (int i = 0; i < ev_dpp.size(); i++) data.push_back(ev_dpp[i]);
+                ep1_in_seq++;
+                // acknowledge with NumP 0 (no more packets wanted now)
+                send_hp(h_tp(4'b0001, 1, 1, 0, ep1_in_seq));
+                result = 0;
+                return;
+            end
+            if (tp_sub(h) == 4'b0010) begin
+                wait_tp(h, ok); if (!ok) return;      // ERDY
+                if (tp_sub(h) != 4'b0011) begin proto_err++; return; end
+                continue;
+            end
+            proto_err++; $display("t=%0t host: bulk in bad response %024x", $time, h); return;
+        end
+    endtask
 endmodule

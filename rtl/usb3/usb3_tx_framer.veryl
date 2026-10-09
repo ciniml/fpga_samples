@@ -74,7 +74,7 @@ module Usb3TxFramer (
     var tail   : logic<96>;
     var tail_k : logic<12>;
     var tail_n : logic<2> ; // tail words still queued (0..2)
-    var addr   : logic<8> ;
+    var addr   : logic<12>;
 
     var skp_due: logic;
     assign skp_due = skp_cnt >= SKP_INTERVAL;

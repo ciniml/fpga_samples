@@ -1,0 +1,822 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file usb3_device.veryl
+ * @brief Protocol and device layers of the SuperSpeed sample device
+ *        (USB 3.2 ch. 8 / 9) on top of Usb3Top.
+ *
+ * Endpoints: EP0 control (512 bytes), EP1 OUT / EP1 IN bulk (1024 bytes,
+ * bMaxBurst 0, one data packet outstanding). EP1 is exposed as a byte
+ * stream with the same ports as the USB 2.0 UsbDevice (EP1_STREAM): bytes
+ * written to i_tx_* are packed into 1024-byte packets and sent when the
+ * host asks; a partial packet (or a ZLP after a full one) is sent after
+ * STREAM_FLUSH_US of idle. Bytes received on EP1 OUT come out of o_rx_*.
+ *
+ * Standard requests: GET_STATUS, CLEAR/SET_FEATURE (endpoint halt, U1/U2
+ * enable accepted and ignored), SET_ADDRESS, GET_DESCRIPTOR (device,
+ * configuration, string, BOS), GET/SET_CONFIGURATION, GET/SET_INTERFACE,
+ * SET_SEL, SET_ISOCH_DELAY; vendor 0x01 IN (i_vendor_status), 0x02 OUT
+ * (o_vendor_reg = wValue), MS_VENDOR_CODE IN wIndex 7 (MS OS 2.0 set).
+ *
+ * Data for outgoing DPPs is read by the framer through o_dpp_rd/addr:
+ * words below IN_BUF_WORDS*2 come from the EP1 IN packet buffers, 0x300
+ * from the small control response register, 0x800.. from the descriptor
+ * ROM.
+ */
+module Usb3Device #(
+    param CLK_PER_US     : u32       = 125     ,
+    param VENDOR_ID      : logic<16> = 16'h1209,
+    param PRODUCT_ID     : logic<16> = 16'h0001,
+    param STREAM_FLUSH_US: u32       = 1000    ,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    // ---- link (Usb3Top) ----
+    i_in_u0      : input  logic    ,
+    i_hot_reset  : input  logic    ,
+    i_warm_reset : input  logic    ,
+    i_rx_hp_valid: input  logic    ,
+    i_rx_hp_hdr  : input  logic<96>,
+    i_dpp_start  : input  logic    ,
+    i_dpp_valid  : input  logic    ,
+    i_dpp_data   : input  logic<32>,
+    i_dpp_be     : input  logic<4> ,
+    i_dpp_end    : input  logic    ,
+    i_dpp_err    : input  logic    ,
+    o_tx_hp_valid: output logic    ,
+    o_tx_hp_hdr  : output logic<96>,
+    o_tx_dpp     : output logic    ,
+    o_tx_dpp_len : output logic<11>,
+    o_tx_dpp_base: output logic<12>,
+    i_tx_hp_ready: input  logic    ,
+    i_dpp_rd     : input  logic    ,
+    i_dpp_addr   : input  logic<12>,
+    o_dpp_data   : output logic<32>,
+
+    // ---- status ----
+    o_configured: output logic   ,
+    o_address   : output logic<7>,
+    o_reset     : output logic   , // pulse: Hot/Warm Reset
+
+    // ---- vendor request scratch ----
+    o_vendor_reg   : output logic<16>,
+    i_vendor_status: input  logic<32>,
+
+    // ---- EP1 byte streams ----
+    o_rx_valid: output logic   ,
+    o_rx_data : output logic<8>,
+    i_rx_ready: input  logic   ,
+    i_tx_valid: input  logic   ,
+    i_tx_data : input  logic<8>,
+    o_tx_ready: output logic   ,
+) {
+    import usb3_pkg::*;
+    import usb3_desc_pkg::*;
+
+    const IN_BUF_WORDS: u32 = 256; // 1024 bytes per packet buffer, two buffers
+    const OUT_BUF_BASE: u32 = 512; // word address of the EP1 OUT buffer (RAM is 768 words)
+    const SMALL_ADDR  : u32 = 12'h300;
+
+    // ---------------------------------------------------------------- memories
+    var in_ram  : logic<32> [512]; // two EP1 IN packet buffers
+    var out_ram : logic<32> [256]; // EP1 OUT packet buffer
+    var rom_q   : logic<32>      ;
+    var rom_addr: logic<8>       ;
+
+    inst u_rom: Usb3DescriptorRom #(
+        VENDOR_ID : VENDOR_ID ,
+        PRODUCT_ID: PRODUCT_ID,
+    ) (
+        i_addr: rom_addr,
+        o_data: rom_q   ,
+    );
+    assign rom_addr = i_dpp_addr[7:0];
+
+    var small_r: logic<32>;
+    always_ff {
+        if i_dpp_rd {
+            if i_dpp_addr[11] {
+                o_dpp_data = rom_q;
+            } else if i_dpp_addr[9:8] == 2'b11 {
+                o_dpp_data = small_r;
+            } else {
+                o_dpp_data = in_ram[i_dpp_addr[8:0]];
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- device state
+    var configured: logic    ;
+    var dev_addr  : logic<7> ;
+    var addr_pend : logic<7> ;
+    var addr_apply: logic    ;
+    var halt_in   : logic    ;
+    var halt_out  : logic    ;
+    var vendor_reg: logic<16>;
+    var reset_evt : logic    ;
+    var seq_in    : logic<5> ; // EP1 IN next sequence number
+    var seq_out   : logic<5> ; // EP1 OUT expected sequence number
+
+    assign o_configured = configured;
+    assign o_address    = dev_addr;
+    assign o_vendor_reg = vendor_reg;
+    assign o_reset      = reset_evt;
+
+    // ---------------------------------------------------------------- received header decode
+    var hp_type : logic<5> ;
+    var hp_addr : logic<7> ;
+    var hp_sub  : logic<4> ;
+    var hp_rty  : logic    ;
+    var hp_dir  : logic    ;
+    var hp_ept  : logic<4> ;
+    var hp_nump : logic<5> ;
+    var hp_seq  : logic<5> ; // TP sequence number
+    var dp_seq  : logic<5> ; // DP sequence number
+    var dp_setup: logic    ;
+    var dp_len  : logic<16>;
+    var hp_mine : logic    ;
+    assign hp_type  = i_rx_hp_hdr[4:0];
+    assign hp_addr  = i_rx_hp_hdr[31:25];
+    assign hp_sub   = i_rx_hp_hdr[35:32];
+    assign hp_rty   = i_rx_hp_hdr[38];
+    assign hp_dir   = i_rx_hp_hdr[39];
+    assign hp_ept   = i_rx_hp_hdr[43:40];
+    assign hp_nump  = i_rx_hp_hdr[52:48];
+    assign hp_seq   = i_rx_hp_hdr[57:53];
+    assign dp_seq   = i_rx_hp_hdr[36:32];
+    assign dp_setup = i_rx_hp_hdr[47];
+    assign dp_len   = i_rx_hp_hdr[63:48];
+    assign hp_mine  = hp_addr == dev_addr;
+
+    // ---------------------------------------------------------------- header builders
+    function tp_hdr (
+        sub : input logic<4>,
+        dir : input logic   ,
+        ept : input logic<4>,
+        nump: input logic<5>,
+        seq : input logic<5>,
+        rty : input logic   ,
+    ) -> logic<96> {
+        return {32'h0, 6'h0, seq, nump, 4'h0, ept, dir, rty, 2'b00, sub, dev_addr, 20'h0, PKT_TP};
+    }
+    function dp_hdr (
+        ept: input logic<4> ,
+        seq: input logic<5> ,
+        len: input logic<16>,
+        eob: input logic    ,
+    ) -> logic<96> {
+        return {32'h0, len, 4'h0, ept, 1'b1, eob, 1'b0, seq, dev_addr, 20'h0, PKT_DP};
+    }
+    const SUB_ACK      : logic<4> = 4'b0001;
+    const SUB_NRDY     : logic<4> = 4'b0010;
+    const SUB_ERDY     : logic<4> = 4'b0011;
+    const SUB_STATUS   : logic<4> = 4'b0100;
+    const SUB_STALL    : logic<4> = 4'b0101;
+    const SUB_PING     : logic<4> = 4'b0111;
+    const SUB_PING_RESP: logic<4> = 4'b1000;
+
+    // ---------------------------------------------------------------- transmit request queue (one at a time)
+    var tx_valid: logic    ;
+    var tx_hdr  : logic<96>;
+    var tx_dpp  : logic    ;
+    var tx_len  : logic<11>;
+    var tx_base : logic<12>;
+    assign o_tx_hp_valid = tx_valid;
+    assign o_tx_hp_hdr   = tx_hdr;
+    assign o_tx_dpp      = tx_dpp;
+    assign o_tx_dpp_len  = tx_len;
+    assign o_tx_dpp_base = tx_base;
+    var tx_take: logic;
+    assign tx_take = tx_valid && i_tx_hp_ready;
+
+    // ---------------------------------------------------------------- control transfer state
+    enum Ctrl: logic<3> {
+        Idle,
+        DataIn, // we send DPs on ACK
+        DataOut, // host sends DPs
+        Status, // waiting for STATUS TP
+        Stall,
+    }
+    var ctrl         : Ctrl     ;
+    var ctrl_base    : logic<12>;
+    var ctrl_remain  : logic<11>; // bytes still to send
+    var ctrl_zlp     : logic    ; // a zero-length DP terminates the transfer
+    var ctrl_seq     : logic<5> ;
+    var ctrl_sending : logic    ; // a DP was handed to the link, waiting for its ACK
+    var ctrl_last_len: logic<11>;
+    var setup_buf    : logic<64>;
+    var setup_pend   : logic    ; // SETUP DPP complete, to be processed
+    var dpp_target   : logic<2> ; // 0 none, 1 setup, 2 EP1 OUT, 3 control OUT data (discarded)
+    var dpp_widx     : logic<8> ;
+    var dpp_len_q    : logic<11>; // Data Length of the DP header being received
+    var dpp_good     : logic    ;
+
+    // request fields
+    var bm_req  : logic<8> ;
+    var b_req   : logic<8> ;
+    var w_value : logic<16>;
+    var w_index : logic<16>;
+    var w_length: logic<16>;
+    assign bm_req   = setup_buf[7:0];
+    assign b_req    = setup_buf[15:8];
+    assign w_value  = setup_buf[31:16];
+    assign w_index  = setup_buf[47:32];
+    assign w_length = setup_buf[63:48];
+
+    var desc_addr: logic<12>;
+    var desc_len : logic<11>;
+    var desc_ok  : logic    ;
+    always_comb {
+        desc_addr = 0;
+        desc_len  = 0;
+        desc_ok   = 0;
+        case w_value[15:8] {
+            8'h01: {
+                desc_addr = DEV_ADDR;
+                desc_len  = DEV_LEN;
+                desc_ok   = 1;
+            }
+            8'h02: {
+                if w_value[7:0] == 0 {
+                    desc_addr = CFG_ADDR;
+                    desc_len  = CFG_LEN;
+                    desc_ok   = 1;
+                }
+            }
+            8'h03: {
+                case w_value[7:0] {
+                    8'd0: {
+                        desc_addr = STR0_ADDR;
+                        desc_len  = STR0_LEN;
+                        desc_ok   = 1;
+                    }
+                    8'd1: {
+                        desc_addr = STR1_ADDR;
+                        desc_len  = STR1_LEN;
+                        desc_ok   = 1;
+                    }
+                    8'd2: {
+                        desc_addr = STR2_ADDR;
+                        desc_len  = STR2_LEN;
+                        desc_ok   = 1;
+                    }
+                    8'd3: {
+                        desc_addr = STR3_ADDR;
+                        desc_len  = STR3_LEN;
+                        desc_ok   = 1;
+                    }
+                    default: {}
+                }
+            }
+            8'h0F: {
+                desc_addr = BOS_ADDR;
+                desc_len  = BOS_LEN;
+                desc_ok   = 1;
+            }
+            default: {}
+        }
+    }
+    function min_len (
+        a: input logic<11>,
+        b: input logic<16>,
+    ) -> logic<11> {
+        return if {5'b0, a} <: b ? a : b[10:0];
+    }
+
+    // ---------------------------------------------------------------- EP1 IN packet buffers
+    var in_wptr    : logic<11>    ; // bytes in the buffer being filled (0..1024)
+    var in_fill    : logic        ; // buffer index being filled
+    var in_word    : logic<32>    ; // byte accumulator
+    var in_ready   : logic<2>     ; // packet ready per buffer
+    var in_len     : logic<11> [2];
+    var in_send    : logic        ; // buffer index to send next
+    var in_flow    : logic        ; // NRDY answered: ERDY when a packet becomes ready
+    var in_active  : logic        ; // DP handed to the link, waiting for the host ACK
+    var in_zlp_pend: logic        ; // last closed packet was full: ZLP after idle
+    var idle_cnt   : logic<32>    ;
+    var flush      : logic        ;
+    var tx_we      : logic        ;
+    assign tx_we      = i_tx_valid && o_tx_ready;
+    assign o_tx_ready = configured && !in_ready[in_fill] && in_wptr != 1024;
+
+    var in_close: logic; // close the packet being filled
+    assign in_close = in_wptr == 1024 || (flush && in_wptr != 0);
+
+    // ---------------------------------------------------------------- EP1 OUT buffer
+    var out_len : logic<11>;
+    var out_rptr: logic<11>;
+    var out_full: logic    ; // a packet is in the buffer
+    var out_flow: logic    ; // NRDY answered: ERDY when the buffer frees
+    var out_q   : logic<32>;
+    var out_qv  : logic    ; // out_q holds the word at out_rptr[10:2]
+    var out_qidx: logic<9> ;
+
+    assign o_rx_valid = out_full && out_qv && out_qidx == out_rptr[10:2] && out_rptr <: out_len;
+    assign o_rx_data  = out_q[out_rptr[1:0] * 8+:8];
+
+    // ---------------------------------------------------------------- main
+    always_ff {
+        if_reset {
+            configured    = 0;
+            dev_addr      = 0;
+            addr_pend     = 0;
+            addr_apply    = 0;
+            halt_in       = 0;
+            halt_out      = 0;
+            vendor_reg    = 0;
+            reset_evt     = 0;
+            seq_in        = 0;
+            seq_out       = 0;
+            tx_valid      = 0;
+            tx_hdr        = 0;
+            tx_dpp        = 0;
+            tx_len        = 0;
+            tx_base       = 0;
+            ctrl          = Ctrl::Idle;
+            ctrl_base     = 0;
+            ctrl_remain   = 0;
+            ctrl_zlp      = 0;
+            ctrl_seq      = 0;
+            ctrl_sending  = 0;
+            ctrl_last_len = 0;
+            setup_buf     = 0;
+            setup_pend    = 0;
+            dpp_target    = 0;
+            dpp_widx      = 0;
+            dpp_len_q     = 0;
+            dpp_good      = 0;
+            small_r       = 0;
+            in_wptr       = 0;
+            in_fill       = 0;
+            in_word       = 0;
+            in_ready      = 0;
+            in_send       = 0;
+            in_flow       = 0;
+            in_active     = 0;
+            in_zlp_pend   = 0;
+            idle_cnt      = 0;
+            flush         = 0;
+            out_len       = 0;
+            out_rptr      = 0;
+            out_full      = 0;
+            out_flow      = 0;
+            out_q         = 0;
+            out_qv        = 0;
+            out_qidx      = 0;
+        } else {
+            var send     : logic    ; // request a transmission this clock
+            var s_hdr    : logic<96>;
+            var s_dpp    : logic    ;
+            var s_len    : logic<11>;
+            var s_base   : logic<12>;
+            send      = 0;
+            s_hdr     = 0;
+            s_dpp     = 0;
+            s_len     = 0;
+            s_base    = 0;
+            reset_evt = 0;
+            flush     = 0;
+
+            if tx_take {
+                tx_valid = 0;
+            }
+
+            // ---- reset
+            if i_hot_reset || i_warm_reset {
+                configured   = 0;
+                dev_addr     = 0;
+                addr_apply   = 0;
+                halt_in      = 0;
+                halt_out     = 0;
+                seq_in       = 0;
+                seq_out      = 0;
+                ctrl         = Ctrl::Idle;
+                ctrl_sending = 0;
+                setup_pend   = 0;
+                dpp_target   = 0;
+                in_wptr      = 0;
+                in_ready     = 0;
+                in_fill      = 0;
+                in_send      = 0;
+                in_flow      = 0;
+                in_active    = 0;
+                in_zlp_pend  = 0;
+                out_full     = 0;
+                out_flow     = 0;
+                out_qv       = 0;
+                tx_valid     = 0;
+                reset_evt    = 1;
+            }
+
+            // ---- EP1 IN byte packing and packet closing
+            if tx_we {
+                in_word[in_wptr[1:0] * 8+:8] = i_tx_data;
+                if in_wptr[1:0] == 3 {
+                    in_ram[{in_fill, in_wptr[9:2]}] = {i_tx_data, in_word[23:0]};
+                }
+                in_wptr  = in_wptr + 1;
+                idle_cnt = 0;
+            } else if configured && (in_wptr != 0 || in_zlp_pend) {
+                if idle_cnt == STREAM_FLUSH_US * CLK_PER_US {
+                    flush = 1;
+                } else {
+                    idle_cnt = idle_cnt + 1;
+                }
+            } else {
+                idle_cnt = 0;
+            }
+            if !tx_we && in_close && !in_ready[in_fill] {
+                if in_wptr[1:0] != 0 {
+                    in_ram[{in_fill, in_wptr[9:2]}] = in_word; // partial last word
+                }
+                in_len[in_fill]   = in_wptr;
+                in_ready[in_fill] = 1;
+                in_zlp_pend       = in_wptr == 1024;
+                in_wptr           = 0;
+                in_fill           = !in_fill;
+                idle_cnt          = 0;
+            } else if !tx_we && flush && in_zlp_pend && in_wptr == 0 && !in_ready[in_fill] {
+                in_len[in_fill]   = 0; // ZLP terminates the transfer
+                in_ready[in_fill] = 1;
+                in_zlp_pend       = 0;
+                in_fill           = !in_fill;
+            }
+
+            // ---- EP1 OUT byte drain
+            if out_full {
+                if !out_qv || out_qidx != out_rptr[10:2] {
+                    out_q    = out_ram[out_rptr[10:2]];
+                    out_qidx = out_rptr[10:2];
+                    out_qv   = 1;
+                } else if o_rx_valid && i_rx_ready {
+                    out_rptr = out_rptr + 1;
+                }
+                if out_rptr >= out_len && out_qv {
+                    out_full = 0;
+                    out_qv   = 0;
+                }
+            }
+
+            // ---- DPP reception
+            if i_dpp_start {
+                dpp_widx = 0;
+                dpp_good = 1;
+            }
+            if i_dpp_valid {
+                if dpp_target == 1 {
+                    if dpp_widx == 0 {
+                        setup_buf[31:0] = i_dpp_data;
+                    } else if dpp_widx == 1 {
+                        setup_buf[63:32] = i_dpp_data;
+                    }
+                } else if dpp_target == 2 {
+                    out_ram[dpp_widx] = i_dpp_data;
+                }
+                dpp_widx = dpp_widx + 1;
+            }
+            if i_dpp_end || i_dpp_err {
+                var ok: logic;
+                ok = i_dpp_end;
+                case dpp_target {
+                    1: {
+                        // SETUP: ACK Seq 1 NumP 1 (good) / ACK Seq 0 rty (bad)
+                        send  = 1;
+                        s_hdr = tp_hdr(SUB_ACK, 0, 0, 1, if ok ? 1 : 0, !ok);
+                        if ok {
+                            setup_pend = 1;
+                        }
+                    }
+                    2: {
+                        send = 1;
+                        if ok {
+                            out_len  = dpp_len_q;
+                            out_rptr = 0;
+                            out_full = 1;
+                            seq_out  = seq_out + 1;
+                            s_hdr    = tp_hdr(SUB_ACK, 0, 1, 1, seq_out + 1, 0);
+                        } else {
+                            s_hdr = tp_hdr(SUB_ACK, 0, 1, 1, seq_out, 1);
+                        }
+                    }
+                    3: {
+                        // control OUT data (SET_SEL ...): accepted and discarded
+                        send     = 1;
+                        ctrl_seq = ctrl_seq + 1;
+                        s_hdr    = tp_hdr(SUB_ACK, 0, 0, 1, ctrl_seq + 1, 0);
+                        if ok {
+                            ctrl = Ctrl::Status;
+                        }
+                    }
+                    default: {}
+                }
+                dpp_target = 0;
+            }
+
+            // ---- received header packets
+            if i_rx_hp_valid && hp_mine && (hp_type == PKT_TP || hp_type == PKT_DP) {
+                if hp_type == PKT_DP {
+                    if dp_setup && hp_ept == 0 && dp_seq == 0 && dp_len == 8 {
+                        dpp_target   = 1;
+                        ctrl         = Ctrl::Idle;
+                        ctrl_sending = 0;
+                        in_active    = 0;
+                    } else if hp_ept == 0 && !hp_dir && ctrl == Ctrl::DataOut && dp_seq == ctrl_seq {
+                        dpp_target = 3;
+                    } else if hp_ept == 1 && !hp_dir && configured {
+                        if halt_out {
+                            send  = 1;
+                            s_hdr = tp_hdr(SUB_STALL, 0, 1, 0, 0, 0);
+                        } else if dp_seq != seq_out {
+                            // unexpected sequence number: ignore
+                        } else if out_full {
+                            send     = 1;
+                            s_hdr    = tp_hdr(SUB_NRDY, 0, 1, 0, 0, 0);
+                            out_flow = 1;
+                        } else {
+                            dpp_target = 2;
+                            dpp_len_q  = dp_len[10:0];
+                        }
+                    }
+                } else {
+                    // transaction packets
+                    case hp_sub {
+                        SUB_ACK: {
+                            if hp_ept == 0 {
+                                if ctrl == Ctrl::DataIn {
+                                    if ctrl_sending && hp_seq == ctrl_seq + 1 && !hp_rty {
+                                        // previous DP accepted
+                                        ctrl_sending = 0;
+                                        ctrl_seq     = ctrl_seq + 1;
+                                        ctrl_base    = ctrl_base + {4'h0, ctrl_last_len[10:2]}
+                                            + (if ctrl_last_len[1:0] != 0 ? 1 : 0);
+                                        ctrl_remain  = ctrl_remain - ctrl_last_len;
+                                        if ctrl_remain == ctrl_last_len && !(ctrl_zlp && ctrl_last_len == 512) {
+                                            ctrl = Ctrl::Status;
+                                        }
+                                    }
+                                    if (ctrl_sending && hp_rty) || !ctrl_sending {
+                                        // (re)send the next DP of the data stage
+                                        if hp_nump != 0 && (ctrl_remain != 0 || ctrl_zlp) && ctrl != Ctrl::Status {
+                                            var n: logic<11>;
+                                            n = if ctrl_remain >= 512 ? 512 : ctrl_remain;
+                                            if ctrl_sending && hp_rty {
+                                                n = ctrl_last_len;
+                                            }
+                                            send          = 1;
+                                            s_hdr         = dp_hdr(0, ctrl_seq, {5'h0, n}, 0);
+                                            s_dpp         = 1;
+                                            s_len         = n;
+                                            s_base        = ctrl_base;
+                                            ctrl_last_len = n;
+                                            ctrl_sending  = 1;
+                                            if n == 0 {
+                                                ctrl_zlp = 0;
+                                            }
+                                        }
+                                    }
+                                } else if ctrl == Ctrl::Stall {
+                                    send  = 1;
+                                    s_hdr = tp_hdr(SUB_STALL, 0, 0, 0, 0, 0);
+                                }
+                            } else if hp_ept == 1 && hp_dir && configured {
+                                // host asks for EP1 IN data
+                                if halt_in {
+                                    send  = 1;
+                                    s_hdr = tp_hdr(SUB_STALL, 1, 1, 0, 0, 0);
+                                } else if in_active && hp_seq == seq_in + 1 && !hp_rty {
+                                    // packet accepted
+                                    in_active         = 0;
+                                    in_ready[in_send] = 0;
+                                    in_send           = !in_send;
+                                    seq_in            = seq_in + 1;
+                                    if hp_nump != 0 && in_ready[!in_send] {
+                                        send      = 1;
+                                        s_hdr     = dp_hdr(1, seq_in + 1, {5'h0, in_len[!in_send]}, 0);
+                                        s_dpp     = 1;
+                                        s_len     = in_len[!in_send];
+                                        s_base    = {3'h0, !in_send, 8'h0};
+                                        in_active = 1;
+                                    } else if hp_nump != 0 {
+                                        send    = 1;
+                                        s_hdr   = tp_hdr(SUB_NRDY, 1, 1, 0, 0, 0);
+                                        in_flow = 1;
+                                    }
+                                } else if hp_nump != 0 && hp_seq == seq_in {
+                                    if in_ready[in_send] {
+                                        send      = 1;
+                                        s_hdr     = dp_hdr(1, seq_in, {5'h0, in_len[in_send]}, 0);
+                                        s_dpp     = 1;
+                                        s_len     = in_len[in_send];
+                                        s_base    = {3'h0, in_send, 8'h0};
+                                        in_active = 1;
+                                    } else {
+                                        send    = 1;
+                                        s_hdr   = tp_hdr(SUB_NRDY, 1, 1, 0, 0, 0);
+                                        in_flow = 1;
+                                    }
+                                }
+                            }
+                        }
+                        SUB_STATUS: {
+                            if hp_ept == 0 {
+                                send = 1;
+                                if ctrl == Ctrl::Status || ctrl == Ctrl::Idle
+                                    || (ctrl == Ctrl::DataIn && !ctrl_sending) {
+                                    s_hdr = tp_hdr(SUB_ACK, 0, 0, 0, 0, 0);
+                                    ctrl  = Ctrl::Idle;
+                                    if addr_apply {
+                                        dev_addr   = addr_pend;
+                                        addr_apply = 0;
+                                    }
+                                } else {
+                                    s_hdr = tp_hdr(SUB_STALL, 0, 0, 0, 0, 0);
+                                    ctrl  = Ctrl::Idle;
+                                }
+                            }
+                        }
+                        SUB_PING: {
+                            send  = 1;
+                            s_hdr = tp_hdr(SUB_PING_RESP, hp_dir, hp_ept, 0, 0, 0);
+                        }
+                        default: {}
+                    }
+                }
+            }
+
+            // ---- ERDY when flow control ends
+            if !send && !tx_valid {
+                if in_flow && in_ready[in_send] && !in_active {
+                    send    = 1;
+                    s_hdr   = tp_hdr(SUB_ERDY, 1, 1, 1, 0, 0);
+                    in_flow = 0;
+                } else if out_flow && !out_full {
+                    send     = 1;
+                    s_hdr    = tp_hdr(SUB_ERDY, 0, 1, 1, 0, 0);
+                    out_flow = 0;
+                }
+            }
+
+            // ---- SETUP processing
+            if setup_pend && !send {
+                var req_in     : logic   ;
+                var req_type   : logic<2>;
+                var req_rcpt   : logic<5>;
+                setup_pend  = 0;
+                req_in      = bm_req[7];
+                req_type    = bm_req[6:5];
+                req_rcpt    = bm_req[4:0];
+                ctrl        = Ctrl::Stall;
+                ctrl_seq    = 0;
+                ctrl_zlp    = 0;
+                ctrl_remain = 0;
+                if req_type == 2'b00 {
+                    case b_req {
+                        8'h00: { // GET_STATUS
+                            if req_in && w_length == 2 {
+                                small_r = 0;
+                                if req_rcpt == 2 && w_index[3:0] == 1 {
+                                    small_r[0] = if w_index[7] ? halt_in : halt_out;
+                                }
+                                ctrl_base   = SMALL_ADDR as 12;
+                                ctrl_remain = 2;
+                                ctrl        = Ctrl::DataIn;
+                            }
+                        }
+                        8'h01, 8'h03: { // CLEAR_FEATURE / SET_FEATURE
+                            if req_rcpt == 2 && w_value == 0 && w_index[3:0] == 1 {
+                                if w_index[7] {
+                                    halt_in = b_req == 8'h03;
+                                    if b_req == 8'h01 {
+                                        seq_in = 0;
+                                    }
+                                } else {
+                                    halt_out = b_req == 8'h03;
+                                    if b_req == 8'h01 {
+                                        seq_out = 0;
+                                    }
+                                }
+                                ctrl = Ctrl::Status;
+                            } else if req_rcpt == 0
+                                && (w_value == 1 || w_value == 48 || w_value == 49 || w_value == 50) {
+                                ctrl = Ctrl::Status; // REMOTE_WAKEUP / U1_ENABLE / U2_ENABLE / LTM_ENABLE: accepted
+                            } else if req_rcpt == 2 && w_value == 0 && w_index[3:0] == 0 {
+                                ctrl = Ctrl::Status; // EP0 halt: accepted, no effect
+                            }
+                        }
+                        8'h05: { // SET_ADDRESS
+                            addr_pend  = w_value[6:0];
+                            addr_apply = 1;
+                            ctrl       = Ctrl::Status;
+                        }
+                        8'h06: { // GET_DESCRIPTOR
+                            if req_in && desc_ok {
+                                ctrl_base   = desc_addr;
+                                ctrl_remain = min_len(desc_len, w_length);
+                                ctrl_zlp    = ({5'b0, desc_len} <: w_length) && desc_len[8:0] == 0;
+                                ctrl        = if w_length == 0 ? Ctrl::Status : Ctrl::DataIn;
+                            }
+                        }
+                        8'h08: { // GET_CONFIGURATION
+                            if req_in {
+                                small_r     = {31'b0, configured};
+                                ctrl_base   = SMALL_ADDR as 12;
+                                ctrl_remain = min_len(1, w_length);
+                                ctrl        = if w_length == 0 ? Ctrl::Status : Ctrl::DataIn;
+                            }
+                        }
+                        8'h09: { // SET_CONFIGURATION
+                            if w_value[7:0] <= 1 {
+                                configured  = w_value[0];
+                                halt_in     = 0;
+                                halt_out    = 0;
+                                seq_in      = 0;
+                                seq_out     = 0;
+                                in_wptr     = 0;
+                                in_ready    = 0;
+                                in_fill     = 0;
+                                in_send     = 0;
+                                in_flow     = 0;
+                                in_active   = 0;
+                                in_zlp_pend = 0;
+                                out_full    = 0;
+                                out_flow    = 0;
+                                out_qv      = 0;
+                                ctrl        = Ctrl::Status;
+                            }
+                        }
+                        8'h0A: { // GET_INTERFACE
+                            if req_in && configured && w_index[7:0] == 0 {
+                                small_r     = 0;
+                                ctrl_base   = SMALL_ADDR as 12;
+                                ctrl_remain = min_len(1, w_length);
+                                ctrl        = if w_length == 0 ? Ctrl::Status : Ctrl::DataIn;
+                            }
+                        }
+                        8'h0B: { // SET_INTERFACE
+                            if configured && w_index[7:0] == 0 && w_value[7:0] == 0 {
+                                seq_in  = 0;
+                                seq_out = 0;
+                                ctrl    = Ctrl::Status;
+                            }
+                        }
+                        8'h30: { // SET_SEL: 6 bytes OUT, discarded
+                            if !req_in && w_length == 6 {
+                                ctrl = Ctrl::DataOut;
+                            }
+                        }
+                        8'h31: { // SET_ISOCH_DELAY
+                            if !req_in && w_length == 0 {
+                                ctrl = Ctrl::Status;
+                            }
+                        }
+                        default: {}
+                    }
+                } else if req_type == 2'b10 {
+                    case b_req {
+                        8'h01: { // vendor IN: status word
+                            if req_in {
+                                small_r     = i_vendor_status;
+                                ctrl_base   = SMALL_ADDR as 12;
+                                ctrl_remain = min_len(4, w_length);
+                                ctrl        = if w_length == 0 ? Ctrl::Status : Ctrl::DataIn;
+                            }
+                        }
+                        8'h02: { // vendor OUT: scratch register
+                            if !req_in && w_length == 0 {
+                                vendor_reg = w_value;
+                                ctrl       = Ctrl::Status;
+                            }
+                        }
+                        MS_VENDOR_CODE: { // MS OS 2.0 descriptor set
+                            if req_in && w_index == 7 {
+                                ctrl_base   = MSOS_ADDR;
+                                ctrl_remain = min_len(MSOS_LEN, w_length);
+                                ctrl_zlp    = 0;
+                                ctrl        = if w_length == 0 ? Ctrl::Status : Ctrl::DataIn;
+                            }
+                        }
+                        default: {}
+                    }
+                }
+                // a request with no data stage goes straight to the status stage;
+                // a DataIn request with nothing to send as well
+                if ctrl == Ctrl::DataIn && ctrl_remain == 0 && !ctrl_zlp {
+                    ctrl = Ctrl::Status;
+                }
+            }
+
+            // ---- hand the request to the link
+            if send && !tx_valid {
+                tx_valid = 1;
+                tx_hdr   = s_hdr;
+                tx_dpp   = s_dpp;
+                tx_len   = s_len;
+                tx_base  = s_base;
+            }
+        }
+    }
+}

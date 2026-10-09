@@ -13,6 +13,7 @@ include_files = [
     "test/usb3_frame_test_body.sv",
     "test/usb3_host_bfm.sv",
     "test/usb3_link_test_body.sv",
+    "test/usb3_device_test_body.sv",
 ]
 
 [test.verilator]
@@ -21,6 +22,7 @@ compile_args = [
     "usb3_frame_test_body.sv",
     "usb3_host_bfm.sv",
     "usb3_link_test_body.sv",
+    "usb3_device_test_body.sv",
     "-Wno-WIDTHEXPAND",
     "-Wno-WIDTHTRUNC",
     "-Wno-CASEINCOMPLETE",

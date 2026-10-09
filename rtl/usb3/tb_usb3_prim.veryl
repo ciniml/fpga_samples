@@ -30,3 +30,10 @@ module usb3_link;
     usb3_link_test_body body();
 endmodule
 }}}
+
+#[test(usb3_device)]
+embed (inline) sv{{{
+module usb3_device;
+    usb3_device_test_body body();
+endmodule
+}}}
