@@ -1,0 +1,10 @@
+// Tang Console 60K (GW5AT-LV60PG484AC1/I0) - see eda/targets/tangconsole60k/README.md
+IO_LOC  "sys_clk" V22;
+IO_PORT "sys_clk" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+IO_LOC  "uart_tx" U15;
+IO_PORT "uart_tx" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_LOC  "uart_rx" V14;
+IO_PORT "uart_rx" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+// MS5351 CLK2 (AC coupled) on the BANK9 (1.5 V) user clock input
+IO_LOC  "usr_clk_in" V10;
+IO_PORT "usr_clk_in" IO_TYPE=LVCMOS15 PULL_MODE=NONE;
