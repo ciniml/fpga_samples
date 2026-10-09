@@ -1,0 +1,297 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file si5351_init.veryl
+ * @brief Programs an Si5351A / MS5351M clock generator over I2C from a
+ *        register table (address 0x60): all three outputs at 125 MHz from
+ *        the 25 MHz crystal (PLLA 750 MHz, MultiSynth /6, integer mode),
+ *        CLK0 inverted so that CLK0/CLK1 form a pseudo-differential pair
+ *        (Tang Console SerDes REFCLK1), CLK2 for the user clock input.
+ *
+ * Bit-banged I2C master at about CLK_HZ / (4 * I2C_DIV). Open-drain:
+ * o_scl_oe / o_sda_oe drive the line low when set. After the table has
+ * been written the module reads register 0 (status) into o_status and
+ * sets o_done; o_error is set if any byte was not acknowledged.
+ */
+module Si5351Init #(
+    param CLK_HZ    : u32      = 50_000_000,
+    param I2C_HZ    : u32      = 100_000   ,
+    param CLK2_DIV  : u32      = 6         , // MultiSynth 2 integer divider (6: 125 MHz, 30: 25 MHz)
+    param STATUS_REG: logic<8> = 8'h00     , // register read back into o_status when done
+) (
+    i_clk   : input  clock   ,
+    i_rst   : input  reset   ,
+    i_start : input  logic   , // level: start when set (one-shot)
+    o_scl_oe: output logic   ,
+    o_sda_oe: output logic   ,
+    i_sda   : input  logic   ,
+    o_done  : output logic   ,
+    o_error : output logic   ,
+    o_status: output logic<8>,
+) {
+    const I2C_DIV: u32      = CLK_HZ / I2C_HZ / 4;
+    const ADDR   : logic<8> = 8'hC0; // 0x60 << 1
+
+    // register table: {reg, value}; terminated by the length
+    const N_ENTRIES: u32 = 42;
+    function tab (
+        i: input logic<6>,
+    ) -> logic<16> {
+        return case i {
+            0      : 16'h03FF, // disable all outputs
+            1      : 16'h1080, // CLK0..7 powered down
+            2      : 16'h1180,
+            3      : 16'h1280,
+            4      : 16'h1380,
+            5      : 16'h1480,
+            6      : 16'h1580,
+            7      : 16'h1680,
+            8      : 16'h1780,
+            9      : 16'hB7C0, // crystal load 10 pF
+            10     : 16'h1A00, // PLLA: P3 = 1, P1 = 128*30-512 = 0xD00, P2 = 0 (750 MHz)
+            11     : 16'h1B01,
+            12     : 16'h1C00,
+            13     : 16'h1D0D,
+            14     : 16'h1E00,
+            15     : 16'h1F00,
+            16     : 16'h2000,
+            17     : 16'h2100,
+            18     : 16'h2A00, // MS0: P3 = 1, P1 = 128*6-512 = 0x100, R = /1 (125 MHz)
+            19     : 16'h2B01,
+            20     : 16'h2C00,
+            21     : 16'h2D01,
+            22     : 16'h2E00,
+            23     : 16'h2F00,
+            24     : 16'h3000,
+            25     : 16'h3100,
+            26     : 16'h3200, // MS1: same
+            27     : 16'h3301,
+            28     : 16'h3400,
+            29     : 16'h3501,
+            30     : 16'h3600,
+            31     : 16'h3700,
+            32     : 16'h3800,
+            33     : 16'h3900,
+            34     : 16'h3A00, // MS2: P1 = 128 * CLK2_DIV - 512
+            35     : 16'h3B01,
+            36     : 16'h3C00,
+            37     : {8'h3D, ms_p1_hi},
+            38     : {8'h3E, ms_p1_lo},
+            39     : 16'h3F00,
+            40     : 16'h4000,
+            41     : 16'h4100,
+            42     : 16'h105F, // CLK0: MS0 integer, PLLA, inverted, MultiSynth, 8 mA
+            43     : 16'h114F, // CLK1
+            44     : 16'h124F, // CLK2
+            45     : 16'hB1A0, // reset PLLA / PLLB
+            46     : 16'h03F8, // enable CLK0..2
+            default: 16'h0000,
+        };
+    }
+    const N_TAB   : u32      = 47;
+    const MS2_P1  : u32      = 128 * CLK2_DIV - 512;
+    const ms_p1_hi: logic<8> = (MS2_P1 >> 8) as 8;
+    const ms_p1_lo: logic<8> = MS2_P1 as 8;
+
+    enum State: logic<4> {
+        Idle,
+        Start,
+        Bit,
+        Ack,
+        Stop,
+        Next,
+        Done,
+    }
+    var state   : State    ;
+    var tick    : logic<16>;
+    var phase   : logic<2> ;
+    var idx     : logic<6> ; // table index
+    var bidx    : logic<2> ; // byte within the transaction (0 addr, 1 reg, 2 data / read)
+    var bitn    : logic<3> ;
+    var sh      : logic<8> ;
+    var rd_mode : logic    ; // final status read
+    var rd_phase: logic<2> ; // 0: write reg 0, 1: repeated start + read
+    var scl     : logic    ;
+    var sda     : logic    ;
+    var nak     : logic    ;
+    var tab_cur : logic<16>;
+    assign tab_cur = tab(idx);
+
+    assign o_scl_oe = !scl;
+    assign o_sda_oe = !sda;
+
+    always_ff {
+        if_reset {
+            state    = State::Idle;
+            tick     = 0;
+            phase    = 0;
+            idx      = 0;
+            bidx     = 0;
+            bitn     = 0;
+            sh       = 0;
+            rd_mode  = 0;
+            rd_phase = 0;
+            scl      = 1;
+            sda      = 1;
+            nak      = 0;
+            o_done   = 0;
+            o_error  = 0;
+            o_status = 0;
+        } else {
+            if tick != I2C_DIV as 16 - 1 {
+                tick = tick + 1;
+            } else {
+                tick  = 0;
+                phase = phase + 1;
+                case state {
+                    State::Idle: {
+                        if i_start && !o_done {
+                            state = State::Start;
+                            phase = 0;
+                            idx   = 0;
+                            nak   = 0;
+                        }
+                    }
+                    State::Start: {
+                        // SDA falls while SCL high
+                        case phase {
+                            0: {
+                                sda = 1;
+                                scl = 1;
+                            }
+                            1: {
+                                sda = 0;
+                            }
+                            2: {
+                                scl = 0;
+                            }
+                            3: {
+                                bidx  = 0;
+                                bitn  = 7;
+                                sh    = if rd_mode && rd_phase == 1 ? ADDR | 8'h01 : ADDR;
+                                state = State::Bit;
+                            }
+                        }
+                    }
+                    State::Bit: {
+                        // one bit per 4 phases: setup, SCL high, SCL high, SCL low
+                        case phase {
+                            0: {
+                                sda = if (rd_mode && rd_phase == 1 && bidx == 1) ? 1 : sh[7];
+                            }
+                            1: {
+                                scl = 1;
+                            }
+                            2: {
+                                if rd_mode && rd_phase == 1 && bidx == 1 {
+                                    sh = {sh[6:0], i_sda};
+                                }
+                            }
+                            3: {
+                                scl = 0;
+                                if !(rd_mode && rd_phase == 1 && bidx == 1) {
+                                    sh = {sh[6:0], 1'b0};
+                                }
+                                if bitn == 0 {
+                                    state = State::Ack;
+                                } else {
+                                    bitn = bitn - 1;
+                                }
+                            }
+                        }
+                    }
+                    State::Ack: {
+                        case phase {
+                            0: {
+                                sda = if (rd_mode && rd_phase == 1 && bidx == 1) ? 1 : 1;
+                            } // release (master NAK after read)
+                            1: {
+                                scl = 1;
+                            }
+                            2: {
+                                if !(rd_mode && rd_phase == 1 && bidx == 1) && i_sda {
+                                    nak = 1;
+                                }
+                            }
+                            3: {
+                                scl  = 0;
+                                sda  = 0;
+                                bitn = 7;
+                                if rd_mode {
+                                    if rd_phase == 0 {
+                                        if bidx == 0 {
+                                            bidx  = 1;
+                                            sh    = STATUS_REG;
+                                            state = State::Bit; // register 0
+                                        } else {
+                                            state = State::Stop; // then repeated start for the read
+                                        }
+                                    } else {
+                                        if bidx == 0 {
+                                            bidx  = 1;
+                                            state = State::Bit;
+                                        } else {
+                                            o_status = sh;
+                                            state    = State::Stop;
+                                        }
+                                    }
+                                } else if bidx == 0 {
+                                    bidx  = 1;
+                                    sh    = tab_cur[15:8];
+                                    state = State::Bit;
+                                } else if bidx == 1 {
+                                    bidx  = 2;
+                                    sh    = tab_cur[7:0];
+                                    state = State::Bit;
+                                } else {
+                                    state = State::Stop;
+                                }
+                            }
+                        }
+                    }
+                    State::Stop: {
+                        case phase {
+                            0: {
+                                sda = 0;
+                            }
+                            1: {
+                                scl = 1;
+                            }
+                            2: {
+                                sda = 1;
+                            }
+                            3: {
+                                state = State::Next;
+                            }
+                        }
+                    }
+                    State::Next: {
+                        if rd_mode {
+                            if rd_phase == 0 {
+                                rd_phase = 1;
+                                state    = State::Start;
+                            } else {
+                                state = State::Done;
+                            }
+                        } else if idx == (N_TAB - 1) as 6 {
+                            rd_mode  = 1;
+                            rd_phase = 0;
+                            state    = State::Start;
+                        } else {
+                            idx   = idx + 1;
+                            state = State::Start;
+                        }
+                    }
+                    State::Done: {
+                        o_done  = 1;
+                        o_error = nak;
+                    }
+                    default: {}
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,4 @@
+*.sv
+*.sv.map
+*.f
+.build/
