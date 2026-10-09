@@ -1,0 +1,600 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file usb3_link.veryl
+ * @brief USB 3.2 Gen1 link layer of an upstream port in U0 (7.2.4):
+ *        header sequence numbers, Rx header buffer credits, LGOOD/LCRD/
+ *        LBAD/LRTY handling with a 4-entry Tx header buffer, keep-alive
+ *        (LUP), link power management commands (LXU for U1/U2, LAU/LPMA
+ *        for U3), the U0 timers and the Port Capability / Port
+ *        Configuration LMP exchange (8.4.5, 8.4.6).
+ *
+ * Header packets other than LMPs are passed to the protocol layer
+ * (o_rx_hp_*). Every properly received header packet is LGOOD'ed and
+ * credited immediately (the protocol layer consumes headers at line rate).
+ *
+ * Transmit requests from the protocol layer are queued in the Tx header
+ * buffer and resent (with their DPP) on LBAD / after Recovery.
+ */
+module Usb3Link #(
+    param CLK_HZ    : u32 = 125_000_000,
+    param PORTCFG_US: u32 = 1000       , // tPortConfiguration is 20 us; be lenient
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    // LTSSM
+    i_in_u0        : input  logic,
+    i_u0_entry     : input  logic,
+    i_from_recovery: input  logic,
+    o_go_recovery  : output logic,
+    o_go_u3        : output logic,
+    o_go_inactive  : output logic,
+    o_go_disabled  : output logic,
+
+    // receive parser
+    i_lc_valid : input logic    ,
+    i_lc_word  : input logic<11>,
+    i_hp_valid : input logic    ,
+    i_hp_hdr   : input logic<96>,
+    i_hp_lcw   : input logic<16>,
+    i_hp_crc_ok: input logic    ,
+
+    // transmit framer
+    o_lc_valid   : output logic    ,
+    o_lc_word    : output logic<11>,
+    i_lc_ready   : input  logic    ,
+    o_hp_valid   : output logic    ,
+    o_hp_hdr     : output logic<96>,
+    o_hp_lcw     : output logic<11>,
+    o_hp_dpp     : output logic    ,
+    o_hp_dpp_len : output logic<11>,
+    o_hp_dpp_base: output logic<12>,
+    i_hp_ready   : input  logic    ,
+    i_tx_busy    : input  logic    ,
+
+    // protocol layer
+    o_rx_hp_valid: output logic    , // TP / DP / ITP header received properly
+    o_rx_hp_hdr  : output logic<96>,
+    i_tx_hp_valid: input  logic    ,
+    i_tx_hp_hdr  : input  logic<96>,
+    i_tx_dpp     : input  logic    ,
+    i_tx_dpp_len : input  logic<11>,
+    i_tx_dpp_base: input  logic<12>,
+    o_tx_hp_ready: output logic    , // request accepted (queued)
+    o_tx_hp_idle : output logic    , // nothing queued or unacknowledged
+
+    o_configured: output logic, // Port Configuration done
+    o_force_pm  : output logic, // Set Link Function: Force_LinkPM_Accept
+) {
+    import usb3_pkg::*;
+
+    const US_CLKS: u32 = CLK_HZ / 1_000_000;
+
+    // ---------------------------------------------------------------- time base
+    var us_div : logic<8>;
+    var tick_us: logic   ;
+    always_ff {
+        if_reset {
+            us_div  = 0;
+            tick_us = 0;
+        } else if us_div == (US_CLKS - 1) as 8 {
+            us_div  = 0;
+            tick_us = 1;
+        } else {
+            us_div  = us_div + 1;
+            tick_us = 0;
+        }
+    }
+
+    // ---------------------------------------------------------------- link command queue
+    // Up to three commands can be queued per clock (slot a: LGOOD/LBAD/LUP,
+    // slot b: LCRD, slot c: LRTY/LXU/LAU); the framer drains one per 2 clocks.
+    var lcq    : logic<11> [8];
+    var lcq_wr : logic<3>     ;
+    var lcq_rd : logic<3>     ;
+    var lcq_cnt: logic<4>     ;
+    var push_a : logic        ;
+    var push_b : logic        ;
+    var push_c : logic        ;
+    var lc_a   : logic<11>    ;
+    var lc_b   : logic<11>    ;
+    var lc_c   : logic<11>    ;
+    var lcq_pop: logic        ;
+
+    assign o_lc_valid = lcq_cnt != 0 && i_in_u0;
+    assign o_lc_word  = lcq[lcq_rd];
+    assign lcq_pop    = o_lc_valid && i_lc_ready;
+
+    always_ff {
+        if_reset {
+            lcq_wr  = 0;
+            lcq_rd  = 0;
+            lcq_cnt = 0;
+        } else if !i_in_u0 {
+            lcq_wr  = 0;
+            lcq_rd  = 0;
+            lcq_cnt = 0;
+        } else {
+            var w: logic<3>;
+            var n: logic<4>;
+            w = lcq_wr;
+            n = lcq_cnt;
+            if push_a {
+                lcq[w] = lc_a;
+                w      = w + 1;
+                n      = n + 1;
+            }
+            if push_b {
+                lcq[w] = lc_b;
+                w      = w + 1;
+                n      = n + 1;
+            }
+            if push_c {
+                lcq[w] = lc_c;
+                w      = w + 1;
+                n      = n + 1;
+            }
+            if lcq_pop {
+                lcq_rd = lcq_rd + 1;
+                n      = n - 1;
+            }
+            lcq_wr  = w;
+            lcq_cnt = n;
+        }
+    }
+
+    // ---------------------------------------------------------------- Tx header buffer (4 entries, in order)
+    var txb_hdr : logic<96> [4];
+    var txb_dpp : logic     [4];
+    var txb_len : logic<11> [4];
+    var txb_base: logic<12> [4];
+    var txb_hsn : logic<3>  [4];
+    var txb_head: logic<2>     ; // oldest unacknowledged
+    var txb_cnt : logic<3>     ; // entries (0..4)
+    var txb_sent: logic<3>     ; // entries handed to the framer since (re)start (<= txb_cnt)
+    var txb_next: logic<2>     ; // = head + sent
+    assign txb_next = txb_head + txb_sent[1:0];
+
+    // ---------------------------------------------------------------- link state
+    var tx_hsn       : logic<3> ;
+    var ack_hsn      : logic<3> ;
+    var rx_hsn       : logic<3> ;
+    var remote_credit: logic<3> ;
+    var tx_cred_idx  : logic<2> ; // next LCRD_x letter we send
+    var rx_cred_idx  : logic<2> ; // next LCRD_x letter we expect
+    var adv_rx       : logic    ; // partner's LGOOD_n advertisement received
+    var cred_rx      : logic    ; // at least one LCRD_x received since U0 entry
+    var adv_cnt      : logic<3> ; // advertisement progress: 0 none, 1 LGOOD+LCRD_A, 2..4 LCRD_B..D queued
+    var ignore_hp    : logic    ; // after LBAD until LRTY
+    var lbad_cnt     : logic<2> ;
+    var retry        : logic    ; // LRTY queued, resend unacknowledged entries
+    var lau_sent     : logic    ;
+    var go_u3        : logic    ;
+    var pending_us   : logic<4> ; // PENDING_HP_TIMER (10 us)
+    var pending_on   : logic    ;
+    var pending_tmo  : logic<2> ; // consecutive PENDING_HP_TIMER expiries
+    var credit_us    : logic<13>; // CREDIT_HP_TIMER (5 ms)
+    var credit_on    : logic    ;
+    var u0l_us       : logic<4> ; // tU0LTimeout (10 us)
+    var u0rec_us     : logic<10>; // tU0RecoveryTimeout (1 ms)
+    var pm_us        : logic<4> ; // PM_ENTRY_TIMER (8 us)
+    var portcfg_us   : logic<11>;
+    var portcfg_wait : logic    ;
+    var configured   : logic    ;
+    var force_pm     : logic    ;
+    var lmp_req      : logic<2> ; // 1: Port Capability, 2: Port Configuration Response
+    var go_recovery  : logic    ;
+    var go_inactive  : logic    ;
+    var go_disabled  : logic    ;
+
+    assign o_go_recovery = go_recovery;
+    assign o_go_u3       = go_u3;
+    assign o_go_inactive = go_inactive;
+    assign o_go_disabled = go_disabled;
+    assign o_configured  = configured;
+    assign o_force_pm    = force_pm;
+    assign o_tx_hp_idle  = txb_cnt == 0 && !i_tx_hp_valid && lmp_req == 0;
+
+    // ---------------------------------------------------------------- transmit side
+    // A header packet may be handed to the framer when the partner advertised
+    // and credits remain. New requests are queued into the Tx buffer first.
+    var can_send: logic;
+    assign can_send = i_in_u0 && adv_rx && cred_rx && remote_credit != 0;
+
+    var hp_present: logic   ; // an entry is being offered to the framer
+    var txb_unsent: logic<3>; // entries queued but not yet transmitted
+    assign txb_unsent = txb_cnt - txb_sent;
+
+    // link commands (including a just-queued LRTY) always go first
+    assign hp_present    = i_in_u0 && lcq_cnt == 0 && !push_a && !push_b && !push_c && txb_unsent != 0
+        && (retry || can_send);
+    assign o_hp_valid    = hp_present;
+    assign o_hp_hdr      = txb_hdr[txb_next];
+    assign o_hp_lcw      = {8'h0, txb_hsn[txb_next]};
+    assign o_hp_dpp      = txb_dpp[txb_next];
+    assign o_hp_dpp_len  = txb_len[txb_next];
+    assign o_hp_dpp_base = txb_base[txb_next];
+
+    var hp_accept: logic;
+    assign hp_accept = hp_present && i_hp_ready;
+
+    // queue acceptance: internal LMP first, then the protocol layer
+    var queue_room: logic;
+    assign queue_room    = i_in_u0 && txb_cnt != 4 && !retry && adv_cnt == 4;
+    assign o_tx_hp_ready = queue_room && lmp_req == 0 && i_tx_hp_valid;
+
+    function lmp_port_capability () -> logic<96> {
+        return {32'h0, 32'h0002_0004, 32'h0000_0280};
+    }
+    function lmp_port_config_response () -> logic<96> {
+        return {32'h0, 32'h0, 32'h0000_02C0};
+    }
+
+    // ---------------------------------------------------------------- main control
+    always_ff {
+        if_reset {
+            txb_head      = 0;
+            txb_cnt       = 0;
+            txb_sent      = 0;
+            tx_hsn        = 0;
+            ack_hsn       = 0;
+            rx_hsn        = 0;
+            remote_credit = 0;
+            tx_cred_idx   = 0;
+            rx_cred_idx   = 0;
+            adv_rx        = 0;
+            cred_rx       = 0;
+            adv_cnt       = 0;
+            ignore_hp     = 0;
+            lbad_cnt      = 0;
+            retry         = 0;
+            lau_sent      = 0;
+            go_u3         = 0;
+            pending_us    = 0;
+            pending_on    = 0;
+            pending_tmo   = 0;
+            credit_us     = 0;
+            credit_on     = 0;
+            u0l_us        = 0;
+            u0rec_us      = 0;
+            pm_us         = 0;
+            portcfg_us    = 0;
+            portcfg_wait  = 0;
+            configured    = 0;
+            force_pm      = 0;
+            lmp_req       = 0;
+            go_recovery   = 0;
+            go_inactive   = 0;
+            go_disabled   = 0;
+            push_a        = 0;
+            push_b        = 0;
+            push_c        = 0;
+            lc_a          = 0;
+            lc_b          = 0;
+            lc_c          = 0;
+            o_rx_hp_valid = 0;
+            o_rx_hp_hdr   = 0;
+        } else {
+            var cnt : logic<3> ;
+            var head: logic<2> ;
+            var sent: logic<3> ;
+            var pa  : logic    ;
+            var pb  : logic    ;
+            var pc  : logic    ;
+            var la  : logic<11>;
+            var lb  : logic<11>;
+            var lc  : logic<11>;
+            cnt  = txb_cnt;
+            head = txb_head;
+            sent = txb_sent;
+            pa   = 0;
+            pb   = 0;
+            pc   = 0;
+            la   = 0;
+            lb   = 0;
+            lc   = 0;
+
+            o_rx_hp_valid = 0;
+            go_recovery   = 0;
+            go_inactive   = 0;
+            go_disabled   = 0;
+
+            if !i_in_u0 {
+                // outside U0: hold state; counters reset on U0 entry
+                adv_rx       = 0;
+                cred_rx      = 0;
+                adv_cnt      = 0;
+                ignore_hp    = 0;
+                lbad_cnt     = 0;
+                retry        = 0;
+                lau_sent     = 0;
+                go_u3        = 0;
+                pending_on   = 0;
+                credit_on    = 0;
+                portcfg_wait = 0;
+                lmp_req      = 0;
+                sent         = 0; // everything unacknowledged will be retransmitted
+                if i_u0_entry {
+                    remote_credit = 0;
+                    tx_cred_idx   = 0;
+                    rx_cred_idx   = 0;
+                    u0l_us        = 0;
+                    u0rec_us      = 0;
+                    pending_tmo   = if i_from_recovery ? pending_tmo : 0;
+                    if !i_from_recovery {
+                        tx_hsn     = 0;
+                        rx_hsn     = 0;
+                        cnt        = 0;
+                        head       = 0;
+                        configured = 0;
+                    }
+                }
+            } else {
+                // ---- advertisement right after U0 entry: LGOOD_(rx_hsn-1), LCRD_A..D
+                if adv_cnt == 0 {
+                    var hm1        : logic<3>;
+                    hm1         = rx_hsn - 1;
+                    pa          = 1;
+                    la          = LC_LGOOD + {8'h0, hm1};
+                    pb          = 1;
+                    lb          = LC_LCRD + 0;
+                    adv_cnt     = 1;
+                    tx_cred_idx = 1;
+                    pending_on  = 1;
+                    pending_us  = 0;
+                    credit_on   = 1;
+                    credit_us   = 0;
+                    if !configured {
+                        lmp_req      = 1;
+                        portcfg_wait = 1;
+                        portcfg_us   = 0;
+                    }
+                } else if adv_cnt <: 4 {
+                    pb          = 1;
+                    lb          = LC_LCRD + {9'h0, tx_cred_idx};
+                    tx_cred_idx = tx_cred_idx + 1;
+                    adv_cnt     = adv_cnt + 1;
+                }
+
+                // ---- timers
+                if tick_us {
+                    if pending_on && pending_us != 15 {
+                        pending_us = pending_us + 1;
+                    }
+                    if credit_on && credit_us != 13'h1FFF {
+                        credit_us = credit_us + 1;
+                    }
+                    if u0l_us != 15 {
+                        u0l_us = u0l_us + 1;
+                    }
+                    if u0rec_us != 10'h3FF {
+                        u0rec_us = u0rec_us + 1;
+                    }
+                    if lau_sent && pm_us != 15 {
+                        pm_us = pm_us + 1;
+                    }
+                    if portcfg_wait && portcfg_us != 11'h7FF {
+                        portcfg_us = portcfg_us + 1;
+                    }
+                }
+                if i_tx_busy || lcq_pop || hp_accept {
+                    u0l_us = 0;
+                }
+                if u0l_us >= 10 && lcq_cnt == 0 && !pa {
+                    pa     = 1;
+                    la     = LC_LUP;
+                    u0l_us = 0;
+                }
+                if u0rec_us >= 1000 {
+                    go_recovery = 1;
+                    u0rec_us    = 0;
+                }
+                if pending_on && pending_us >= 10 {
+                    pending_on = 0;
+                    if pending_tmo == 3 {
+                        go_inactive = 1;
+                    } else {
+                        pending_tmo = pending_tmo + 1;
+                        go_recovery = 1;
+                    }
+                }
+                if credit_on && credit_us >= 5000 {
+                    credit_on   = 0;
+                    go_recovery = 1;
+                }
+                if lau_sent && pm_us >= 8 {
+                    go_u3 = 1;
+                }
+                if portcfg_wait && portcfg_us >= PORTCFG_US as 11 {
+                    portcfg_wait = 0;
+                    go_disabled  = 1;
+                }
+
+                // ---- framer handed an entry
+                if hp_accept {
+                    sent = sent + 1;
+                    if !retry {
+                        remote_credit = remote_credit - 1;
+                    }
+                    if !pending_on {
+                        pending_on = 1;
+                        pending_us = 0;
+                    }
+                    credit_on = 1;
+                    if retry && sent == cnt {
+                        retry = 0;
+                    }
+                }
+
+                // ---- received link command
+                if i_lc_valid {
+                    u0rec_us = 0;
+                    if i_lc_word[10:3] == 8'h00 {
+                        // LGOOD_n
+                        var ng : logic<3>;
+                        var ngp: logic<3>;
+                        ng  = i_lc_word[2:0];
+                        ngp = ng + 1;
+                        if !adv_rx {
+                            adv_rx  = 1;
+                            ack_hsn = ngp;
+                            // after Recovery: drop entries the partner already received,
+                            // the rest is retransmitted
+                            if i_from_recovery {
+                                var h: logic<2>;
+                                var c: logic<3>;
+                                h = head;
+                                c = cnt;
+                                for i in 0..4 {
+                                    if c != 0 && txb_hsn[h] != ngp {
+                                        h = h + 1;
+                                        c = c - 1;
+                                    }
+                                }
+                                head = h;
+                                cnt  = c;
+                                sent = 0;
+                                if c != 0 {
+                                    retry = 1;
+                                }
+                            }
+                            pending_on = cnt != 0;
+                            pending_us = 0;
+                        } else if ng == ack_hsn && cnt != 0 && sent != 0 {
+                            head        = head + 1;
+                            cnt         = cnt - 1;
+                            sent        = sent - 1;
+                            ack_hsn     = ack_hsn + 1;
+                            pending_tmo = 0;
+                            if cnt == 0 {
+                                pending_on = 0;
+                            } else {
+                                pending_us = 0;
+                            }
+                        } else {
+                            go_recovery = 1;
+                        }
+                    } else if i_lc_word[10:2] == 9'h020 {
+                        // LCRD_x
+                        if i_lc_word[1:0] == rx_cred_idx {
+                            rx_cred_idx = rx_cred_idx + 1;
+                            cred_rx     = 1;
+                            if remote_credit != 4 {
+                                remote_credit = remote_credit + 1;
+                            }
+                            credit_us = 0;
+                            credit_on = remote_credit != 3; // < 4 after increment
+                        } else {
+                            go_recovery = 1;
+                        }
+                    } else if i_lc_word == LC_LBAD {
+                        if !retry {
+                            retry = 1;
+                            sent  = 0;
+                            pc    = 1;
+                            lc    = LC_LRTY;
+                        }
+                    } else if i_lc_word == LC_LRTY {
+                        ignore_hp = 0;
+                    } else if i_lc_word == LC_LGO_U1 || i_lc_word == LC_LGO_U2 {
+                        pc = 1;
+                        lc = LC_LXU;
+                    } else if i_lc_word == LC_LGO_U3 {
+                        pc       = 1;
+                        lc       = LC_LAU;
+                        lau_sent = 1;
+                        pm_us    = 0;
+                    } else if i_lc_word == LC_LPMA {
+                        if lau_sent {
+                            go_u3 = 1;
+                        }
+                    }
+                }
+
+                // ---- received header packet
+                if i_hp_valid {
+                    u0rec_us = 0;
+                    if !i_hp_crc_ok {
+                        if !ignore_hp {
+                            if lbad_cnt == 2 {
+                                go_recovery = 1;
+                            } else {
+                                lbad_cnt  = lbad_cnt + 1;
+                                ignore_hp = 1;
+                                pa        = 1;
+                                la        = LC_LBAD;
+                            }
+                        }
+                    } else if ignore_hp {
+                        // dropped until LRTY
+                    } else if i_hp_lcw[2:0] != rx_hsn {
+                        go_recovery = 1;
+                    } else {
+                        lbad_cnt = 0;
+                        pa       = 1;
+                        la       = LC_LGOOD + {8'h0, rx_hsn};
+                        rx_hsn   = rx_hsn + 1;
+                        // credit returned right away (our Rx buffers never run out)
+                        pb          = 1;
+                        lb          = LC_LCRD + {9'h0, tx_cred_idx};
+                        tx_cred_idx = tx_cred_idx + 1;
+                        if i_hp_hdr[4:0] == PKT_LMP {
+                            case i_hp_hdr[8:5] {
+                                4'b0001: force_pm = i_hp_hdr[10]; // Set Link Function bit 1
+                                4'b0100: {} // Port Capability
+                                4'b0101: {
+                                    // Port Configuration: answer, done
+                                    lmp_req      = 2;
+                                    configured   = 1;
+                                    portcfg_wait = 0;
+                                }
+                                default: {}
+                            }
+                        } else {
+                            o_rx_hp_valid = 1;
+                            o_rx_hp_hdr   = i_hp_hdr;
+                        }
+                    }
+                }
+
+                // ---- queue new header packets into the Tx buffer
+                if queue_room && lmp_req != 0 {
+                    var w          : logic<2>;
+                    w           = head + cnt[1:0];
+                    txb_hdr[w]  = if lmp_req == 1 ? lmp_port_capability() : lmp_port_config_response();
+                    txb_dpp[w]  = 0;
+                    txb_len[w]  = 0;
+                    txb_base[w] = 0;
+                    txb_hsn[w]  = tx_hsn;
+                    tx_hsn      = tx_hsn + 1;
+                    cnt         = cnt + 1;
+                    lmp_req     = 0;
+                } else if o_tx_hp_ready {
+                    var w          : logic<2>;
+                    w           = head + cnt[1:0];
+                    txb_hdr[w]  = i_tx_hp_hdr;
+                    txb_dpp[w]  = i_tx_dpp;
+                    txb_len[w]  = i_tx_dpp_len;
+                    txb_base[w] = i_tx_dpp_base;
+                    txb_hsn[w]  = tx_hsn;
+                    tx_hsn      = tx_hsn + 1;
+                    cnt         = cnt + 1;
+                }
+            }
+
+            txb_head = head;
+            txb_cnt  = cnt;
+            txb_sent = sent;
+            push_a   = pa;
+            push_b   = pb;
+            push_c   = pc;
+            lc_a     = la;
+            lc_b     = lb;
+            lc_c     = lc;
+        }
+    }
+}

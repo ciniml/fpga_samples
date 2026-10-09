@@ -28,15 +28,16 @@ module Usb3TxFramer (
     i_lc_word : input  logic<11>,
     o_lc_ready: output logic    , // request accepted this clock
 
-    i_hp_valid  : input  logic    ,
-    i_hp_hdr    : input  logic<96>,
-    i_hp_lcw    : input  logic<11>, // LCW information bits (HSN, DL, ...)
-    i_hp_dpp    : input  logic    , // a DPP follows the header
-    i_hp_dpp_len: input  logic<11>, // 0..1024
-    o_hp_ready  : output logic    ,
+    i_hp_valid   : input  logic    ,
+    i_hp_hdr     : input  logic<96>,
+    i_hp_lcw     : input  logic<11>, // LCW information bits (HSN, DL, ...)
+    i_hp_dpp     : input  logic    , // a DPP follows the header
+    i_hp_dpp_len : input  logic<11>, // 0..1024
+    i_hp_dpp_base: input  logic<12>, // word address of the payload in the data RAM
+    o_hp_ready   : output logic    ,
 
     o_dpp_rd  : output logic    ,
-    o_dpp_addr: output logic<8> , // word index 0..255
+    o_dpp_addr: output logic<12>, // = base + word index
     i_dpp_data: input  logic<32>,
 
     o_data: output logic<32>,
@@ -252,7 +253,7 @@ module Usb3TxFramer (
                         remain  = i_hp_dpp_len;
                         crc16   = 16'hFFFF;
                         crc32   = 32'hFFFFFFFF;
-                        addr    = 0;
+                        addr    = i_hp_dpp_base;
                         state   = State::Hp0;
                     }
                 }

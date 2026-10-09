@@ -1,0 +1,691 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file usb3_ltssm.veryl
+ * @brief Link Training and Status State Machine of a USB 3.2 Gen1 x1
+ *        upstream (device) port on a PIPE 3.x PHY (7.5, 6.9, PIPE 8.x).
+ *
+ * Implemented states: eSS.Disabled, eSS.Inactive, Rx.Detect, Polling
+ * (LFPS / RxEQ / Active / Configuration / Idle), U0, U3, Recovery
+ * (Active / Configuration / Idle), Hot Reset (Active / Exit) and Warm
+ * Reset detection. U1/U2 are never entered (the link layer refuses
+ * LGO_U1/U2 with LXU), Compliance Mode and Loopback are not implemented.
+ *
+ * The PHY is kept in P0 except in Rx.Detect / eSS.Inactive / eSS.Disabled
+ * / U3 where P2 is used (P3 would stop PCLK on the Gowin PHY). LFPS is
+ * transmitted through the PIPE control decode (P0: TxElecIdle and
+ * TxDetectRx both 1; P2: TxElecIdle 0) and received through RxElecIdle.
+ *
+ * Training ordered sets are produced on o_ts_data/o_ts_k while
+ * o_tx_sel_ts is set (the scrambler must be bypassed for them, 6.4.1.1);
+ * otherwise the framer owns the transmit stream.
+ *
+ * Timers are counted in microseconds from a 125 MHz PCLK (CLK_HZ).
+ */
+module Usb3Ltssm #(
+    param CLK_HZ           : u32 = 125_000_000,
+    param DISABLED_RETRY_MS: u32 = 1000       , // 0: stay in eSS.Disabled until VBUS cycles
+    param TSEQ_COUNT       : u32 = 65536      , // ordered sets sent in Polling.RxEQ (shorten for simulation)
+) (
+    i_clk: input clock,
+    i_rst: input reset, // PHY reset released and PCLK stable
+
+    // PIPE
+    o_power_down    : output logic<2>,
+    o_tx_elecidle   : output logic   ,
+    o_tx_detectrx   : output logic   ,
+    o_rx_termination: output logic   ,
+    o_rx_polarity   : output logic   ,
+    i_phy_status    : input  logic   ,
+    i_rx_status     : input  logic<3>,
+    i_rx_elecidle   : input  logic   , // asynchronous, synchronised here
+    i_power_present : input  logic   , // VBUS
+
+    // receive-side observations (from Usb3RxParser)
+    i_ts_valid    : input logic   ,
+    i_ts_type     : input logic<2>,
+    i_ts_cfg      : input logic<8>,
+    i_ts_inv      : input logic   ,
+    i_pol_inv_hint: input logic   ,
+    i_idle8       : input logic   ,
+
+    // requests from the link layer
+    i_go_recovery: input logic,
+    i_go_u3      : input logic, // LPMA received / PM_ENTRY_TIMER after LAU for LGO_U3
+    i_go_inactive: input logic,
+    i_go_disabled: input logic,
+
+    // status
+    o_state        : output logic<5>,
+    o_in_u0        : output logic   ,
+    o_u0_entry     : output logic   , // one clock on entry to U0
+    o_from_recovery: output logic   , // qualifies o_u0_entry: entered from Recovery
+    o_hot_reset    : output logic   , // one clock: Hot Reset performed
+    o_warm_reset   : output logic   , // one clock: Warm Reset detected
+    o_scr_bypass   : output logic   , // scrambling disabled by the link partner
+    o_rx_enable    : output logic   , // parser enabled
+    o_rx_flush     : output logic   , // flush the receive FIFO
+    o_tx_idle      : output logic   , // Polling.Idle etc.: framer may send Idle only
+
+    // training set transmit
+    o_tx_sel_ts: output logic    ,
+    o_ts_data  : output logic<32>,
+    o_ts_k     : output logic<4> ,
+) {
+    import usb3_pkg::*;
+
+    enum State: logic<5> {
+        PhyWait,
+        Disabled,
+        Inactive,
+        RxDetectReset,
+        RxDetectActive,
+        RxDetectQuiet,
+        PollingLfps,
+        PollingRxEq,
+        PollingActive,
+        PollingConfig,
+        PollingIdle,
+        U0,
+        U3,
+        U3Wake,
+        RecoveryActive,
+        RecoveryConfig,
+        RecoveryIdle,
+        HotResetActive,
+        HotResetExit,
+    }
+
+    const US_CLKS: u32 = CLK_HZ / 1_000_000;
+
+    var state: State;
+    assign o_state = state;
+
+    // ---------------------------------------------------------------- time base
+    var us_div : logic<8>;
+    var tick_us: logic   ;
+    always_ff {
+        if_reset {
+            us_div  = 0;
+            tick_us = 0;
+        } else if us_div == (US_CLKS - 1) as 8 {
+            us_div  = 0;
+            tick_us = 1;
+        } else {
+            us_div  = us_div + 1;
+            tick_us = 0;
+        }
+    }
+    var t_us   : logic<20>; // state timer, microseconds (max ~1 s)
+    var t_clear: logic    ;
+
+    // ---------------------------------------------------------------- LFPS receive
+    var ei_sync: logic<2>;
+    var ei     : logic   ; // 1 = electrical idle (no LFPS)
+    assign ei = ei_sync[1];
+    var lfps_low_clk: logic<6> ; // cycles LFPS has been present (saturating, for the 300 ns threshold)
+    var lfps_low_us : logic<16>; // microseconds LFPS has been present continuously
+    var lfps_gap_us : logic<8> ; // microseconds since LFPS ended (saturating)
+    var lfps_burst  : logic    ; // one clock: a Polling.LFPS-like burst (0.3..3 us) just ended
+    var lfps_long   : logic    ; // LFPS present for >= 0.3 us (Ux exit / wake / reset candidate)
+    var warm_reset  : logic    ; // LFPS present for >= tResetDelay
+    var burst_cnt   : logic<2> ; // consecutive Polling.LFPS bursts received (saturating at 2)
+    var tx_after_rx : logic<3> ; // bursts sent since the last received burst (saturating at 4)
+
+    always_ff {
+        if_reset {
+            ei_sync      = 2'b11;
+            lfps_low_clk = 0;
+            lfps_low_us  = 0;
+            lfps_gap_us  = 8'hFF;
+            lfps_burst   = 0;
+            warm_reset   = 0;
+            burst_cnt    = 0;
+        } else {
+            ei_sync    = {ei_sync[0], i_rx_elecidle};
+            lfps_burst = 0;
+            warm_reset = 0;
+            if !ei {
+                if lfps_low_clk != 6'h3F {
+                    lfps_low_clk = lfps_low_clk + 1;
+                }
+                if tick_us && lfps_low_us != 16'hFFFF {
+                    lfps_low_us = lfps_low_us + 1;
+                }
+                if tick_us && lfps_low_us == 20_000 {
+                    warm_reset = 1; // tResetDelay 18..50 ms
+                }
+            } else {
+                if lfps_low_clk != 0 {
+                    // LFPS just ended: classify
+                    if lfps_low_clk >= 30 && lfps_low_us <: 3 {
+                        lfps_burst = 1;
+                    }
+                    lfps_gap_us = 0;
+                } else if tick_us && lfps_gap_us != 8'hFF {
+                    lfps_gap_us = lfps_gap_us + 1;
+                }
+                lfps_low_clk = 0;
+                lfps_low_us  = 0;
+            }
+            // consecutive Polling.LFPS bursts: next burst within ~20 us of the previous one
+            if lfps_burst {
+                burst_cnt = if lfps_gap_us <: 20 && burst_cnt != 0 ? 2 : 1;
+            } else if lfps_gap_us >= 40 {
+                burst_cnt = 0;
+            }
+            if state != State::PollingLfps {
+                burst_cnt = 0;
+            }
+        }
+    }
+    assign lfps_long = !ei && lfps_low_clk >= 30;
+
+    // ---------------------------------------------------------------- LFPS transmit (Polling bursts)
+    var lfps_tx: logic   ; // request LFPS on the line
+    var pb_us  : logic<4>; // Polling burst phase timer
+    var pb_on  : logic   ;
+    var pb_sent: logic<5>; // bursts sent (saturating at 16)
+    var pb_edge: logic   ; // one clock at the end of a transmitted burst
+
+    // ---------------------------------------------------------------- TS transmit
+    var ts_word  : logic<3> ; // word index within the ordered set (TS: 0..3, TSEQ: 0..7)
+    var ts_cfg_tx: logic<8> ; // link configuration byte we transmit
+    var ts_sent  : logic<5> ; // ordered sets sent since the event of interest (saturating)
+    var tseq_cnt : logic<17>; // TSEQ ordered sets sent (65536)
+    var skp_cnt  : logic<10>; // symbols since the last SKP OS during training
+    var skp_now  : logic    ; // this word is SKP SKP SKP SKP
+    var idle_sent: logic<5> ; // idle words sent after idle received (16 symbols = 4 words)
+    var idle_rx  : logic    ; // 8 consecutive idle symbols were received in this state
+
+    // receive-side consecutive TS counting
+    var ts_cnt  : logic<4> ; // consecutive identical TS1/TS2 received
+    var ts_last : logic<10>; // {type, cfg} of the previous TS
+    var ts8     : logic    ; // 8 consecutive identical TS received (sticky within state)
+    var ts8_type: logic<2> ;
+    var ts8_cfg : logic<8> ;
+    var ts2_rst0: logic<2> ; // consecutive TS2 with Reset=0 (Hot Reset.Active)
+    var ts1_seen: logic    ; // a TS1 arrived in U0 -> Recovery
+
+    // ---------------------------------------------------------------- PIPE handshakes
+    var pd       : logic<2>;
+    var pd_wait  : logic   ; // waiting for PhyStatus after a PowerDown change
+    var det_req  : logic   ; // receiver detection in progress
+    var det_done : logic   ;
+    var det_found: logic   ;
+    var det_fail : logic<4>; // consecutive failed detections
+    var phy_ready: logic   ;
+
+    assign o_power_down     = pd;
+    assign o_tx_detectrx    = det_req || (lfps_tx && pd == 2'b00);
+    assign o_tx_elecidle    = if pd == 2'b00 ? (lfps_tx || !(o_tx_sel_ts || o_in_u0 || o_tx_idle)) : !lfps_tx;
+    assign o_rx_termination = state != State::Disabled;
+
+    assign o_in_u0     = state == State::U0;
+    assign o_tx_idle   = state == State::PollingIdle || state == State::RecoveryIdle || state == State::HotResetExit;
+    assign o_rx_enable = state == State::PollingRxEq || state == State::PollingActive || state == State::PollingConfig
+        || state == State::PollingIdle || state == State::U0 || state == State::RecoveryActive || state
+        == State::RecoveryConfig || state == State::RecoveryIdle || state == State::HotResetActive || state
+        == State::HotResetExit;
+    assign o_tx_sel_ts = state == State::PollingRxEq || state == State::PollingActive || state == State::PollingConfig
+        || state == State::RecoveryActive || state == State::RecoveryConfig || state == State::HotResetActive;
+
+    // training set word generator
+    always_comb {
+        var filler   : logic<8>;
+        var ts2      : logic   ;
+        ts2       = state == State::PollingConfig || state == State::RecoveryConfig || state == State::HotResetActive;
+        filler    = if ts2 ? D5_2 : D10_2;
+        o_ts_data = 0;
+        o_ts_k    = 0;
+        if skp_now {
+            o_ts_data = {K_SKP, K_SKP, K_SKP, K_SKP};
+            o_ts_k    = 4'b1111;
+        } else if state == State::PollingRxEq {
+            case ts_word {
+                0: {
+                    o_ts_data = 32'hC017FFBC;
+                    o_ts_k    = 4'b0001;
+                }
+                1      : o_ts_data = 32'h02E7B214;
+                2      : o_ts_data = 32'h286E7282;
+                3      : o_ts_data = 32'hBF6DBEA6;
+                default: o_ts_data = {D10_2, D10_2, D10_2, D10_2};
+            }
+        } else {
+            case ts_word[1:0] {
+                0: {
+                    o_ts_data = {K_COM, K_COM, K_COM, K_COM};
+                    o_ts_k    = 4'b1111;
+                }
+                1      : o_ts_data = {filler, filler, ts_cfg_tx, 8'h00};
+                default: o_ts_data = {filler, filler, filler, filler};
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- state machine
+    var nstate   : State;
+    var timeout  : logic;
+    var ts_done  : logic; // one clock: last word of an ordered set transmitted
+    var tseq_done: logic;
+
+    function tmo (
+        us: input u32,
+    ) -> logic {
+        return t_us >= us as 20;
+    }
+
+    always_ff {
+        if_reset {
+            state           = State::PhyWait;
+            t_us            = 0;
+            pd              = 2'b10;
+            pd_wait         = 0;
+            det_req         = 0;
+            det_done        = 0;
+            det_found       = 0;
+            det_fail        = 0;
+            phy_ready       = 0;
+            lfps_tx         = 0;
+            pb_us           = 0;
+            pb_on           = 0;
+            pb_sent         = 0;
+            pb_edge         = 0;
+            tx_after_rx     = 0;
+            ts_word         = 0;
+            ts_cfg_tx       = 0;
+            ts_sent         = 0;
+            tseq_cnt        = 0;
+            skp_cnt         = 0;
+            skp_now         = 0;
+            idle_sent       = 0;
+            idle_rx         = 0;
+            ts_cnt          = 0;
+            ts_last         = 0;
+            ts8             = 0;
+            ts8_type        = 0;
+            ts8_cfg         = 0;
+            ts2_rst0        = 0;
+            ts1_seen        = 0;
+            o_rx_polarity   = 0;
+            o_u0_entry      = 0;
+            o_from_recovery = 0;
+            o_hot_reset     = 0;
+            o_warm_reset    = 0;
+            o_scr_bypass    = 0;
+            o_rx_flush      = 0;
+        } else {
+            var enter       : logic; // state change this clock
+            var ns          : State;
+            ns           = state;
+            o_u0_entry   = 0;
+            o_hot_reset  = 0;
+            o_warm_reset = 0;
+            o_rx_flush   = 0;
+            pb_edge      = 0;
+            det_done     = 0;
+            ts_done      = 0;
+
+            // ---- state timer
+            if tick_us && t_us != 20'hFFFFF {
+                t_us = t_us + 1;
+            }
+
+            // ---- PowerDown / PhyStatus handshake
+            if i_phy_status {
+                pd_wait   = 0;
+                phy_ready = 1;
+                if det_req {
+                    det_req   = 0;
+                    det_done  = 1;
+                    det_found = i_rx_status == 3'b011;
+                }
+            }
+
+            // ---- consecutive TS reception
+            if i_ts_valid {
+                if ts_cnt != 0 && ts_last == {i_ts_type, i_ts_cfg} {
+                    if ts_cnt != 15 {
+                        ts_cnt = ts_cnt + 1;
+                    }
+                } else {
+                    ts_cnt = 1;
+                }
+                ts_last = {i_ts_type, i_ts_cfg};
+                if (ts_cnt >= 7 && ts_last == {i_ts_type, i_ts_cfg}) && !ts8 {
+                    ts8      = 1;
+                    ts8_type = i_ts_type;
+                    ts8_cfg  = i_ts_cfg;
+                    ts_sent  = 0;
+                }
+                if i_ts_type == 2 && !i_ts_cfg[0] {
+                    if ts2_rst0 != 3 {
+                        ts2_rst0 = ts2_rst0 + 1;
+                    }
+                } else {
+                    ts2_rst0 = 0;
+                }
+                if i_ts_type == 1 {
+                    ts1_seen = 1;
+                }
+                // polarity: TS1 fillers seen as D21.5
+                if i_ts_inv && (state == State::PollingRxEq || state == State::PollingActive) {
+                    o_rx_polarity = !o_rx_polarity;
+                }
+            }
+            if i_pol_inv_hint && (state == State::PollingRxEq || state == State::PollingActive) {
+                o_rx_polarity = !o_rx_polarity;
+            }
+            if i_idle8 {
+                idle_rx = 1;
+            }
+
+            // ---- training set transmit sequencing (one word per clock)
+            if o_tx_sel_ts {
+                if skp_now {
+                    skp_now = 0;
+                } else if state == State::PollingRxEq {
+                    ts_word = ts_word + 1;
+                    if ts_word == 7 {
+                        ts_word = 0;
+                        if tseq_cnt != 17'h1FFFF {
+                            tseq_cnt = tseq_cnt + 1;
+                        }
+                    }
+                } else {
+                    if ts_word[1:0] == 3 {
+                        ts_word = 0;
+                        ts_done = 1;
+                        if ts_sent != 31 {
+                            ts_sent = ts_sent + 1;
+                        }
+                        // SKP: two ordered sets (4 symbols) every 2*354 symbols during training
+                        if skp_cnt >= 708 - 16 {
+                            skp_now = 1;
+                            skp_cnt = 0;
+                        }
+                    } else {
+                        ts_word = ts_word + 1;
+                    }
+                    if !skp_now {
+                        skp_cnt = skp_cnt + 4;
+                    }
+                }
+            } else {
+                ts_word = 0;
+                skp_now = 0;
+            }
+            // idle words sent after idle received
+            if o_tx_idle && idle_rx && idle_sent != 31 {
+                idle_sent = idle_sent + 1;
+            }
+
+            // ---- Polling.LFPS burst generator: 1 us on, 10 us period
+            if state == State::PollingLfps {
+                if tick_us {
+                    pb_us = pb_us + 1;
+                    if pb_us == 0 {
+                        pb_on = 1;
+                    } else if pb_us == 1 {
+                        pb_on   = 0;
+                        pb_edge = 1;
+                        if pb_sent != 16 {
+                            pb_sent = pb_sent + 1;
+                        }
+                        if tx_after_rx != 4 {
+                            tx_after_rx = tx_after_rx + 1;
+                        }
+                    } else if pb_us == 9 {
+                        pb_us = 15; // next tick wraps to 0
+                    }
+                }
+                lfps_tx = pb_on;
+                // "4 bursts sent after receiving one": count from the first burst of
+                // the consecutive sequence, not from every burst
+                if lfps_burst && burst_cnt == 0 {
+                    tx_after_rx = 0;
+                }
+            } else if state == State::U3Wake {
+                lfps_tx = 1;
+            } else {
+                lfps_tx = 0;
+                pb_on   = 0;
+                pb_us   = 15;
+            }
+
+            // ---- transitions
+            if i_power_present == 0 && state != State::PhyWait {
+                ns = State::Disabled;
+            } else if warm_reset && state != State::Disabled && state != State::PhyWait {
+                ns           = State::RxDetectReset;
+                o_warm_reset = 1;
+            } else {
+                case state {
+                    State::PhyWait: {
+                        pd = 2'b10;
+                        if phy_ready || tmo(1000) {
+                            ns = State::RxDetectActive;
+                        }
+                    }
+                    State::Disabled: {
+                        pd = 2'b10;
+                        if DISABLED_RETRY_MS != 0 && tmo(DISABLED_RETRY_MS * 1000) {
+                            ns = State::RxDetectActive;
+                        }
+                    }
+                    State::Inactive: {
+                        pd = 2'b10;
+                        // eSS.Inactive.Quiet (12 ms) then far-end termination check
+                        if tmo(12_000) && !det_req && !pd_wait {
+                            det_req = 1;
+                            t_us    = 0;
+                        }
+                        if det_done && !det_found {
+                            ns = State::RxDetectActive;
+                        }
+                    }
+                    State::RxDetectReset: {
+                        pd = 2'b10;
+                        if ei && lfps_low_clk == 0 {
+                            ns = State::RxDetectActive;
+                        }
+                    }
+                    State::RxDetectActive: {
+                        pd = 2'b10;
+                        if !det_req && !pd_wait && !det_done && t_us >= 2 {
+                            det_req = 1;
+                        }
+                        if det_done {
+                            if det_found {
+                                det_fail = 0;
+                                ns       = State::PollingLfps;
+                            } else if det_fail == 7 {
+                                det_fail = 0;
+                                ns       = State::Disabled;
+                            } else {
+                                det_fail = det_fail + 1;
+                                ns       = State::RxDetectQuiet;
+                            }
+                        }
+                    }
+                    State::RxDetectQuiet: {
+                        pd = 2'b10;
+                        if tmo(12_000) {
+                            ns = State::RxDetectActive;
+                        }
+                    }
+                    State::PollingLfps: {
+                        pd = 2'b00;
+                        if !pd_wait {
+                            if pb_sent == 16 && burst_cnt == 2 && tx_after_rx == 4 && !pb_on {
+                                ns = State::PollingRxEq;
+                            } else if tmo(360_000) {
+                                ns = State::Disabled;
+                            }
+                        }
+                    }
+                    State::PollingRxEq: {
+                        if tseq_cnt == TSEQ_COUNT as 17 && ts_word == 0 {
+                            ns = State::PollingActive;
+                        }
+                    }
+                    State::PollingActive: {
+                        if ts8 && ts_done {
+                            ns = State::PollingConfig;
+                        } else if tmo(12_000) {
+                            ns = State::Disabled;
+                        }
+                    }
+                    State::PollingConfig: {
+                        if ts8 && ts8_type == 2 && ts_sent >= 16 && ts_done {
+                            ns = State::PollingIdle;
+                        } else if tmo(12_000) {
+                            ns = State::Disabled;
+                        }
+                    }
+                    State::PollingIdle: {
+                        if idle_rx && idle_sent >= 4 {
+                            ns = if ts8_cfg[0] ? State::HotResetActive : State::U0;
+                        } else if tmo(2_000) {
+                            ns = State::Disabled;
+                        }
+                    }
+                    State::U0: {
+                        if i_go_disabled {
+                            ns = State::Disabled;
+                        } else if i_go_inactive {
+                            ns = State::Inactive;
+                        } else if i_go_u3 {
+                            ns = State::U3;
+                        } else if i_go_recovery || ts1_seen {
+                            ns = State::RecoveryActive;
+                        }
+                    }
+                    State::U3: {
+                        pd = 2'b10;
+                        // host wakeup: LFPS present -> respond with LFPS (>= 80 us), then Recovery
+                        if lfps_long && !pd_wait {
+                            ns = State::U3Wake;
+                        }
+                    }
+                    State::U3Wake: {
+                        pd = 2'b10;
+                        if tmo(100) && ei {
+                            ns = State::RecoveryActive;
+                        } else if tmo(10_000) {
+                            ns = State::U3;
+                        }
+                    }
+                    State::RecoveryActive: {
+                        pd = 2'b00;
+                        if !pd_wait {
+                            if ts8 && ts_done {
+                                ns = State::RecoveryConfig;
+                            } else if tmo(12_000) {
+                                ns = State::Inactive;
+                            }
+                        }
+                    }
+                    State::RecoveryConfig: {
+                        if ts8 && ts8_type == 2 && ts_sent >= 16 && ts_done {
+                            ns = State::RecoveryIdle;
+                        } else if tmo(6_000) {
+                            ns = State::Inactive;
+                        }
+                    }
+                    State::RecoveryIdle: {
+                        if idle_rx && idle_sent >= 4 {
+                            ns = if ts8_cfg[0] ? State::HotResetActive : State::U0;
+                        } else if tmo(2_000) {
+                            ns = State::Inactive;
+                        }
+                    }
+                    State::HotResetActive: {
+                        // >= 16 TS2(Reset=1) sent, 2 consecutive TS2(Reset=0) received,
+                        // 4 TS2(Reset=0) sent after receiving one
+                        if ts_sent >= 16 && ts_cfg_tx[0] && ts2_rst0 >= 2 && ts_done {
+                            ts_cfg_tx = 0;
+                            ts_sent   = 0;
+                        }
+                        if !ts_cfg_tx[0] && ts_sent >= 4 && ts_done {
+                            ns = State::HotResetExit;
+                        } else if tmo(12_000) {
+                            ns = State::Inactive;
+                        }
+                    }
+                    State::HotResetExit: {
+                        if idle_rx && idle_sent >= 4 {
+                            ns = State::U0;
+                        } else if tmo(2_000) {
+                            ns = State::Inactive;
+                        }
+                    }
+                    default: {}
+                }
+            }
+
+            // ---- entry actions
+            if ns != state {
+                state      = ns;
+                t_us       = 0;
+                ts_cnt     = 0;
+                ts8        = 0;
+                ts_sent    = 0;
+                ts_word    = 0;
+                ts2_rst0   = 0;
+                ts1_seen   = 0;
+                idle_rx    = 0;
+                idle_sent  = 0;
+                skp_now    = 0;
+                o_rx_flush = 1;
+                case ns {
+                    State::PollingLfps: {
+                        pb_sent       = 0;
+                        tx_after_rx   = 0;
+                        pb_us         = 15;
+                        o_scr_bypass  = 0;
+                        o_rx_polarity = 0;
+                    }
+                    State::PollingRxEq: {
+                        tseq_cnt = 0;
+                        skp_cnt  = 0;
+                    }
+                    State::PollingActive, State::RecoveryActive: {
+                        ts_cfg_tx = 0;
+                    }
+                    State::PollingConfig, State::RecoveryConfig: {
+                        ts_cfg_tx = 0;
+                    }
+                    State::PollingIdle, State::RecoveryIdle: {
+                        o_scr_bypass = ts8_cfg[3];
+                    }
+                    State::HotResetActive: {
+                        ts_cfg_tx   = 8'h01;
+                        o_hot_reset = 1;
+                    }
+                    State::U0: {
+                        o_u0_entry      = 1;
+                        o_from_recovery = state == State::RecoveryIdle;
+                    }
+                    State::Disabled, State::Inactive, State::RxDetectActive, State::U3: {
+                        det_fail = if ns == State::RxDetectActive ? det_fail : 0;
+                    }
+                    default: {}
+                }
+                // PowerDown change -> wait for PhyStatus
+                if (ns == State::PollingLfps || ns == State::RecoveryActive) && pd != 2'b00 {
+                    pd      = 2'b00;
+                    pd_wait = 1;
+                } else if (ns == State::U3 || ns == State::Inactive || ns == State::Disabled || ns
+                        == State::RxDetectActive || ns == State::RxDetectReset) && pd != 2'b10 {
+                    pd      = 2'b10;
+                    pd_wait = 1;
+                }
+            }
+        }
+    }
+}

@@ -23,3 +23,10 @@ module usb3_frame;
     usb3_frame_test_body body();
 endmodule
 }}}
+
+#[test(usb3_link)]
+embed (inline) sv{{{
+module usb3_link;
+    usb3_link_test_body body();
+endmodule
+}}}

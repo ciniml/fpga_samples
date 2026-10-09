@@ -1,0 +1,326 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file usb3_top.veryl
+ * @brief USB 3.2 Gen1 x1 device link: PIPE 3.x (32-bit, 125 MHz) on one
+ *        side, header packets / data packet payloads for the protocol
+ *        layer on the other.
+ *
+ *   PIPE Rx -> Usb3Scrambler (descramble) -> Usb3RxFifo -> Usb3RxParser
+ *            -> Usb3Ltssm (training sets, LFPS, idle)
+ *            -> Usb3Link  (link commands, header packets)
+ *   Usb3Link -> Usb3TxFramer -> mux with LTSSM ordered sets ->
+ *   Usb3Scrambler -> PIPE Tx
+ *
+ * Everything runs on PCLK. The PHY reset / PCLK-stable sequencing is left
+ * to the board top (i_rst must stay asserted until PCLK is running).
+ */
+module Usb3Top #(
+    param CLK_HZ    : u32 = 125_000_000,
+    param TSEQ_COUNT: u32 = 65536      ,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    // PIPE
+    i_rx_data       : input  logic<32>,
+    i_rx_k          : input  logic<4> ,
+    i_rx_valid      : input  logic    ,
+    i_rx_status     : input  logic<3> ,
+    i_rx_elecidle   : input  logic    ,
+    i_phy_status    : input  logic    ,
+    i_power_present : input  logic    ,
+    o_tx_data       : output logic<32>,
+    o_tx_k          : output logic<4> ,
+    o_tx_elecidle   : output logic    ,
+    o_tx_detectrx   : output logic    ,
+    o_power_down    : output logic<2> ,
+    o_rx_polarity   : output logic    ,
+    o_rx_termination: output logic    ,
+
+    // protocol layer
+    o_rx_hp_valid: output logic    ,
+    o_rx_hp_hdr  : output logic<96>,
+    o_dpp_start  : output logic    ,
+    o_dpp_valid  : output logic    ,
+    o_dpp_data   : output logic<32>,
+    o_dpp_be     : output logic<4> ,
+    o_dpp_end    : output logic    ,
+    o_dpp_err    : output logic    ,
+    i_tx_hp_valid: input  logic    ,
+    i_tx_hp_hdr  : input  logic<96>,
+    i_tx_dpp     : input  logic    ,
+    i_tx_dpp_len : input  logic<11>,
+    i_tx_dpp_base: input  logic<12>,
+    o_tx_hp_ready: output logic    ,
+    o_tx_hp_idle : output logic    ,
+    o_dpp_rd     : output logic    ,
+    o_dpp_addr   : output logic<12>,
+    i_dpp_data   : input  logic<32>,
+
+    // status
+    o_ltssm_state: output logic<5>,
+    o_in_u0      : output logic   ,
+    o_u0_entry   : output logic   ,
+    o_hot_reset  : output logic   ,
+    o_warm_reset : output logic   ,
+    o_configured : output logic   ,
+) {
+    import usb3_pkg::*;
+
+    // ---------------------------------------------------------------- receive
+    var rx_desc : logic<32>;
+    var rx_keep : logic<4> ;
+    var rx_flush: logic    ;
+    var rx_en   : logic    ;
+
+    inst u_dscr: Usb3Scrambler (
+        i_clk               ,
+        i_rst               ,
+        i_valid : i_rx_valid,
+        i_bypass: 1'b0      ,
+        i_data  : i_rx_data ,
+        i_k     : i_rx_k    ,
+        o_data  : rx_desc   ,
+        o_lfsr  : _         ,
+    );
+
+    always_comb {
+        for i in 0..4 {
+            rx_keep[i] = !(i_rx_k[i] && i_rx_data[i * 8+:8] == K_SKP);
+        }
+    }
+
+    var f_raw  : logic<64>;
+    var f_desc : logic<64>;
+    var f_k    : logic<8> ;
+    var f_avail: logic<5> ;
+    var f_pop  : logic<4> ;
+
+    inst u_fifo: Usb3RxFifo (
+        i_clk              ,
+        i_rst              ,
+        i_flush: rx_flush  ,
+        i_valid: i_rx_valid,
+        i_raw  : i_rx_data ,
+        i_desc : rx_desc   ,
+        i_k    : i_rx_k    ,
+        i_keep : rx_keep   ,
+        o_raw  : f_raw     ,
+        o_desc : f_desc    ,
+        o_k    : f_k       ,
+        o_avail: f_avail   ,
+        i_pop  : f_pop     ,
+    );
+
+    var ts_valid    : logic    ;
+    var ts_type     : logic<2> ;
+    var ts_cfg      : logic<8> ;
+    var ts_inv      : logic    ;
+    var pol_inv_hint: logic    ;
+    var idle8       : logic    ;
+    var lc_valid    : logic    ;
+    var lc_word     : logic<11>;
+    var hp_valid    : logic    ;
+    var hp_hdr      : logic<96>;
+    var hp_lcw      : logic<16>;
+    var hp_crc_ok   : logic    ;
+
+    inst u_parser: Usb3RxParser (
+        i_clk                       ,
+        i_rst                       ,
+        i_enable      : rx_en       ,
+        i_raw         : f_raw       ,
+        i_desc        : f_desc      ,
+        i_k           : f_k         ,
+        i_avail       : f_avail     ,
+        o_pop         : f_pop       ,
+        o_ts_valid    : ts_valid    ,
+        o_ts_type     : ts_type     ,
+        o_ts_cfg      : ts_cfg      ,
+        o_ts_inv      : ts_inv      ,
+        o_pol_inv_hint: pol_inv_hint,
+        o_idle8       : idle8       ,
+        o_lc_valid    : lc_valid    ,
+        o_lc_word     : lc_word     ,
+        o_hp_valid    : hp_valid    ,
+        o_hp_hdr      : hp_hdr      ,
+        o_hp_lcw      : hp_lcw      ,
+        o_hp_crc_ok   : hp_crc_ok   ,
+        o_dpp_start                 ,
+        o_dpp_valid                 ,
+        o_dpp_data                  ,
+        o_dpp_be                    ,
+        o_dpp_end                   ,
+        o_dpp_err                   ,
+    );
+
+    // ---------------------------------------------------------------- LTSSM
+    var in_u0        : logic    ;
+    var u0_entry     : logic    ;
+    var from_recovery: logic    ;
+    var go_recovery  : logic    ;
+    var go_u3        : logic    ;
+    var go_inactive  : logic    ;
+    var go_disabled  : logic    ;
+    var scr_bypass   : logic    ;
+    var tx_idle      : logic    ;
+    var tx_sel_ts    : logic    ;
+    var ts_data      : logic<32>;
+    var ts_k         : logic<4> ;
+
+    inst u_ltssm: Usb3Ltssm #(
+        CLK_HZ    : CLK_HZ    ,
+        TSEQ_COUNT: TSEQ_COUNT,
+    ) (
+        i_clk                          ,
+        i_rst                          ,
+        o_power_down                   ,
+        o_tx_elecidle                  ,
+        o_tx_detectrx                  ,
+        o_rx_termination               ,
+        o_rx_polarity                  ,
+        i_phy_status                   ,
+        i_rx_status                    ,
+        i_rx_elecidle                  ,
+        i_power_present                ,
+        i_ts_valid      : ts_valid     ,
+        i_ts_type       : ts_type      ,
+        i_ts_cfg        : ts_cfg       ,
+        i_ts_inv        : ts_inv       ,
+        i_pol_inv_hint  : pol_inv_hint ,
+        i_idle8         : idle8        ,
+        i_go_recovery   : go_recovery  ,
+        i_go_u3         : go_u3        ,
+        i_go_inactive   : go_inactive  ,
+        i_go_disabled   : go_disabled  ,
+        o_state         : o_ltssm_state,
+        o_in_u0         : in_u0        ,
+        o_u0_entry      : u0_entry     ,
+        o_from_recovery : from_recovery,
+        o_hot_reset                    ,
+        o_warm_reset                   ,
+        o_scr_bypass    : scr_bypass   ,
+        o_rx_enable     : rx_en        ,
+        o_rx_flush      : rx_flush     ,
+        o_tx_idle       : tx_idle      ,
+        o_tx_sel_ts     : tx_sel_ts    ,
+        o_ts_data       : ts_data      ,
+        o_ts_k          : ts_k         ,
+    );
+    assign o_in_u0    = in_u0;
+    assign o_u0_entry = u0_entry;
+
+    // ---------------------------------------------------------------- link layer
+    var f_lc_valid   : logic    ;
+    var f_lc_word    : logic<11>;
+    var f_lc_ready   : logic    ;
+    var f_hp_valid   : logic    ;
+    var f_hp_hdr     : logic<96>;
+    var f_hp_lcw     : logic<11>;
+    var f_hp_dpp     : logic    ;
+    var f_hp_dpp_len : logic<11>;
+    var f_hp_dpp_base: logic<12>;
+    var f_hp_ready   : logic    ;
+    var f_busy       : logic    ;
+
+    inst u_link: Usb3Link #(
+        CLK_HZ: CLK_HZ,
+    ) (
+        i_clk                         ,
+        i_rst                         ,
+        i_in_u0        : in_u0        ,
+        i_u0_entry     : u0_entry     ,
+        i_from_recovery: from_recovery,
+        o_go_recovery  : go_recovery  ,
+        o_go_u3        : go_u3        ,
+        o_go_inactive  : go_inactive  ,
+        o_go_disabled  : go_disabled  ,
+        i_lc_valid     : lc_valid     ,
+        i_lc_word      : lc_word      ,
+        i_hp_valid     : hp_valid     ,
+        i_hp_hdr       : hp_hdr       ,
+        i_hp_lcw       : hp_lcw       ,
+        i_hp_crc_ok    : hp_crc_ok    ,
+        o_lc_valid     : f_lc_valid   ,
+        o_lc_word      : f_lc_word    ,
+        i_lc_ready     : f_lc_ready   ,
+        o_hp_valid     : f_hp_valid   ,
+        o_hp_hdr       : f_hp_hdr     ,
+        o_hp_lcw       : f_hp_lcw     ,
+        o_hp_dpp       : f_hp_dpp     ,
+        o_hp_dpp_len   : f_hp_dpp_len ,
+        o_hp_dpp_base  : f_hp_dpp_base,
+        i_hp_ready     : f_hp_ready   ,
+        i_tx_busy      : f_busy       ,
+        o_rx_hp_valid                 ,
+        o_rx_hp_hdr                   ,
+        i_tx_hp_valid                 ,
+        i_tx_hp_hdr                   ,
+        i_tx_dpp                      ,
+        i_tx_dpp_len                  ,
+        i_tx_dpp_base                 ,
+        o_tx_hp_ready                 ,
+        o_tx_hp_idle                  ,
+        o_configured                  ,
+        o_force_pm     : _            ,
+    );
+
+    // ---------------------------------------------------------------- transmit
+    var fr_data: logic<32>;
+    var fr_k   : logic<4> ;
+
+    inst u_framer: Usb3TxFramer (
+        i_clk                          ,
+        i_rst                          ,
+        i_enable     : in_u0 || tx_idle,
+        i_lc_valid   : f_lc_valid      ,
+        i_lc_word    : f_lc_word       ,
+        o_lc_ready   : f_lc_ready      ,
+        i_hp_valid   : f_hp_valid      ,
+        i_hp_hdr     : f_hp_hdr        ,
+        i_hp_lcw     : f_hp_lcw        ,
+        i_hp_dpp     : f_hp_dpp        ,
+        i_hp_dpp_len : f_hp_dpp_len    ,
+        i_hp_dpp_base: f_hp_dpp_base   ,
+        o_hp_ready   : f_hp_ready      ,
+        o_dpp_rd                       ,
+        o_dpp_addr                     ,
+        i_dpp_data                     ,
+        o_data       : fr_data         ,
+        o_k          : fr_k            ,
+        o_busy       : f_busy          ,
+    );
+
+    var tx_mux_data: logic<32>;
+    var tx_mux_k   : logic<4> ;
+    var tx_bypass  : logic    ;
+    var scr_data   : logic<32>;
+    assign tx_mux_data = if tx_sel_ts ? ts_data : fr_data;
+    assign tx_mux_k    = if tx_sel_ts ? ts_k : fr_k;
+    assign tx_bypass   = tx_sel_ts || scr_bypass;
+
+    inst u_scr: Usb3Scrambler (
+        i_clk                ,
+        i_rst                ,
+        i_valid : 1'b1       ,
+        i_bypass: tx_bypass  ,
+        i_data  : tx_mux_data,
+        i_k     : tx_mux_k   ,
+        o_data  : scr_data   ,
+        o_lfsr  : _          ,
+    );
+
+    always_ff {
+        if_reset {
+            o_tx_data = 0;
+            o_tx_k    = 0;
+        } else {
+            o_tx_data = scr_data;
+            o_tx_k    = tx_mux_k;
+        }
+    }
+}

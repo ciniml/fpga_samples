@@ -22,7 +22,7 @@ module usb3_frame_test_body;
     logic [95:0] hp_hdr;
     logic [10:0] hp_lcw, hp_len;
     logic        dpp_rd;
-    logic [7:0]  dpp_addr;
+    logic [11:0] dpp_addr;
     logic [31:0] dpp_data;
     logic [31:0] tx_data;
     logic [3:0]  tx_k;
@@ -30,12 +30,12 @@ module usb3_frame_test_body;
     logic        tx_enable = 0;
 
     logic [31:0] ram[256];
-    always_ff @(posedge clk) if (dpp_rd) dpp_data <= ram[dpp_addr];
+    always_ff @(posedge clk) if (dpp_rd) dpp_data <= ram[dpp_addr[7:0]];
 
     Usb3TxFramer txf(.i_clk(clk), .i_rst(rst), .i_enable(tx_enable),
         .i_lc_valid(lc_valid), .i_lc_word(lc_word), .o_lc_ready(lc_ready),
         .i_hp_valid(hp_valid), .i_hp_hdr(hp_hdr), .i_hp_lcw(hp_lcw), .i_hp_dpp(hp_dpp),
-        .i_hp_dpp_len(hp_len), .o_hp_ready(hp_ready),
+        .i_hp_dpp_len(hp_len), .i_hp_dpp_base(12'd0), .o_hp_ready(hp_ready),
         .o_dpp_rd(dpp_rd), .o_dpp_addr(dpp_addr), .i_dpp_data(dpp_data),
         .o_data(tx_data), .o_k(tx_k), .o_busy(tx_busy));
 
