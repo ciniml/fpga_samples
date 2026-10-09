@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_usb3_prim.veryl
+ * @brief `veryl test` entry for the usb3_pkg / Usb3Scrambler unit tests
+ *        (body in test/usb3_prim_test_body.sv).
+ */
+module TbUsb3Prim {}
+
+#[test(usb3_prim)]
+embed (inline) sv{{{
+module usb3_prim;
+    usb3_prim_test_body body();
+endmodule
+}}}
+
+#[test(usb3_frame)]
+embed (inline) sv{{{
+module usb3_frame;
+    usb3_frame_test_body body();
+endmodule
+}}}

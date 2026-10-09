@@ -1,0 +1,306 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file usb3_tx_framer.veryl
+ * @brief Transmit-side framer for USB 3.2 Gen1 (7.2): builds link
+ *        commands, header packets and data packet payloads as a
+ *        continuous 4-symbol/clock stream (before scrambling).
+ *
+ * Everything is kept word aligned on the wire: SKP ordered sets are sent
+ * as SKP SKP IS IS (6.4.3 allows Idle Symbols around a scheduled SKP OS)
+ * and a DPP whose length is not a multiple of 4 is padded with Idle
+ * Symbols after DPPEND. Priority when idle: scheduled SKP OS, then link
+ * command, then header packet (7.2.2.3: no link command before the
+ * scheduled SKPs).
+ *
+ * DPP data is pulled from a synchronous read port: o_dpp_rd requests
+ * word o_dpp_addr and i_dpp_data must carry it on the next clock.
+ */
+module Usb3TxFramer (
+    i_clk   : input clock,
+    i_rst   : input reset,
+    i_enable: input logic, // U0: otherwise Logical Idle is produced and requests wait
+
+    i_lc_valid: input  logic    ,
+    i_lc_word : input  logic<11>,
+    o_lc_ready: output logic    , // request accepted this clock
+
+    i_hp_valid  : input  logic    ,
+    i_hp_hdr    : input  logic<96>,
+    i_hp_lcw    : input  logic<11>, // LCW information bits (HSN, DL, ...)
+    i_hp_dpp    : input  logic    , // a DPP follows the header
+    i_hp_dpp_len: input  logic<11>, // 0..1024
+    o_hp_ready  : output logic    ,
+
+    o_dpp_rd  : output logic    ,
+    o_dpp_addr: output logic<8> , // word index 0..255
+    i_dpp_data: input  logic<32>,
+
+    o_data: output logic<32>,
+    o_k   : output logic<4> ,
+    o_busy: output logic    , // a packet / link command is being sent
+) {
+    import usb3_pkg::*;
+
+    enum State: logic<4> {
+        Idle,
+        Lc1,
+        Hp0,
+        Hp1,
+        Hp2,
+        Hp3,
+        Hp4,
+        DppData,
+        DppTail0,
+        DppTail,
+    }
+
+    const SKP_INTERVAL: u32 = 354;
+
+    var state  : State    ;
+    var skp_cnt: logic<10>; // symbols since the last SKP OS
+    var hdr    : logic<96>;
+    var lcw    : logic<16>;
+    var has_dpp: logic    ;
+    var dlen   : logic<11>;
+    var remain : logic<11>; // data bytes not yet emitted
+    var crc16  : logic<16>;
+    var crc32  : logic<32>;
+    var lcword : logic<16>;
+    var tail   : logic<96>;
+    var tail_k : logic<12>;
+    var tail_n : logic<2> ; // tail words still queued (0..2)
+    var addr   : logic<8> ;
+
+    var skp_due: logic;
+    assign skp_due = skp_cnt >= SKP_INTERVAL;
+
+    assign o_dpp_addr = addr;
+
+    // CRC helpers over the word being emitted
+    var crc16_w: logic<16>;
+    always_comb {
+        var c: logic<16>;
+        c = crc16;
+        for i in 0..4 {
+            c = crc16_byte(c, o_data[i * 8+:8]);
+        }
+        crc16_w = c;
+    }
+    var crc32_w: logic<32>; // over a full data word
+    var crc32_t: logic<32>; // over the (remain % 4) tail bytes
+    always_comb {
+        var d: logic<32>;
+        var t: logic<32>;
+        d = crc32;
+        t = crc32;
+        for i in 0..4 {
+            d = crc32_byte(d, i_dpp_data[i * 8+:8]);
+            if (i as 11) <: remain {
+                t = crc32_byte(t, i_dpp_data[i * 8+:8]);
+            }
+        }
+        crc32_w = d;
+        crc32_t = t;
+    }
+
+    // tail of the DPP: m = remain (0..3) data bytes, CRC-32, DPPEND, idle pad
+    var tail0  : logic<96>;
+    var tail0_k: logic<12>;
+    always_comb {
+        var cfin: logic<32>;
+        var m   : logic<2> ;
+        var t   : logic<96>;
+        var tk  : logic<12>;
+        m    = remain[1:0];
+        cfin = if m == 0 ? ~crc32 : ~crc32_t;
+        t    = 0;
+        tk   = 0;
+        for j in 0..12 {
+            // NOTE: a width cast of the (signed int) loop variable is signed in
+            // the generated SV, so compare through unsigned temporaries.
+            var jj: logic<4>;
+            var mm: logic<4>;
+            jj = j;
+            mm = {2'b00, m};
+            if jj <: mm {
+                t[j * 8+:8] = i_dpp_data[jj[1:0] * 8+:8];
+            } else if jj <: mm + 4 {
+                t[j * 8+:8] = cfin[(jj - mm) * 8+:8];
+            } else if jj <: mm + 8 {
+                t[j * 8+:8] = if jj == mm + 7 ? K_EPF : K_END;
+                tk[j]       = 1;
+            }
+        }
+        tail0   = t;
+        tail0_k = tk;
+    }
+
+    // ---------------------------------------------------------------- comb
+    var start_skp: logic;
+    var start_lc : logic;
+    var start_hp : logic;
+    always_comb {
+        start_skp  = 0;
+        start_lc   = 0;
+        start_hp   = 0;
+        o_lc_ready = 0;
+        o_hp_ready = 0;
+        o_dpp_rd   = 0;
+        o_data     = 0;
+        o_k        = 0;
+        o_busy     = state != State::Idle;
+        case state {
+            State::Idle: {
+                if i_enable {
+                    if skp_due {
+                        start_skp = 1;
+                        o_data    = {8'h00, 8'h00, K_SKP, K_SKP};
+                        o_k       = 4'b0011;
+                    } else if i_lc_valid {
+                        start_lc   = 1;
+                        o_lc_ready = 1;
+                        o_data     = {K_EPF, K_SLC, K_SLC, K_SLC};
+                        o_k        = 4'b1111;
+                    } else if i_hp_valid {
+                        start_hp   = 1;
+                        o_hp_ready = 1;
+                        o_data     = {K_EPF, K_SHP, K_SHP, K_SHP};
+                        o_k        = 4'b1111;
+                    }
+                }
+            }
+            State::Lc1: {
+                o_data = {lcword, lcword};
+            }
+            State::Hp0: {
+                o_data = hdr[31:0];
+            }
+            State::Hp1: {
+                o_data = hdr[63:32];
+            }
+            State::Hp2: {
+                o_data = hdr[95:64];
+            }
+            State::Hp3: {
+                o_data = {lcw, ~crc16[15:8], ~crc16[7:0]};
+            }
+            State::Hp4: {
+                // DPPSTART (only reached when has_dpp); prefetch data word 0
+                o_data   = {K_EPF, K_SDP, K_SDP, K_SDP};
+                o_k      = 4'b1111;
+                o_dpp_rd = remain != 0;
+            }
+            State::DppData: {
+                // one full data word (remain >= 4); prefetch the next word if any byte is left
+                o_data   = i_dpp_data;
+                o_dpp_rd = remain >= 5;
+            }
+            State::DppTail0: {
+                // first word of [data(remain)] CRC-32 DPPEND [idle pad]
+                o_data = tail0[31:0];
+                o_k    = tail0_k[3:0];
+            }
+            State::DppTail: {
+                o_data = tail[31:0];
+                o_k    = tail_k[3:0];
+            }
+            default: {}
+        }
+    }
+
+    // ---------------------------------------------------------------- seq
+    always_ff {
+        if_reset {
+            state   = State::Idle;
+            skp_cnt = 0;
+            hdr     = 0;
+            lcw     = 0;
+            has_dpp = 0;
+            dlen    = 0;
+            remain  = 0;
+            crc16   = 0;
+            crc32   = 0;
+            lcword  = 0;
+            tail    = 0;
+            tail_k  = 0;
+            tail_n  = 0;
+            addr    = 0;
+        } else {
+            // symbol counter for SKP scheduling (reset while not enabled)
+            if !i_enable {
+                skp_cnt = 0;
+            } else if start_skp {
+                skp_cnt = skp_cnt - SKP_INTERVAL + 2; // the two Idle Symbols count
+            } else if skp_cnt <: 1023 - 4 {
+                skp_cnt = skp_cnt + 4;
+            }
+
+            case state {
+                State::Idle: {
+                    if start_lc {
+                        lcword = lcw_make(i_lc_word);
+                        state  = State::Lc1;
+                    } else if start_hp {
+                        hdr     = i_hp_hdr;
+                        lcw     = lcw_make(i_hp_lcw);
+                        has_dpp = i_hp_dpp;
+                        dlen    = i_hp_dpp_len;
+                        remain  = i_hp_dpp_len;
+                        crc16   = 16'hFFFF;
+                        crc32   = 32'hFFFFFFFF;
+                        addr    = 0;
+                        state   = State::Hp0;
+                    }
+                }
+                State::Lc1: {
+                    state = State::Idle;
+                }
+                State::Hp0: {
+                    crc16 = crc16_w;
+                    state = State::Hp1;
+                }
+                State::Hp1: {
+                    crc16 = crc16_w;
+                    state = State::Hp2;
+                }
+                State::Hp2: {
+                    crc16 = crc16_w;
+                    state = State::Hp3;
+                }
+                State::Hp3: {
+                    state = if has_dpp ? State::Hp4 : State::Idle;
+                }
+                State::Hp4: {
+                    addr  = addr + 1;
+                    state = if remain >= 4 ? State::DppData : State::DppTail0;
+                }
+                State::DppData: {
+                    addr   = addr + 1;
+                    crc32  = crc32_w;
+                    remain = remain - 4;
+                    state  = if remain >= 8 ? State::DppData : State::DppTail0;
+                }
+                State::DppTail0: {
+                    // queue the remaining tail words (1 when m == 0, else 2)
+                    tail   = {32'h0, tail0[95:32]};
+                    tail_k = {4'h0, tail0_k[11:4]};
+                    tail_n = if remain[1:0] == 0 ? 1 : 2;
+                    state  = State::DppTail;
+                }
+                State::DppTail: {
+                    tail   = {32'h0, tail[95:32]};
+                    tail_k = {4'h0, tail_k[11:4]};
+                    tail_n = tail_n - 1;
+                    if tail_n == 1 {
+                        state = State::Idle;
+                    }
+                }
+                default: {}
+            }
+        }
+    }
+}

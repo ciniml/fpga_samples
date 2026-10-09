@@ -1,0 +1,5 @@
+# Vendor specifications and board schematics (not redistributable); keep text extracts out too.
+*.pdf
+*.zip
+*.txt
+gowin_usb3_ref/

@@ -1,0 +1,147 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file usb3_pkg.veryl
+ * @brief Constants and bit-exact helper functions for the USB 3.2 Gen1
+ *        (SuperSpeed, 5 Gbps, x1) link layer.
+ *
+ * References are to USB 3.2 Rev 1.1 (doc/spec_notes.md has the digest).
+ *
+ * CRC conventions (7.2.1.1.2, 7.2.1.1.3, 7.2.1.2.2): all three CRCs feed
+ * byte 0 bit 0 first, start from all ones, complement the remainder and
+ * map remainder bit i to field bit (W-1-i). With the register kept in
+ * reflected form (shift right, reflected polynomial) that is exactly
+ * "field = ~reg", so the helpers below keep reflected registers:
+ *   CRC-16: poly 0x100B  -> reflected 0xD008, init 0xFFFF
+ *   CRC-32: poly 0x04C11DB7 -> reflected 0xEDB88320, init 0xFFFFFFFF
+ *   CRC-5 : poly 0x05    -> reflected 0x14,   init 0x1F
+ * The field is transmitted little-endian (byte 0 = field[7:0]).
+ * test/usb3_ref.py is the Python model these were checked against.
+ */
+pub package usb3_pkg {
+    // K-codes (Table 6-2 / Appendix A)
+    const K_SKP: logic<8> = 8'h3C; // K28.1 clock compensation
+    const K_SDP: logic<8> = 8'h5C; // K28.2 start of DPP
+    const K_EDB: logic<8> = 8'h7C; // K28.3 end bad (DPPABORT)
+    const K_SUB: logic<8> = 8'h9C; // K28.4 decode error substitute
+    const K_COM: logic<8> = 8'hBC; // K28.5 comma
+    const K_SHP: logic<8> = 8'hFB; // K27.7 start header packet
+    const K_END: logic<8> = 8'hFD; // K29.7 end of DPP
+    const K_SLC: logic<8> = 8'hFE; // K30.7 start link command
+    const K_EPF: logic<8> = 8'hF7; // K23.7 end packet framing
+
+    // Training set data symbols
+    const D10_2: logic<8> = 8'h4A; // TS1 / TSEQ filler
+    const D5_2 : logic<8> = 8'h45; // TS2 filler
+    const D21_5: logic<8> = 8'hB5; // D10.2 seen with inverted polarity
+
+    // Link command words, bits [10:0] (Table 7-4)
+    const LC_LGOOD : logic<11> = 11'h000; // + n (0..7)
+    const LC_LCRD  : logic<11> = 11'h080; // + x (0..3 = A..D)
+    const LC_LRTY  : logic<11> = 11'h100;
+    const LC_LBAD  : logic<11> = 11'h180;
+    const LC_LGO_U1: logic<11> = 11'h201;
+    const LC_LGO_U2: logic<11> = 11'h202;
+    const LC_LGO_U3: logic<11> = 11'h203;
+    const LC_LAU   : logic<11> = 11'h280;
+    const LC_LXU   : logic<11> = 11'h300;
+    const LC_LPMA  : logic<11> = 11'h380;
+    const LC_LUP   : logic<11> = 11'h400;
+    const LC_LDN   : logic<11> = 11'h580;
+
+    // Header packet types (Table 8-1, DW0[4:0])
+    const PKT_LMP: logic<5> = 5'b00000;
+    const PKT_TP : logic<5> = 5'b00100;
+    const PKT_DP : logic<5> = 5'b01000;
+    const PKT_ITP: logic<5> = 5'b01100;
+
+    const LFSR_INIT: logic<16> = 16'hFFFF;
+
+    /// Advance the x^16+x^5+x^4+x^3+1 LFSR by 8 serial shifts (Appendix B).
+    function lfsr_adv8 (
+        b: input logic<16>,
+    ) -> logic<16> {
+        var o    : logic<16>;
+        o[0]  = b[8];
+        o[1]  = b[9];
+        o[2]  = b[10];
+        o[3]  = b[11] ^ b[8];
+        o[4]  = b[12] ^ b[9] ^ b[8];
+        o[5]  = b[13] ^ b[10] ^ b[9] ^ b[8];
+        o[6]  = b[14] ^ b[11] ^ b[10] ^ b[9];
+        o[7]  = b[15] ^ b[12] ^ b[11] ^ b[10];
+        o[8]  = b[0] ^ b[13] ^ b[12] ^ b[11];
+        o[9]  = b[1] ^ b[14] ^ b[13] ^ b[12];
+        o[10] = b[2] ^ b[15] ^ b[14] ^ b[13];
+        o[11] = b[3] ^ b[15] ^ b[14];
+        o[12] = b[4] ^ b[15];
+        o[13] = b[5];
+        o[14] = b[6];
+        o[15] = b[7];
+        return o;
+    }
+
+    /// Scrambling mask for one byte: data bit i is XORed with LFSR bit 15-i.
+    function lfsr_mask (
+        l: input logic<16>,
+    ) -> logic<8> {
+        return {l[8], l[9], l[10], l[11], l[12], l[13], l[14], l[15]};
+    }
+
+    /// One byte through the reflected CRC-16 register (poly 0x100B).
+    function crc16_byte (
+        crc: input logic<16>,
+        d  : input logic<8> ,
+    ) -> logic<16> {
+        var r: logic<16>;
+        r = crc ^ {8'h00, d};
+        for i in 0..8 {
+            r = if r[0] ? ({1'b0, r[15:1]} ^ 16'hD008) : {1'b0, r[15:1]};
+        }
+        return r;
+    }
+
+    /// One byte through the reflected CRC-32 register (poly 0x04C11DB7).
+    function crc32_byte (
+        crc: input logic<32>,
+        d  : input logic<8> ,
+    ) -> logic<32> {
+        var r: logic<32>;
+        r = crc ^ {24'h0, d};
+        for i in 0..8 {
+            r = if r[0] ? ({1'b0, r[31:1]} ^ 32'hEDB88320) : {1'b0, r[31:1]};
+        }
+        return r;
+    }
+
+    /// CRC-5 field (bits [15:11] of a link control / link command word) over
+    /// the 11 information bits, bit 0 first. Returned value bit 0 maps to
+    /// word bit 11 (7.2.1.1.3).
+    function crc5_11 (
+        v: input logic<11>,
+    ) -> logic<5> {
+        var r: logic<5>;
+        r = 5'h1F;
+        for i in 0..11 {
+            r = if (r[0] ^ v[i]) ? ({1'b0, r[4:1]} ^ 5'h14) : {1'b0, r[4:1]};
+        }
+        return ~r;
+    }
+
+    /// Build a 16-bit link control / link command word from 11 information bits.
+    function lcw_make (
+        v: input logic<11>,
+    ) -> logic<16> {
+        return {crc5_11(v), v};
+    }
+
+    /// CRC-5 check of a received 16-bit word.
+    function lcw_ok (
+        w: input logic<16>,
+    ) -> logic {
+        return w[15:11] == crc5_11(w[10:0]);
+    }
+}

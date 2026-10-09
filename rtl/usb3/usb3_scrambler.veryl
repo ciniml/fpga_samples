@@ -1,0 +1,64 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file usb3_scrambler.veryl
+ * @brief 4-symbol/clock USB 3.2 Gen1 (de)scrambler (6.3.1.3, Appendix B).
+ *
+ * The same block is used on both directions. Per symbol, byte 0 first:
+ *   - K28.5 (COM): LFSR reset to FFFFh, symbol passed through, no advance
+ *   - K28.1 (SKP): symbol passed through, LFSR not advanced
+ *   - other K-codes: passed through, LFSR advanced 8 bits
+ *   - D-codes: XORed with the LFSR output (unless i_bypass), LFSR advanced
+ * o_data is combinational from i_data and the LFSR state; the LFSR is
+ * updated at the clock edge when i_valid is set.
+ */
+module Usb3Scrambler (
+    i_clk   : input  clock    ,
+    i_rst   : input  reset    ,
+    i_valid : input  logic    , // consume this word
+    i_bypass: input  logic    , // scrambling disabled (TS2 Disable Scrambling)
+    i_data  : input  logic<32>,
+    i_k     : input  logic<4> ,
+    o_data  : output logic<32>,
+    o_lfsr  : output logic<16>, // state before this word (debug)
+) {
+    import usb3_pkg::*;
+
+    var lfsr    : logic<16>;
+    var lfsr_nxt: logic<16>;
+
+    assign o_lfsr = lfsr;
+
+    always_comb {
+        var l     : logic<16>;
+        var d     : logic<8> ;
+        var k     : logic    ;
+        l      = lfsr;
+        o_data = 0;
+        for i in 0..4 {
+            d = i_data[i * 8+:8];
+            k = i_k[i];
+            if k && d == K_COM {
+                o_data[i * 8+:8] = d;
+                l                = LFSR_INIT;
+            } else if k && d == K_SKP {
+                o_data[i * 8+:8] = d;
+            } else {
+                o_data[i * 8+:8] = if (k || i_bypass) ? d : d ^ lfsr_mask(l);
+                l                = lfsr_adv8(l);
+            }
+        }
+        lfsr_nxt = l;
+    }
+
+    always_ff {
+        if_reset {
+            lfsr = LFSR_INIT;
+        } else if i_valid {
+            lfsr = lfsr_nxt;
+        }
+    }
+}

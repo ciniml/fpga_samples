@@ -1,0 +1,4 @@
+*.vo
+temp/
+impl/
+*.gprj.user

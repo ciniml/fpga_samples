@@ -1,0 +1,84 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file usb3_rx_fifo.veryl
+ * @brief Symbol compactor for the receive path.
+ *
+ * Takes the 4 symbols of a PIPE word (raw and descrambled copies plus the
+ * K flag), drops the symbols marked !i_keep (SKP), and presents a window
+ * of the next 8 symbols to the parser, which consumes 0..8 symbols per
+ * clock with i_pop. 16-entry ring; the parser never lets more than 11
+ * symbols accumulate (it pops >= 4 whenever >= 7 are available).
+ */
+module Usb3RxFifo (
+    i_clk  : input  clock    ,
+    i_rst  : input  reset    ,
+    i_flush: input  logic    , // discard everything (link state change)
+    i_valid: input  logic    ,
+    i_raw  : input  logic<32>,
+    i_desc : input  logic<32>,
+    i_k    : input  logic<4> ,
+    i_keep : input  logic<4> ,
+    o_raw  : output logic<64>, // window symbol j = [j*8 +: 8]
+    o_desc : output logic<64>,
+    o_k    : output logic<8> ,
+    o_avail: output logic<5> , // symbols available (0..15)
+    i_pop  : input  logic<4> , // symbols consumed this clock (0..8)
+) {
+    var mem_raw : logic<8> [16];
+    var mem_desc: logic<8> [16];
+    var mem_k   : logic    [16];
+    var wr      : logic<4>     ;
+    var rd      : logic<4>     ;
+    var cnt     : logic<5>     ;
+    var npush   : logic<3>     ;
+
+    always_comb {
+        var n: logic<3>;
+        n = 0;
+        for i in 0..4 {
+            if i_valid && i_keep[i] {
+                n = n + 1;
+            }
+        }
+        npush = n;
+    }
+
+    always_comb {
+        for j in 0..8 {
+            o_raw[j * 8+:8]  = mem_raw[(rd + j) as 4];
+            o_desc[j * 8+:8] = mem_desc[(rd + j) as 4];
+            o_k[j]           = mem_k[(rd + j) as 4];
+        }
+    }
+    assign o_avail = cnt;
+
+    always_ff {
+        if_reset {
+            wr  = 0;
+            rd  = 0;
+            cnt = 0;
+        } else if i_flush {
+            wr  = 0;
+            rd  = 0;
+            cnt = 0;
+        } else {
+            var p: logic<4>;
+            p = wr;
+            for i in 0..4 {
+                if i_valid && i_keep[i] {
+                    mem_raw[p]  = i_raw[i * 8+:8];
+                    mem_desc[p] = i_desc[i * 8+:8];
+                    mem_k[p]    = i_k[i];
+                    p           = p + 1;
+                }
+            }
+            wr  = p;
+            rd  = rd + i_pop;
+            cnt = cnt + npush - i_pop;
+        }
+    }
+}

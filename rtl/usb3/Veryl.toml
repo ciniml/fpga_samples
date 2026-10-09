@@ -1,0 +1,29 @@
+[project]
+name    = "usb3"
+version = "0.1.0"
+
+[build]
+clock_type          = "posedge"
+reset_type          = "sync_high"
+omit_project_prefix = true
+
+[test]
+include_files = [
+    "test/usb3_prim_test_body.sv",
+    "test/usb3_frame_test_body.sv",
+]
+
+[test.verilator]
+compile_args = [
+    "usb3_prim_test_body.sv",
+    "usb3_frame_test_body.sv",
+    "-Wno-WIDTHEXPAND",
+    "-Wno-WIDTHTRUNC",
+    "-Wno-CASEINCOMPLETE",
+    "-Wno-UNUSEDSIGNAL",
+    "-Wno-UNDRIVEN",
+    "-Wno-PINMISSING",
+    "-Wno-INITIALDLY",
+    "-Wno-TIMESCALEMOD",
+    "-Wno-UNUSEDPARAM",
+]
