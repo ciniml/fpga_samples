@@ -428,6 +428,10 @@ class Jtag:
 
 
 # ---------------------------------------------------------------------------- pins / ER1
+# balls built as the external VREF input (make LA_VREF=...) are not I/O ports; --vref BALL
+VREF_BALLS = set()
+
+
 def load_pins(pinset):
     rows = []
     with open(PINS_CSV) as f:
@@ -437,7 +441,8 @@ def load_pins(pinset):
             rows.append(line)
     # probe pins tagged '@la' in the note are kept in the 'la' set (pins the factory app drives)
     pins = [r for r in csv.DictReader(rows)
-            if r['class'] not in PINSET_SKIP[pinset] or (pinset in ('la', 'mipi') and '@la' in r['note'])]
+            if r['ball'] not in VREF_BALLS
+            and (r['class'] not in PINSET_SKIP[pinset] or (pinset in ('la', 'mipi') and '@la' in r['note']))]
     for i, p in enumerate(pins):
         p['index'] = i
     return pins
@@ -722,6 +727,39 @@ def cmd_ubs_read(j, args):
         pass
 
 
+SERDES_CLKS = ('CMU_CK_REF', 'CMU1_CK_REF', 'LANE0_CMU_CK_REF', 'LANE1_CMU_CK_REF', 'LANE2_CMU_CK_REF',
+               'LANE3_CMU_CK_REF', 'CM_LIFE_CLK', 'CM1_LIFE_CLK', 'CLK_MON')
+
+
+def read_er2(j):
+    """ER2 of a SERDES=1 build: SerDes Q0 reference-clock detect, CMU status, clock edge counts."""
+    j.ir(0x43)
+    raw = j.dr(256 + 8)
+    for off in range(8):                  # same 0..few bit lead as ER1 (TDO path)
+        v = raw >> off
+        if v & 0xFFFF == 0x5E2D:
+            break
+    else:
+        raise SystemExit(f'ER2 magic not found (0x{raw & 0xFFFFFF:06x}): not a SERDES=1 build')
+    return {'det': (v >> 16) & 0xF, 'ok': (v >> 20) & 0x3F,
+            'cnt': [(v >> (32 + 24 * i)) & 0xFFFFFF for i in range(9)], 'gate': (v >> 248) & 0xFF}
+
+
+def cmd_serdes(j, args):
+    """Reference-clock probe: frequencies relative to the internal oscillator (gate 2^22 osc cycles)."""
+    osc = args.osc * 1e6
+    last = None
+    for _ in range(args.n):
+        r = read_er2(j)
+        while r['gate'] == (last or {}).get('gate'):
+            time.sleep(0.02)
+            r = read_er2(j)
+        last = r
+        print(f"gate {r['gate']:3d}  refclk_det CM3..0 {r['det']:04b}  cmu_ok {{ln3..0,cmu1,cmu}} {r['ok']:06b}")
+        for name, c in zip(SERDES_CLKS, r['cnt']):
+            print(f'    {name:18s} {c:9d}  ~{c * osc / (1 << 22) / 1e6:9.3f} MHz')
+
+
 def cmd_status_watch(j, args):
     """Print USERCODE / STATUS whenever they change (e.g. while pressing MODE)."""
     prev = None
@@ -921,6 +959,8 @@ def main():
     ap.add_argument('--freq', type=float, default=1e6, help='TCK frequency (default 1 MHz)')
     ap.add_argument('--any-device', action='store_true', help='skip the GW5AT-15 IDCODE check')
     ap.add_argument('--sim', help='simulation command instead of hardware (e.g. "vvp -n sim/tb.vvp")')
+    ap.add_argument('--vref', action='append', default=[], metavar='BALL',
+                    help='ball used as the external VREF in the loaded build (LA_VREF / LA_VREF2)')
     ap.add_argument('--cable', choices=['dap', 'ftdi'], default='dap',
                     help='dap = CMSIS-DAP v2 (rust-dap), ftdi = FT2232 MPSSE (default dap)')
     ap.add_argument('--loader', help='SRAM loader command (default: gowin-prog sram for dap, '
@@ -931,6 +971,9 @@ def main():
     ap.add_argument('--classes', default='classify.json', help='classification file (classify writes it)')
     sub = ap.add_subparsers(dest='cmd', required=True)
     sub.add_parser('detect')
+    s = sub.add_parser('serdes', help='SerDes Q0 reference-clock probe (ER2 of a SERDES=1 build)')
+    s.add_argument('-n', type=int, default=2, help='gates to print')
+    s.add_argument('--osc', type=float, default=52.5, help='assumed oscillator frequency in MHz')
     sub.add_parser('bsr-len')
     s = sub.add_parser('sample')
     s.add_argument('-n', type=int, default=32)
@@ -974,6 +1017,7 @@ def main():
     s.add_argument('--rounds', type=int, default=3)
     s.add_argument('--force', action='store_true')
     args = ap.parse_args()
+    VREF_BALLS.update(b.upper() for b in args.vref)
 
     if args.cmd in ('diff',):
         return cmd_diff(None, args)

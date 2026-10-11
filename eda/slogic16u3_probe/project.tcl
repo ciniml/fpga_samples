@@ -39,6 +39,9 @@ if {[info exists ::env(LA_VREF2)]} { set LA_VREF2 $::env(LA_VREF2) }
 set LA_IO2 ""
 if {[info exists ::env(LA_IO2)]} { set LA_IO2 $::env(LA_IO2) }
 
+if {[info exists ::env(SERDES)] && $::env(SERDES) eq "1"} {
+    create_project -name ${PROJECT_NAME} -dir gprj -pn $DEVICE_PART -device_version A -force
+}
 set_option -output_base_name ${PROJECT_NAME}
 set_option -verilog_std v2001
 set_option -print_all_synthesis_warning 1
@@ -62,6 +65,8 @@ foreach line [split [read $fh] "\n"] {
     set f [split $line ","]
     if {[lindex $f 0] eq "ball"} continue
     # probe pins tagged '@la' in the note are kept in the 'la' set (pins the factory app drives)
+    # the external VREF balls are not I/O ports
+    if {[lindex $f 0] eq $LA_VREF || [lindex $f 0] eq $LA_VREF2} continue
     if {[lsearch -exact $PINSET_SKIP($PINSET) [lindex $f 2]] >= 0 && !(($PINSET eq "la" || $PINSET eq "mipi") && [string first "@la" [lindex $f 3]] >= 0)} continue
     lappend rows $f
 }
@@ -105,10 +110,49 @@ set fh [open defines_gen.v w]; puts -nonewline $fh $defs; close $fh
 
 add_file -type verilog [file normalize defines_gen.v]
 add_file -type verilog [file normalize ${SRC_DIR}/top.v]
+# SERDES=1: bare SerDes Q0 quad + ER2 reference-clock / frequency probe (top.v PROBE_SERDES)
+if {[info exists ::env(SERDES)] && $::env(SERDES) eq "1"} {
+    set fh [open defines_gen.v a]; puts $fh "`define PROBE_SERDES"; close $fh
+    if {[info exists ::env(SERDES_IP)] && $::env(SERDES_IP) ne ""} {
+        # SERDES_IP=<dir>: a GUI-generated Customized PHY (serdes.v, customized_phy/, serdes.csr)
+        set fh [open defines_gen.v a]; puts $fh "`define PROBE_SERDES_IP"; close $fh
+        add_file -type verilog [file normalize $::env(SERDES_IP)/serdes.v]
+        add_file -type verilog [file normalize $::env(SERDES_IP)/customized_phy/customized_phy.v]
+        set ::env(QUAD_CSR) [file normalize $::env(SERDES_IP)/serdes.csr]
+    } else {
+        add_file -type verilog [file normalize ${SRC_DIR}/quad_probe.v]
+    }
+    # the GW5AT-15 quad takes its static configuration from a CSR file (quad_probe.toml ->
+    # serdes_toml_to_csr_15k.bin); QUAD_CSR=<file> overrides it
+    set QUAD_CSR [file normalize ${SRC_DIR}/quad_probe.csr]
+    if {[info exists ::env(QUAD_CSR)] && $::env(QUAD_CSR) ne ""} { set QUAD_CSR [file normalize $::env(QUAD_CSR)] }
+    # gw_sh has no option for it: the CSR goes to PnR as the project's "RES.serdes.csr" result
+    # file, which only a saved project (.gprj.user) carries -> create one, then reopen it below
+    set USE_GPRJ_CSR 1
+}
 # GW_JTAG is a black box whose stub ships with the IDE (GAO uses it).
 set GW_JTAG_V [file normalize [file join [file dirname [info nameofexecutable]] .. data ipcores gw_jtag.v]]
 if {[info exists ::env(GW_JTAG_V)]} { set GW_JTAG_V $::env(GW_JTAG_V) }
 add_file -type verilog $GW_JTAG_V
 add_file -type cst [file normalize pins.cst]
 add_file -type sdc [file normalize ${SRC_DIR}/timing.sdc]
-run all
+if {[info exists USE_GPRJ_CSR]} {
+    # gw_sh keeps the project in memory and rewrites .gprj.user from it, so the CSR entry is
+    # written now and a child gw_sh opens the saved project and runs the flow
+    set gdir [pwd]   ;# create_project moved into gprj/<name>
+    set ufile $gdir/${PROJECT_NAME}.gprj.user
+    set fh [open $ufile w]
+    puts $fh "<?xml version=\"1\" encoding=\"UTF-8\"?>\n<!DOCTYPE ProjectUserData>\n<UserConfig>\n    <Version>1.0</Version>"
+    puts $fh "    <ResultFileList>\n        <ResultFile ResultFileType=\"RES.serdes.csr\" ResultFilePath=\"$QUAD_CSR\"/>\n    </ResultFileList>\n</UserConfig>"
+    close $fh
+    set fh [open $gdir/run_csr.tcl w]
+    puts $fh "open_project $gdir/${PROJECT_NAME}.gprj\nrun all"
+    close $fh
+    exec [info nameofexecutable] $gdir/run_csr.tcl >@ stdout 2>@ stderr
+    # results to where the Makefile expects them (build/<target>/impl/pnr)
+    file mkdir $gdir/../../impl
+    file delete -force $gdir/../../impl/pnr
+    file copy -force $gdir/impl/pnr $gdir/../../impl/pnr
+} else {
+    run all
+}

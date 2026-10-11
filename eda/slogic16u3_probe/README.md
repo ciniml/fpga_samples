@@ -118,6 +118,8 @@ python3 host/slogic_probe.py --sim "vvp -n sim/build/tb_main_up.vvp" map-bsr
 - アプリ動作中は、N1 (MODE1) の入力が 1 Hz で、J12 の出力が高速にトグルしている。
 - classify の結果: LA CH0-15、F14、E14 は floating。D13 は high。D14、G14、M1、H2 は low。DONE、READY、MODE0、MODE1 は high。active なピンはない (F13 などに発振器は来ていない)。
 
+- **SerDes 基準クロック (2026-10-11)**: 裏面の 125 MHz 発振器は **Q0 REFCLK0** (A8/A7) に入り、**D14 = 発振器の OE** (プルダウンで停止、純正アプリは 1)。D14=High で GUI 生成の Customized PHY (Q0 Ln0、1.25G、CPLL、REFCLK0) の refclk_o と tx_pcs_clkout が 124.75 MHz (内蔵 OSC 較正 51.66 MHz 基準、≈125 MHz)。REFCLK1 版や D14=Low では 80〜190 MHz の不定値 (PLL が基準なしで空回りしても pll_lock/ready は 1 になるので当てにならない)。GW5AT-15 の quad は静的設定を .csr で受け取り、gw_sh にはオプションが無い → `.gprj.user` の ResultFile `RES.serdes.csr` に書いた保存済みプロジェクトを子 gw_sh で開いて run all (project.tcl SERDES=1)。CLI の GowinModGen -do で serdes.v は作れるが Customized PHY 本体と csr は GUI 生成 (eda/targets/slogic16u3/ip_trial/src/serdes_ref0)。手作り TOML は 15K 用キー (mclk_freq, cmu0/1_reset_by_fabric, cpll_reset_by_fabric 等) が要る。GowinSynthesis は別クロックの同形カウンタを 1 つにまとめるので syn_preserve。GW5A の Gowin IDE は LD_LIBRARY_PATH=IDE/lib で起動 (システム Qt の xcb プラグインを掴んで落ちる)。
+
 ## 未確認事項
 
 - GW5A でも SAMPLE が 0x01 か。

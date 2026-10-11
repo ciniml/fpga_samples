@@ -36,9 +36,9 @@ P8,CH15,la,IOB20B
 F14,UART_TX,uart_tx,IOB43A D09
 E14,UART_RX,uart_rx,IOB43B D08
 C13,IOB36B,probe,bank1
-C14,IOB39B,probe,bank1 D10 @la
+C14,IOB39B,probe,bank1 D10; USB2 D+ 1.5k pull-up enable: high -> the host tries to enumerate a full-speed device (kernel log) and H3/K3/P2 + M2/K2/P1 toggle for ~2-3 s; the factory USB3 app drives it 0 (2026-10-11) @la
 D13,IOB36A,probe,bank1; pulled up; driving it low reconfigures the FPGA like MODE (RECONFIG_N net?; 2026-10-10)
-D14,IOB39A,probe,bank1 D11 @la
+D14,IOB39A,probe,bank1 D11; enable (OE) of the 125 MHz oscillator on SerDes Q0 REFCLK0 (pulled low = off; the factory app drives it 1; 2026-10-11) @la
 E13,IOB34B,probe,bank1 GCLKC_0
 F13,IOB34A,probe,bank1 GCLKT_0 (oscillator candidate)
 G13,IOB32B,probe,bank1 GCLKC_1; header CK (second; 2026-10-10); not divided like H13 (3.35 V stays 1 up to VREF 127/128; floats high without a pull-down; 2026-10-11) @la
@@ -48,13 +48,13 @@ H14,IOB45A,probe,bank1; as SSTL33 external VREF it reads ~0 V regardless of J12 
 J12,IOB31A,probe,bank1; threshold PWM: RC-filtered into M8 (bank1 external VREF); Vth ~ 6.7 V x duty (3.35 V trips at 62.5/128; 4.9 V at ~92/128; 2026-10-11) @la
 M8,IOB11A,probe,bank1; external VREF of the LA inputs (SSTL33_I VREF=USE_VREF_DRIVER M8) fed by filtered J12 PWM (2026-10-11)
 M1,IOL33B,probe,bank3 GCLKC_4 SDA
-M2,IOL33A,probe,bank3 GCLKT_4 SCL
+M2,IOL33A,probe,bank3 GCLKT_4 SCL; USB2 D- group (with K2/P1: low at idle; toggles during host enumeration; 2026-10-11)
 H2,IOL22B,probe,bank4 GCLKC_7 SO
-H3,IOL22A,probe,bank4 GCLKT_7 SSPI_CLK
-K2,IOL26B,probe,bank4 GCLKC_6 D07 SSPI_WPN
-K3,IOL26A,probe,bank4 GCLKT_6 D06 CLKHOLD_N
-P1,IOL35B,probe,bank3 D05 SSPI_CS_N
-P2,IOL35A,probe,bank3 D04 SI
+H3,IOL22A,probe,bank4 GCLKT_7 SSPI_CLK; USB2 D+ group (with K3/P2: high while C14 enables the 1.5k pull-up and the host idles; 2026-10-11)
+K2,IOL26B,probe,bank4 GCLKC_6 D07 SSPI_WPN; USB2 D- group with M2/P1 (2026-10-11)
+K3,IOL26A,probe,bank4 GCLKT_6 D06 CLKHOLD_N; USB2 D+ group with H3/P2 (2026-10-11)
+P1,IOL35B,probe,bank3 D05 SSPI_CS_N; USB2 D- group with M2/K2 (2026-10-11)
+P2,IOL35A,probe,bank3 D04 SI; USB2 D+ group with H3/K3 (2026-10-11)
 L3,DONE,cfg,IOL29A; ACT LED green: lit while DONE is high; off when pulled low (2026-10-10; dim)
 M12,READY,cfg,IOB9A
 N1,MODE1,cfg,IOL31A GCLKT_5

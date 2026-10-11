@@ -64,14 +64,14 @@ module top (
     OBUF u_tdo (.I(tdo_c), .O(tdo_pad_o));
 
     wire jtck, jtdi, jrst, sdc, upd, pause, en1, en2, rti1, rti2;
-    wire tdo_er1;
+    wire tdo_er1, tdo_er2;
     GW_JTAG u_jtag (
         .tck_pad_i(tck_c), .tms_pad_i(tms_c), .tdi_pad_i(tdi_c), .tdo_pad_o(tdo_c),
         .tck_o(jtck), .tdi_o(jtdi), .test_logic_reset_o(jrst),
         .run_test_idle_er1_o(rti1), .run_test_idle_er2_o(rti2),
         .shift_dr_capture_dr_o(sdc), .pause_dr_o(pause), .update_dr_o(upd),
         .enable_er1_o(en1), .enable_er2_o(en2),
-        .tdo_er1_i(tdo_er1), .tdo_er2_i(1'b0)
+        .tdo_er1_i(tdo_er1), .tdo_er2_i(tdo_er2)
     );
 
     // ---------------------------------------------------------------- pins
@@ -198,4 +198,90 @@ module top (
         end
     end
     assign tdo_er1 = sr[0];
+
+    // ---------------------------------------------------------------- ER2: SerDes Q0 probe (read-only)
+    // With PROBE_SERDES a bare GTR12_QUADB (quad_probe.v) is placed and ER2 (IR 0x43, 256 bits,
+    // LSB first) captures: [15:0] magic 0x5E2D, [19:16] reference-clock detect CM0..3,
+    // [25:20] CMU ok {lane3..0, CMU1, CMU}, [31:26] 0, [32 + 24*i +: 24] edges of clks[i] counted
+    // (x16 resolution) during the last gate of 2^22 osc cycles (i = CMU_CK_REF, CMU1_CK_REF, LANE0..3 CMU_CK_REF,
+    // CM_LIFE, CM1_LIFE, CLK_MON), [255:248] gate number. Without it ER2 reads all zeros.
+    localparam integer L2 = 256;
+    reg  [L2-1:0] sr2 = {L2{1'b0}};
+    wire [L2-1:0] cap2;
+`ifdef PROBE_SERDES
+    wire [3:0] q_det;
+    wire [5:0] q_ok;
+    wire [8:0] q_clk;
+`ifdef PROBE_SERDES_IP
+    // GUI-generated Customized PHY (Q0 lane 0, 1.25 Gb/s, 10-bit, CPLL from the 125 MHz reference):
+    // q_det = {ready, signal_detect, cdr_lock, pll_lock}, q_clk[0..2] = {refclk_o, tx_pcs_clkout, rx_pcs_clkout}
+    wire c_rxclk, c_txclk, c_refclk, c_sd, c_cdr, c_pll, c_ready;
+    reg [19:0] pma_rst_cnt = 20'd0;   // ~20 ms after configuration
+    always @(posedge osc) if (!pma_rst_cnt[19]) pma_rst_cnt <= pma_rst_cnt + 20'd1;
+    SerDes_Top u_serdes (
+        .Customized_PHY_Top_q0_ln0_rx_pcs_clkout_o(c_rxclk),
+        .Customized_PHY_Top_q0_ln0_rx_valid_o(),
+        .Customized_PHY_Top_q0_ln0_tx_pcs_clkout_o(c_txclk),
+        .Customized_PHY_Top_q0_ln0_refclk_o(c_refclk),
+        .Customized_PHY_Top_q0_ln0_signal_detect_o(c_sd),
+        .Customized_PHY_Top_q0_ln0_rx_cdr_lock_o(c_cdr),
+        .Customized_PHY_Top_q0_ln0_pll_lock_o(c_pll),
+        .Customized_PHY_Top_q0_ln0_ready_o(c_ready),
+        .Customized_PHY_Top_q0_ln0_rx_data_o(), .Customized_PHY_Top_q0_ln0_rx_fifo_rdusewd_o(),
+        .Customized_PHY_Top_q0_ln0_rx_fifo_aempty_o(), .Customized_PHY_Top_q0_ln0_rx_fifo_empty_o(),
+        .Customized_PHY_Top_q0_ln0_tx_fifo_wrusewd_o(), .Customized_PHY_Top_q0_ln0_tx_fifo_afull_o(),
+        .Customized_PHY_Top_q0_ln0_tx_fifo_full_o(),
+        .Customized_PHY_Top_q0_ln0_rx_clk_i(c_rxclk), .Customized_PHY_Top_q0_ln0_rx_fifo_rden_i(1'b0),
+        .Customized_PHY_Top_q0_ln0_tx_clk_i(c_txclk), .Customized_PHY_Top_q0_ln0_tx_data_i(80'd0),
+        .Customized_PHY_Top_q0_ln0_tx_fifo_wren_i(1'b0),
+        .Customized_PHY_Top_q0_ln0_pma_rstn_i(pma_rst_cnt[19]),
+        .Customized_PHY_Top_q0_ln0_pcs_rx_rst_i(!pma_rst_cnt[19]),
+        .Customized_PHY_Top_q0_ln0_pcs_tx_rst_i(!pma_rst_cnt[19]));
+    assign q_det = {c_ready, c_sd, c_cdr, c_pll};
+    assign q_ok  = 6'd0;
+    // q_clk[3] = osc itself: a check of the counting scheme (must read the calibrated ~51.66 MHz)
+    assign q_clk = {5'd0, osc, c_rxclk, c_txclk, c_refclk};
+`else
+    quad_probe u_quad (.refclk_det(q_det), .cmu_ok(q_ok), .clks(q_clk));
+`endif
+    reg  [21:0] gate = 22'd0;
+    reg  [7:0]  gate_no = 8'd0;
+    reg  [24*9-1:0] f_hold = {24*9{1'b0}};
+    genvar fi;
+    generate
+        for (fi = 0; fi < 9; fi = fi + 1) begin : g_f
+            // divide by 16 in the measured clock (a 4-bit counter closes timing far above the
+            // fabric's reach for wider counters), count the /16 edges on osc (< osc/2 up to ~400 MHz)
+            // syn_preserve: GowinSynthesis otherwise merges the nine identical counters onto one clock
+            reg [3:0] d = 4'd0 /* synthesis syn_preserve=1 */;
+            always @(posedge q_clk[fi]) d <= d + 4'd1;
+            reg [2:0] ds = 3'd0 /* synthesis syn_preserve=1 */;
+            reg [19:0] n = 20'd0 /* synthesis syn_preserve=1 */;
+            always @(posedge osc) begin
+                ds <= {ds[1:0], d[3]};
+                if (&gate) begin f_hold[24*fi +: 24] <= {n, 4'd0}; n <= 20'd0; end
+                else if (ds[1] && !ds[2]) n <= n + 20'd1;
+            end
+        end
+    endgenerate
+    always @(posedge osc) begin gate <= gate + 22'd1; if (&gate) gate_no <= gate_no + 8'd1; end
+    assign cap2 = {gate_no, f_hold, 6'd0, q_ok, q_det, 16'h5E2D};
+`else
+    assign cap2 = {L2{1'b0}};
+`endif
+    reg [2:0] en2_s = 3'd0;
+    reg       in_scan2 = 1'b0;
+    always @(posedge osc) begin
+        en2_s <= {en2_s[1:0], en2};
+        if (tck_rise) begin
+            if (en2_s[2] && sdc_s[2]) begin
+                in_scan2 <= 1'b1;
+                if (!in_scan2) sr2 <= cap2;
+                else           sr2 <= {tdi_s[1], sr2[L2-1:1]};
+            end else begin
+                in_scan2 <= 1'b0;
+            end
+        end
+    end
+    assign tdo_er2 = sr2[0];
 endmodule

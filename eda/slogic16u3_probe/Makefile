@@ -19,9 +19,16 @@ LA_IO2 ?=
 export LA_VREF2 LA_IO2
 LA_EXTRA ?=
 export LA_EXTRA
+# SERDES=1: add the SerDes Q0 reference-clock probe (ER2)
+SERDES ?=
+export SERDES
+# SERDES_IP=<dir>: use a GUI-generated Customized PHY instead of the bare quad (with SERDES=1)
+SERDES_IP ?=
+QUAD_CSR ?=
+export SERDES_IP QUAD_CSR
 BUILD_SUFFIX := _$(PINSET)_$(shell echo $(PULL) | tr A-Z a-z)$(if $(LA_TAG),_$(LA_TAG))
 
-SRCS := src/$(TARGET)/top.v src/$(TARGET)/pins.csv src/$(TARGET)/timing.sdc project.tcl
+SRCS := src/$(TARGET)/top.v src/$(TARGET)/quad_probe.v src/$(TARGET)/pins.csv src/$(TARGET)/timing.sdc project.tcl
 
 include ../build_gowin.mk
 

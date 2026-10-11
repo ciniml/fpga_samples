@@ -1,0 +1,13 @@
+<?xml version="1" encoding="UTF-8"?>
+<!DOCTYPE gowin-fpga-project>
+<Project>
+    <Template>FPGA</Template>
+    <Version>5</Version>
+    <Device name="GW5AT-15A" pn="GW5AT-LV15MG132C1/I0">gw5at15a-006</Device>
+    <FileList>
+        <File path="src/serdes_ref0/customized_phy/customized_phy.v" type="file.verilog" enable="1"/>
+        <File path="src/serdes_ref0/serdes.v" type="file.verilog" enable="1"/>
+        <File path="src/serdes_ref1/customized_phy/customized_phy.v" type="file.verilog" enable="1"/>
+        <File path="src/serdes_ref1/serdes.v" type="file.verilog" enable="1"/>
+    </FileList>
+</Project>
