@@ -1,0 +1,20 @@
+// SLogic16U3 USB 2.0 pins. @DXP@/@DXN@ and @TDP@/@TDN@ are filled by project.tcl:
+// DX=K -> dx = K3/K2, term = P2/P1; DX=P -> dx = P2/P1, term = K3/K2 (which one is the dx pair is being tested)
+IO_LOC "usb_dp" @DXP@;
+IO_PORT "usb_dp" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=16;
+IO_LOC "usb_dn" @DXN@;
+IO_PORT "usb_dn" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=16;
+IO_LOC "usb_term_dp" @TDP@;
+IO_PORT "usb_term_dp" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "usb_term_dn" @TDN@;
+IO_PORT "usb_term_dn" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "usb_cmp_dp" H3,H2;
+IO_PORT "usb_cmp_dp" IO_TYPE=LVDS25 PULL_MODE=NONE DIFF_RESISTOR=OFF;
+IO_LOC "usb_cmp_dn" M2,M1;
+IO_PORT "usb_cmp_dn" IO_TYPE=LVDS25 PULL_MODE=NONE DIFF_RESISTOR=OFF;
+IO_LOC "usb_pullup" C14;
+IO_PORT "usb_pullup" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "xo_en" D14;
+IO_PORT "xo_en" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "led_r" G14;
+IO_PORT "led_r" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
