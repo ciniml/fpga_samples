@@ -27,7 +27,9 @@ module top (
     input  wire usb_tdn,
     output wire usb_pullup,    // C14 (off)
     output wire xo_en,         // D14: 125 MHz oscillator enable
-    output wire led_r          // G14: in U0
+    output wire led_r,         // G14: in U0
+    output wire trace_p,       // F14 / E14 (UART TX / RX on the JTAG connector): EasyCDR trace link
+    output wire trace_n        //   (TRACE=1; emulated LVDS, 1 Gb/s 8b10b, AC coupled into a Pmod EasyCDR)
 );
     wire osc;   // ~51.7 MHz (measured)
     OSCA #(.FREQ_DIV(4)) u_osc (.OSCOUT(osc), .OSCEN(1'b1));
@@ -121,10 +123,37 @@ module top (
         .o_vendor_reg(vendor_reg), .i_vendor_status({8'h55, 3'b0, ltssm_state, 7'b0, link_configured, 8'h03}),
         .o_rx_valid(ep_rx_valid), .o_rx_data(ep_rx_data), .i_rx_ready(ep_rx_ready),
         .i_tx_valid(ep_tx_valid), .i_tx_data(ep_tx_data), .o_tx_ready(ep_tx_ready));
-    // EP1 byte loopback
-    assign ep_tx_valid = ep_rx_valid;
-    assign ep_tx_data  = ep_rx_data;
-    assign ep_rx_ready = ep_tx_ready;
+    // EP1: byte loopback, or (vendor register bit 0, vendor request 0x02 wValue) a PRBS15 source on
+    // EP1 IN for throughput / integrity tests (8 bits per pclk from x^15 + x^14 + 1, first bit in
+    // the byte LSB; restarts from the all-ones state when the mode is switched on; EP1 OUT is then
+    // drained and discarded). host/usb3_prbs.py checks the stream.
+    function [14:0] prbs15_8(input [14:0] s);   // 8 serial steps
+        integer k; reg [14:0] t;
+        begin
+            t = s;
+            for (k = 0; k < 8; k = k + 1) t = {t[13:0], t[14] ^ t[13]};
+            prbs15_8 = t;
+        end
+    endfunction
+    function [7:0] prbs15_byte(input [14:0] s);  // the 8 bits those steps produce, first in bit 0
+        integer k; reg [14:0] t; reg [7:0] b;
+        begin
+            t = s;
+            for (k = 0; k < 8; k = k + 1) begin b[k] = t[14] ^ t[13]; t = {t[13:0], t[14] ^ t[13]}; end
+            prbs15_byte = b;
+        end
+    endfunction
+    wire       prbs_mode = vendor_reg[0];
+    reg        prbs_mode_d = 1'b0;
+    reg [14:0] prbs_s = 15'h7FFF;
+    always @(posedge pclk) begin
+        prbs_mode_d <= prbs_mode;
+        if (prbs_mode && !prbs_mode_d) prbs_s <= 15'h7FFF;
+        else if (prbs_mode && ep_tx_ready) prbs_s <= prbs15_8(prbs_s);
+    end
+    assign ep_tx_valid = prbs_mode ? prbs_mode_d : ep_rx_valid;   // (not in the clock that restarts it)
+    assign ep_tx_data  = prbs_mode ? prbs15_byte(prbs_s) : ep_rx_data;
+    assign ep_rx_ready = prbs_mode ? 1'b1 : ep_tx_ready;
 
     // ---------------------------------------------------------------- statistics (pclk)
     reg [15:0] cnt_u0 = 16'd0, cnt_hp = 16'd0, cnt_reset = 16'd0, cnt_dpp_err = 16'd0, cnt_physt = 16'd0;
@@ -184,78 +213,60 @@ module top (
     reg [5:0] pads_s = 6'd0;
     always @(posedge osc) pads_s <= {cmp_dn, cmp_dp, usb_tdn, usb_tdp, usb_dxn, usb_dxp};
 
-    // ---------------------------------------------------------------- receive-side debug (pclk)
-    // counters: K28.5 symbols (COM), decode errors (RxStatus 4) and disparity errors (RxStatus 7);
-    // capture: 64 PIPE receive words {RxStatus, RxValid, RxDataK, RxData} around the first TS2 seen
-    // in Polling.Config (8 before, 56 from it), then frozen; entry cwp is the oldest. The JTAG side shows entry up[5:0] (rotates every
-    // ~1.3 ms), so the host assembles the buffer from repeated reads.
+    // ---------------------------------------------------------------- receive-side counters (pclk)
+    // K28.5 symbols (COM), decode errors (RxStatus 4) and disparity errors (RxStatus 7). (The
+    // Polling-time statistics and the Polling.Config capture that found the bring-up problems were
+    // removed again: the device sits at 83 % of the CLSs and the debug logic cost pclk timing.)
     reg [15:0] cnt_com = 16'd0, cnt_dec = 16'd0, cnt_disp = 16'd0;
-    reg [39:0] cbuf [0:63];
-    reg [6:0]  cwp = 7'd0;
-    reg [8:0]  cdly = 9'd0;
-    reg        cfull = 1'b0, carm = 1'b0, ctrig = 1'b0;
-    reg [5:0]  cpost = 6'd0;
     wire [3:0] com_k = {rx_k[3] && rx_data[31:24] == 8'hBC, rx_k[2] && rx_data[23:16] == 8'hBC,
                         rx_k[1] && rx_data[15:8] == 8'hBC, rx_k[0] && rx_data[7:0] == 8'hBC};
     always @(posedge pclk) begin
         if (rx_valid && |com_k) cnt_com <= cnt_com + 16'd1;
         if (rx_status == 3'd4) cnt_dec <= cnt_dec + 16'd1;
         if (rx_status == 3'd7) cnt_disp <= cnt_disp + 16'd1;
-        // ring buffer while in Polling.Config, stopped 56 words after the first TS2 body word
-        // (D5.2 x 4), so it holds 8 words before it; cwp then points at the oldest entry
-        if (ltssm_state == 5'd9) carm <= 1'b1;
-        if (carm && !cfull) begin
-            cbuf[cwp[5:0]] <= {rx_status, rx_valid, rx_k, rx_data};
-            cwp <= {1'b0, cwp[5:0] + 6'd1};
-            if (ctrig) begin cpost <= cpost + 6'd1; if (cpost == 6'd55) cfull <= 1'b1; end
-            else if (rx_valid && rx_k == 4'd0 && rx_data == 32'h45454545) ctrig <= 1'b1;
-        end
     end
-    // per-state receive statistics for Polling.RxEQ (7) and Polling.Active (8), accumulated over all
-    // visits: {COM words, RxElecIdle cycles, RxValid cycles, cycles}, 24 bits each
-    reg [23:0] ps_cnt [0:7];
-    integer pi;
-    initial for (pi = 0; pi < 8; pi = pi + 1) ps_cnt[pi] = 24'd0;
-    wire       ps_in  = ltssm_state == 5'd7 || ltssm_state == 5'd8;
-    wire [2:0] ps_b   = {ltssm_state == 5'd8, 2'b00};
-    always @(posedge pclk) if (ps_in) begin
-        ps_cnt[ps_b + 3'd0] <= ps_cnt[ps_b + 3'd0] + 24'd1;
-        if (rx_valid)              ps_cnt[ps_b + 3'd1] <= ps_cnt[ps_b + 3'd1] + 24'd1;
-        if (rx_elecidle)           ps_cnt[ps_b + 3'd2] <= ps_cnt[ps_b + 3'd2] + 24'd1;
-        if (rx_valid && |com_k)    ps_cnt[ps_b + 3'd3] <= ps_cnt[ps_b + 3'd3] + 24'd1;
-    end
-    reg [39:0] cbuf_q; reg [5:0] cidx;
-    always @(posedge osc) begin cbuf_q <= cbuf[up[5:0]]; cidx <= up[5:0]; end   // static once cfull
 
     // [15:0] magic, [16] ref_lock, [17] phy_resetn, [23:18] USB 2.0 pads {cdn, cdp, tdn, tdp, dxn, dxp},
-    // [43:24] pclk / 16 edges per 2^22 osc, [383:352] uptime (2^16 osc),
-    // [423:384] capture entry, [429:424] its index, [430] capture full, [447:432] COM count,
-    // [463:448] decode errors, [479:464] disparity errors
-    // [671:480] per-state statistics ps_cnt[0..7] (24 bits each, pclk, sampled as is)
-    wire [671:480] cap_ps = {ps_cnt[7], ps_cnt[6], ps_cnt[5], ps_cnt[4], ps_cnt[3], ps_cnt[2], ps_cnt[1], ps_cnt[0]};
-    // [679:674] cwp (oldest capture entry)
-    wire [679:0] cap = {2'b0, cwp[5:0], cap_ps, cnt_disp, cnt_dec, cnt_com, 1'b0, cfull, cidx, cbuf_q,
-                        up, snap, pf, pads_s, phy_resetn, ref_lock, 16'h5B31};
-    // ---------------------------------------------------------------- U0 packet trace (ER2)
-    // 1024 pclk words of {RxStatus, RxValid, RxDataK, RxData, TxDataK, TxData} around the first data
-    // packet header received in U0 (a SETUP), or the header after it (TRACE_AFTER_DPH): 256 before
-    // it, 768 from it, then frozen. Read through
-    // ER2: a scan writing bit L2-1 = 1 and the index in bits L2-32 +: 11 (jtag_status o_w2_data)
-    // selects an entry, the next scan returns it (layout below).
-    // TRACE_AFTER_DPH: trigger on the first header after it instead (the SETUP's STATUS stage)
-    localparam TRACE_AFTER_DPH = 1;
-    reg  dph_seen = 1'b0;
-    always @(posedge pclk) if (rx_hp_valid && rx_hp_hdr[4:0] == 5'h08) dph_seen <= 1'b1;
-    wire is_dph = rx_hp_valid && (TRACE_AFTER_DPH ? dph_seen : rx_hp_hdr[4:0] == 5'h08);
+    // [43:24] pclk / 16 edges per 2^22 osc, [351:44] pclk snapshot, [383:352] uptime (2^16 osc),
+    // [399:384] COM count, [415:400] decode errors, [431:416] disparity errors (pclk, sampled as is)
+    wire [431:0] cap = {cnt_disp, cnt_dec, cnt_com, up, snap, pf, pads_s, phy_resetn, ref_lock, 16'h5B31};
+    // ---------------------------------------------------------------- packet trace (ER2)
+    // 1024 pclk words of {RxStatus, RxValid, RxDataK, RxData, TxDataK, TxData} in a ring that runs
+    // until a trigger, then 'post' more words and frozen; the write pointer is then the oldest entry.
+    // Trigger modes (ER2 write with bit 30 = re-arm, bits 29:28 = mode; default mode 1 after reset):
+    //   0: the header after the first data packet header in U0 (a SETUP's next stage), 768 after it
+    //   1: U0 -> Recovery.Active, 256 after it (768 words of U0 traffic before the link dropped)
+    //   2: a data packet payload with a bad CRC-32 / framing (Usb3Top o_dpp_err), 256 after it
+    //   3: U0 -> Recovery.Active, 1000 after it (the recovery itself)
+    wire        w2; wire [30:0] w2_data;
+    reg  [1:0]  tmode = 2'd1;
+    reg         rearm_t = 1'b0;            // osc toggle -> pclk
+    always @(posedge osc) if (w2 && w2_data[30]) begin tmode <= w2_data[29:28]; rearm_t <= ~rearm_t; end
+    reg  [2:0]  rearm_s = 3'd0;
+    always @(posedge pclk) rearm_s <= {rearm_s[1:0], rearm_t};
+    wire        rearm = rearm_s[2] != rearm_s[1];
+    reg  [1:0]  tmode_p = 2'd1;
+    reg         dph_seen = 1'b0;
+    reg  [4:0]  st_q = 5'd0;
+    always @(posedge pclk) begin
+        st_q <= ltssm_state;
+        if (rearm) begin dph_seen <= 1'b0; tmode_p <= tmode; end
+        else if (rx_hp_valid && rx_hp_hdr[4:0] == 5'h08) dph_seen <= 1'b1;
+    end
+    wire t_ev = tmode_p == 2'd0 ? (rx_hp_valid && dph_seen) :
+                tmode_p == 2'd2 ? dpp_err :
+                                  (st_q == 5'd11 && ltssm_state == 5'd14);
+    wire [9:0] t_post = tmode_p == 2'd0 ? 10'd767 : tmode_p == 2'd3 ? 10'd1000 : 10'd255;
     reg  [75:0] tbuf [0:1023];
     reg  [9:0]  twp = 10'd0, tpost = 10'd0;
     reg         ttrig = 1'b0, tfull = 1'b0;
     always @(posedge pclk) begin
-        if (!tfull && (in_u0 || ttrig)) begin
+        if (rearm) begin ttrig <= 1'b0; tfull <= 1'b0; tpost <= 10'd0; end
+        else if (!tfull) begin
             tbuf[twp] <= {rx_status, rx_valid, rx_k, rx_data, tx_k, tx_data};
             twp <= twp + 10'd1;
-            if (ttrig) begin tpost <= tpost + 10'd1; if (tpost == 10'd767) tfull <= 1'b1; end
-            else if (is_dph) ttrig <= 1'b1;
+            if (ttrig) begin tpost <= tpost + 10'd1; if (tpost == t_post) tfull <= 1'b1; end
+            else if (t_ev) ttrig <= 1'b1;
         end
     end
     // header log: every header packet received (rx_hp_valid) or handed to the link for
@@ -268,26 +279,92 @@ module top (
     always @(posedge pclk) begin
         hts <= hts + 24'd1;
         if (in_u0) hrun <= 1'b1;
-        if (hrun && !hwp[7]) begin
+        if (rearm) begin hwp <= 8'd0; hrun <= in_u0; end
+        else if (hrun && !hwp[7]) begin
             if (rx_hp_valid && rx_hp_hdr[4:0] != 5'h0C) begin hlog[hwp[6:0]] <= {1'b0, hts, rx_hp_hdr}; hwp <= hwp + 8'd1; end   // ITPs (every 125 us) not logged
             else if (tx_hp_valid && tx_hp_ready) begin hlog[hwp[6:0]] <= {1'b1, hts, tx_hp_hdr}; hwp <= hwp + 8'd1; end
         end
     end
-    wire        w2; wire [30:0] w2_data;
     reg  [10:0] tidx = 11'd0;          // [10] = 1: header log entry tidx[6:0], else trace entry
     reg  [120:0] tq = 121'd0;
     reg  [10:0] tq_idx = 11'd0;
     always @(posedge osc) begin
-        if (w2) tidx <= w2_data[10:0];
+        if (w2 && !w2_data[30]) tidx <= w2_data[10:0];
         tq <= tidx[10] ? hlog[tidx[6:0]] : {45'd0, tbuf[tidx[9:0]]};   // static once full
         tq_idx <= tidx;
     end
     // ER2 (192 bits): [15:0] magic 0x5B33, [16] triggered, [17] full, [27:18] trace write pointer,
-    // [38:28] index shown, [159:39] entry, [167:160] header log count (128 = full)
-    wire [191:0] cap2 = {24'd0, hwp, tq, tq_idx, twp, tfull, ttrig, 16'h5B33};
+    // [38:28] index shown, [159:39] entry, [167:160] header log count (128 = full), [169:168] trigger mode
+    wire [191:0] cap2 = {22'd0, tmode_p, hwp, tq, tq_idx, twp, tfull, ttrig, 16'h5B33};
 
-    jtag_status #(.L(680), .L2(192)) u_jtag (.tck_pad_i(tck_pad_i), .tms_pad_i(tms_pad_i), .tdi_pad_i(tdi_pad_i),
+    jtag_status #(.L(432), .L2(192)) u_jtag (.tck_pad_i(tck_pad_i), .tms_pad_i(tms_pad_i), .tdi_pad_i(tdi_pad_i),
         .tdo_pad_o(tdo_pad_o), .osc(osc), .cap(cap), .cap2(cap2), .o_w2(w2), .o_w2_data(w2_data));
 
     assign led_r = in_u0;
+
+    // ---------------------------------------------------------------- EasyCDR trace link (TRACE=1)
+    // 64 bits sampled on pclk (maps/slogic16u3_usb3.map), a timestamped record on every change, sent
+    // as 1 Gb/s 8b10b over the UART pins of the JTAG connector to a Tang Primer 25K
+    // (eda/easycdr_trace). No reverse control channel (one pair only): the trace always runs with
+    // change detection, the descriptor goes out periodically and the 25K does the triggering.
+`ifdef TRACE
+    function [23:0] hsum(input [95:0] h);   // {rty, nump, seq, ept, sub, type}
+        reg [31:0] dw1;
+        begin
+            dw1  = h[63:32];
+            hsum = {dw1[6], dw1[20:16], (h[4:0] == 5'h08) ? dw1[4:0] : dw1[25:21], dw1[11:8], dw1[3:0], h[4:0]};
+        end
+    endfunction
+    reg [23:0] rx_sum = 24'd0, tx_sum = 24'd0;
+    reg        rx_ev = 1'b0, tx_ev = 1'b0, dpp_ev = 1'b0, rx_err_l = 1'b0;
+    always @(posedge pclk) begin
+        if (rx_hp_valid) begin rx_sum <= hsum(rx_hp_hdr); rx_ev <= ~rx_ev; end
+        if (tx_hp_valid && tx_hp_ready) begin tx_sum <= hsum(tx_hp_hdr); tx_ev <= ~tx_ev; end
+        if (dpp_err) dpp_ev <= ~dpp_ev;
+        rx_err_l <= rx_status == 3'd4 || rx_status == 3'd7;
+    end
+    reg [63:0] trace_sig = 64'd0;
+    always @(posedge pclk)
+        trace_sig <= {1'b0, dev_configured, power_down, rx_err_l, warm_reset, hot_reset, dpp_ev,
+                      tx_sum, tx_ev, rx_sum, rx_ev, in_u0, ltssm_state};
+
+    wire tr_f500 /* synthesis syn_keep=1 */, tr_lock, tr_clk /* synthesis syn_keep=1 */;
+    pll_trace500 u_pll_tr (.lock(tr_lock), .clkout0(tr_f500), .clkin(pclk));
+    reg [3:0] tr_rst_sr = 4'd0;
+    always @(posedge tr_f500 or negedge tr_lock)
+        if (!tr_lock) tr_rst_sr <= 4'd0; else tr_rst_sr <= {tr_rst_sr[2:0], 1'b1};
+    CLKDIV u_tr_div (.HCLKIN(tr_f500), .RESETN(tr_rst_sr[3]), .CALIB(1'b0), .CLKOUT(tr_clk));
+    defparam u_tr_div.DIV_MODE = "5";
+    reg [7:0] tr_rst_cnt = 8'd0;
+    always @(posedge tr_clk or negedge tr_lock)
+        if (!tr_lock) tr_rst_cnt <= 8'd0; else if (!tr_rst_cnt[7]) tr_rst_cnt <= tr_rst_cnt + 8'd1;
+    wire tr_rstn = tr_rst_cnt[7];
+
+    wire [7:0] map_addr, map_data, map_len;
+    trace_map_rom u_map_rom (.addr(map_addr), .data(map_data), .len(map_len));
+    wire [9:0] tr_sym;
+    easycdr_trace_tx #(.WIDTH(64), .TS_BITS(24), .SYNC_STAGES(0), .FIFO_AW(6), .FIFO_RAM("block"),
+                       .CFG_HASH(`TRACE_MAP_HASH)) u_trace_tx (
+        .sclk(pclk), .srstn(~prst), .sig(trace_sig),
+        .clk(tr_clk), .rstn(tr_rstn),
+        .i_enable(1'b1), .i_ignore_mask(64'd0), .i_desc_req(1'b0),
+        .i_map_req(1'b0), .i_map_len(map_len), .o_map_addr(map_addr), .i_map_data(map_data),
+        .i_periodic_en(1'b0), .i_change_dis(1'b0), .i_tick_dis(1'b0), .i_period(24'd0),
+        .i_arm(1'b0), .i_trig_mask(64'd0), .i_trig_value(64'd0), .i_post(16'd0),
+        .o_symbol(tr_sym), .o_overflow(), .o_armed(), .o_triggered(), .o_done());
+    // TRACE_INVERT: swap the line polarity (which ball of the pair is P depends on the wiring)
+`ifdef TRACE_INVERT
+    wire [9:0] tr_d = ~tr_sym;
+`else
+    wire [9:0] tr_d = tr_sym;
+`endif
+    wire tr_q;
+    OSER10 u_tr_ser (.Q(tr_q), .D0(tr_d[0]), .D1(tr_d[1]), .D2(tr_d[2]), .D3(tr_d[3]), .D4(tr_d[4]),
+        .D5(tr_d[5]), .D6(tr_d[6]), .D7(tr_d[7]), .D8(tr_d[8]), .D9(tr_d[9]),
+        .PCLK(tr_clk), .FCLK(tr_f500), .RESET(~tr_rstn));
+    ELVDS_OBUF u_tr_obuf (.I(tr_q), .O(trace_p), .OB(trace_n));
+`else
+    assign trace_p = 1'bz;   // the UART pins stay released without TRACE
+    assign trace_n = 1'bz;
+`endif
 endmodule

@@ -8,12 +8,15 @@
 // descrambler -> Usb3RxFifo -> Usb3RxParser. Checks link commands, header
 // packets (CRC good/bad), DPPs of many lengths and TS1/TS2 detection.
 `timescale 1ns/1ps
-module usb3_frame_test_body;
+// RUN: Verilator runs every test body of include_files as an implicit top in every test, so the
+// body only acts when instantiated with RUN = 1 (TbUsb3Prim's test wrappers); it ends with $finish
+// on success, $fatal on failure (veryl test counts a $finish as success)
+module usb3_frame_test_body #(parameter bit RUN = 0);
     import usb3_pkg::*;
     logic clk = 0;
     logic rst = 1;
     always #4 clk = ~clk;
-    initial begin repeat (400_000) @(posedge clk); $fatal(1, "TIMEOUT"); end
+    initial if (RUN) begin repeat (400_000) @(posedge clk); $fatal(1, "TIMEOUT"); end
 
     // ---------------------------------------------------------------- TX
     logic        lc_valid, lc_ready;
@@ -100,16 +103,16 @@ module usb3_frame_test_body;
     logic [31:0] cls;
     always_comb for (int i = 0; i < 4; i++) cls[8*i +: 8] = sym_class(l_k[i], l_data[8*i +: 8], desc[8*i +: 8]);
 
-    logic [127:0] f_raw, f_desc, f_cls; logic [15:0] f_k; logic [4:0] f_fill;
+    logic [191:0] f_raw, f_desc, f_cls; logic [23:0] f_k; logic [4:0] f_fill; logic f_adv;
     Usb3RxFifo fifo(.i_clk(clk), .i_rst(rst), .i_flush(1'b0), .i_valid(l_valid),
         .i_raw(l_data), .i_desc(desc), .i_k(l_k), .i_cls(cls),
-        .o_raw(f_raw), .o_desc(f_desc), .o_k(f_k), .o_cls(f_cls), .o_fill(f_fill));
+        .o_raw(f_raw), .o_desc(f_desc), .o_k(f_k), .o_cls(f_cls), .o_fill(f_fill), .o_adv(f_adv));
 
     logic ts_valid, ts_inv, pol_hint, idle8, rlc_valid, rhp_valid, rhp_ok;
     logic [1:0] ts_type; logic [7:0] ts_cfg; logic [10:0] rlc_word;
     logic [95:0] rhp_hdr; logic [15:0] rhp_lcw;
     logic dpp_start, dpp_valid, dpp_end, dpp_err; logic [31:0] dpp_w; logic [3:0] dpp_be;
-    Usb3RxParser par(.i_clk(clk), .i_rst(rst), .i_enable(1'b1),
+    Usb3RxParser par(.i_clk(clk), .i_rst(rst), .i_enable(1'b1), .i_adv(f_adv),
         .i_raw(f_raw), .i_desc(f_desc), .i_k(f_k), .i_cls(f_cls), .i_fill(f_fill),
         .o_ts_valid(ts_valid), .o_ts_type(ts_type), .o_ts_cfg(ts_cfg), .o_ts_inv(ts_inv),
         .o_pol_inv_hint(pol_hint), .o_idle8(idle8),
@@ -136,7 +139,7 @@ module usb3_frame_test_body;
     end
 
 `ifdef USB3_DBG
-    initial begin
+    initial if (RUN) begin
         #200;
         forever begin
             @(posedge clk);
@@ -174,7 +177,7 @@ module usb3_frame_test_body;
     logic [95:0] h; ev_t e;
     int len;
     int lens[12] = '{0, 1, 2, 3, 4, 5, 7, 8, 13, 64, 511, 1024};
-    initial begin
+    initial if (RUN) begin
         lc_valid = 0; hp_valid = 0; raw_valid = 0; ts_bypass = 0;
         repeat (3) @(posedge clk); @(negedge clk); rst = 0; repeat (3) @(posedge clk);
         tx_enable = 1; settle();
@@ -289,7 +292,7 @@ module usb3_frame_test_body;
         if (hints == 0) fail("no polarity hint");
         raw_valid = 0;
 
-        if (errors == 0) $display("PASS usb3_frame");
+        if (errors == 0) begin $display("PASS usb3_frame"); $finish; end
         else $fatal(1, "FAIL usb3_frame: %0d errors", errors);
         $finish;
     end

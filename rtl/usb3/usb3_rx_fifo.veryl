@@ -10,12 +10,17 @@
  *        flag and the class bits of each symbol, plus a fill count.
  *
  * Nothing is removed or realigned here: the parser keeps a registered
- * read position into this window, which keeps its decision loop short
- * (the window shifts by exactly one word every clock; filler without
- * class bits when the PHY has no data). SKP symbols stay in the stream and
- * are ignored by the parser.
+ * read position into this window, which keeps its decision loop short.
+ * The window shifts by one word on every PHY word. A clock without one
+ * (RxValid 0: the PHY's elastic buffer inserts them anywhere, also inside a
+ * packet) holds it and o_adv = 0 stalls the parser; only after GAP_FLUSH
+ * such clocks in a row is a word without class bits shifted in, so that the
+ * last symbols of a stream (e.g. LPMA before U3) still reach the parser.
+ * SKP symbols stay in the stream and are ignored by the parser.
  */
-module Usb3RxFifo (
+module Usb3RxFifo #(
+    param GAP_FLUSH: u32 = 6, // clocks without a PHY word before the window advances anyway
+) (
     i_clk  : input  clock     ,
     i_rst  : input  reset     ,
     i_flush: input  logic     , // discard everything (link state change)
@@ -29,25 +34,28 @@ module Usb3RxFifo (
     o_k    : output logic<24> ,
     o_cls  : output logic<192>,
     o_fill : output logic<5>  , // valid symbols at the top of the window (saturates at 24)
+    o_adv  : output logic     , // the window shifts at the end of this clock
 ) {
     const N: u32 = 24;
 
     var fill: logic<5>;
     assign o_fill = fill;
+    var gap: logic<3>; // clocks without a PHY word in a row (saturating)
+    assign o_adv = i_valid || gap >= GAP_FLUSH as 3;
 
     always_ff {
         if_reset {
             fill   = 0;
+            gap    = 0;
             o_raw  = 0;
             o_desc = 0;
             o_k    = 0;
             o_cls  = 0;
         } else if i_flush {
             fill = 0;
-        } else {
-            // the window always advances: a word with no class bits is shifted
-            // in when the PHY delivers nothing, so that the last symbols of a
-            // stream (e.g. LPMA before U3) are still reached by the parser
+            gap  = 0;
+        } else if o_adv {
+            gap = if i_valid ? 0 : gap;
             if i_valid {
                 o_raw  = {i_raw, o_raw[191:32]};
                 o_desc = {i_desc, o_desc[191:32]};
@@ -62,6 +70,8 @@ module Usb3RxFifo (
             if fill <= (N - 4) as 5 {
                 fill = fill + 4;
             }
+        } else if gap != 7 {
+            gap = gap + 1;
         }
     }
 }

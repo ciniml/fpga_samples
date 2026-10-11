@@ -7,7 +7,10 @@
 // from test/usb3_ref.py (checked against the USB 3.2 Appendix B tables,
 // zlib.crc32 and the spec residuals).
 `timescale 1ns/1ps
-module usb3_prim_test_body;
+// RUN: Verilator runs every test body of include_files as an implicit top in every test, so the
+// body only acts when instantiated with RUN = 1 (TbUsb3Prim's test wrappers); it ends with $finish
+// on success, $fatal on failure (veryl test counts a $finish as success)
+module usb3_prim_test_body #(parameter bit RUN = 0);
     import usb3_pkg::*;
     logic clk = 0;
     logic rst = 1;
@@ -31,7 +34,7 @@ module usb3_prim_test_body;
     logic [15:0] c16;
     logic [31:0] c32;
     logic [7:0]  hdr[12];
-    initial begin
+    initial if (RUN) begin
         // ---- LFSR table (Appendix B): FFFF -> E817 -> 0328 -> 284B
         check("adv1", lfsr_adv8(16'hFFFF), 16'hE817);
         check("adv2", lfsr_adv8(16'hE817), 16'h0328);
@@ -94,7 +97,7 @@ module usb3_prim_test_body;
         check("descr", s_out, {24'h0, K_COM});
         @(posedge clk);
 
-        if (errors == 0) $display("PASS usb3_prim");
+        if (errors == 0) begin $display("PASS usb3_prim"); $finish; end
         else $fatal(1, "FAIL usb3_prim: %0d errors", errors);
         $finish;
     end

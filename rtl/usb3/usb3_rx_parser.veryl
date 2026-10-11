@@ -20,11 +20,15 @@
  *     checked (7.2.4.1.9)
  *   - TS1/TS2 (16 symbols, raw) -> o_ts_* for the LTSSM
  * Outputs are registered (one clock after the symbols were consumed).
+ * Clocks without a PHY word (RxValid 0, which the PHY may insert anywhere,
+ * also inside a packet) are skipped: the window holds and the parser stalls
+ * (i_adv = 0); only a long gap advances the window with empty words.
  */
 module Usb3RxParser (
     i_clk   : input clock,
     i_rst   : input reset,
     i_enable: input logic, // 0: drain the window and stay idle
+    i_adv   : input logic, // the window shifts by 4 at the end of this clock (Usb3RxFifo o_adv); 0: hold everything
 
     i_raw : input logic<192>, // 24-symbol window from Usb3RxFifo (j = 0 oldest)
     i_desc: input logic<192>,
@@ -132,8 +136,10 @@ module Usb3RxParser (
         if_reset {
             hit_r = 0;
         } else {
-            for p in 0..17 {
-                hit_r[p * 8+:8] = {3'b0, hit_c[p + 4]};
+            if i_adv {
+                for p in 0..17 {
+                    hit_r[p * 8+:8] = {3'b0, hit_c[p + 4]};
+                }
             }
         }
     }
@@ -378,191 +384,195 @@ module Usb3RxParser (
             o_dpp_valid    = 0;
             o_dpp_end      = 0;
             o_dpp_err      = 0;
-            state          = nstate;
-            // window advanced by 4: the read position moves down unless it is
-            // already at the bottom (window not yet full, nothing consumed)
-            if pop == 0 && pos <: 4 {
-                pos = 0;
-            } else {
-                pos = pos + pop - 4;
-            }
+            // a clock without a PHY word (RxValid 0) does not exist for the parser: the window
+            // holds (Usb3RxFifo), so nothing is consumed and no state moves; only the pulses drop
+            if i_adv {
+                state = nstate;
+                // window advanced by 4: the read position moves down unless it is
+                // already at the bottom (window not yet full, nothing consumed)
+                if pop == 0 && pos <: 4 {
+                    pos = 0;
+                } else {
+                    pos = pos + pop - 4;
+                }
 
-            if !i_enable {
-                pos      = 0;
-                widx     = 0;
-                idle_cnt = 0;
-                o_idle8  = 0;
-            } else {
-                case state {
-                    State::Search: {
-                        if i_avail >= 7 {
-                            if found {
-                                widx     = 0;
-                                kbad     = 0;
-                                crc16    = 16'hFFFF;
-                                ts_ok    = 3'b111;
-                                idle_cnt = 0;
-                                o_idle8  = 0;
-                            } else {
-                                // idle counting / polarity hints over the 4 consumed symbols
-                                var c: logic<4>;
-                                c = idle_cnt;
-                                for i in 0..4 {
-                                    if v_cls[i * 8 + CLS_IDLE] {
-                                        if c != 15 {
-                                            c = c + 1;
+                if !i_enable {
+                    pos      = 0;
+                    widx     = 0;
+                    idle_cnt = 0;
+                    o_idle8  = 0;
+                } else {
+                    case state {
+                        State::Search: {
+                            if i_avail >= 7 {
+                                if found {
+                                    widx     = 0;
+                                    kbad     = 0;
+                                    crc16    = 16'hFFFF;
+                                    ts_ok    = 3'b111;
+                                    idle_cnt = 0;
+                                    o_idle8  = 0;
+                                } else {
+                                    // idle counting / polarity hints over the 4 consumed symbols
+                                    var c: logic<4>;
+                                    c = idle_cnt;
+                                    for i in 0..4 {
+                                        if v_cls[i * 8 + CLS_IDLE] {
+                                            if c != 15 {
+                                                c = c + 1;
+                                            }
+                                        } else if !v_cls[i * 8 + CLS_SKP] {
+                                            c = 0; // SKP ordered sets do not break the idle run (6.4.3.1)
                                         }
-                                    } else if !v_cls[i * 8 + CLS_SKP] {
-                                        c = 0; // SKP ordered sets do not break the idle run (6.4.3.1)
+                                    }
+                                    idle_cnt = c;
+                                    o_idle8  = c >= 8;
+                                    if w_k == 0 && w_raw == {D21_5, D21_5, D21_5, D21_5} {
+                                        o_pol_inv_hint = 1;
                                     }
                                 }
-                                idle_cnt = c;
-                                o_idle8  = c >= 8;
-                                if w_k == 0 && w_raw == {D21_5, D21_5, D21_5, D21_5} {
-                                    o_pol_inv_hint = 1;
+                            }
+                        }
+                        State::HpBody: {
+                            if i_avail >= 4 {
+                                widx = widx + 1;
+                                if w_k != 0 {
+                                    kbad = 1;
+                                }
+                                if widx != 3 {
+                                    hdr[widx * 32+:32] = w_desc;
+                                    crc16              = crc16_w;
+                                } else {
+                                    o_hp_valid  = 1;
+                                    o_hp_hdr    = hdr;
+                                    o_hp_lcw    = w_desc[31:16];
+                                    o_hp_crc_ok = !kbad && w_k == 0 && ~crc16 == {w_desc[15:8], w_desc[7:0]}
+                                        && lcw_ok(w_desc[31:16]);
+                                    remain      = hdr[58:48]; // Data Length (DW1[31:16]), max 1024
+                                    if hdr[63:59] != 0 {
+                                        remain = 11'h7FF; // > 1024: treat as babble, DPP will fail
+                                    }
+                                    crc32 = 32'hFFFFFFFF;
                                 }
                             }
                         }
-                    }
-                    State::HpBody: {
-                        if i_avail >= 4 {
-                            widx = widx + 1;
-                            if w_k != 0 {
-                                kbad = 1;
+                        State::LcBody: {
+                            if i_avail >= 4 {
+                                o_lc_valid = w_k == 0 && w_desc[15:0] == w_desc[31:16] && lcw_ok(w_desc[15:0]);
+                                o_lc_word  = w_desc[10:0];
                             }
-                            if widx != 3 {
-                                hdr[widx * 32+:32] = w_desc;
-                                crc16              = crc16_w;
-                            } else {
-                                o_hp_valid  = 1;
-                                o_hp_hdr    = hdr;
-                                o_hp_lcw    = w_desc[31:16];
-                                o_hp_crc_ok = !kbad && w_k == 0 && ~crc16 == {w_desc[15:8], w_desc[7:0]}
-                                    && lcw_ok(w_desc[31:16]);
-                                remain      = hdr[58:48]; // Data Length (DW1[31:16]), max 1024
-                                if hdr[63:59] != 0 {
-                                    remain = 11'h7FF; // > 1024: treat as babble, DPP will fail
+                        }
+                        State::DppStart: {
+                            if i_avail >= 4 {
+                                if hit_at(0, H_SDP) {
+                                    o_dpp_start = 1;
+                                } else {
+                                    o_dpp_err = 1;
                                 }
-                                crc32 = 32'hFFFFFFFF;
                             }
                         }
-                    }
-                    State::LcBody: {
-                        if i_avail >= 4 {
-                            o_lc_valid = w_k == 0 && w_desc[15:0] == w_desc[31:16] && lcw_ok(w_desc[15:0]);
-                            o_lc_word  = w_desc[10:0];
-                        }
-                    }
-                    State::DppStart: {
-                        if i_avail >= 4 {
-                            if hit_at(0, H_SDP) {
-                                o_dpp_start = 1;
-                            } else {
-                                o_dpp_err = 1;
+                        State::DppData: {
+                            if i_avail >= 4 {
+                                if w_k != 0 {
+                                    o_dpp_err = 1;
+                                } else {
+                                    o_dpp_valid = 1;
+                                    o_dpp_data  = w_desc;
+                                    o_dpp_be    = 4'b1111;
+                                    crc32       = crc32_w;
+                                    remain      = remain - 4;
+                                }
                             }
                         }
-                    }
-                    State::DppData: {
-                        if i_avail >= 4 {
-                            if w_k != 0 {
-                                o_dpp_err = 1;
-                            } else {
-                                o_dpp_valid = 1;
+                        State::DppTail1: {
+                            if i_avail >= 4 {
+                                if w_k != 0 {
+                                    o_dpp_err = 1;
+                                }
+                                o_dpp_valid = remain != 0;
                                 o_dpp_data  = w_desc;
-                                o_dpp_be    = 4'b1111;
-                                crc32       = crc32_w;
-                                remain      = remain - 4;
+                                o_dpp_be    = case remain[1:0] {
+                                    0      : 4'b0000,
+                                    1      : 4'b0001,
+                                    2      : 4'b0011,
+                                    default: 4'b0111,
+                                };
+                                crc32 = crc32_w;
+                                case remain[1:0] {
+                                    0      : crc_rx[31:0] = w_desc;
+                                    1      : crc_rx[23:0] = w_desc[31:8];
+                                    2      : crc_rx[15:0] = w_desc[31:16];
+                                    default: crc_rx[7:0]  = w_desc[31:24];
+                                }
                             }
                         }
-                    }
-                    State::DppTail1: {
-                        if i_avail >= 4 {
-                            if w_k != 0 {
-                                o_dpp_err = 1;
-                            }
-                            o_dpp_valid = remain != 0;
-                            o_dpp_data  = w_desc;
-                            o_dpp_be    = case remain[1:0] {
-                                0      : 4'b0000,
-                                1      : 4'b0001,
-                                2      : 4'b0011,
-                                default: 4'b0111,
-                            };
-                            crc32 = crc32_w;
-                            case remain[1:0] {
-                                0      : crc_rx[31:0] = w_desc;
-                                1      : crc_rx[23:0] = w_desc[31:8];
-                                2      : crc_rx[15:0] = w_desc[31:16];
-                                default: crc_rx[7:0]  = w_desc[31:24];
+                        State::DppTail2: {
+                            if i_avail >= remain[2:0] + 4 {
+                                var crc_full: logic<32>;
+                                var kk      : logic    ;
+                                var r       : logic<2> ;
+                                r        = remain[1:0];
+                                crc_full = crc_rx;
+                                kk       = 0;
+                                case r {
+                                    0: {}
+                                    1: {
+                                        crc_full[31:24] = sym(v_desc, 0);
+                                        kk              = v_k[0];
+                                    }
+                                    2: {
+                                        crc_full[31:16] = v_desc[15:0];
+                                        kk              = v_k[0] | v_k[1];
+                                    }
+                                    default: {
+                                        crc_full[31:8] = v_desc[23:0];
+                                        kk             = v_k[0] | v_k[1] | v_k[2];
+                                    }
+                                }
+                                if !kk && hit_at(r, H_END) && crc_full == ~crc32 {
+                                    o_dpp_end = 1;
+                                } else {
+                                    o_dpp_err = 1;
+                                }
                             }
                         }
-                    }
-                    State::DppTail2: {
-                        if i_avail >= remain[2:0] + 4 {
-                            var crc_full: logic<32>;
-                            var kk      : logic    ;
-                            var r       : logic<2> ;
-                            r        = remain[1:0];
-                            crc_full = crc_rx;
-                            kk       = 0;
-                            case r {
-                                0: {}
-                                1: {
-                                    crc_full[31:24] = sym(v_desc, 0);
-                                    kk              = v_k[0];
-                                }
-                                2: {
-                                    crc_full[31:16] = v_desc[15:0];
-                                    kk              = v_k[0] | v_k[1];
-                                }
-                                default: {
-                                    crc_full[31:8] = v_desc[23:0];
-                                    kk             = v_k[0] | v_k[1] | v_k[2];
-                                }
-                            }
-                            if !kk && hit_at(r, H_END) && crc_full == ~crc32 {
-                                o_dpp_end = 1;
-                            } else {
-                                o_dpp_err = 1;
-                            }
-                        }
-                    }
-                    State::TsBody: {
-                        if i_avail >= 4 {
-                            var ok  : logic<3>;
-                            widx = widx + 1;
-                            ok   = ts_ok;
-                            if widx == 0 {
-                                o_ts_cfg = w_raw[15:8];
-                                for i in 2..4 {
-                                    if w_k[i] || w_raw[i * 8+:8] != D10_2 {
-                                        ok[0] = 0;
+                        State::TsBody: {
+                            if i_avail >= 4 {
+                                var ok  : logic<3>;
+                                widx = widx + 1;
+                                ok   = ts_ok;
+                                if widx == 0 {
+                                    o_ts_cfg = w_raw[15:8];
+                                    for i in 2..4 {
+                                        if w_k[i] || w_raw[i * 8+:8] != D10_2 {
+                                            ok[0] = 0;
+                                        }
+                                        if w_k[i] || w_raw[i * 8+:8] != D5_2 {
+                                            ok[1] = 0;
+                                        }
+                                        if w_k[i] || w_raw[i * 8+:8] != D21_5 {
+                                            ok[2] = 0;
+                                        }
                                     }
-                                    if w_k[i] || w_raw[i * 8+:8] != D5_2 {
-                                        ok[1] = 0;
-                                    }
-                                    if w_k[i] || w_raw[i * 8+:8] != D21_5 {
-                                        ok[2] = 0;
+                                } else {
+                                    for i in 0..4 {
+                                        if w_k[i] || w_raw[i * 8+:8] != D10_2 {
+                                            ok[0] = 0;
+                                        }
+                                        if w_k[i] || w_raw[i * 8+:8] != D5_2 {
+                                            ok[1] = 0;
+                                        }
+                                        if w_k[i] || w_raw[i * 8+:8] != D21_5 {
+                                            ok[2] = 0;
+                                        }
                                     }
                                 }
-                            } else {
-                                for i in 0..4 {
-                                    if w_k[i] || w_raw[i * 8+:8] != D10_2 {
-                                        ok[0] = 0;
-                                    }
-                                    if w_k[i] || w_raw[i * 8+:8] != D5_2 {
-                                        ok[1] = 0;
-                                    }
-                                    if w_k[i] || w_raw[i * 8+:8] != D21_5 {
-                                        ok[2] = 0;
-                                    }
+                                ts_ok = ok;
+                                if widx == 2 {
+                                    o_ts_valid = ok != 0;
+                                    o_ts_type  = if ok[1] ? 2 : 1;
+                                    o_ts_inv   = ok[2];
                                 }
-                            }
-                            ts_ok = ok;
-                            if widx == 2 {
-                                o_ts_valid = ok != 0;
-                                o_ts_type  = if ok[1] ? 2 : 1;
-                                o_ts_inv   = ok[2];
                             }
                         }
                     }

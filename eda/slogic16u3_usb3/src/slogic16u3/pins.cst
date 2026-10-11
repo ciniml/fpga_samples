@@ -17,3 +17,9 @@ IO_LOC "usb_tdp" P2;
 IO_PORT "usb_tdp" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
 IO_LOC "usb_tdn" P1;
 IO_PORT "usb_tdn" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+// UART TX / RX on the JTAG connector (released; project.tcl turns them into the LVCMOS33D pair of the
+// EasyCDR trace link with TRACE=1)
+IO_LOC "trace_p" F14;
+IO_PORT "trace_p" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+IO_LOC "trace_n" E14;
+IO_PORT "trace_n" IO_TYPE=LVCMOS33 PULL_MODE=NONE;

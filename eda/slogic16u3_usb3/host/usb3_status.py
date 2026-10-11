@@ -30,7 +30,7 @@ def st(n):
 
 def read(j):
     j.ir(0x42)
-    raw = j.dr(680 + 8)
+    raw = j.dr(432 + 8)
     for off in range(8):
         v = raw >> off
         if v & 0xFFFF == MAGIC:
@@ -49,9 +49,7 @@ def read(j):
         'u0': f(112, 16), 'hp': f(128, 16), 'resets': f(144, 16), 'dpp_err': f(160, 16), 'physt': f(176, 16),
         'lfps': f(192, 16), 'seen': f(208, 32), 'trace': [f(240 + 5 * i, 5) for i in range(16)],
         'bytes': f(320, 32), 'up': f(352, 32) * 65536 / OSC_HZ,
-        'centry': f(384, 40), 'cidx': f(424, 6), 'cfull': f(430, 1),
-        'ps': [f(480 + 24 * i, 24) for i in range(8)], 'cwp': f(674, 6),
-        'com': f(432, 16), 'dec_err': f(448, 16), 'disp_err': f(464, 16),
+        'com': f(384, 16), 'dec_err': f(400, 16), 'disp_err': f(416, 16),
     }
 
 
@@ -66,7 +64,6 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('-w', '--watch', action='store_true')
     ap.add_argument('-i', '--interval', type=float, default=0.1)
-    ap.add_argument('-c', '--capture', action='store_true', help='dump the 64-word PIPE receive capture')
     a = ap.parse_args()
     j = sp.open_jtag(Args())
     s = read(j)
@@ -76,25 +73,7 @@ def main():
     print('seen:', ' '.join(st(i) for i in range(32) if s['seen'] >> i & 1))
     print('trace (old -> new):', ' > '.join(st(x) for x in reversed(s['trace'])))
     print(fmt(s))
-    for name, b in (('Polling.RxEQ', 0), ('Polling.Active', 4)):
-        c = s['ps'][b:b + 4]
-        print(f"{name:15s} cycles={c[0]:8d} RxValid={c[1]:8d} RxElecIdle={c[2]:8d} COM={c[3]:8d}")
-    print(f"rx: COM={s['com']} decode_err={s['dec_err']} disparity_err={s['disp_err']} capture_full={s['cfull']}")
-    if a.capture:
-        buf = {}
-        t0 = time.time()
-        while len(buf) < 64 and time.time() - t0 < 10:
-            c = read(j)
-            buf[c['cidx']] = c['centry']
-        print(f"(oldest entry {c['cwp']}; listed oldest first)")
-        for n in range(64):
-            i = (c['cwp'] + n) % 64
-            e = buf.get(i)
-            if e is None:
-                print(f'{n - 8:+3d} ?'); continue
-            d, k, vld, rst = e & 0xFFFFFFFF, (e >> 32) & 0xF, (e >> 36) & 1, (e >> 37) & 7
-            syms = ' '.join(('K' if k >> b & 1 else ' ') + f'{(d >> 8 * b) & 0xFF:02x}' for b in range(4))
-            print(f'{n - 8:+3d} v={vld} st={rst} {syms}')
+    print(f"rx: COM={s['com']} decode_err={s['dec_err']} disparity_err={s['disp_err']}")
     if not a.watch:
         return
     last = None

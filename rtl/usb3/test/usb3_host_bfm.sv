@@ -13,7 +13,14 @@
 // queues the test can inspect. The scrambler and CRCs are implemented
 // bit-serially here, independently of the RTL package.
 `timescale 1ns/1ps
-module usb3_host_bfm (
+module usb3_host_bfm #(
+    // RxValid gaps: a PHY elastic buffer running from a faster local clock drops RxValid for a
+    // clock now and then, anywhere in the stream (the Gowin USB 3.0 PHY does, also inside
+    // packets; it repeats the last word meanwhile). One gap clock every GAP_EVERY words, two in
+    // a row every GAP2_EVERY words; 0 = none.
+    parameter int GAP_EVERY  = 97,
+    parameter int GAP2_EVERY = 389
+) (
     input  logic        clk,
     input  logic        rst,
     // from the device
@@ -204,11 +211,18 @@ module usb3_host_bfm (
     endfunction
     logic ts_raw = 0; // symbols currently queued are training sets (never scrambled)
 
+    int gap_w = 0, gap_left = 0;
     always @(posedge clk) begin
         if (hmode == HM_ELEC_IDLE && txq.size() == 0) begin
             d_rx_valid <= 0; d_rx_data <= 0; d_rx_k <= 0;
+        end else if (gap_left != 0) begin
+            gap_left <= gap_left - 1;
+            d_rx_valid <= 0;                  // data / K held (the last word repeated)
         end else begin
             logic [31:0] w; logic [3:0] k;
+            gap_w <= gap_w + 1;
+            if (GAP2_EVERY != 0 && (gap_w + 1) % GAP2_EVERY == 0) gap_left <= 2;
+            else if (GAP_EVERY != 0 && (gap_w + 1) % GAP_EVERY == 0) gap_left <= 1;
             for (int i = 0; i < 4; i++) begin
                 logic [8:0] s = next_tx_sym();
                 w[8*i +: 8] = s[7:0]; k[i] = s[8];

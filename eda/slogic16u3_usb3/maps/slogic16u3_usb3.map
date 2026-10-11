@@ -1,0 +1,28 @@
+# Trace signal map of the SLogic16U3 USB 3.0 device (src/slogic16u3/top.v, TRACE=1), 64 bits sampled
+# on pclk (125 MHz, timestamps in 8 ns). A record is sent on every change; rx_ev / tx_ev / dpp_err
+# toggle on every received / sent header and bad DPP, so repeated identical headers show up too.
+# Header summaries: type (DW0[4:0]: 0 LMP, 4 TP, 8 DP, 12 ITP), sub (TP SubType DW1[3:0]), ept
+# (DW1[11:8]), seq (TP DW1[25:21] / DP DW1[4:0]), nump (TP DW1[20:16] / DP length[4:0]), rty (DW1[6]).
+ltssm:5:dec
+u0:1
+rx_ev:1
+rx_type:5:dec
+rx_sub:4:dec
+rx_ept:4:dec
+rx_seq:5:dec
+rx_nump:5:dec
+rx_rty:1
+tx_ev:1
+tx_type:5:dec
+tx_sub:4:dec
+tx_ept:4:dec
+tx_seq:5:dec
+tx_nump:5:dec
+tx_rty:1
+dpp_err:1
+hot_reset:1
+warm_reset:1
+rx_err:1
+pd:2
+dev_cfg:1
+spare:1

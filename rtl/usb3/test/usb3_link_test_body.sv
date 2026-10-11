@@ -8,11 +8,14 @@
 // Configuration exchange, header packet acknowledgement, keep-alive,
 // LBAD/LRTY retry, LGO_U1 refusal, U3 entry / wakeup, Hot Reset.
 `timescale 1ns/1ps
-module usb3_link_test_body;
+// RUN: Verilator runs every test body of include_files as an implicit top in every test, so the
+// body only acts when instantiated with RUN = 1 (TbUsb3Prim's test wrappers); it ends with $finish
+// on success, $fatal on failure (veryl test counts a $finish as success)
+module usb3_link_test_body #(parameter bit RUN = 0);
     logic clk = 0;
     logic rst = 1;
     always #4 clk = ~clk;   // 125 MHz
-    initial begin repeat (3_000_000) @(posedge clk); $fatal(1, "TIMEOUT at stage %s", stage); end
+    initial if (RUN) begin repeat (3_000_000) @(posedge clk); $fatal(1, "TIMEOUT at stage %s", stage); end
     string stage = "init";
 
     logic [31:0] rx_data, tx_data; logic [3:0] rx_k, tx_k; logic rx_valid; logic [2:0] rx_status;
@@ -98,7 +101,7 @@ module usb3_link_test_body;
     logic [7:0] plq[$];
     int n0;
     int dlens[5] = '{13, 0, 1024, 512, 3};
-    initial begin
+    initial if (RUN) begin
         wait_clk(5); @(negedge clk); rst = 0; wait_clk(5);
 
         // ---------------------------------------------------------------- link up
@@ -279,7 +282,7 @@ module usb3_link_test_body;
             if (dev_rx_hp.size() != 1) fail("HP after recovery");
         end
 
-        if (errors == 0) $display("PASS usb3_link");
+        if (errors == 0) begin $display("PASS usb3_link"); $finish; end
         else $fatal(1, "FAIL usb3_link: %0d errors", errors);
         $finish;
     end

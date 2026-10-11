@@ -7,11 +7,14 @@
 // Enumeration (descriptors, address, configuration), vendor requests,
 // STALL, EP1 bulk OUT / IN byte streams with NRDY/ERDY flow control.
 `timescale 1ns/1ps
-module usb3_device_test_body;
+// RUN: Verilator runs every test body of include_files as an implicit top in every test, so the
+// body only acts when instantiated with RUN = 1 (TbUsb3Prim's test wrappers); it ends with $finish
+// on success, $fatal on failure (veryl test counts a $finish as success)
+module usb3_device_test_body #(parameter bit RUN = 0);
     logic clk = 0;
     logic rst = 1;
     always #4 clk = ~clk;
-    initial begin repeat (6_000_000) @(posedge clk); $fatal(1, "TIMEOUT at stage %s", stage); end
+    initial if (RUN) begin repeat (6_000_000) @(posedge clk); $fatal(1, "TIMEOUT at stage %s", stage); end
     string stage = "init";
 
     logic [31:0] rx_data, tx_data; logic [3:0] rx_k, tx_k; logic rx_valid; logic [2:0] rx_status;
@@ -69,7 +72,7 @@ module usb3_device_test_body;
     // background helpers (Verilator's fork/join is not reliable with nested tasks)
     logic [7:0] app_q[$];
     int app_go = 0, app_delay = 0, app_done = 0;
-    initial forever begin
+    initial if (RUN) forever begin
         @(posedge clk);
         if (app_go) begin
             app_go = 0;
@@ -79,7 +82,7 @@ module usb3_device_test_body;
         end
     end
     int ready_after = 0;
-    initial forever begin
+    initial if (RUN) forever begin
         @(posedge clk);
         if (ready_after > 0) begin
             ready_after--;
@@ -105,7 +108,7 @@ module usb3_device_test_body;
 
     logic [7:0] d[$], q[$];
     int res;
-    initial begin
+    initial if (RUN) begin
         wait_clk(5); @(negedge clk); rst = 0; wait_clk(5);
         stage = "linkup";
         host.link_up(64);
@@ -246,10 +249,22 @@ module usb3_device_test_body;
         if (res != 0 || d.size() != 1024) fail("exact packet");
         host.bulk_in(d, res);
         if (res != 0 || d.size() != 0) fail($sformatf("zlp: res %0d len %0d", res, d.size()));
+        // SeqNum wraps 31 -> 0: 34 more IN transfers (the device ignored the ACK with SeqNum 0
+        // after 31 - a widened "seq + 1" compare - and the host timed out on the 33rd packet)
+        stage = "seq wrap";
+        for (int r = 0; r < 34; r++) begin
+            q.delete(); for (int i = 0; i < 4; i++) q.push_back(8'(r * 4 + i));
+            app_send(q);
+            wait_clk(125 * 30);
+            host.bulk_in(d, res);
+            if (res != 0 || d.size() != 4 || d[0] != q[0] || d[3] != q[3]) begin
+                fail($sformatf("wrap round %0d: res %0d len %0d", r, res, d.size())); break;
+            end
+        end
         if (host.proto_err != 0) fail($sformatf("host protocol errors %0d", host.proto_err));
         if (host.lgood_err || host.lcrd_err || host.hsn_err) fail("link ack errors");
 
-        if (errors == 0) $display("PASS usb3_device");
+        if (errors == 0) begin $display("PASS usb3_device"); $finish; end
         else $fatal(1, "FAIL usb3_device: %0d errors", errors);
         $finish;
     end

@@ -120,6 +120,7 @@ module Usb3Top #(
     var f_k   : logic<24> ;
     var f_cls : logic<192>;
     var f_fill: logic<5>  ;
+    var f_adv : logic     ;
 
     inst u_fifo: Usb3RxFifo (
         i_clk            ,
@@ -135,6 +136,7 @@ module Usb3Top #(
         o_k    : f_k     ,
         o_cls  : f_cls   ,
         o_fill : f_fill  ,
+        o_adv  : f_adv   ,
     );
 
     var ts_valid    : logic    ;
@@ -154,6 +156,7 @@ module Usb3Top #(
         i_clk                       ,
         i_rst                       ,
         i_enable      : rx_en       ,
+        i_adv         : f_adv       ,
         i_raw         : f_raw       ,
         i_desc        : f_desc      ,
         i_k           : f_k         ,

@@ -13,27 +13,27 @@ module TbUsb3Prim {}
 #[test(usb3_prim)]
 embed (inline) sv{{{
 module usb3_prim;
-    usb3_prim_test_body body();
+    usb3_prim_test_body #(.RUN(1)) body();
 endmodule
 }}}
 
 #[test(usb3_frame)]
 embed (inline) sv{{{
 module usb3_frame;
-    usb3_frame_test_body body();
+    usb3_frame_test_body #(.RUN(1)) body();
 endmodule
 }}}
 
 #[test(usb3_link)]
 embed (inline) sv{{{
 module usb3_link;
-    usb3_link_test_body body();
+    usb3_link_test_body #(.RUN(1)) body();
 endmodule
 }}}
 
 #[test(usb3_device)]
 embed (inline) sv{{{
 module usb3_device;
-    usb3_device_test_body body();
+    usb3_device_test_body #(.RUN(1)) body();
 endmodule
 }}}

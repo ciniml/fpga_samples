@@ -238,9 +238,9 @@ module Usb3Device #(
     function dp_hdr (
         addr: input logic<7> ,
         ept : input logic<4> ,
-        seq: input logic<5> ,
-        len: input logic<16>,
-        eob: input logic    ,
+        seq : input logic<5> ,
+        len : input logic<16>,
+        eob : input logic    ,
     ) -> logic<96> {
         return {32'h0, len, 4'h0, ept, 1'b1, eob, 1'b0, seq, addr, 20'h0, PKT_DP};
     }
@@ -717,7 +717,7 @@ module Usb3Device #(
                         SUB_ACK: {
                             if hp_ept == 0 {
                                 if ctrl == Ctrl::DataIn {
-                                    if ctrl_sending && hp_seq == ctrl_seq + 1 && !hp_rty {
+                                    if ctrl_sending && hp_seq == (ctrl_seq + 1) as 5 && !hp_rty { // (as 5: SeqNum wraps 31 -> 0)
                                         // previous DP accepted
                                         ctrl_sending = 0;
                                         ctrl_seq     = ctrl_seq + 1;
@@ -773,7 +773,7 @@ module Usb3Device #(
                                     s_nump  = 0;
                                     s_seq   = 0;
                                     s_rty   = 0;
-                                } else if in_active && hp_seq == seq_in + 1 && !hp_rty {
+                                } else if in_active && hp_seq == (seq_in + 1) as 5 && !hp_rty { // (as 5: the compare widened and failed at the 31 -> 0 wrap)
                                     // packet accepted
                                     in_active         = 0;
                                     in_ready[in_send] = 0;

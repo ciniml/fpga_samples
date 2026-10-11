@@ -208,7 +208,16 @@ def main():
     ap.add_argument('-i', '--input', help='decode a saved trace instead of reading the board')
     ap.add_argument('--raw', action='store_true')
     ap.add_argument('--hdr', action='store_true', help='header packet log instead of the word trace')
+    ap.add_argument('--arm', type=int, choices=[0, 1, 2, 3], help='re-arm the trace (and the header log) with trigger mode '
+                    '0 = after the first SETUP, 1 = U0 -> Recovery, 2 = bad DPP, 3 = U0 -> Recovery with 1000 words after it, then exit')
     a = ap.parse_args()
+    if a.arm is not None:
+        j = sp.open_jtag(Args())
+        off = find_off(j)
+        v = (1 << (L2 - 1)) | (((1 << 30) | (a.arm << 28)) << (L2 - 32))
+        j.dr(L2 + off, v << off)
+        print(f'trace re-armed, mode {a.arm}')
+        return
     if a.hdr:
         log = read_hlog(sp.open_jtag(Args()))
         t0 = log[0][1] if log else 0
@@ -225,7 +234,7 @@ def main():
         for n, w in enumerate(words):
             rx = ' '.join(('K' if w['rx_k'] >> b & 1 else ' ') + f"{(w['rx_d'] >> 8 * b) & 0xFF:02x}" for b in range(4))
             tx = ' '.join(('K' if w['tx_k'] >> b & 1 else ' ') + f"{(w['tx_d'] >> 8 * b) & 0xFF:02x}" for b in range(4))
-            print(f"{n - 256:+5d} rx[v={w['rx_v']} st={w['rx_st']}] {rx}   tx {tx}")
+            print(f"{n:5d} rx[v={w['rx_v']} st={w['rx_st']}] {rx}   tx {tx}")
         return
     for name, d, k, v in (('RX', 'rx_d', 'rx_k', 'rx_v'), ('TX', 'tx_d', 'tx_k', None)):
         print(f'==== {name}')
