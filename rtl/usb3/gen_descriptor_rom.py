@@ -14,7 +14,7 @@ framer can read it as words from ROM_BASE + word address.
 import sys
 
 MS_VENDOR_CODE = 0x20
-ROM_BASE = 0x800   # word address at which the ROM appears on the framer's read port
+ROM_BASE = 0x1000  # word address at which the ROM appears on the framer's read port
 
 def le16(x): return [x & 0xff, x >> 8]
 def string_desc(s):
@@ -22,7 +22,7 @@ def string_desc(s):
 
 dev = ([0x12, 0x01] + le16(0x0310) + [0xFF, 0x00, 0x00, 0x09, "VID_L", "VID_H", "PID_L", "PID_H"]
        + le16(0x0100) + [0x01, 0x02, 0x03, 0x01])
-IN_MAX_BURST = 7   # EP1 IN: up to 8 packets per burst (Usb3Device IN_BUFS = 8 packet buffers)
+IN_MAX_BURST = 15  # EP1 IN: up to 16 packets per burst (Usb3Device IN_BUFS = 16 packet buffers)
 ep_comp = [0x06, 0x30, 0x00, 0x00, 0x00, 0x00]
 ep_comp_in = [0x06, 0x30, IN_MAX_BURST, 0x00, 0x00, 0x00]
 cfg_body = ([0x09, 0x04, 0x00, 0x00, 0x02, 0xFF, 0x00, 0x00, 0x00] +
@@ -73,9 +73,9 @@ out.append(f""" *
  * 0x{MS_VENDOR_CODE:02X}, descriptor set with Compatible ID WINUSB served at wIndex 7).
  */
 pub package usb3_desc_pkg {{
-    const ROM_BASE: logic<12> = 12'h{ROM_BASE:03X}; // framer read address of ROM word 0""")
+    const ROM_BASE: logic<13> = 13'h{ROM_BASE:04X}; // framer read address of ROM word 0""")
 for name, (a, n) in offs.items():
-    out.append(f"    const {name}_ADDR: logic<12> = 12'h{ROM_BASE + a:03X};")
+    out.append(f"    const {name}_ADDR: logic<13> = 13'h{ROM_BASE + a:04X};")
     out.append(f"    const {name}_LEN : logic<11> = 11'd{n};")
 out.append(f"    const MS_VENDOR_CODE: logic<8> = 8'h{MS_VENDOR_CODE:02X};")
 out.append("""}

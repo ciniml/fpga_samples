@@ -56,10 +56,10 @@ module Usb3Device #(
     o_tx_hp_hdr  : output logic<96>,
     o_tx_dpp     : output logic    ,
     o_tx_dpp_len : output logic<11>,
-    o_tx_dpp_base: output logic<12>,
+    o_tx_dpp_base: output logic<13>,
     i_tx_hp_ready: input  logic    ,
     i_dpp_rd     : input  logic    ,
-    i_dpp_addr   : input  logic<12>,
+    i_dpp_addr   : input  logic<13>,
     o_dpp_data   : output logic<32>,
 
     // ---- status ----
@@ -68,7 +68,7 @@ module Usb3Device #(
     o_reset     : output logic    , // pulse: Hot/Warm Reset
     o_dbg_event : output logic    , // pulse (debug): an EP1 IN ACK ignored or with Retry, or a response lost
     o_dbg_strobe: output logic    , // pulse (debug): an EP1 IN ACK handled (1 clock later) or a data packet issued
-    o_dbg_state : output logic<32>, // (debug) {flags, in_ready, in_ack, in_nsent, in_limit, seq_in} after it
+    o_dbg_state : output logic<64>, // (debug) {flags, in_ready, in_ack, in_nsent, in_limit, seq_in} after it
 
     // ---- vendor request scratch ----
     o_vendor_reg   : output logic<16>,
@@ -89,8 +89,9 @@ module Usb3Device #(
     import usb3_pkg::*;
     import usb3_desc_pkg::*;
 
-    const IN_BUFS   : u32 = 8; // EP1 IN packet buffers (1024 bytes each; bMaxBurst = IN_BUFS - 1 in the ROM)
-    const SMALL_ADDR: u32 = 12'hC00;
+    const IN_BUFS   : u32 = 16; // EP1 IN packet buffers (1024 bytes each; bMaxBurst = IN_BUFS - 1 in the ROM)
+    const SMALL_ADDR: u32 = 13'h1800;
+    // framer read address map (words): EP1 IN buffers 0x0000-0x0FFF, ROM 0x1000 (ROM_BASE), small_r 0x1800
 
     // ---------------------------------------------------------------- memories
     var in_ram  : logic<32> [IN_BUFS * 256]; // EP1 IN packet buffers
@@ -110,12 +111,12 @@ module Usb3Device #(
     var small_r: logic<32>;
     always_ff {
         if i_dpp_rd {
-            if i_dpp_addr[11:10] == 2'b11 {
+            if i_dpp_addr[12:11] == 2'b11 {
                 o_dpp_data = small_r;
-            } else if i_dpp_addr[11] {
+            } else if i_dpp_addr[12] {
                 o_dpp_data = rom_q;
             } else {
-                o_dpp_data = in_ram[i_dpp_addr[10:0]];
+                o_dpp_data = in_ram[i_dpp_addr[11:0]];
             }
         }
     }
@@ -270,7 +271,7 @@ module Usb3Device #(
 
     // ---------------------------------------------------------------- transmit request queue (one at a time)
     var tx_valid: logic        ;
-    var rq      : logic<69> [2]; // responses waiting for the link slot (see the hand-off at the end)
+    var rq      : logic<70> [2]; // responses waiting for the link slot (see the hand-off at the end)
     var rq_n    : logic<2>     ;
     var dbg_ev  : logic        ;
     var dbg_nseq: logic<5>     ; // (debug) SeqNum the next new EP1 IN data packet should carry
@@ -289,7 +290,7 @@ module Usb3Device #(
     var tx_dlen : logic<16>;
     var tx_dpp  : logic    ;
     var tx_len  : logic<11>;
-    var tx_base : logic<12>;
+    var tx_base : logic<13>;
     assign o_tx_hp_valid = tx_valid;
     assign o_tx_hp_hdr   = if tx_is_dp ?
         dp_hdr(tx_addr, tx_ept, tx_seq, tx_dlen, tx_eob)
@@ -311,7 +312,7 @@ module Usb3Device #(
         Stall,
     }
     var ctrl         : Ctrl     ;
-    var ctrl_base    : logic<12>;
+    var ctrl_base    : logic<13>;
     var ctrl_remain  : logic<11>; // bytes still to send
     var ctrl_zlp     : logic    ; // a zero-length DP terminates the transfer
     var ctrl_seq     : logic<5> ;
@@ -321,7 +322,7 @@ module Usb3Device #(
     var setup_buf    : logic<64>;
     var setup_pend   : logic    ; // SETUP DPP complete, to be processed
     var setup_go     : logic    ; // decode registered, act now
-    var r_desc_addr  : logic<12>;
+    var r_desc_addr  : logic<13>;
     var r_desc_ok    : logic    ;
     var r_len_desc   : logic<11>;
     var r_zlp_desc   : logic    ;
@@ -346,7 +347,7 @@ module Usb3Device #(
     assign w_index  = setup_buf[47:32];
     assign w_length = setup_buf[63:48];
 
-    var desc_addr: logic<12>;
+    var desc_addr: logic<13>;
     var desc_len : logic<11>;
     var desc_ok  : logic    ;
     always_comb {
@@ -408,12 +409,12 @@ module Usb3Device #(
 
     // ---------------------------------------------------------------- EP1 IN packet buffers
     var in_wptr : logic<11>               ; // bytes in the buffer being filled (0..1024)
-    var in_fill : logic<3>                ; // buffer index being filled
+    var in_fill : logic<4>                ; // buffer index being filled
     var in_word : logic<32>               ; // byte accumulator
     var in_ready: logic<IN_BUFS>          ; // packet ready per buffer (until acknowledged)
     var in_len  : logic<11>      [IN_BUFS];
-    var in_ack  : logic<3>                ; // oldest unacknowledged buffer (SeqNum seq_in)
-    var in_nsent: logic<4>                ; // buffers from in_ack on already sent, not acknowledged
+    var in_ack  : logic<4>                ; // oldest unacknowledged buffer (SeqNum seq_in)
+    var in_nsent: logic<5>                ; // buffers from in_ack on already sent, not acknowledged
     var in_limit: logic<5>                ; // packets the host accepts from in_ack on (NumP of its last ACK)
     var in_stop : logic                   ; // a short packet / ZLP in flight: hold further packets until it is acknowledged
     var in_acked: logic<5>                ; // packets a received EP1 IN ACK acknowledges (its SeqNum - seq_in)
@@ -431,7 +432,7 @@ module Usb3Device #(
     assign tx_any      = tx_we || tx_ww;
     assign o_tx_ready  = configured && !in_ready[in_fill] && in_wptr != 1024;
 
-    assign o_dbg_state = {3'b0, in_flow, in_stop, configured, in_ready, in_ack, in_nsent, in_limit, seq_in};
+    assign o_dbg_state = {26'b0, in_flow, in_stop, configured, in_ready, in_ack, in_nsent, in_limit, seq_in};
 
     var in_close: logic; // close the packet being filled
     assign in_close = in_wptr == 1024 || (flush && in_wptr != 0);
@@ -537,7 +538,7 @@ module Usb3Device #(
             var s_dlen   : logic<16>;
             var s_dpp    : logic    ;
             var s_len    : logic<11>;
-            var s_base   : logic<12>;
+            var s_base   : logic<13>;
             send      = 0;
             in_acknow = 0;
             s_is_dp   = 0;
@@ -779,7 +780,7 @@ module Usb3Device #(
                                         // previous DP accepted
                                         ctrl_sending = 0;
                                         ctrl_seq     = ctrl_seq + 1;
-                                        ctrl_base    = ctrl_base + {4'h0, ctrl_last_len[10:2]}
+                                        ctrl_base    = ctrl_base + {5'h0, ctrl_last_len[10:2]}
                                             + (if ctrl_last_len[1:0] != 0 ? 1 : 0);
                                         ctrl_remain  = ctrl_remain - ctrl_last_len;
                                         if ctrl_remain == ctrl_last_len && !(ctrl_zlp && ctrl_last_len == 512) {
@@ -831,7 +832,7 @@ module Usb3Device #(
                                     s_nump  = 0;
                                     s_seq   = 0;
                                     s_rty   = 0;
-                                } else if in_acked <= {1'b0, in_nsent} {
+                                } else if in_acked <= in_nsent {
                                     dbg_ev    = hp_rty;
                                     dbg_stb   = 1;
                                     in_acknow = 1;
@@ -839,25 +840,25 @@ module Usb3Device #(
                                     // (everything before it is acknowledged), NumP = packets it
                                     // accepts from there, Retry = resend from SeqNum
                                     for i in 0..IN_BUFS {
-                                        if {2'b0, ((i as 3) - in_ack) as 3} <: in_acked {
+                                        if {1'b0, ((i as 4) - in_ack) as 4} <: in_acked {
                                             in_ready[i] = 0;
                                         }
                                     }
-                                    in_ack = in_ack + in_acked[2:0];
+                                    in_ack = in_ack + in_acked[3:0];
                                     seq_in = seq_in + in_acked;
                                     // Retry: send again from SeqNum. (NumP 0 is not a reason: an xHC still takes packets in
                                     // flight after it, resending them cost 25 % of the throughput)
-                                    in_nsent = if hp_rty ? 4'd0 : in_nsent - in_acked[3:0];
+                                    in_nsent = if hp_rty ? 5'd0 : in_nsent - in_acked;
                                     if hp_rty {
                                         dbg_nseq = hp_seq;
                                     }
-                                    if hp_rty || in_nsent == in_acked[3:0] {
+                                    if hp_rty || in_nsent == in_acked {
                                         in_stop = 0; // the short packet was acknowledged (or is to be resent)
                                     }
                                     in_limit = hp_nump;
                                     // nothing left to send: NRDY, ERDY once a packet is ready
-                                    if hp_nump != 0 && (hp_rty || in_nsent == in_acked[3:0])
-                                        && !in_ready[in_ack + in_acked[2:0]] {
+                                    if hp_nump != 0 && (hp_rty || in_nsent == in_acked)
+                                        && !in_ready[in_ack + in_acked[3:0]] {
                                         send    = 1;
                                         s_is_dp = 0;
                                         s_sub   = SUB_NRDY;
@@ -927,28 +928,28 @@ module Usb3Device #(
             if !send && !tx_valid && rq_n == 0 {
                 // (not in the clock an ACK is handled: both update in_nsent, the later nonblocking
                 // assignment won and the ACK's decrement was lost - a SeqNum then got skipped)
-                if configured && !halt_in && !in_flow && !in_stop && !in_acknow && {1'b0, in_nsent} <: in_limit
-                    && in_nsent != IN_BUFS as 4 && in_ready[in_ack + in_nsent[2:0]] {
+                if configured && !halt_in && !in_flow && !in_stop && !in_acknow && in_nsent <: in_limit && in_nsent
+                    != IN_BUFS as 5 && in_ready[in_ack + in_nsent[3:0]] {
                     send     = 1;
                     s_is_dp  = 1;
                     s_ept    = 1;
-                    s_seq    = seq_in + {1'b0, in_nsent};
-                    dbg_ev   = (seq_in + {1'b0, in_nsent}) != dbg_nseq; // (debug) a SeqNum skipped or repeated
+                    s_seq    = seq_in + in_nsent;
+                    dbg_ev   = (seq_in + in_nsent) != dbg_nseq; // (debug) a SeqNum skipped or repeated
                     dbg_stb  = 1;
-                    dbg_nseq = seq_in + {1'b0, in_nsent} + 5'd1;
-                    s_dlen   = {5'h0, in_len[in_ack + in_nsent[2:0]]};
+                    dbg_nseq = seq_in + in_nsent + 5'd1;
+                    s_dlen   = {5'h0, in_len[in_ack + in_nsent[3:0]]};
                     // EOB stays 0: an xHC takes EOB = 1 as "no more data" and then waits for an ERDY
                     // before it asks again (the next read never started). A short packet / ZLP ends
                     // the host's transfer, though: nothing more goes out until the host has
                     // acknowledged it (in_stop; it drops packets sent after it, which used to leave us
                     // a burst ahead, and ACKs of earlier packets must not restart the burst)
                     s_eob = 0;
-                    if in_len[in_ack + in_nsent[2:0]] != 11'd1024 {
+                    if in_len[in_ack + in_nsent[3:0]] != 11'd1024 {
                         in_stop = 1;
                     }
                     s_dpp    = 1;
-                    s_len    = in_len[in_ack + in_nsent[2:0]];
-                    s_base   = {1'b0, in_ack + in_nsent[2:0], 8'h0};
+                    s_len    = in_len[in_ack + in_nsent[3:0]];
+                    s_base   = {1'b0, in_ack + in_nsent[3:0], 8'h0};
                     in_nsent = in_nsent + 1;
                 } else if in_flow && in_ready[in_ack] && in_nsent == 0 {
                     send    = 1;
@@ -1006,7 +1007,7 @@ module Usb3Device #(
                                 if req_rcpt == 2 && w_index[3:0] == 1 {
                                     small_r[0] = if w_index[7] ? halt_in : halt_out;
                                 }
-                                ctrl_base   = SMALL_ADDR as 12;
+                                ctrl_base   = SMALL_ADDR as 13;
                                 ctrl_remain = 2;
                                 ctrl        = Ctrl::DataIn;
                             }
@@ -1049,7 +1050,7 @@ module Usb3Device #(
                         8'h08: { // GET_CONFIGURATION
                             if req_in {
                                 small_r     = {31'b0, configured};
-                                ctrl_base   = SMALL_ADDR as 12;
+                                ctrl_base   = SMALL_ADDR as 13;
                                 ctrl_remain = r_len1;
                                 ctrl        = if w_length == 0 ? Ctrl::Status : Ctrl::DataIn;
                             }
@@ -1080,7 +1081,7 @@ module Usb3Device #(
                         8'h0A: { // GET_INTERFACE
                             if req_in && configured && w_index[7:0] == 0 {
                                 small_r     = 0;
-                                ctrl_base   = SMALL_ADDR as 12;
+                                ctrl_base   = SMALL_ADDR as 13;
                                 ctrl_remain = r_len1;
                                 ctrl        = if w_length == 0 ? Ctrl::Status : Ctrl::DataIn;
                             }
@@ -1110,7 +1111,7 @@ module Usb3Device #(
                         8'h01: { // vendor IN: status word
                             if req_in {
                                 small_r     = i_vendor_status;
-                                ctrl_base   = SMALL_ADDR as 12;
+                                ctrl_base   = SMALL_ADDR as 13;
                                 ctrl_remain = r_len4;
                                 ctrl        = if w_length == 0 ? Ctrl::Status : Ctrl::DataIn;
                             }
@@ -1142,9 +1143,9 @@ module Usb3Device #(
             // ---- hand the request to the link. A response produced while the slot is busy (an
             // EP1 IN burst keeps it busy) waits in rq instead of being dropped: losing the ACK of
             // an EP1 OUT packet made the host fail the transfer.
-            var s_pack: logic<69>;
+            var s_pack: logic<70>;
             var ld    : logic    ;
-            var ld_v  : logic<69>;
+            var ld_v  : logic<70>;
             s_pack = {
                 dev_addr, s_is_dp, s_sub, s_dir, s_ept, s_nump, s_seq, s_rty, s_eob, s_dlen, s_dpp, s_len, s_base
             }; // dev_addr: before this clock's update (old address for SET_ADDRESS)
@@ -1182,19 +1183,19 @@ module Usb3Device #(
             }
             if ld {
                 tx_valid = 1;
-                tx_addr  = ld_v[68:62];
-                tx_is_dp = ld_v[61];
-                tx_sub   = ld_v[60:57];
-                tx_dir   = ld_v[56];
-                tx_ept   = ld_v[55:52];
-                tx_nump  = ld_v[51:47];
-                tx_seq   = ld_v[46:42];
-                tx_rty   = ld_v[41];
-                tx_eob   = ld_v[40];
-                tx_dlen  = ld_v[39:24];
-                tx_dpp   = ld_v[23];
-                tx_len   = ld_v[22:12];
-                tx_base  = ld_v[11:0];
+                tx_addr  = ld_v[69:63];
+                tx_is_dp = ld_v[62];
+                tx_sub   = ld_v[61:58];
+                tx_dir   = ld_v[57];
+                tx_ept   = ld_v[56:53];
+                tx_nump  = ld_v[52:48];
+                tx_seq   = ld_v[47:43];
+                tx_rty   = ld_v[42];
+                tx_eob   = ld_v[41];
+                tx_dlen  = ld_v[40:25];
+                tx_dpp   = ld_v[24];
+                tx_len   = ld_v[23:13];
+                tx_base  = ld_v[12:0];
             }
         }
     }

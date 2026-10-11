@@ -54,11 +54,11 @@ module Usb3Top #(
     i_tx_hp_hdr  : input  logic<96>,
     i_tx_dpp     : input  logic    ,
     i_tx_dpp_len : input  logic<11>,
-    i_tx_dpp_base: input  logic<12>,
+    i_tx_dpp_base: input  logic<13>,
     o_tx_hp_ready: output logic    ,
     o_tx_hp_idle : output logic    ,
     o_dpp_rd     : output logic    ,
-    o_dpp_addr   : output logic<12>,
+    o_dpp_addr   : output logic<13>,
     i_dpp_data   : input  logic<32>,
 
     // status
@@ -247,7 +247,7 @@ module Usb3Top #(
     var f_hp_lcw     : logic<11>;
     var f_hp_dpp     : logic    ;
     var f_hp_dpp_len : logic<11>;
-    var f_hp_dpp_base: logic<12>;
+    var f_hp_dpp_base: logic<13>;
     var f_hp_ready   : logic    ;
     var f_busy       : logic    ;
 

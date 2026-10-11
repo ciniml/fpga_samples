@@ -94,10 +94,10 @@ module top (
     // ---------------------------------------------------------------- link + protocol
     wire rx_hp_valid; wire [95:0] rx_hp_hdr;
     wire dpp_start, dpp_valid, dpp_end, dpp_err; wire [31:0] dpp_data; wire [3:0] dpp_be;
-    wire tx_hp_valid, tx_dpp, tx_hp_ready, tx_hp_idle; wire [95:0] tx_hp_hdr; wire [10:0] tx_dpp_len; wire [11:0] tx_dpp_base;
-    wire dpp_rd; wire [11:0] dpp_addr; wire [31:0] dpp_rdata;
+    wire tx_hp_valid, tx_dpp, tx_hp_ready, tx_hp_idle; wire [95:0] tx_hp_hdr; wire [10:0] tx_dpp_len; wire [12:0] tx_dpp_base;
+    wire dpp_rd; wire [12:0] dpp_addr; wire [31:0] dpp_rdata;
     wire [4:0] ltssm_state; wire in_u0, u0_entry, hot_reset, warm_reset, link_configured;
-    wire dev_configured, dev_reset, dbg_event, dbg_strobe; wire [31:0] dbg_state; wire [6:0] dev_address; wire [15:0] vendor_reg;
+    wire dev_configured, dev_reset, dbg_event, dbg_strobe; wire [63:0] dbg_state; wire [6:0] dev_address; wire [15:0] vendor_reg;
     wire ep_rx_valid, ep_rx_ready, ep_tx_valid, ep_tx_ready; wire [7:0] ep_rx_data, ep_tx_data;
     wire epw_valid, epw_ready; wire [31:0] epw_data;
 
@@ -298,7 +298,7 @@ module top (
             // ring mode also logs Usb3Device's EP1 IN state at every ACK it handles / packet it issues:
             // an entry of type 5'h1F with the state in DW1
             if (hrun && !hfrz && (hring || !hwp[7]) && (hev_rx || hev_tx || (hring && dbg_strobe))) begin
-                hlog[hwp[6:0]] <= hev_rx ? {1'b0, hts, rx_hp_hdr} : (hring && dbg_strobe) ? {1'b1, hts, 32'd0, dbg_state, 32'h1F} :
+                hlog[hwp[6:0]] <= hev_rx ? {1'b0, hts, rx_hp_hdr} : (hring && dbg_strobe) ? {1'b1, hts, dbg_state, 32'h1F} :
                                   {1'b1, hts, tx_hp_hdr};
                 hwp <= {1'b0, hwp[6:0] + 7'd1} | {hring ? 1'b0 : hwp[6:0] == 7'd127, 7'd0};
                 if (hring && hwp[6:0] == 7'd127) hwrap <= 1'b1;

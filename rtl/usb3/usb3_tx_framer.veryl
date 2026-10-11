@@ -34,11 +34,11 @@ module Usb3TxFramer (
     i_hp_lcw     : input  logic<11>, // LCW information bits (HSN, DL, ...)
     i_hp_dpp     : input  logic    , // a DPP follows the header
     i_hp_dpp_len : input  logic<11>, // 0..1024
-    i_hp_dpp_base: input  logic<12>, // word address of the payload in the data RAM
+    i_hp_dpp_base: input  logic<13>, // word address of the payload in the data RAM
     o_hp_ready   : output logic    ,
 
     o_dpp_rd  : output logic    ,
-    o_dpp_addr: output logic<12>, // = base + word index
+    o_dpp_addr: output logic<13>, // = base + word index
     i_dpp_data: input  logic<32>,
 
     o_data: output logic<32>,
@@ -76,7 +76,7 @@ module Usb3TxFramer (
     var tail   : logic<96>;
     var tail_k : logic<12>;
     var tail_n : logic<2> ; // tail words still queued (0..2)
-    var addr   : logic<12>;
+    var addr   : logic<13>;
 
     var skp_due: logic;
     assign skp_due = skp_cnt >= SKP_INTERVAL;

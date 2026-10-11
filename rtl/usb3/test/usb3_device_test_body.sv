@@ -22,8 +22,8 @@ module usb3_device_test_body #(parameter bit RUN = 0);
     logic [1:0] power_down;
     logic rx_hp_valid; logic [95:0] rx_hp_hdr;
     logic dpp_start, dpp_valid, dpp_end, dpp_err; logic [31:0] dpp_data; logic [3:0] dpp_be;
-    logic tx_hp_valid, tx_dpp, tx_hp_ready, tx_hp_idle; logic [95:0] tx_hp_hdr; logic [10:0] tx_dpp_len; logic [11:0] tx_dpp_base;
-    logic dpp_rd; logic [11:0] dpp_addr; logic [31:0] dpp_rdata;
+    logic tx_hp_valid, tx_dpp, tx_hp_ready, tx_hp_idle; logic [95:0] tx_hp_hdr; logic [10:0] tx_dpp_len; logic [12:0] tx_dpp_base;
+    logic dpp_rd; logic [12:0] dpp_addr; logic [31:0] dpp_rdata;
     logic [4:0] ltssm_state; logic in_u0, u0_entry, hot_reset, warm_reset, link_configured;
     logic dev_configured, dev_reset; logic [6:0] dev_address; logic [15:0] vendor_reg;
     logic [31:0] vendor_status = 32'hCAFE1234;
@@ -326,6 +326,18 @@ module usb3_device_test_body #(parameter bit RUN = 0);
         wait_clk(125 * 30);
         host.bulk_in(d, res);       // the ZLP after the idle full packets
         if (res != 0 || d.size() != 0) fail($sformatf("short zlp: res %0d len %0d", res, d.size()));
+        if (host.proto_err != 0) fail($sformatf("host protocol errors %0d", host.proto_err));
+        // all 16 buffers (bMaxBurst 15): 15 full packets and a 300-byte tail read with NumP 16, the
+        // 10th packet answered with a retry; twice, so the 4-bit buffer indices wrap
+        stage = "bulk in burst 16";
+        for (int r = 0; r < 2; r++) begin
+            q.delete(); for (int i = 0; i < 15660; i++) q.push_back(8'(i * 11 + r * 5 + 3));
+            app_send_words(q);
+            wait_clk(125 * 30);
+            host.bulk_in_burst(16, 16, 9, d, res);
+            if (res != 0 || d.size() != 15660) fail($sformatf("burst 16 #%0d: res %0d len %0d", r, res, d.size()));
+            else for (int i = 0; i < 15660; i++) if (d[i] != q[i]) begin fail($sformatf("burst 16 #%0d data at %0d", r, i)); break; end
+        end
         if (host.proto_err != 0) fail($sformatf("host protocol errors %0d", host.proto_err));
         // SeqNum wraps 31 -> 0: 34 more IN transfers (the device ignored the ACK with SeqNum 0
         // after 31 - a widened "seq + 1" compare - and the host timed out on the 33rd packet)

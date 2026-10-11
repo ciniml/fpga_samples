@@ -119,9 +119,9 @@ def decode_hdr(h):
         return (f'DP  addr={addr} route={route:x} seq={dw1 & 0x1F} eob={(dw1 >> 6) & 1} dir={(dw1 >> 7) & 1} '
                 f'ept={(dw1 >> 8) & 0xF} setup={(dw1 >> 15) & 1} len={dw1 >> 16} dw2={dw2:08x}')
     if typ == 0x1F:     # Usb3Device EP1 IN state (ring mode, top.v)
-        st = dw1
-        return (f'    state seq_in={st & 0x1F} limit={(st >> 5) & 0x1F} nsent={(st >> 10) & 0xF} ack={(st >> 14) & 7} '
-                f'ready={(st >> 17) & 0xFF:08b} cfg={(st >> 25) & 1} stop={(st >> 26) & 1} flow={(st >> 27) & 1}')
+        st = dw2 << 32 | dw1
+        return (f'    state seq_in={st & 0x1F} limit={(st >> 5) & 0x1F} nsent={(st >> 10) & 0x1F} ack={(st >> 15) & 0xF} '
+                f'ready={(st >> 19) & 0xFFFF:016b} cfg={(st >> 35) & 1} stop={(st >> 36) & 1} flow={(st >> 37) & 1}')
     if typ == 0x0C:
         return f'ITP {dw0:08x}'
     return f'type {typ:02x} {dw0:08x} {dw1:08x} {dw2:08x}'

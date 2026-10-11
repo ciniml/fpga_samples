@@ -23,8 +23,8 @@ module usb3_link_test_body #(parameter bit RUN = 0);
     logic [1:0] power_down;
     logic rx_hp_valid; logic [95:0] rx_hp_hdr;
     logic dpp_start, dpp_valid, dpp_end, dpp_err; logic [31:0] dpp_data; logic [3:0] dpp_be;
-    logic tx_hp_valid = 0, tx_dpp = 0, tx_hp_ready, tx_hp_idle; logic [95:0] tx_hp_hdr = 0; logic [10:0] tx_dpp_len = 0; logic [11:0] tx_dpp_base = 0;
-    logic dpp_rd; logic [11:0] dpp_addr; logic [31:0] dpp_rdata;
+    logic tx_hp_valid = 0, tx_dpp = 0, tx_hp_ready, tx_hp_idle; logic [95:0] tx_hp_hdr = 0; logic [10:0] tx_dpp_len = 0; logic [12:0] tx_dpp_base = 0;
+    logic dpp_rd; logic [12:0] dpp_addr; logic [31:0] dpp_rdata;
     logic [4:0] ltssm_state; logic in_u0, u0_entry, hot_reset, warm_reset, configured;
 
     Usb3Top #(.TSEQ_COUNT(64)) dut(.i_clk(clk), .i_rst(rst),

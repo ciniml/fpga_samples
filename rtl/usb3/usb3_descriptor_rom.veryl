@@ -25,22 +25,22 @@
  * 0x20, descriptor set with Compatible ID WINUSB served at wIndex 7).
  */
 pub package usb3_desc_pkg {
-    const ROM_BASE      : logic<12> = 12'h800; // framer read address of ROM word 0
-    const DEV_ADDR      : logic<12> = 12'h800;
+    const ROM_BASE      : logic<13> = 13'h1000; // framer read address of ROM word 0
+    const DEV_ADDR      : logic<13> = 13'h1000;
     const DEV_LEN       : logic<11> = 11'd18;
-    const CFG_ADDR      : logic<12> = 12'h805;
+    const CFG_ADDR      : logic<13> = 13'h1005;
     const CFG_LEN       : logic<11> = 11'd44;
-    const STR0_ADDR     : logic<12> = 12'h810;
+    const STR0_ADDR     : logic<13> = 13'h1010;
     const STR0_LEN      : logic<11> = 11'd4;
-    const STR1_ADDR     : logic<12> = 12'h811;
+    const STR1_ADDR     : logic<13> = 13'h1011;
     const STR1_LEN      : logic<11> = 11'd26;
-    const STR2_ADDR     : logic<12> = 12'h818;
+    const STR2_ADDR     : logic<13> = 13'h1018;
     const STR2_LEN      : logic<11> = 11'd28;
-    const STR3_ADDR     : logic<12> = 12'h81F;
+    const STR3_ADDR     : logic<13> = 13'h101F;
     const STR3_LEN      : logic<11> = 11'd14;
-    const BOS_ADDR      : logic<12> = 12'h823;
+    const BOS_ADDR      : logic<13> = 13'h1023;
     const BOS_LEN       : logic<11> = 11'd50;
-    const MSOS_ADDR     : logic<12> = 12'h830;
+    const MSOS_ADDR     : logic<13> = 13'h1030;
     const MSOS_LEN      : logic<11> = 11'd30;
     const MS_VENDOR_CODE: logic<8>  = 8'h20;
 }
@@ -69,7 +69,7 @@ pub module Usb3DescriptorRom #(
             8'd12  : o_data = {8'h07, 8'h00, 8'h00, 8'h00};
             8'd13  : o_data = {8'h00, 8'h02, 8'h81, 8'h05};
             8'd14  : o_data = {8'h30, 8'h06, 8'h00, 8'h04};
-            8'd15  : o_data = {8'h00, 8'h00, 8'h00, 8'h07};
+            8'd15  : o_data = {8'h00, 8'h00, 8'h00, 8'h0F};
             8'd16  : o_data = {8'h04, 8'h09, 8'h03, 8'h04};
             8'd17  : o_data = {8'h00, 8'h66, 8'h03, 8'h1A};
             8'd18  : o_data = {8'h00, 8'h67, 8'h00, 8'h70};

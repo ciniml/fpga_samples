@@ -52,7 +52,7 @@ module Usb3Link #(
     o_hp_lcw     : output logic<11>,
     o_hp_dpp     : output logic    ,
     o_hp_dpp_len : output logic<11>,
-    o_hp_dpp_base: output logic<12>,
+    o_hp_dpp_base: output logic<13>,
     i_hp_ready   : input  logic    ,
     i_tx_busy    : input  logic    ,
 
@@ -63,7 +63,7 @@ module Usb3Link #(
     i_tx_hp_hdr  : input  logic<96>,
     i_tx_dpp     : input  logic    ,
     i_tx_dpp_len : input  logic<11>,
-    i_tx_dpp_base: input  logic<12>,
+    i_tx_dpp_base: input  logic<13>,
     o_tx_hp_ready: output logic    , // request accepted (queued)
     o_tx_hp_idle : output logic    , // nothing queued or unacknowledged
 
@@ -162,7 +162,7 @@ module Usb3Link #(
     var txb_hdr : logic<96> [4];
     var txb_dpp : logic     [4];
     var txb_len : logic<11> [4];
-    var txb_base: logic<12> [4];
+    var txb_base: logic<13> [4];
     var txb_hsn : logic<3>  [4];
     var txb_head: logic<2>     ; // oldest unacknowledged
     var txb_cnt : logic<3>     ; // entries (0..4)
