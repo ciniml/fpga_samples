@@ -106,6 +106,8 @@ typedef struct {
     int nbad_idx;
     uint64_t last;           /* the last payload word */
     FILE *out;
+    uint64_t *buf;           /* -o: the payload, written out after the capture */
+    size_t nbuf, cap;
 } st_t;
 static st_t st[2];
 static int capid;
@@ -155,7 +157,10 @@ static void parse(const uint8_t *buf, int n) {
                 if (p_have & 1) {
                     uint64_t v = (uint64_t)w << 32 | p_lo;
                     data_word(&st[g], v);
-                    if (st[g].out) fwrite(&v, 8, 1, st[g].out);
+                    if (st[g].out) {
+                        st_t *s = &st[g];
+                        if (s->nbuf < s->cap) s->buf[s->nbuf++] = v;
+                    }
                 } else p_lo = w;
             } else if (p_have < 2) p_ev[p_have] = w;
             p_have++;
@@ -199,6 +204,7 @@ static void group_regs(int g, const gcfg_t *c) {
 }
 
 static int report(int expect_flags[2]);
+static double cap_secs = 1;
 static void setup_streams(const gcfg_t *a, const gcfg_t *b, const char *prefix) {
     memset(st, 0, sizeof st);
     st[0].c = *a; st[1].c = *b;
@@ -210,6 +216,11 @@ static void setup_streams(const gcfg_t *a, const gcfg_t *b, const char *prefix) 
         if (prefix) {
             char fn[512]; snprintf(fn, sizeof fn, "%s_%c.bin", prefix, 'a' + g);
             st[g].out = fopen(fn, "wb");
+            /* room for the whole capture (at most the link rate), touched now: growing or faulting it
+             * in during the capture stalled the reading enough to overflow the device at 400 MB/s */
+            st[g].cap = (size_t)((cap_secs + 0.5) * 460e6 / 8);
+            st[g].buf = malloc(st[g].cap * 8);
+            memset(st[g].buf, 0, st[g].cap * 8);
         }
     }
     p_state = 0; p_err = 0; total_bytes = 0; xfer_err = 0;
@@ -220,6 +231,7 @@ static int capture(const gcfg_t *a, const gcfg_t *b, double secs, const char *pr
     unsigned char junk[65536]; int got;
     reg_wr(0x00, 0);                                                      /* stop, drain */
     while (libusb_bulk_transfer(h, 0x81, junk, sizeof junk, &got, 100) == 0) ;
+    cap_secs = secs;
     setup_streams(a, b, prefix);
     group_regs(0, a); group_regs(1, b);
     reg_wr(0x01, (a->en ? 1 : 0) | (b->en ? 2 : 0));
@@ -287,7 +299,7 @@ static int report(int expect_flags[2]) {
         if (verify && real_bad)
             printf("      %llu bad words, first at word %llu\n", (unsigned long long)real_bad, (unsigned long long)s->first_bad);
         if (!ok) bad = 1;
-        if (s->out) fclose(s->out);
+        if (s->out) { fwrite(s->buf, 8, s->nbuf, s->out); fclose(s->out); free(s->buf); }
         free(s->e.w);
     }
     return bad;
