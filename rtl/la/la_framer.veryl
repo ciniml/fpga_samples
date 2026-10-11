@@ -1,0 +1,147 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file la_framer.veryl
+ * @brief Merges the streams of the two groups (LaAfifo outputs: 64-bit
+ *        beats, tuser = control beat, and the fill level) into the 32-bit
+ *        host stream of la_pkg: a header word, then the payload, low word of
+ *        each beat first. AXI4-Stream out, tlast on the last word of a block.
+ *
+ * A stream is served when it has BLK beats (a full block), when its head is
+ * a control beat (an event block), or when data has waited TIMEOUT clocks
+ * without filling a block (a shorter one); the two streams alternate. The
+ * header promises the beats counted from the fill level, so they must all
+ * be data: LaPacker writes a control beat only into an empty FIFO. One idle
+ * clock after each block lets the registered level catch up with the reads.
+ */
+module LaFramer #(
+    param BLK    : u32 = 256 , // beats per full block (<= 32767)
+    param TIMEOUT: u32 = 2500, // clocks before a partial block goes out
+    param LW     : u32 = 12  , // level width
+) (
+    i_clk   : input  clock        ,
+    i_rst   : input  reset        ,
+    i_tvalid: input  logic<2>     ,
+    i_tdata : input  logic<64> [2],
+    i_tuser : input  logic<2>     ,
+    o_tready: output logic<2>     ,
+    i_level : input  logic<LW> [2],
+    o_tvalid: output logic        ,
+    o_tdata : output logic<32>    ,
+    o_tlast : output logic        ,
+    i_tready: input  logic        ,
+) {
+    import la_pkg::*;
+
+    enum State: logic<3> {
+        Idle,
+        Hdr,
+        Lo,
+        Hi,
+        Gap,
+    }
+    var state: State        ;
+    var cur  : logic        ; // stream being sent
+    var rr   : logic        ; // stream served last
+    var n    : logic<16>    ; // beats left in the block
+    var hdr  : logic<32>    ;
+    var seq  : logic<8>  [2];
+    var tmo  : logic<16> [2];
+
+    var cand: logic<2>;
+    always_comb {
+        for s in 0..2 {
+            cand[s] = i_tvalid[s] && (i_tuser[s] || i_level[s] >= BLK || tmo[s] >= TIMEOUT);
+        }
+    }
+    let pick: logic     = if cand[~rr] ? ~rr : rr;
+    let cdat: logic<64> = i_tdata[cur];
+    let pdat: logic<64> = i_tdata[pick];
+    let plev: logic<LW> = i_level[pick];
+    let pn  : logic<16> = if plev >= BLK ? BLK as 16 : plev as 16;
+
+    let out_free: logic = !o_tvalid || i_tready;
+    always_comb {
+        for s in 0..2 {
+            o_tready[s] = state == State::Hi && cur == s && out_free;
+        }
+    }
+
+    always_ff {
+        if_reset {
+            state    = State::Idle;
+            cur      = 0;
+            rr       = 1;
+            n        = 0;
+            hdr      = 0;
+            seq      = '{0, 0};
+            tmo      = '{0, 0};
+            o_tvalid = 0;
+            o_tdata  = 0;
+            o_tlast  = 0;
+        } else {
+            if o_tvalid && i_tready {
+                o_tvalid = 0;
+            }
+            for s in 0..2 {
+                if !i_tvalid[s] || i_level[s] == 0 {
+                    tmo[s] = 0;
+                } else if tmo[s] != 16'hFFFF {
+                    tmo[s] = tmo[s] + 1;
+                }
+            }
+            case state {
+                State::Idle: {
+                    if |cand {
+                        cur       = pick;
+                        rr        = pick;
+                        tmo[pick] = 0;
+                        if i_tuser[pick] {
+                            hdr = {pdat[63:60], 1'b0, pick, 2'b0, pdat[55:48], 16'd2};
+                            n   = 1;
+                            if pdat[63:60] == HDR_START {
+                                seq[pick] = 0;
+                            }
+                        } else {
+                            hdr       = {HDR_DATA, 1'b0, pick, 2'b0, seq[pick], pn[14:0], 1'b0};
+                            n         = pn;
+                            seq[pick] = seq[pick] + 1;
+                        }
+                        state = State::Hdr;
+                    }
+                }
+                State::Hdr: {
+                    if out_free {
+                        o_tvalid = 1;
+                        o_tdata  = hdr;
+                        o_tlast  = 0;
+                        state    = State::Lo;
+                    }
+                }
+                State::Lo: {
+                    if out_free && i_tvalid[cur] {
+                        o_tvalid = 1;
+                        o_tdata  = cdat[31:0];
+                        o_tlast  = 0;
+                        state    = State::Hi;
+                    }
+                }
+                State::Hi: {
+                    if out_free {
+                        o_tvalid = 1;
+                        o_tdata  = cdat[63:32];
+                        o_tlast  = n == 1;
+                        n        = n - 1;
+                        state    = if n == 1 ? State::Gap : State::Lo;
+                    }
+                }
+                default: { // Gap
+                    state = State::Idle;
+                }
+            }
+        }
+    }
+}

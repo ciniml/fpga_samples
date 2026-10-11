@@ -1,0 +1,17 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_la.veryl
+ * @brief `veryl test` entry for LaCore (body in test/la_core_test_body.sv).
+ */
+module TbLa {}
+
+#[test(la_core_test)]
+embed (inline) sv{{{
+module la_core_test;
+    la_core_test_body #(.RUN(1)) body();
+endmodule
+}}}

@@ -1,0 +1,189 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file la_packer.veryl
+ * @brief Packs the samples of one group (LaFront's AXI4-Stream: k samples
+ *        per beat at the bottom lanes, tkeep; k = 1, 2, 4 or 8 and the same
+ *        throughout a capture) into 64-bit words of W = 2^wlog bits per
+ *        sample (la_pkg), as an AXI4-Stream with tuser = control beat.
+ *
+ * Two stages: the samples are gathered into groups of 8 (a beat's k samples
+ * go to lanes f.. f + k - 1, f a multiple of k, so lane p takes sample
+ * p mod k), then each group gives 8 W bits of a word (8 / W groups per
+ * word). wlog comes with the START beat, which goes out as a control
+ * beat. At the END beat the waiting samples and the last word go out padded
+ * with zeros, then the END control beat with the sample count - once the
+ * FIFO behind is empty (i_fifo_empty), so that LaFramer never finds a
+ * control beat among the data words it has counted for a block.
+ */
+module LaPacker (
+    i_clk       : input  clock    ,
+    i_rst       : input  reset    ,
+    i_tvalid    : input  logic    ,
+    i_tdata     : input  logic<64>,
+    i_tkeep     : input  logic<8> ,
+    i_tuser     : input  logic<2> ,
+    o_tready    : output logic    ,
+    o_tvalid    : output logic    ,
+    o_tdata     : output logic<64>,
+    o_tuser     : output logic    , // control beat (START / END)
+    i_tready    : input  logic    ,
+    i_fifo_empty: input  logic    ,
+    o_idle      : output logic    ,
+) {
+    import la_pkg::*;
+
+    enum State: logic<3> {
+        Idle,
+        Run,
+        Pad,
+        Tail,
+        Last,
+    }
+    var state: State;
+
+    var wlog   : logic<2> ;
+    var f      : logic<3> ; // samples waiting in wbuf
+    var wbuf   : logic<64>; // samples waiting (lanes >= f are 0)
+    var g_v    : logic    ; // a group of 8 samples for the word stage
+    var g_lanes: logic<64>;
+    var acc    : logic<64>;
+    var idx    : logic<3> ;
+    var count  : logic<48>;
+    var endw   : logic<16>; // END beat [63:48]
+
+    let adv: logic     = !o_tvalid || i_tready; // the output register can take a word this clock
+    let k  : logic<4>  = popcount8(i_tkeep);
+    let fk : logic<4>  = {1'b0, f} + k;
+    var ins: logic<64>; // the waiting samples with the beat's in place
+    always_comb {
+        for p in 0..8 {
+            var pp: logic<4>;
+            var sv: logic<8>;
+            pp = p;
+            sv = case k {
+                4'd1   : i_tdata[7:0],
+                4'd2   : i_tdata[(p % 2) * 8+:8],
+                4'd4   : i_tdata[(p % 4) * 8+:8],
+                default: i_tdata[p * 8+:8],
+            };
+            ins[p * 8+:8] = if pp >= {1'b0, f} && pp <: fk ? sv : wbuf[p * 8+:8];
+        }
+    }
+    let last_idx: logic<3> = case wlog {
+        2'd3   : 3'd0,
+        2'd2   : 3'd1,
+        2'd1   : 3'd3,
+        default: 3'd7,
+    };
+    let acc_n: logic<64> = shift_in(acc, g_lanes, wlog);
+
+    assign o_tready = adv && (state == State::Idle || state == State::Run);
+    assign o_idle   = state == State::Idle && !o_tvalid;
+    let take: logic = i_tvalid && o_tready;
+
+    always_ff {
+        if_reset {
+            state    = State::Idle;
+            wlog     = 0;
+            f        = 0;
+            wbuf     = 0;
+            g_v      = 0;
+            g_lanes  = 0;
+            acc      = 0;
+            idx      = 0;
+            count    = 0;
+            endw     = 0;
+            o_tvalid = 0;
+            o_tdata  = 0;
+            o_tuser  = 0;
+        } else {
+            if o_tvalid && i_tready {
+                o_tvalid = 0;
+            }
+            if adv {
+                // word stage
+                if g_v {
+                    if idx == last_idx {
+                        o_tvalid = 1;
+                        o_tdata  = acc_n;
+                        o_tuser  = 0;
+                        acc      = 0;
+                        idx      = 0;
+                    } else {
+                        acc = acc_n;
+                        idx = idx + 1;
+                    }
+                }
+                g_v = 0;
+                case state {
+                    State::Idle: {
+                        if take && i_tuser == U_START {
+                            wlog     = i_tdata[1:0];
+                            f        = 0;
+                            wbuf     = 0;
+                            acc      = 0;
+                            idx      = 0;
+                            count    = 0;
+                            o_tvalid = 1;
+                            o_tdata  = i_tdata;
+                            o_tuser  = 1;
+                            state    = State::Run;
+                        }
+                    }
+                    State::Run: {
+                        if take {
+                            if i_tuser == U_DATA {
+                                count = count + {44'h0, k};
+                                if fk >= 4'd8 {
+                                    g_v     = 1;
+                                    g_lanes = ins;
+                                    wbuf    = 0;
+                                    f       = 0;
+                                } else {
+                                    wbuf = ins;
+                                    f    = fk as 3;
+                                }
+                            } else if i_tuser == U_END {
+                                endw  = i_tdata[63:48];
+                                state = State::Pad;
+                            }
+                        }
+                    }
+                    State::Pad: {
+                        if f != 0 {
+                            g_v     = 1;
+                            g_lanes = wbuf;
+                            f       = 0;
+                            wbuf    = 0;
+                        }
+                        state = State::Tail;
+                    }
+                    State::Tail: {
+                        // (the padded group, if any, is in the word stage this clock) a partial word
+                        // is completed with groups of zeros
+                        if !g_v {
+                            if idx != 0 {
+                                g_v     = 1;
+                                g_lanes = 0;
+                            } else {
+                                state = State::Last;
+                            }
+                        }
+                    }
+                    default: { // Last
+                        if !o_tvalid && i_fifo_empty {
+                            o_tvalid = 1;
+                            o_tdata  = {endw, count};
+                            o_tuser  = 1;
+                            state    = State::Idle;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

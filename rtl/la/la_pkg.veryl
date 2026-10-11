@@ -1,0 +1,129 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file la_pkg.veryl
+ * @brief Logic analyzer stream format and helper functions.
+ *
+ * Sampling works on words of 8 samples (one 100 MHz clock of an IDES8 at
+ * 800 MS/s): sample i of a word (i = 0 earliest) of a group of 8 channels is
+ * the byte [8i+7:8i], channel c in bit c of it.
+ *
+ * The host stream (32-bit words, little endian) is a sequence of blocks,
+ * each a header word and `len` payload words:
+ *   [31:28] type   HDR_DATA  packed samples of one group
+ *                  HDR_RLE   (reserved for a compressed form of the same)
+ *                  HDR_START capture start: payload = the start beat (below)
+ *                  HDR_END   capture end:   payload = the end beat (below)
+ *   [27:26] stream (0: group A = CH0..7, 1: group B = CH8..15)
+ *   [25:24] 0
+ *   [23:16] DATA: block sequence number per stream (0 after START, wraps)
+ *           START / END: capture id
+ *   [15:0]  len: payload words
+ * Packed samples: the samples of a group, W = 2^wlog bits each (its lowest W
+ * channels), back to back from bit 0 of the first payload word on; the
+ * blocks of a stream continue each other. The last word of a capture is
+ * padded with zeros (the END beat has the sample count).
+ * Control beats (64 bits, payload words low first):
+ *   [63:60] type (HDR_START / HDR_END), [59:56] flags (END: bit 0 overflow,
+ *   bit 1 unsupported timing: an edge clock with two edges in one word, or
+ *   an internal divider of 3, 5, 6 or 7),
+ *   [55:48] capture id,
+ *   START [47:0] = {8'h0, div (24), 7'h0, cfg (9)}, END [47:0] = sample count.
+ */
+pub package la_pkg {
+    const HDR_DATA : logic<4> = 4'h1;
+    const HDR_RLE  : logic<4> = 4'h2;
+    const HDR_START: logic<4> = 4'h4;
+    const HDR_END  : logic<4> = 4'h5;
+
+    // LaFront -> LaPacker tuser
+    const U_DATA : logic<2> = 2'd0;
+    const U_START: logic<2> = 2'd1;
+    const U_END  : logic<2> = 2'd2;
+
+    /// PRBS15 (x^15 + x^14 + 1, Fibonacci, new bit = s[14] ^ s[13] shifted in at bit 0):
+    /// the next 64 output bits from state s, first in bit 0
+    function prbs15_word (
+        s: input logic<15>,
+    ) -> logic<64> {
+        var t: logic<15>;
+        var o: logic<64>;
+        t = s;
+        for i in 0..64 {
+            o[i] = t[14] ^ t[13];
+            t    = {t[13:0], t[14] ^ t[13]};
+        }
+        return o;
+    }
+    function prbs15_adv (
+        s: input logic<15>,
+    ) -> logic<15> {
+        var t: logic<15>;
+        t = s;
+        for _i in 0..64 {
+            t = {t[13:0], t[14] ^ t[13]};
+        }
+        return t;
+    }
+
+    /// PRBS17 (x^17 + x^14 + 1, new bit = s[16] ^ s[13])
+    function prbs17_word (
+        s: input logic<17>,
+    ) -> logic<64> {
+        var t: logic<17>;
+        var o: logic<64>;
+        t = s;
+        for i in 0..64 {
+            o[i] = t[16] ^ t[13];
+            t    = {t[15:0], t[16] ^ t[13]};
+        }
+        return o;
+    }
+    function prbs17_adv (
+        s: input logic<17>,
+    ) -> logic<17> {
+        var t: logic<17>;
+        t = s;
+        for _i in 0..64 {
+            t = {t[15:0], t[16] ^ t[13]};
+        }
+        return t;
+    }
+
+    function popcount8 (
+        m: input logic<8>,
+    ) -> logic<4> {
+        var c: logic<4>;
+        c = 0;
+        for i in 0..8 {
+            c = c + {3'b0, m[i]};
+        }
+        return c;
+    }
+
+    /// The low 2^wlog bits of each of the 8 samples in `lanes`, packed (sample 0 at bit 0),
+    /// shifted into word `acc` from the top: after 8 / 2^wlog groups the first one is at bit 0.
+    function shift_in (
+        acc  : input logic<64>,
+        lanes: input logic<64>,
+        wlog : input logic<2> ,
+    ) -> logic<64> {
+        var c4: logic<32>;
+        var c2: logic<16>;
+        var c1: logic<8> ;
+        for i in 0..8 {
+            c4[i * 4+:4] = lanes[i * 8+:4];
+            c2[i * 2+:2] = lanes[i * 8+:2];
+            c1[i]        = lanes[i * 8];
+        }
+        return case wlog {
+            2'd3   : lanes,
+            2'd2   : {c4, acc[63:32]},
+            2'd1   : {c2, acc[63:16]},
+            default: {c1, acc[63:8]},
+        };
+    }
+}

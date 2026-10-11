@@ -25,7 +25,10 @@
  * enable accepted and ignored), SET_ADDRESS, GET_DESCRIPTOR (device,
  * configuration, string, BOS), GET/SET_CONFIGURATION, GET/SET_INTERFACE,
  * SET_SEL, SET_ISOCH_DELAY; vendor 0x01 IN (i_vendor_status), 0x02 OUT
- * (o_vendor_reg = wValue), MS_VENDOR_CODE IN wIndex 7 (MS OS 2.0 set).
+ * (o_vendor_reg = wValue), 0x03 OUT (register write: o_reg_wr with
+ * o_reg_addr = wIndex, o_reg_wdata = wValue), 0x04 IN (register read: 4
+ * bytes of i_reg_rdata for o_reg_addr = wIndex), MS_VENDOR_CODE IN wIndex 7
+ * (MS OS 2.0 set).
  *
  * Data for outgoing DPPs is read by the framer through o_dpp_rd/addr:
  * words 0x000..0x7FF come from the EP1 IN packet buffers, 0xC00 from the
@@ -73,6 +76,11 @@ module Usb3Device #(
     // ---- vendor request scratch ----
     o_vendor_reg   : output logic<16>,
     i_vendor_status: input  logic<32>,
+    // ---- vendor register port (requests 0x03 / 0x04) ----
+    o_reg_wr   : output logic    , // pulse
+    o_reg_addr : output logic<8> , // wIndex of the request (valid with o_reg_wr; i_reg_rdata is read for it)
+    o_reg_wdata: output logic<16>, // wValue
+    i_reg_rdata: input  logic<32>, // combinational from o_reg_addr
 
     // ---- EP1 byte streams ----
     o_rx_valid: output logic   ,
@@ -136,7 +144,9 @@ module Usb3Device #(
     assign o_configured = configured;
     assign o_address    = dev_addr;
     assign o_vendor_reg = vendor_reg;
-    assign o_reset      = reset_evt;
+    var reg_wr: logic;
+    assign o_reg_wr = reg_wr;
+    assign o_reset  = reset_evt;
 
     // ---------------------------------------------------------------- input pipeline stage
     // The link's header and the parser's DPP stream are registered here so
@@ -341,11 +351,13 @@ module Usb3Device #(
     var w_value : logic<16>;
     var w_index : logic<16>;
     var w_length: logic<16>;
-    assign bm_req   = setup_buf[7:0];
-    assign b_req    = setup_buf[15:8];
-    assign w_value  = setup_buf[31:16];
-    assign w_index  = setup_buf[47:32];
-    assign w_length = setup_buf[63:48];
+    assign bm_req      = setup_buf[7:0];
+    assign b_req       = setup_buf[15:8];
+    assign w_value     = setup_buf[31:16];
+    assign w_index     = setup_buf[47:32];
+    assign o_reg_addr  = w_index[7:0];
+    assign o_reg_wdata = w_value;
+    assign w_length    = setup_buf[63:48];
 
     var desc_addr: logic<13>;
     var desc_len : logic<11>;
@@ -459,6 +471,7 @@ module Usb3Device #(
             halt_in       = 0;
             halt_out      = 0;
             vendor_reg    = 0;
+            reg_wr        = 0;
             reset_evt     = 0;
             seq_in        = 0;
             dbg_nseq      = 0;
@@ -554,6 +567,7 @@ module Usb3Device #(
             s_len     = 0;
             s_base    = 0;
             reset_evt = 0;
+            reg_wr    = 0;
             flush     = 0;
             dbg_ev    = 0;
             dbg_stb   = 0;
@@ -1120,6 +1134,20 @@ module Usb3Device #(
                             if !req_in && w_length == 0 {
                                 vendor_reg = w_value;
                                 ctrl       = Ctrl::Status;
+                            }
+                        }
+                        8'h03: { // vendor OUT: register write
+                            if !req_in && w_length == 0 {
+                                reg_wr = 1;
+                                ctrl   = Ctrl::Status;
+                            }
+                        }
+                        8'h04: { // vendor IN: register read
+                            if req_in {
+                                small_r     = i_reg_rdata;
+                                ctrl_base   = SMALL_ADDR as 13;
+                                ctrl_remain = r_len4;
+                                ctrl        = if w_length == 0 ? Ctrl::Status : Ctrl::DataIn;
                             }
                         }
                         MS_VENDOR_CODE: { // MS OS 2.0 descriptor set

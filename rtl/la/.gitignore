@@ -1,0 +1,6 @@
+*.sv
+!test/*.sv
+*.sv.map
+*.f
+.build/
+__pycache__/

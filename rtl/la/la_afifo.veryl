@@ -1,0 +1,151 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file la_afifo.veryl
+ * @brief Asynchronous AXI4-Stream FIFO (gray-code pointers, 2FF
+ *        synchronised, block RAM) with a write-side empty flag and a
+ *        read-side fill level (after rtl/trace trace_afifo).
+ *
+ * o_wempty ('w): everything written has been taken (m_tready), as far as the
+ *   write side knows (it lags the reads, never the writes). The write side
+ *   follows a pointer of the beats taken, not of those fetched into m_tdata:
+ *   a beat waiting there is not gone yet.
+ * o_rlevel ('r): beats readable, registered (one clock behind the reads; a
+ *   lower bound otherwise), including the one in m_tdata.
+ */
+module LaAfifo #(
+    param DW: u32 = 65,
+    param AW: u32 = 10,
+) (
+    i_wclk  : input  'w clock    ,
+    i_wrst  : input  'w reset    ,
+    s_tvalid: input  'w logic    ,
+    s_tdata : input  'w logic<DW>,
+    s_tready: output 'w logic    ,
+    o_wempty: output 'w logic    ,
+
+    i_rclk  : input  'r clock        ,
+    i_rrst  : input  'r reset        ,
+    m_tvalid: output 'r logic        ,
+    m_tdata : output 'r logic<DW>    ,
+    m_tready: input  'r logic        ,
+    o_rlevel: output 'r logic<AW + 2>,
+) {
+    const PW: u32 = AW + 1; // pointer width
+
+    function gray2bin (
+        g: input logic<PW>,
+    ) -> logic<PW> {
+        var b        : logic<PW>;
+        b[PW - 1] = g[PW - 1];
+        for i in 1..PW {
+            b[PW - 1 - i] = b[PW - i] ^ g[PW - 1 - i];
+        }
+        return b;
+    }
+
+    // write side
+    var wbin     : 'w logic<PW>;
+    var wgray    : 'w logic<PW>;
+    var wgray_inc: 'w logic<PW>;
+    var rgray_w1 : 'w logic<PW>;
+    var rgray_w2 : 'w logic<PW>;
+    var wfull    : 'w logic    ;
+    let wr_go    : 'w logic     = s_tvalid & ~wfull;
+    let wbin_p2  : 'w logic<PW> = wbin + 2'd2;
+    let wgray_n  : 'w logic<PW> = if wr_go ? wgray_inc : wgray;
+    let rgray_wf : 'w logic<PW> = {~rgray_w2[AW:AW - 1], rgray_w2[AW - 2:0]};
+    assign s_tready = ~wfull;
+    assign o_wempty = wgray == rgray_w2;
+
+    // read side
+    var rbin     : 'r logic<PW>    ;
+    var rgray    : 'r logic<PW>    ;
+    var rgray_inc: 'r logic<PW>    ;
+    var wgray_r1 : 'r logic<PW>    ;
+    var wgray_r2 : 'r logic<PW>    ;
+    var cbin     : 'r logic<PW>    ; // beats taken
+    var cgray    : 'r logic<PW>    ;
+    var mempty   : 'r logic        ;
+    var ovalid   : 'r logic        ;
+    var level    : 'r logic<AW + 2>;
+    let rd_en    : 'r logic         = m_tready & ovalid;
+    let fetch    : 'r logic         = ~mempty & (~ovalid | rd_en);
+    let cbin_n   : 'r logic<PW>     = cbin + 1; // (PW bits: the gray code of the wrapped value)
+    let rbin_p2  : 'r logic<PW>     = rbin + 2'd2;
+    let rgray_n  : 'r logic<PW>     = if fetch ? rgray_inc : rgray;
+    let wbin_r   : 'r logic<PW>     = gray2bin(wgray_r2);
+    assign m_tvalid = ovalid;
+    assign o_rlevel = level;
+
+    unsafe (cdc) {
+        always_ff (i_wclk, i_wrst) {
+            if_reset {
+                wbin      = 0;
+                wgray     = 0;
+                wgray_inc = 1;
+                wfull     = 1'b0;
+                rgray_w1  = 0;
+                rgray_w2  = 0;
+            } else {
+                if wr_go {
+                    wbin      = wbin + 1;
+                    wgray     = wgray_inc;
+                    wgray_inc = (wbin_p2 >> 1) ^ wbin_p2;
+                }
+                rgray_w1 = cgray;
+                rgray_w2 = rgray_w1;
+                wfull    = wgray_n == rgray_wf;
+            }
+        }
+        always_ff (i_rclk, i_rrst) {
+            if_reset {
+                rbin      = 0;
+                rgray     = 0;
+                rgray_inc = 1;
+                cbin      = 0;
+                cgray     = 0;
+                mempty    = 1'b1;
+                ovalid    = 1'b0;
+                wgray_r1  = 0;
+                wgray_r2  = 0;
+                level     = 0;
+            } else {
+                if fetch {
+                    rbin      = rbin + 1;
+                    rgray     = rgray_inc;
+                    rgray_inc = (rbin_p2 >> 1) ^ rbin_p2;
+                    ovalid    = 1'b1;
+                } else if rd_en {
+                    ovalid = 1'b0;
+                }
+                if rd_en {
+                    cbin  = cbin + 1;
+                    cgray = (cbin_n >> 1) ^ cbin_n;
+                }
+                wgray_r1 = wgray;
+                wgray_r2 = wgray_r1;
+                mempty   = rgray_n == wgray_r2;
+                level    = {1'b0, wbin_r - rbin} + (if ovalid ? 1 : 0);
+            }
+        }
+    }
+
+    #[sv("syn_ramstyle = \"block_ram\"")]
+    var mem: 'w logic<DW> [2 ** AW];
+    always_ff (i_wclk) {
+        if wr_go {
+            mem[wbin[AW - 1:0]] = s_tdata;
+        }
+    }
+    unsafe (cdc) {
+        always_ff (i_rclk) {
+            if fetch {
+                m_tdata = mem[rbin[AW - 1:0]];
+            }
+        }
+    }
+}

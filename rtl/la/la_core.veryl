@@ -1,0 +1,309 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file la_core.veryl
+ * @brief Logic analyzer core: two groups of 8 channels sampled at 800 MS/s
+ *        (8 samples per sclk), each LaFront -> LaPacker -> LaAfifo, merged
+ *        by LaFramer into one 32-bit AXI4-Stream in the USB clock domain
+ *        (uclk), plus the register file and the VREF PWM.
+ *
+ * Registers (uclk; 16-bit writes, 32-bit reads, address = USB wIndex):
+ *   0x00 CTRL   W [0] run (0 -> 1 starts a capture, 1 -> 0 stops it),
+ *                 [15:8] capture id (in the START / END blocks)
+ *               R {version 8'h01, 8'h00, 16'h4C41 ("LA")}
+ *   0x01 GROUPS W [0] group A (CH0..7) enable, [1] group B (CH8..15) enable
+ *               R status {.., sclk alive [5], ovf B [4], ovf A [3], run B [2], run A [1], run [0]}
+ *   0x02 A_CFG  {ck_sel (8: 0 = own clock input, 1 = the other group's), skew (7:5),
+ *                test (4), cmode (3:2), wlog (1:0)}   (LaFront)
+ *   0x03 A_DIVL / 0x04 A_DIVH  internal clock divider, 800 MHz / div (24 bits)
+ *   0x05 A_THALF test clock half period in samples
+ *   0x0A..0x0D the same for group B
+ *   0x10 VREF   threshold PWM duty (10 bits, of 1024; ~122 kHz)
+ * Reads of 0x02..0x10 return the value written.
+ *
+ * A capture starts on both enabled groups in the same sclk (sample positions
+ * line up) once both are idle with their FIFOs empty (the previous capture
+ * read out). Configuration crosses to sclk as quasi-static values: write it
+ * before setting run.
+ */
+module LaCore #(
+    param FIFO_AW: u32 = 10  , // FIFO depth 2^FIFO_AW beats of 64 bits per group
+    param BLK    : u32 = 256 ,
+    param TIMEOUT: u32 = 2500, // uclk before a partial block goes out (LaFramer)
+) (
+    i_uclk     : input  'u clock    ,
+    i_urst     : input  'u reset    ,
+    i_reg_wr   : input  'u logic    ,
+    i_reg_addr : input  'u logic<8> ,
+    i_reg_wdata: input  'u logic<16>,
+    o_reg_rdata: output 'u logic<32>,
+    o_tvalid   : output 'u logic    ,
+    o_tdata    : output 'u logic<32>,
+    o_tlast    : output 'u logic    ,
+    i_tready   : input  'u logic    ,
+    o_pwm      : output 'u logic    , // VREF threshold PWM
+    o_active   : output 'u logic    , // run
+    i_salive   : input  'u logic    , // the sample clock runs (e.g. its PLL locked)
+
+    i_sclk : input 's clock    ,
+    i_srst : input 's reset    ,
+    i_raw_a: input 's logic<64>, // CH0..7: sample i in [8i+7:8i], channel in bit 0..7
+    i_raw_b: input 's logic<64>, // CH8..15
+    i_ck_a : input 's logic<8> , // clock input of group A, sample i in bit i
+    i_ck_b : input 's logic<8> ,
+) {
+    // ---------------------------------------------------------------- registers (uclk)
+    var r_run   : 'u logic        ;
+    var r_capid : 'u logic<8>     ;
+    var r_groups: 'u logic<2>     ;
+    var r_cfg   : 'u logic<9>  [2];
+    var r_div   : 'u logic<24> [2];
+    var r_thalf : 'u logic<16> [2];
+    var r_vref  : 'u logic<10>    ;
+    var st_s    : 'u logic<4>     ; // {ovf B, ovf A, run B, run A} synchronised
+    always_ff (i_uclk, i_urst) {
+        if_reset {
+            r_run    = 0;
+            r_capid  = 0;
+            r_groups = 2'b01;
+            r_cfg    = '{9'h00C, 9'h00C};
+            r_div    = '{24'd1, 24'd1};
+            r_thalf  = '{16'd4, 16'd4};
+            r_vref   = 10'd252; // ~1.65 V threshold (3.3 V logic)
+        } else if i_reg_wr {
+            case i_reg_addr {
+                8'h00: {
+                    r_run   = i_reg_wdata[0];
+                    r_capid = i_reg_wdata[15:8];
+                }
+                8'h01  : r_groups        = i_reg_wdata[1:0];
+                8'h02  : r_cfg[0]        = i_reg_wdata[8:0];
+                8'h03  : r_div[0][15:0]  = i_reg_wdata;
+                8'h04  : r_div[0][23:16] = i_reg_wdata[7:0];
+                8'h05  : r_thalf[0]      = i_reg_wdata;
+                8'h0A  : r_cfg[1]        = i_reg_wdata[8:0];
+                8'h0B  : r_div[1][15:0]  = i_reg_wdata;
+                8'h0C  : r_div[1][23:16] = i_reg_wdata[7:0];
+                8'h0D  : r_thalf[1]      = i_reg_wdata;
+                8'h10  : r_vref          = i_reg_wdata[9:0];
+                default: {}
+            }
+        }
+    }
+    always_comb {
+        o_reg_rdata = case i_reg_addr {
+            8'h00  : {8'h01, 8'h00, 16'h4C41},
+            8'h01  : {26'h0, i_salive, st_s, r_run},
+            8'h02  : {23'h0, r_cfg[0]},
+            8'h03  : {16'h0, r_div[0][15:0]},
+            8'h04  : {24'h0, r_div[0][23:16]},
+            8'h05  : {16'h0, r_thalf[0]},
+            8'h0A  : {23'h0, r_cfg[1]},
+            8'h0B  : {16'h0, r_div[1][15:0]},
+            8'h0C  : {24'h0, r_div[1][23:16]},
+            8'h0D  : {16'h0, r_thalf[1]},
+            8'h10  : {22'h0, r_vref},
+            default: 32'h0,
+        };
+    }
+    assign o_active = r_run;
+
+    var pwm_cnt: 'u logic<10>;
+    always_ff (i_uclk, i_urst) {
+        if_reset {
+            pwm_cnt = 0;
+            o_pwm   = 0;
+        } else {
+            pwm_cnt = pwm_cnt + 1;
+            o_pwm   = pwm_cnt <: r_vref;
+        }
+    }
+
+    // ---------------------------------------------------------------- to sclk (quasi-static)
+    const CW    : u32       = 1 + 8 + 2 + 2 * (9 + 24 + 16);
+    let   cfg_u : 'u logic<CW> = {
+        r_run, r_capid, r_groups, r_cfg[1], r_div[1], r_thalf[1], r_cfg[0], r_div[0], r_thalf[0]
+    };
+    var   cfg_s1: 's logic<CW>;
+    var   cfg_s : 's logic<CW>;
+    unsafe (cdc) {
+        always_ff (i_sclk, i_srst) {
+            if_reset {
+                cfg_s1 = 0;
+                cfg_s  = 0;
+            } else {
+                cfg_s1 = cfg_u;
+                cfg_s  = cfg_s1;
+            }
+        }
+    }
+    let s_run   : 's logic     = cfg_s[CW - 1];
+    let s_capid : 's logic<8>  = cfg_s[CW - 2:CW - 9];
+    let s_groups: 's logic<2>  = cfg_s[CW - 10:CW - 11];
+    let s_cfg_b : 's logic<9>  = cfg_s[97:89];
+    let s_div_b : 's logic<24> = cfg_s[88:65];
+    let s_thal_b: 's logic<16> = cfg_s[64:49];
+    let s_cfg_a : 's logic<9>  = cfg_s[48:40];
+    let s_div_a : 's logic<24> = cfg_s[39:16];
+    let s_thal_a: 's logic<16> = cfg_s[15:0];
+
+    // ---------------------------------------------------------------- capture control (sclk)
+    var run_d    : 's logic   ;
+    var start_pnd: 's logic   ;
+    var fe_idle  : 's logic<2>;
+    var pk_idle  : 's logic<2>;
+    var wempty   : 's logic<2>;
+    var fe_run   : 's logic<2>;
+    var fe_ovf   : 's logic<2>;
+    var ready_g  : 's logic<2>;
+    always_comb {
+        for g in 0..2 {
+            ready_g[g] = !s_groups[g] || (fe_idle[g] && pk_idle[g] && wempty[g]);
+        }
+    }
+    let go  : 's logic = start_pnd && s_run && &ready_g && |s_groups;
+    let stop: 's logic = run_d && !s_run;
+    always_ff (i_sclk, i_srst) {
+        if_reset {
+            run_d     = 0;
+            start_pnd = 0;
+        } else {
+            run_d = s_run;
+            if s_run && !run_d {
+                start_pnd = 1;
+            } else if go || !s_run {
+                start_pnd = 0;
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- groups (sclk -> uclk)
+    var f_tvalid: 's logic<2>              ;
+    var f_tdata : 's logic<64>          [2];
+    var f_tkeep : 's logic<8>           [2];
+    var f_tuser : 's logic<2>           [2];
+    var f_tready: 's logic<2>              ;
+    var p_tvalid: 's logic<2>              ;
+    var p_tdata : 's logic<64>          [2];
+    var p_tuser : 's logic<2>              ;
+    var p_tready: 's logic<2>              ;
+    var q_tvalid: 'u logic<2>              ;
+    var q_tdata : 'u logic<65>          [2];
+    var q_tready: 'u logic<2>              ;
+    var q_level : 'u logic<FIFO_AW + 2> [2];
+
+    inst u_fe_a: LaFront #(
+        PRBS17: 1'b0,
+    ) (
+        i_clk   : i_sclk                         ,
+        i_rst   : i_srst                         ,
+        i_raw   : i_raw_a                        ,
+        i_ck    : if s_cfg_a[8] ? i_ck_b : i_ck_a,
+        i_cfg   : s_cfg_a                        ,
+        i_div   : s_div_a                        ,
+        i_thalf : s_thal_a                       ,
+        i_capid : s_capid                        ,
+        i_go    : go && s_groups[0],
+        i_stop  : stop                           ,
+        o_tvalid: f_tvalid[0]                    ,
+        o_tdata : f_tdata[0]                     ,
+        o_tkeep : f_tkeep[0]                     ,
+        o_tuser : f_tuser[0]                     ,
+        i_tready: f_tready[0]                    ,
+        o_idle  : fe_idle[0]                     ,
+        o_run   : fe_run[0]                      ,
+        o_ovf   : fe_ovf[0]                      ,
+    );
+    inst u_fe_b: LaFront #(
+        PRBS17: 1'b1,
+    ) (
+        i_clk   : i_sclk                         ,
+        i_rst   : i_srst                         ,
+        i_raw   : i_raw_b                        ,
+        i_ck    : if s_cfg_b[8] ? i_ck_a : i_ck_b,
+        i_cfg   : s_cfg_b                        ,
+        i_div   : s_div_b                        ,
+        i_thalf : s_thal_b                       ,
+        i_capid : s_capid                        ,
+        i_go    : go && s_groups[1],
+        i_stop  : stop                           ,
+        o_tvalid: f_tvalid[1]                    ,
+        o_tdata : f_tdata[1]                     ,
+        o_tkeep : f_tkeep[1]                     ,
+        o_tuser : f_tuser[1]                     ,
+        i_tready: f_tready[1]                    ,
+        o_idle  : fe_idle[1]                     ,
+        o_run   : fe_run[1]                      ,
+        o_ovf   : fe_ovf[1]                      ,
+    );
+
+    for g in 0..2 :g_grp {
+        inst u_pk: LaPacker (
+            i_clk       : i_sclk     ,
+            i_rst       : i_srst     ,
+            i_tvalid    : f_tvalid[g],
+            i_tdata     : f_tdata[g] ,
+            i_tkeep     : f_tkeep[g] ,
+            i_tuser     : f_tuser[g] ,
+            o_tready    : f_tready[g],
+            o_tvalid    : p_tvalid[g],
+            o_tdata     : p_tdata[g] ,
+            o_tuser     : p_tuser[g] ,
+            i_tready    : p_tready[g],
+            i_fifo_empty: wempty[g]  ,
+            o_idle      : pk_idle[g] ,
+        );
+        inst u_fifo: LaAfifo #(
+            DW: 65     ,
+            AW: FIFO_AW,
+        ) (
+            i_wclk  : i_sclk                  ,
+            i_wrst  : i_srst                  ,
+            s_tvalid: p_tvalid[g]             ,
+            s_tdata : {p_tuser[g], p_tdata[g]},
+            s_tready: p_tready[g]             ,
+            o_wempty: wempty[g]               ,
+            i_rclk  : i_uclk                  ,
+            i_rrst  : i_urst                  ,
+            m_tvalid: q_tvalid[g]             ,
+            m_tdata : q_tdata[g]              ,
+            m_tready: q_tready[g]             ,
+            o_rlevel: q_level[g]              ,
+        );
+    }
+
+    var st_s1: 'u logic<4>;
+    unsafe (cdc) {
+        always_ff (i_uclk, i_urst) {
+            if_reset {
+                st_s1 = 0;
+                st_s  = 0;
+            } else {
+                st_s1 = {fe_ovf, fe_run};
+                st_s  = st_s1;
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- framer (uclk)
+    inst u_framer: LaFramer #(
+        BLK    : BLK        ,
+        TIMEOUT: TIMEOUT    ,
+        LW     : FIFO_AW + 2,
+    ) (
+        i_clk   : i_uclk                               ,
+        i_rst   : i_urst                               ,
+        i_tvalid: q_tvalid                             ,
+        i_tdata : '{q_tdata[0][63:0], q_tdata[1][63:0]},
+        i_tuser : {q_tdata[1][64], q_tdata[0][64]},
+        o_tready: q_tready                             ,
+        i_level : q_level                              ,
+        o_tvalid: o_tvalid                             ,
+        o_tdata : o_tdata                              ,
+        o_tlast : o_tlast                              ,
+        i_tready: i_tready                             ,
+    );
+}

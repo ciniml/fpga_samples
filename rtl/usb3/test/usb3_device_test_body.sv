@@ -27,6 +27,10 @@ module usb3_device_test_body #(parameter bit RUN = 0);
     logic [4:0] ltssm_state; logic in_u0, u0_entry, hot_reset, warm_reset, link_configured;
     logic dev_configured, dev_reset; logic [6:0] dev_address; logic [15:0] vendor_reg;
     logic [31:0] vendor_status = 32'hCAFE1234;
+    // register port: a small register file (32 x 16 bits), read back as {~addr, value}
+    logic reg_wr; logic [7:0] reg_addr; logic [15:0] reg_wdata; logic [15:0] regs[32];
+    wire [31:0] reg_rdata = {8'(~reg_addr), 8'h0, regs[reg_addr[4:0]]};
+    always @(posedge clk) if (reg_wr) regs[reg_addr[4:0]] <= reg_wdata;
     logic app_rx_valid, app_rx_ready = 1, app_tx_valid = 0, app_tx_ready; logic [7:0] app_rx_data, app_tx_data = 0;
     logic app_txw_valid = 0, app_txw_ready; logic [31:0] app_txw_data = 0;
     logic [7:0] q2_short[$];
@@ -52,6 +56,7 @@ module usb3_device_test_body #(parameter bit RUN = 0);
         .i_tx_hp_ready(tx_hp_ready), .i_dpp_rd(dpp_rd), .i_dpp_addr(dpp_addr), .o_dpp_data(dpp_rdata),
         .o_configured(dev_configured), .o_address(dev_address), .o_reset(dev_reset),
         .o_vendor_reg(vendor_reg), .i_vendor_status(vendor_status),
+        .o_reg_wr(reg_wr), .o_reg_addr(reg_addr), .o_reg_wdata(reg_wdata), .i_reg_rdata(reg_rdata),
         .o_rx_valid(app_rx_valid), .o_rx_data(app_rx_data), .i_rx_ready(app_rx_ready),
         .i_tx_valid(app_tx_valid), .i_tx_data(app_tx_data), .o_tx_ready(app_tx_ready),
         .i_txw_valid(app_txw_valid), .i_txw_data(app_txw_data), .o_txw_ready(app_txw_ready));
@@ -211,6 +216,15 @@ module usb3_device_test_body #(parameter bit RUN = 0);
         if (res != 0 || vendor_reg != 16'hBEEF) fail("vendor out");
         host.control_xfer(8'hC0, 8'h01, 0, 0, 4, d, res);
         if (res != 0 || d.size() != 4 || {d[3], d[2], d[1], d[0]} != 32'hCAFE1234) fail("vendor in");
+        // register port: write two registers, read them back
+        host.control_xfer(8'h40, 8'h03, 16'h1234, 16'h0005, 0, d, res);
+        if (res != 0) fail("reg write 5");
+        host.control_xfer(8'h40, 8'h03, 16'hABCD, 16'h0011, 0, d, res);
+        if (res != 0) fail("reg write 0x11");
+        host.control_xfer(8'hC0, 8'h04, 0, 16'h0005, 4, d, res);
+        if (res != 0 || d.size() != 4 || {d[3], d[2], d[1], d[0]} != 32'hFA001234) fail("reg read 5");
+        host.control_xfer(8'hC0, 8'h04, 0, 16'h0011, 4, d, res);
+        if (res != 0 || d.size() != 4 || {d[3], d[2], d[1], d[0]} != 32'hEE00ABCD) fail("reg read 0x11");
         host.control_xfer(8'hC0, 8'h20, 0, 7, 30, d, res);
         if (res != 0 || d.size() != 30 || d[0] != 10 || d[8] != 30) fail("ms os 2.0 set");
 
