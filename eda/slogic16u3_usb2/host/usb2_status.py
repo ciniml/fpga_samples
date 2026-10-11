@@ -62,7 +62,7 @@ def main():
     try:
         while True:
             s = read_status(j)
-            line = fmt({**s, 'sof': 0, 'frame': 0} if a.watch else s)   # watch: ignore the counters for "changed"
+            line = fmt({**s, 'sof': 0, 'frame': 0, 'f60': 0} if a.watch else s)   # watch: ignore the counters for "changed"
             if not a.watch:
                 print(fmt(s))
                 break

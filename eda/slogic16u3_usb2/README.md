@@ -39,4 +39,31 @@ python3 ../usb_device/host/usb_echo.py --bytes 2048 --rounds 100
   入力にして解決。
 - DX=K、DX=P とも FS で列挙 (1209:0001 "USB PHY Sample")、SOF 約 1000/s、受信エラー 0。
   `usb_echo.py` のバルクループバック 8 / 64 / 512 / 2048 B × 100 回すべて OK (往復 0.53 MB/s)。
-- 次: HS (dx 対を差動受信 + OSIDES32 で 4 相オーバーサンプル、送信は dx 対、終端は term 対)。
+
+## HS (`make ... HS=1`, rtl/usb/gowin/usb_phy_gowin_sl.v)
+
+```
+pll_60m 60 MHz -> pll_hs960 (VCO 960) -> 960 MHz: IDES16 x3 / OSER16 FCLK, CLKDIV /8 = pclk 120 MHz
+                                      -> 480 MHz: CLKDIV /8 = clk60 (UsbPhy + UsbDevice, HS_CAPABLE=1)
+```
+
+- dx 対 (K3/K2) は ELVDS_IOBUF (LVCMOS33D) 1 個: 送信 = OSER16、受信 = IOBUF の差動レシーバ -> IDES16。
+  OSIDES32 は入力バッファ直結しか受け付けない (CK3001) ので、Gowin SoftPHY と同じ IDES16 を
+  倍の FCLK 960 MHz (DDR 1.92 Gsps = 4 サンプル/ビット) で使い、OsCdr は SAMPLES 16 / OSR 4。
+  比較器 (H3/H2、M2/M1) も IDES16 (スケルチ、SE0、FS の line state)。
+- 送信は OSER16 で 1 ビット 4 回 (1.92 Gbps)。OSER16 にはトライステートが無いので OEN はファブリックの
+  pclk レジスタから、OSER16 の遅延 (prim_sim で取り込みから約 1.9 pclk) に合わせて 2 pclk 遅らせ前後 1 語ずつ
+  延長、駆動していない間はデータを最後のビットに保持。SE0 (FS の EOP) は dx 対を切って term 対を Low。
+- pclk と clk60 は別の FCLK (960 / 480) の CLKDIV なので、起動ごとに約 1 ns (960 MHz の 1 周期) ずれることがある。
+  usb_phy_gowin_p.v 流の「pclk のトグルを clk60 で取る」位相検出 (ph) は同じエッジのホールド競合になり、
+  8 回中 2 回のロードで ph が反転して HS 受信が全滅した (チャープは通るが descriptor read -71)。
+  clk60 のトグルを pclk の立ち下がりで取る方式に変えて 10/10 で列挙。
+- タイミング: os_pclk Fmax 130.8 MHz (120)、clk60 63.1 MHz (60)。
+
+### 実機記録 (2026-10-11、Linux xhci、DX=K)
+
+- 480M で列挙 (1209:0001、bcdUSB 2.10、バルク 512 B)、SOF 約 8000/s、ロード 10 回連続で成功。
+- `usb_echo.py` 8 / 64 / 512 / 1024 / 2048 B × 1000 回、2048 B × 10000 回すべて一致 (往復 11 MB/s)。
+  その間の PHY 受信エラーは 5 (プロトコルの再送で回復)。
+- 3584 B × 1000 回も一致 (往復 14 MB/s)。4096 B を一度に書くと、ループバック FIFO (4096 B、空きが 2 パケット以上の
+  ときだけ OUT を受ける) に入りきらず、読み出す前に書き込みがタイムアウトする (試験方法の制限で、PHY とは無関係)。

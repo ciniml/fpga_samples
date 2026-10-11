@@ -68,11 +68,25 @@ module top (
     // ---------------------------------------------------------------- 60 MHz
     wire pll_lock;
     wire clk60 /* synthesis syn_keep=1 */;
+`ifdef USB_HS
+    // HS: pll_60m -> pll_hs960 (VCO 960) -> 960 MHz FCLK (CLKDIV /8 os_pclk 120 MHz) + 480 MHz (CLKDIV /8 clk60, in the PHY)
+    wire pll_60m /* synthesis syn_keep=1 */;
+    pll_60m u_pll (.lock(pll_lock), .clkout0(pll_60m), .clkout1(), .clkout2(), .clkout3(),
+                   .clkin(sd_txclk), .reset(pll_rst), .psdir(1'b0), .pspulse(1'b0));
+    wire os_lock, os_f960 /* synthesis syn_keep=1 */, os_f480 /* synthesis syn_keep=1 */;
+    wire os_pclk /* synthesis syn_keep=1 */;
+    wire rst60;
+    pll_hs960 u_pll_os(.lock(os_lock), .clkout0(os_f960), .clkout1(os_f480), .clkin(pll_60m));
+    reg [3:0] rst_sr = 4'hf;
+    always @(posedge clk60) rst_sr <= {rst_sr[2:0], ~pll_lock | ~os_lock | rst60};
+    wire rst = rst_sr[3];
+`else
     pll_60m u_pll (.lock(pll_lock), .clkout0(clk60), .clkout1(), .clkout2(), .clkout3(),
                    .clkin(sd_txclk), .reset(pll_rst), .psdir(1'b0), .pspulse(1'b0));
     reg [3:0] rst_sr = 4'hf;
     always @(posedge clk60) rst_sr <= {rst_sr[2:0], ~pll_lock};
     wire rst = rst_sr[3];
+`endif
 
     // ---------------------------------------------------------------- USB device core + PHY (full speed)
     wire [7:0] utmi_data_out, utmi_data_in;
@@ -85,7 +99,12 @@ module top (
     reg  [15:0] sof_cnt = 16'd0;
     reg  [7:0]  rst_cnt = 8'd0, err_cnt = 8'd0;
 
-    UsbDevice #(.HS_CAPABLE(1'b0), .CLK_PER_US(60)) u_dev (
+`ifdef USB_HS
+    localparam HS_CAPABLE = 1'b1;
+`else
+    localparam HS_CAPABLE = 1'b0;
+`endif
+    UsbDevice #(.HS_CAPABLE(HS_CAPABLE), .CLK_PER_US(60)) u_dev (
         .i_clk(clk60), .i_rst(rst),
         .o_utmi_data_out(utmi_data_out), .o_utmi_txvalid(utmi_txvalid), .i_utmi_txready(utmi_txready),
         .i_utmi_data_in(utmi_data_in), .i_utmi_rxactive(utmi_rxactive), .i_utmi_rxvalid(utmi_rxvalid),
@@ -98,6 +117,28 @@ module top (
         .o_rx_valid(), .o_rx_data(), .i_rx_ready(1'b1),
         .i_tx_valid(1'b0), .i_tx_data(8'd0), .o_tx_ready());
 
+`ifdef USB_HS
+    wire [1:0] mon_line;
+    wire       phy_tx_oe, phy_pullup;
+    usb_phy_gowin_sl u_phy(
+        .clk_ref_i(osc), .rstn_ref_i(~pll_rst), .pll_lock_i(os_lock & pll_lock),
+        .fclk_i(os_f960), .fclk480_i(os_f480), .pclk_o(os_pclk), .clk60_o(clk60), .rst60_o(rst60), .rst_i(rst),
+        .i_scan_freeze(1'b0), .i_scan_ofs(1'b0), .i_scan_class(2'd0), .i_hist_run(1'b0), .o_hist(),
+        .o_samples(), .o_cmp_dbg(), .o_tx_oe(phy_tx_oe), .o_mon_line(mon_line),
+        .utmi_data_out_i(utmi_data_out), .utmi_txvalid_i(utmi_txvalid), .utmi_txready_o(utmi_txready),
+        .utmi_data_in_o(utmi_data_in), .utmi_rxactive_o(utmi_rxactive), .utmi_rxvalid_o(utmi_rxvalid),
+        .utmi_rxerror_o(utmi_rxerror), .utmi_linestate_o(utmi_linestate),
+        .utmi_opmode_i(utmi_opmode), .utmi_xcvrselect_i(utmi_xcvrselect), .utmi_termselect_i(utmi_termselect),
+        .usb_dxp_io(usb_dp), .usb_dxn_io(usb_dn),
+        .usb_rxdp_p_i(usb_cmp_dp), .usb_rxdp_n_i(usb_cmp_dp_n),
+        .usb_rxdn_p_i(usb_cmp_dn), .usb_rxdn_n_i(usb_cmp_dn_n),
+        .usb_pullup_en_o(phy_pullup), .usb_term_dp_o(usb_term_dp), .usb_term_dn_o(usb_term_dn));
+    assign usb_pullup = phy_pullup & ~rst;
+    wire tx_oe = phy_tx_oe;
+    // status view of the pads: the comparators (one sample per clk60), no dx / term readback
+    wire [1:0] dp_s = {2{mon_line[0]}}, dn_s = {2{mon_line[1]}}, tdp_s = 2'b00, tdn_s = 2'b00;
+    wire [1:0] cdp_s = {2{mon_line[0]}}, cdn_s = {2{mon_line[1]}};
+`else
     // pads: one sample per 60 MHz clock (two-flop synchroniser), replicated over UsbPhy's 8 sample slots
     reg [1:0] dp_s = 2'b00, dn_s = 2'b00;
     // the comparator pairs must be declared: as unused pins they get the default weak pull-up, which
@@ -132,6 +173,8 @@ module top (
     assign usb_term_dp = 1'bz;
     assign usb_term_dn = 1'bz;
     assign usb_pullup = pullup_dp_en & ~rst;
+
+`endif
 
     // ---------------------------------------------------------------- status
     reg bus_reset_seen = 1'b0, rxact_seen = 1'b0, txoe_seen = 1'b0;
