@@ -97,8 +97,9 @@ module top (
     wire tx_hp_valid, tx_dpp, tx_hp_ready, tx_hp_idle; wire [95:0] tx_hp_hdr; wire [10:0] tx_dpp_len; wire [11:0] tx_dpp_base;
     wire dpp_rd; wire [11:0] dpp_addr; wire [31:0] dpp_rdata;
     wire [4:0] ltssm_state; wire in_u0, u0_entry, hot_reset, warm_reset, link_configured;
-    wire dev_configured, dev_reset; wire [6:0] dev_address; wire [15:0] vendor_reg;
+    wire dev_configured, dev_reset, dbg_event, dbg_strobe; wire [31:0] dbg_state; wire [6:0] dev_address; wire [15:0] vendor_reg;
     wire ep_rx_valid, ep_rx_ready, ep_tx_valid, ep_tx_ready; wire [7:0] ep_rx_data, ep_tx_data;
+    wire epw_valid, epw_ready; wire [31:0] epw_data;
 
     Usb3Top u_usb3 (.i_clk(pclk), .i_rst(prst),
         .i_rx_data(rx_data), .i_rx_k(rx_k), .i_rx_valid(rx_valid), .i_rx_status(rx_status), .i_rx_elecidle(rx_elecidle),
@@ -119,40 +120,44 @@ module top (
         .i_dpp_start(dpp_start), .i_dpp_valid(dpp_valid), .i_dpp_data(dpp_data), .i_dpp_be(dpp_be), .i_dpp_end(dpp_end), .i_dpp_err(dpp_err),
         .o_tx_hp_valid(tx_hp_valid), .o_tx_hp_hdr(tx_hp_hdr), .o_tx_dpp(tx_dpp), .o_tx_dpp_len(tx_dpp_len), .o_tx_dpp_base(tx_dpp_base),
         .i_tx_hp_ready(tx_hp_ready), .i_dpp_rd(dpp_rd), .i_dpp_addr(dpp_addr), .o_dpp_data(dpp_rdata),
-        .o_configured(dev_configured), .o_address(dev_address), .o_reset(dev_reset),
+        .o_configured(dev_configured), .o_address(dev_address), .o_reset(dev_reset), .o_dbg_event(dbg_event), .o_dbg_strobe(dbg_strobe), .o_dbg_state(dbg_state),
         .o_vendor_reg(vendor_reg), .i_vendor_status({8'h55, 3'b0, ltssm_state, 7'b0, link_configured, 8'h03}),
         .o_rx_valid(ep_rx_valid), .o_rx_data(ep_rx_data), .i_rx_ready(ep_rx_ready),
-        .i_tx_valid(ep_tx_valid), .i_tx_data(ep_tx_data), .o_tx_ready(ep_tx_ready));
-    // EP1: byte loopback, or (vendor register bit 0, vendor request 0x02 wValue) a PRBS15 source on
-    // EP1 IN for throughput / integrity tests (8 bits per pclk from x^15 + x^14 + 1, first bit in
-    // the byte LSB; restarts from the all-ones state when the mode is switched on; EP1 OUT is then
-    // drained and discarded). host/usb3_prbs.py checks the stream.
-    function [14:0] prbs15_8(input [14:0] s);   // 8 serial steps
+        .i_tx_valid(ep_tx_valid), .i_tx_data(ep_tx_data), .o_tx_ready(ep_tx_ready),
+        .i_txw_valid(epw_valid), .i_txw_data(epw_data), .o_txw_ready(epw_ready));
+    // EP1: byte loopback, or (vendor register = 0x0001, vendor request 0x02 wValue) a PRBS15 source on
+    // EP1 IN for throughput / integrity tests: x^15 + x^14 + 1, 32 bits per pclk into the 32-bit entry
+    // of Usb3Device (byte 0 first, first bit in bit 0 of each byte; restarts from the all-ones state
+    // when the mode is switched on; EP1 OUT is then drained and discarded). host/usb3_prbs.py checks it.
+    function [14:0] prbs15_adv32(input [14:0] s);
         integer k; reg [14:0] t;
         begin
             t = s;
-            for (k = 0; k < 8; k = k + 1) t = {t[13:0], t[14] ^ t[13]};
-            prbs15_8 = t;
+            for (k = 0; k < 32; k = k + 1) t = {t[13:0], t[14] ^ t[13]};
+            prbs15_adv32 = t;
         end
     endfunction
-    function [7:0] prbs15_byte(input [14:0] s);  // the 8 bits those steps produce, first in bit 0
-        integer k; reg [14:0] t; reg [7:0] b;
+    function [31:0] prbs15_word(input [14:0] s);   // the 32 bits those steps produce, first in bit 0
+        integer k; reg [14:0] t; reg [31:0] b;
         begin
             t = s;
-            for (k = 0; k < 8; k = k + 1) begin b[k] = t[14] ^ t[13]; t = {t[13:0], t[14] ^ t[13]}; end
-            prbs15_byte = b;
+            for (k = 0; k < 32; k = k + 1) begin b[k] = t[14] ^ t[13]; t = {t[13:0], t[14] ^ t[13]}; end
+            prbs15_word = b;
         end
     endfunction
-    wire       prbs_mode = vendor_reg[0];
+    wire       prbs_mode = vendor_reg == 16'h0001;   // (exactly 1: usb_echo.py writes 0x5AA5 as a register test)
     reg        prbs_mode_d = 1'b0;
     reg [14:0] prbs_s = 15'h7FFF;
+    reg [31:0] prbs_w = 32'd0;            // registered word (keeps the 32-step XOR network off the RAM write)
     always @(posedge pclk) begin
         prbs_mode_d <= prbs_mode;
-        if (prbs_mode && !prbs_mode_d) prbs_s <= 15'h7FFF;
-        else if (prbs_mode && ep_tx_ready) prbs_s <= prbs15_8(prbs_s);
+        if (prbs_mode && !prbs_mode_d) begin prbs_s <= 15'h7FFF; prbs_w <= prbs15_word(15'h7FFF); end
+        else if (prbs_mode && epw_ready) begin prbs_s <= prbs15_adv32(prbs_s); prbs_w <= prbs15_word(prbs15_adv32(prbs_s)); end
     end
-    assign ep_tx_valid = prbs_mode ? prbs_mode_d : ep_rx_valid;   // (not in the clock that restarts it)
-    assign ep_tx_data  = prbs_mode ? prbs15_byte(prbs_s) : ep_rx_data;
+    assign epw_valid   = prbs_mode && prbs_mode_d;   // (not in the clock that restarts it)
+    assign epw_data    = prbs_w;
+    assign ep_tx_valid = prbs_mode ? 1'b0 : ep_rx_valid;
+    assign ep_tx_data  = ep_rx_data;
     assign ep_rx_ready = prbs_mode ? 1'b1 : ep_tx_ready;
 
     // ---------------------------------------------------------------- statistics (pclk)
@@ -237,7 +242,8 @@ module top (
     //   0: the header after the first data packet header in U0 (a SETUP's next stage), 768 after it
     //   1: U0 -> Recovery.Active, 256 after it (768 words of U0 traffic before the link dropped)
     //   2: a data packet payload with a bad CRC-32 / framing (Usb3Top o_dpp_err), 256 after it
-    //   3: U0 -> Recovery.Active, 1000 after it (the recovery itself)
+    //   3: Usb3Device o_dbg_event (an EP1 IN ACK ignored / with Retry, a response lost), 256 after
+    //      it; the header log then runs as a ring of EP1 IN headers only and stops 64 entries after it
     wire        w2; wire [30:0] w2_data;
     reg  [1:0]  tmode = 2'd1;
     reg         rearm_t = 1'b0;            // osc toggle -> pclk
@@ -255,8 +261,8 @@ module top (
     end
     wire t_ev = tmode_p == 2'd0 ? (rx_hp_valid && dph_seen) :
                 tmode_p == 2'd2 ? dpp_err :
-                                  (st_q == 5'd11 && ltssm_state == 5'd14);
-    wire [9:0] t_post = tmode_p == 2'd0 ? 10'd767 : tmode_p == 2'd3 ? 10'd1000 : 10'd255;
+                                  dbg_event;
+    wire [9:0] t_post = tmode_p == 2'd0 ? 10'd767 : 10'd255;
     reg  [75:0] tbuf [0:1023];
     reg  [9:0]  twp = 10'd0, tpost = 10'd0;
     reg         ttrig = 1'b0, tfull = 1'b0;
@@ -275,14 +281,29 @@ module top (
     reg  [120:0] hlog [0:127];
     reg  [7:0]   hwp = 8'd0;
     reg  [23:0]  hts = 24'd0;
-    reg          hrun = 1'b0;
+    reg          hrun = 1'b0, hwrap = 1'b0, htrig = 1'b0, hfrz = 1'b0;
+    reg  [6:0]   hpost = 7'd0;
+    wire         hring = tmode_p == 2'd3;     // ring mode: frozen 64 entries after the trigger
+    // ITPs (every 125 us) are not logged; in ring mode only EP1 IN traffic (DW1 direction 1, endpoint 1)
+    wire         hin_rx = rx_hp_hdr[39] && rx_hp_hdr[43:40] == 4'd1;
+    wire         hin_tx = tx_hp_hdr[39] && tx_hp_hdr[43:40] == 4'd1;
+    wire         hev_rx = rx_hp_valid && rx_hp_hdr[4:0] != 5'h0C && (!hring || hin_rx);
+    wire         hev_tx = tx_hp_valid && tx_hp_ready && (!hring || hin_tx);
     always @(posedge pclk) begin
         hts <= hts + 24'd1;
         if (in_u0) hrun <= 1'b1;
-        if (rearm) begin hwp <= 8'd0; hrun <= in_u0; end
-        else if (hrun && !hwp[7]) begin
-            if (rx_hp_valid && rx_hp_hdr[4:0] != 5'h0C) begin hlog[hwp[6:0]] <= {1'b0, hts, rx_hp_hdr}; hwp <= hwp + 8'd1; end   // ITPs (every 125 us) not logged
-            else if (tx_hp_valid && tx_hp_ready) begin hlog[hwp[6:0]] <= {1'b1, hts, tx_hp_hdr}; hwp <= hwp + 8'd1; end
+        if (rearm) begin hwp <= 8'd0; hrun <= in_u0; hwrap <= 1'b0; htrig <= 1'b0; hfrz <= 1'b0; hpost <= 7'd0; end
+        else begin
+            if (hring && t_ev) htrig <= 1'b1;
+            // ring mode also logs Usb3Device's EP1 IN state at every ACK it handles / packet it issues:
+            // an entry of type 5'h1F with the state in DW1
+            if (hrun && !hfrz && (hring || !hwp[7]) && (hev_rx || hev_tx || (hring && dbg_strobe))) begin
+                hlog[hwp[6:0]] <= hev_rx ? {1'b0, hts, rx_hp_hdr} : (hring && dbg_strobe) ? {1'b1, hts, 32'd0, dbg_state, 32'h1F} :
+                                  {1'b1, hts, tx_hp_hdr};
+                hwp <= {1'b0, hwp[6:0] + 7'd1} | {hring ? 1'b0 : hwp[6:0] == 7'd127, 7'd0};
+                if (hring && hwp[6:0] == 7'd127) hwrap <= 1'b1;
+                if (hring && htrig) begin hpost <= hpost + 7'd1; if (hpost == 7'd63) hfrz <= 1'b1; end
+            end
         end
     end
     reg  [10:0] tidx = 11'd0;          // [10] = 1: header log entry tidx[6:0], else trace entry
@@ -294,8 +315,9 @@ module top (
         tq_idx <= tidx;
     end
     // ER2 (192 bits): [15:0] magic 0x5B33, [16] triggered, [17] full, [27:18] trace write pointer,
-    // [38:28] index shown, [159:39] entry, [167:160] header log count (128 = full), [169:168] trigger mode
-    wire [191:0] cap2 = {22'd0, tmode_p, hwp, tq, tq_idx, twp, tfull, ttrig, 16'h5B33};
+    // [38:28] index shown, [159:39] entry, [167:160] header log write pointer / count (128 = full),
+    // [169:168] trigger mode, [170] header log wrapped (ring mode: oldest = pointer), [171] header log frozen
+    wire [191:0] cap2 = {20'd0, hfrz, hwrap, tmode_p, hwp, tq, tq_idx, twp, tfull, ttrig, 16'h5B33};
 
     jtag_status #(.L(432), .L2(192)) u_jtag (.tck_pad_i(tck_pad_i), .tms_pad_i(tms_pad_i), .tdi_pad_i(tdi_pad_i),
         .tdo_pad_o(tdo_pad_o), .osc(osc), .cap(cap), .cap2(cap2), .o_w2(w2), .o_w2_data(w2_data));

@@ -8,12 +8,18 @@
  * @brief Protocol and device layers of the SuperSpeed sample device
  *        (USB 3.2 ch. 8 / 9) on top of Usb3Top.
  *
- * Endpoints: EP0 control (512 bytes), EP1 OUT / EP1 IN bulk (1024 bytes,
- * bMaxBurst 0, one data packet outstanding). EP1 is exposed as a byte
+ * Endpoints: EP0 control (512 bytes), EP1 OUT bulk (1024 bytes, bMaxBurst 0,
+ * one data packet outstanding), EP1 IN bulk (1024 bytes, bMaxBurst
+ * IN_BUFS - 1: a ring of IN_BUFS packet buffers; data packets go out back to
+ * back up to the NumP the host's ACK allows, are kept until acknowledged and
+ * resent from the requested SeqNum on a retry). EP1 is exposed as a byte
  * stream with the same ports as the USB 2.0 UsbDevice (EP1_STREAM): bytes
  * written to i_tx_* are packed into 1024-byte packets and sent when the
  * host asks; a partial packet (or a ZLP after a full one) is sent after
  * STREAM_FLUSH_US of idle. Bytes received on EP1 OUT come out of o_rx_*.
+ * i_txw_* is a second, 32-bit entry to the same EP1 IN stream (4 bytes per
+ * clock, byte 0 in [7:0]; accepted only at a word boundary of the packet
+ * being filled): use one of the two at a time (the byte port wins a clash).
  *
  * Standard requests: GET_STATUS, CLEAR/SET_FEATURE (endpoint halt, U1/U2
  * enable accepted and ignored), SET_ADDRESS, GET_DESCRIPTOR (device,
@@ -22,9 +28,8 @@
  * (o_vendor_reg = wValue), MS_VENDOR_CODE IN wIndex 7 (MS OS 2.0 set).
  *
  * Data for outgoing DPPs is read by the framer through o_dpp_rd/addr:
- * words below IN_BUF_WORDS*2 come from the EP1 IN packet buffers, 0x300
- * from the small control response register, 0x800.. from the descriptor
- * ROM.
+ * words 0x000..0x7FF come from the EP1 IN packet buffers, 0xC00 from the
+ * small control response register, 0x800.. from the descriptor ROM.
  */
 module Usb3Device #(
     param CLK_PER_US     : u32       = 125     ,
@@ -58,9 +63,12 @@ module Usb3Device #(
     o_dpp_data   : output logic<32>,
 
     // ---- status ----
-    o_configured: output logic   ,
-    o_address   : output logic<7>,
-    o_reset     : output logic   , // pulse: Hot/Warm Reset
+    o_configured: output logic    ,
+    o_address   : output logic<7> ,
+    o_reset     : output logic    , // pulse: Hot/Warm Reset
+    o_dbg_event : output logic    , // pulse (debug): an EP1 IN ACK ignored or with Retry, or a response lost
+    o_dbg_strobe: output logic    , // pulse (debug): an EP1 IN ACK handled (1 clock later) or a data packet issued
+    o_dbg_state : output logic<32>, // (debug) {flags, in_ready, in_ack, in_nsent, in_limit, seq_in} after it
 
     // ---- vendor request scratch ----
     o_vendor_reg   : output logic<16>,
@@ -73,19 +81,22 @@ module Usb3Device #(
     i_tx_valid: input  logic   ,
     i_tx_data : input  logic<8>,
     o_tx_ready: output logic   ,
+    // ---- EP1 IN word stream (4 bytes per clock) ----
+    i_txw_valid: input  logic    ,
+    i_txw_data : input  logic<32>,
+    o_txw_ready: output logic    ,
 ) {
     import usb3_pkg::*;
     import usb3_desc_pkg::*;
 
-    const IN_BUF_WORDS: u32 = 256; // 1024 bytes per packet buffer, two buffers
-    const OUT_BUF_BASE: u32 = 512; // word address of the EP1 OUT buffer (RAM is 768 words)
-    const SMALL_ADDR  : u32 = 12'h300;
+    const IN_BUFS   : u32 = 8; // EP1 IN packet buffers (1024 bytes each; bMaxBurst = IN_BUFS - 1 in the ROM)
+    const SMALL_ADDR: u32 = 12'hC00;
 
     // ---------------------------------------------------------------- memories
-    var in_ram  : logic<32> [512]; // two EP1 IN packet buffers
-    var out_ram : logic<32> [256]; // EP1 OUT packet buffer
-    var rom_q   : logic<32>      ;
-    var rom_addr: logic<8>       ;
+    var in_ram  : logic<32> [IN_BUFS * 256]; // EP1 IN packet buffers
+    var out_ram : logic<32> [256]          ; // EP1 OUT packet buffer
+    var rom_q   : logic<32>                ;
+    var rom_addr: logic<8>                 ;
 
     inst u_rom: Usb3DescriptorRom #(
         VENDOR_ID : VENDOR_ID ,
@@ -99,12 +110,12 @@ module Usb3Device #(
     var small_r: logic<32>;
     always_ff {
         if i_dpp_rd {
-            if i_dpp_addr[11] {
-                o_dpp_data = rom_q;
-            } else if i_dpp_addr[9:8] == 2'b11 {
+            if i_dpp_addr[11:10] == 2'b11 {
                 o_dpp_data = small_r;
+            } else if i_dpp_addr[11] {
+                o_dpp_data = rom_q;
             } else {
-                o_dpp_data = in_ram[i_dpp_addr[8:0]];
+                o_dpp_data = in_ram[i_dpp_addr[10:0]];
             }
         }
     }
@@ -168,6 +179,7 @@ module Usb3Device #(
     var hp_ept  : logic<4> ;
     var hp_nump : logic<5> ;
     var hp_seq  : logic<5> ; // TP sequence number
+    var hp_acked: logic<5> ; // hp_seq - seq_in
     var dp_seq  : logic<5> ; // DP sequence number
     var dp_setup: logic    ;
     var dp_len  : logic<16>;
@@ -188,6 +200,7 @@ module Usb3Device #(
             hp_ept   = 0;
             hp_nump  = 0;
             hp_seq   = 0;
+            hp_acked = 0;
             dp_seq   = 0;
             dp_setup = 0;
             dp_len   = 0;
@@ -207,6 +220,9 @@ module Usb3Device #(
             hp_ept   = q_hp_hdr[43:40];
             hp_nump  = q_hp_hdr[52:48];
             hp_seq   = q_hp_hdr[57:53];
+            // packets an EP1 IN ACK acknowledges, precomputed here (off the ACK handling path;
+            // headers are >= 5 clocks apart, so seq_in cannot change in between)
+            hp_acked = q_hp_hdr[57:53] - seq_in;
             dp_seq   = q_hp_hdr[36:32];
             dp_setup = q_hp_hdr[47];
             dp_len   = q_hp_hdr[63:48];
@@ -253,7 +269,14 @@ module Usb3Device #(
     const SUB_PING_RESP: logic<4> = 4'b1000;
 
     // ---------------------------------------------------------------- transmit request queue (one at a time)
-    var tx_valid: logic    ;
+    var tx_valid: logic        ;
+    var rq      : logic<69> [2]; // responses waiting for the link slot (see the hand-off at the end)
+    var rq_n    : logic<2>     ;
+    var dbg_ev  : logic        ;
+    var dbg_nseq: logic<5>     ; // (debug) SeqNum the next new EP1 IN data packet should carry
+    assign o_dbg_event = dbg_ev;
+    var dbg_stb: logic;
+    assign o_dbg_strobe = dbg_stb;
     var tx_is_dp: logic    ;
     var tx_sub  : logic<4> ;
     var tx_dir  : logic    ;
@@ -384,20 +407,31 @@ module Usb3Device #(
     }
 
     // ---------------------------------------------------------------- EP1 IN packet buffers
-    var in_wptr    : logic<11>    ; // bytes in the buffer being filled (0..1024)
-    var in_fill    : logic        ; // buffer index being filled
-    var in_word    : logic<32>    ; // byte accumulator
-    var in_ready   : logic<2>     ; // packet ready per buffer
-    var in_len     : logic<11> [2];
-    var in_send    : logic        ; // buffer index to send next
-    var in_flow    : logic        ; // NRDY answered: ERDY when a packet becomes ready
-    var in_active  : logic        ; // DP handed to the link, waiting for the host ACK
-    var in_zlp_pend: logic        ; // last closed packet was full: ZLP after idle
-    var idle_cnt   : logic<32>    ;
-    var flush      : logic        ;
-    var tx_we      : logic        ;
-    assign tx_we      = i_tx_valid && o_tx_ready;
-    assign o_tx_ready = configured && !in_ready[in_fill] && in_wptr != 1024;
+    var in_wptr : logic<11>               ; // bytes in the buffer being filled (0..1024)
+    var in_fill : logic<3>                ; // buffer index being filled
+    var in_word : logic<32>               ; // byte accumulator
+    var in_ready: logic<IN_BUFS>          ; // packet ready per buffer (until acknowledged)
+    var in_len  : logic<11>      [IN_BUFS];
+    var in_ack  : logic<3>                ; // oldest unacknowledged buffer (SeqNum seq_in)
+    var in_nsent: logic<4>                ; // buffers from in_ack on already sent, not acknowledged
+    var in_limit: logic<5>                ; // packets the host accepts from in_ack on (NumP of its last ACK)
+    var in_stop : logic                   ; // a short packet / ZLP in flight: hold further packets until it is acknowledged
+    var in_acked: logic<5>                ; // packets a received EP1 IN ACK acknowledges (its SeqNum - seq_in)
+    assign in_acked = hp_acked;
+    var in_flow    : logic    ; // NRDY answered: ERDY when a packet becomes ready
+    var in_zlp_pend: logic    ; // last closed packet was full: ZLP after idle
+    var idle_cnt   : logic<32>;
+    var flush      : logic    ;
+    var tx_we      : logic    ;
+    var tx_ww      : logic    ; // a word from i_txw_*
+    var tx_any     : logic    ;
+    assign tx_we       = i_tx_valid && o_tx_ready;
+    assign o_txw_ready = o_tx_ready && in_wptr[1:0] == 0;
+    assign tx_ww       = i_txw_valid && o_txw_ready && !i_tx_valid;
+    assign tx_any      = tx_we || tx_ww;
+    assign o_tx_ready  = configured && !in_ready[in_fill] && in_wptr != 1024;
+
+    assign o_dbg_state = {3'b0, in_flow, in_stop, configured, in_ready, in_ack, in_nsent, in_limit, seq_in};
 
     var in_close: logic; // close the packet being filled
     assign in_close = in_wptr == 1024 || (flush && in_wptr != 0);
@@ -426,8 +460,13 @@ module Usb3Device #(
             vendor_reg    = 0;
             reset_evt     = 0;
             seq_in        = 0;
+            dbg_nseq      = 0;
             seq_out       = 0;
             tx_valid      = 0;
+            dbg_ev        = 0;
+            dbg_stb       = 0;
+            rq_n          = 0;
+            rq            = '{0, 0};
             tx_is_dp      = 0;
             tx_sub        = 0;
             tx_dir        = 0;
@@ -469,9 +508,11 @@ module Usb3Device #(
             in_fill       = 0;
             in_word       = 0;
             in_ready      = 0;
-            in_send       = 0;
+            in_ack        = 0;
             in_flow       = 0;
-            in_active     = 0;
+            in_nsent      = 0;
+            in_limit      = 0;
+            in_stop       = 0;
             in_zlp_pend   = 0;
             idle_cnt      = 0;
             flush         = 0;
@@ -484,6 +525,7 @@ module Usb3Device #(
             out_qidx      = 0;
         } else {
             var send     : logic    ; // request a transmission this clock
+            var in_acknow: logic    ; // an EP1 IN ACK is handled this clock (no data packet issued then)
             var s_is_dp  : logic    ;
             var s_sub    : logic<4> ;
             var s_dir    : logic    ;
@@ -497,6 +539,7 @@ module Usb3Device #(
             var s_len    : logic<11>;
             var s_base   : logic<12>;
             send      = 0;
+            in_acknow = 0;
             s_is_dp   = 0;
             s_sub     = 0;
             s_dir     = 0;
@@ -511,6 +554,8 @@ module Usb3Device #(
             s_base    = 0;
             reset_evt = 0;
             flush     = 0;
+            dbg_ev    = 0;
+            dbg_stb   = 0;
 
             if tx_take {
                 tx_valid = 0;
@@ -524,6 +569,7 @@ module Usb3Device #(
                 halt_in      = 0;
                 halt_out     = 0;
                 seq_in       = 0;
+                dbg_nseq     = 0;
                 seq_out      = 0;
                 ctrl         = Ctrl::Idle;
                 ctrl_sending = 0;
@@ -533,25 +579,36 @@ module Usb3Device #(
                 in_wptr      = 0;
                 in_ready     = 0;
                 in_fill      = 0;
-                in_send      = 0;
+                in_ack       = 0;
                 in_flow      = 0;
-                in_active    = 0;
+                in_nsent     = 0;
+                in_limit     = 0;
+                in_stop      = 0;
                 in_zlp_pend  = 0;
                 out_full     = 0;
                 out_flow     = 0;
                 out_qv       = 0;
                 tx_valid     = 0;
+                rq_n         = 0;
                 reset_evt    = 1;
             }
 
             // ---- EP1 IN byte packing and packet closing
-            if tx_we {
+            // (flush is cleared by new data and by the close it causes: once set it used to stay
+            // set, so every later one-clock gap in the stream closed a short packet)
+            if tx_ww {
+                in_ram[{in_fill, in_wptr[9:2]}] = i_txw_data;
+                in_wptr                         = in_wptr + 4;
+                idle_cnt                        = 0;
+                flush                           = 0;
+            } else if tx_we {
                 in_word[in_wptr[1:0] * 8+:8] = i_tx_data;
                 if in_wptr[1:0] == 3 {
                     in_ram[{in_fill, in_wptr[9:2]}] = {i_tx_data, in_word[23:0]};
                 }
                 in_wptr  = in_wptr + 1;
                 idle_cnt = 0;
+                flush    = 0;
             } else if configured && (in_wptr != 0 || in_zlp_pend) {
                 if idle_cnt == STREAM_FLUSH_US * CLK_PER_US {
                     flush = 1;
@@ -561,7 +618,7 @@ module Usb3Device #(
             } else {
                 idle_cnt = 0;
             }
-            if !tx_we && in_close && !in_ready[in_fill] {
+            if !tx_any && in_close && !in_ready[in_fill] {
                 if in_wptr[1:0] != 0 {
                     in_ram[{in_fill, in_wptr[9:2]}] = in_word; // partial last word
                 }
@@ -569,13 +626,15 @@ module Usb3Device #(
                 in_ready[in_fill] = 1;
                 in_zlp_pend       = in_wptr == 1024;
                 in_wptr           = 0;
-                in_fill           = !in_fill;
+                in_fill           = in_fill + 1;
                 idle_cnt          = 0;
-            } else if !tx_we && flush && in_zlp_pend && in_wptr == 0 && !in_ready[in_fill] {
+                flush             = flush && in_wptr == 1024; // a full packet closed by flush leaves the ZLP to send
+            } else if !tx_any && flush && in_zlp_pend && in_wptr == 0 && !in_ready[in_fill] {
                 in_len[in_fill]   = 0; // ZLP terminates the transfer
                 in_ready[in_fill] = 1;
                 in_zlp_pend       = 0;
-                in_fill           = !in_fill;
+                in_fill           = in_fill + 1;
+                flush             = 0;
             }
 
             // ---- EP1 OUT byte drain
@@ -681,7 +740,6 @@ module Usb3Device #(
                         dpp_target   = 1;
                         ctrl         = Ctrl::Idle;
                         ctrl_sending = 0;
-                        in_active    = 0;
                     } else if hp_ept == 0 && !hp_dir && ctrl == Ctrl::DataOut && dp_seq == ctrl_seq {
                         dpp_target = 3;
                     } else if hp_ept == 1 && !hp_dir && configured {
@@ -773,24 +831,33 @@ module Usb3Device #(
                                     s_nump  = 0;
                                     s_seq   = 0;
                                     s_rty   = 0;
-                                } else if in_active && hp_seq == (seq_in + 1) as 5 && !hp_rty { // (as 5: the compare widened and failed at the 31 -> 0 wrap)
-                                    // packet accepted
-                                    in_active         = 0;
-                                    in_ready[in_send] = 0;
-                                    in_send           = !in_send;
-                                    seq_in            = seq_in + 1;
-                                    if hp_nump != 0 && in_ready[!in_send] {
-                                        send      = 1;
-                                        s_is_dp   = 1;
-                                        s_ept     = 1;
-                                        s_seq     = seq_in + 1;
-                                        s_dlen    = {5'h0, in_len[!in_send]};
-                                        s_eob     = 0;
-                                        s_dpp     = 1;
-                                        s_len     = in_len[!in_send];
-                                        s_base    = {3'h0, !in_send, 8'h0};
-                                        in_active = 1;
-                                    } else if hp_nump != 0 {
+                                } else if in_acked <= {1'b0, in_nsent} {
+                                    dbg_ev    = hp_rty;
+                                    dbg_stb   = 1;
+                                    in_acknow = 1;
+                                    // ACK for EP1 IN: SeqNum = the next packet the host expects
+                                    // (everything before it is acknowledged), NumP = packets it
+                                    // accepts from there, Retry = resend from SeqNum
+                                    for i in 0..IN_BUFS {
+                                        if {2'b0, ((i as 3) - in_ack) as 3} <: in_acked {
+                                            in_ready[i] = 0;
+                                        }
+                                    }
+                                    in_ack = in_ack + in_acked[2:0];
+                                    seq_in = seq_in + in_acked;
+                                    // Retry: send again from SeqNum. (NumP 0 is not a reason: an xHC still takes packets in
+                                    // flight after it, resending them cost 25 % of the throughput)
+                                    in_nsent = if hp_rty ? 4'd0 : in_nsent - in_acked[3:0];
+                                    if hp_rty {
+                                        dbg_nseq = hp_seq;
+                                    }
+                                    if hp_rty || in_nsent == in_acked[3:0] {
+                                        in_stop = 0; // the short packet was acknowledged (or is to be resent)
+                                    }
+                                    in_limit = hp_nump;
+                                    // nothing left to send: NRDY, ERDY once a packet is ready
+                                    if hp_nump != 0 && (hp_rty || in_nsent == in_acked[3:0])
+                                        && !in_ready[in_ack + in_acked[2:0]] {
                                         send    = 1;
                                         s_is_dp = 0;
                                         s_sub   = SUB_NRDY;
@@ -800,30 +867,11 @@ module Usb3Device #(
                                         s_seq   = 0;
                                         s_rty   = 0;
                                         in_flow = 1;
+                                        // flow controlled: nothing goes out before the host's ACK that follows ERDY
+                                        in_limit = 0;
                                     }
-                                } else if hp_nump != 0 && hp_seq == seq_in {
-                                    if in_ready[in_send] {
-                                        send      = 1;
-                                        s_is_dp   = 1;
-                                        s_ept     = 1;
-                                        s_seq     = seq_in;
-                                        s_dlen    = {5'h0, in_len[in_send]};
-                                        s_eob     = 0;
-                                        s_dpp     = 1;
-                                        s_len     = in_len[in_send];
-                                        s_base    = {3'h0, in_send, 8'h0};
-                                        in_active = 1;
-                                    } else {
-                                        send    = 1;
-                                        s_is_dp = 0;
-                                        s_sub   = SUB_NRDY;
-                                        s_dir   = 1;
-                                        s_ept   = 1;
-                                        s_nump  = 0;
-                                        s_seq   = 0;
-                                        s_rty   = 0;
-                                        in_flow = 1;
-                                    }
+                                } else {
+                                    dbg_ev = 1; // SeqNum outside what is in flight: ignored
                                 }
                             }
                         }
@@ -874,9 +922,35 @@ module Usb3Device #(
                 }
             }
 
-            // ---- ERDY when flow control ends
-            if !send && !tx_valid {
-                if in_flow && in_ready[in_send] && !in_active {
+            // ---- EP1 IN data packets (bursts up to the host's NumP), ERDY when flow control ends
+            // (only with no response waiting: responses go first)
+            if !send && !tx_valid && rq_n == 0 {
+                // (not in the clock an ACK is handled: both update in_nsent, the later nonblocking
+                // assignment won and the ACK's decrement was lost - a SeqNum then got skipped)
+                if configured && !halt_in && !in_flow && !in_stop && !in_acknow && {1'b0, in_nsent} <: in_limit
+                    && in_nsent != IN_BUFS as 4 && in_ready[in_ack + in_nsent[2:0]] {
+                    send     = 1;
+                    s_is_dp  = 1;
+                    s_ept    = 1;
+                    s_seq    = seq_in + {1'b0, in_nsent};
+                    dbg_ev   = (seq_in + {1'b0, in_nsent}) != dbg_nseq; // (debug) a SeqNum skipped or repeated
+                    dbg_stb  = 1;
+                    dbg_nseq = seq_in + {1'b0, in_nsent} + 5'd1;
+                    s_dlen   = {5'h0, in_len[in_ack + in_nsent[2:0]]};
+                    // EOB stays 0: an xHC takes EOB = 1 as "no more data" and then waits for an ERDY
+                    // before it asks again (the next read never started). A short packet / ZLP ends
+                    // the host's transfer, though: nothing more goes out until the host has
+                    // acknowledged it (in_stop; it drops packets sent after it, which used to leave us
+                    // a burst ahead, and ACKs of earlier packets must not restart the burst)
+                    s_eob = 0;
+                    if in_len[in_ack + in_nsent[2:0]] != 11'd1024 {
+                        in_stop = 1;
+                    }
+                    s_dpp    = 1;
+                    s_len    = in_len[in_ack + in_nsent[2:0]];
+                    s_base   = {1'b0, in_ack + in_nsent[2:0], 8'h0};
+                    in_nsent = in_nsent + 1;
+                } else if in_flow && in_ready[in_ack] && in_nsent == 0 {
                     send    = 1;
                     s_is_dp = 0;
                     s_sub   = SUB_ERDY;
@@ -942,7 +1016,8 @@ module Usb3Device #(
                                 if w_index[7] {
                                     halt_in = b_req == 8'h03;
                                     if b_req == 8'h01 {
-                                        seq_in = 0;
+                                        seq_in   = 0;
+                                        dbg_nseq = 0;
                                     }
                                 } else {
                                     halt_out = b_req == 8'h03;
@@ -985,13 +1060,16 @@ module Usb3Device #(
                                 halt_in     = 0;
                                 halt_out    = 0;
                                 seq_in      = 0;
+                                dbg_nseq    = 0;
                                 seq_out     = 0;
                                 in_wptr     = 0;
                                 in_ready    = 0;
                                 in_fill     = 0;
-                                in_send     = 0;
+                                in_ack      = 0;
                                 in_flow     = 0;
-                                in_active   = 0;
+                                in_nsent    = 0;
+                                in_limit    = 0;
+                                in_stop     = 0;
                                 in_zlp_pend = 0;
                                 out_full    = 0;
                                 out_flow    = 0;
@@ -1009,9 +1087,10 @@ module Usb3Device #(
                         }
                         8'h0B: { // SET_INTERFACE
                             if configured && w_index[7:0] == 0 && w_value[7:0] == 0 {
-                                seq_in  = 0;
-                                seq_out = 0;
-                                ctrl    = Ctrl::Status;
+                                seq_in   = 0;
+                                dbg_nseq = 0;
+                                seq_out  = 0;
+                                ctrl     = Ctrl::Status;
                             }
                         }
                         8'h30: { // SET_SEL: 6 bytes OUT, discarded
@@ -1060,22 +1139,62 @@ module Usb3Device #(
                 }
             }
 
-            // ---- hand the request to the link
-            if send && !tx_valid {
+            // ---- hand the request to the link. A response produced while the slot is busy (an
+            // EP1 IN burst keeps it busy) waits in rq instead of being dropped: losing the ACK of
+            // an EP1 OUT packet made the host fail the transfer.
+            var s_pack: logic<69>;
+            var ld    : logic    ;
+            var ld_v  : logic<69>;
+            s_pack = {
+                dev_addr, s_is_dp, s_sub, s_dir, s_ept, s_nump, s_seq, s_rty, s_eob, s_dlen, s_dpp, s_len, s_base
+            }; // dev_addr: before this clock's update (old address for SET_ADDRESS)
+            ld     = 0;
+            ld_v   = s_pack;
+            if !tx_valid {
+                if rq_n == 0 {
+                    ld = send;
+                } else {
+                    ld   = 1;
+                    ld_v = rq[0];
+                    if rq_n == 2 {
+                        rq[0] = rq[1];
+                        if send {
+                            rq[1] = s_pack;
+                        } else {
+                            rq_n = 1;
+                        }
+                    } else if send {
+                        rq[0] = s_pack;
+                    } else {
+                        rq_n = 0;
+                    }
+                }
+            } else if send {
+                if rq_n == 0 {
+                    rq[0] = s_pack;
+                    rq_n  = 1;
+                } else if rq_n == 1 {
+                    rq[1] = s_pack;
+                    rq_n  = 2;
+                } else {
+                    dbg_ev = 1; // dropped (responses are >= 5 clocks apart, should not happen)
+                }
+            }
+            if ld {
                 tx_valid = 1;
-                tx_is_dp = s_is_dp;
-                tx_sub   = s_sub;
-                tx_dir   = s_dir;
-                tx_ept   = s_ept;
-                tx_nump  = s_nump;
-                tx_seq   = s_seq;
-                tx_rty   = s_rty;
-                tx_addr  = dev_addr; // the value before this clock's update (old address for SET_ADDRESS)
-                tx_eob   = s_eob;
-                tx_dlen  = s_dlen;
-                tx_dpp   = s_dpp;
-                tx_len   = s_len;
-                tx_base  = s_base;
+                tx_addr  = ld_v[68:62];
+                tx_is_dp = ld_v[61];
+                tx_sub   = ld_v[60:57];
+                tx_dir   = ld_v[56];
+                tx_ept   = ld_v[55:52];
+                tx_nump  = ld_v[51:47];
+                tx_seq   = ld_v[46:42];
+                tx_rty   = ld_v[41];
+                tx_eob   = ld_v[40];
+                tx_dlen  = ld_v[39:24];
+                tx_dpp   = ld_v[23];
+                tx_len   = ld_v[22:12];
+                tx_base  = ld_v[11:0];
             }
         }
     }

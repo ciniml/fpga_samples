@@ -255,6 +255,11 @@ module usb3_host_bfm #(
     logic [10:0] ev_lc[$];
     hp_t         ev_hp[$];
     logic [7:0]  ev_dpp[$];     // last DPP payload
+    // every DPP in order (bursts: several DPs arrive before the test looks): lengths, CRC/framing
+    // results and the payload bytes back to back
+    int          dpq_len[$];
+    logic        dpq_ok[$];
+    logic [7:0]  dpq_bytes[$];
     int          ev_dpp_len = -1;
     int          ev_dpp_ok = 0;
     int          ev_dpp_count = 0;
@@ -334,6 +339,8 @@ module usb3_host_bfm #(
                 end
                 ev_dpp_len = n;
                 ev_dpp_count++;
+                dpq_len.push_back(n); dpq_ok.push_back(ev_dpp_ok);
+                for (int i = 0; i < ev_dpp.size(); i++) dpq_bytes.push_back(ev_dpp[i]);
             end
             progress = 1;
             return;
@@ -583,10 +590,84 @@ module usb3_host_bfm #(
     endtask
 
     // bulk IN: request one DP (NumP 1); data returned; result 0 ok (data), 1 NRDY->ERDY handled, 2 error
+    // EP1 IN with bursts: the ACKs carry NumP = np (packets accepted ahead), so the device may send
+    // several data packets before each acknowledgement. Ends at a short packet or after max_pkts.
+    // force_retry_at >= 0 answers that packet (by count) with a retry once, although it was good:
+    // the device must resend from it (packets already in flight with later SeqNums are dropped).
+    int burst_dropped = 0, burst_discarded = 0;
+    // EOB = 1 on an EP1 IN data packet: like an xHC, the next request waits for an ERDY first
+    logic ep1_in_eob = 0;
+    task automatic wait_erdy_if_eob(output logic ok);
+        logic [95:0] h;
+        ok = 1;
+        if (ep1_in_eob) begin
+            wait_tp(h, ok);
+            if (ok && tp_sub(h) != 4'b0011) begin proto_err++; $display("t=%0t host: expected ERDY after EOB, got %024x", $time, h); ok = 0; end
+            ep1_in_eob = 0;
+        end
+    endtask
+    task automatic bulk_in_burst(int np, int max_pkts, int force_retry_at, output logic [7:0] data[$], output int result);
+        logic [95:0] h; logic ok; int got = 0, retries = 0; logic forced = 0;
+        result = 2;
+        data.delete();
+        dpq_len.delete(); dpq_ok.delete(); dpq_bytes.delete();
+        wait_erdy_if_eob(ok); if (!ok) return;
+        // NumP = min(np, packets the transfer still wants), as an xHC: the device never runs
+        // past the end of a transfer of full packets
+        send_hp(h_tp(4'b0001, 1, 1, 5'(np < max_pkts ? np : max_pkts), ep1_in_seq));
+        while (got < max_pkts) begin
+            wait_tp(h, ok); if (!ok) return;
+            if (h[4:0] == 5'b01000) begin
+                int n; logic g; logic [7:0] pl[$];
+                if (dpq_len.size() == 0) begin proto_err++; $display("t=%0t host: DP without DPP", $time); return; end
+                n = dpq_len.pop_front(); g = dpq_ok.pop_front();
+                pl.delete(); for (int i = 0; i < n; i++) pl.push_back(dpq_bytes.pop_front());
+                if (dp_seq(h) != ep1_in_seq) begin burst_dropped++; continue; end   // in flight before a retry
+                if (!g || (got == force_retry_at && !forced)) begin
+                    forced = 1;
+                    if (++retries > 8) begin proto_err++; return; end
+                    send_hp(h_tp(4'b0001, 1, 1, 5'(np < max_pkts - got ? np : max_pkts - got), ep1_in_seq, 1));
+                    continue;
+                end
+                for (int i = 0; i < n; i++) data.push_back(pl[i]);
+                ep1_in_seq++;
+                got++;
+                if (h[38]) ep1_in_eob = 1;
+                if (n < 1024 || got >= max_pkts) begin
+                    send_hp(h_tp(4'b0001, 1, 1, 0, ep1_in_seq));
+                    // a real host completes the transfer here and drops data packets that still
+                    // arrive (the device must send them again in the next transfer)
+                    repeat (400) @(posedge clk);
+                    while (rx_tp.size() != 0 && rx_tp[0][4:0] == 5'b01000) begin
+                        void'(rx_tp.pop_front());
+                        if (dpq_len.size() != 0) begin
+                            int m = dpq_len.pop_front(); void'(dpq_ok.pop_front());
+                            repeat (m) void'(dpq_bytes.pop_front());
+                        end
+                        burst_discarded++;
+                    end
+                    result = 0;
+                    return;
+                end
+                send_hp(h_tp(4'b0001, 1, 1, 5'(np < max_pkts - got ? np : max_pkts - got), ep1_in_seq));
+            end else if (tp_sub(h) == 4'b0010) begin
+                wait_tp(h, ok); if (!ok) return;      // ERDY
+                if (tp_sub(h) != 4'b0011) begin proto_err++; return; end
+                // flow controlled: no data packet may come before our ACK
+                repeat (300) @(posedge clk);
+                if (rx_tp.size() != 0) begin proto_err++; $display("t=%0t host: device sent %024x after ERDY before the ACK", $time, rx_tp[0]); return; end
+                send_hp(h_tp(4'b0001, 1, 1, 5'(np < max_pkts - got ? np : max_pkts - got), ep1_in_seq));
+            end else begin
+                proto_err++; $display("t=%0t host: burst in bad response %024x", $time, h); return;
+            end
+        end
+        result = 0;
+    endtask
     task automatic bulk_in(output logic [7:0] data[$], output int result);
         logic [95:0] h; logic ok;
         result = 2;
         data.delete();
+        wait_erdy_if_eob(ok); if (!ok) return;
         for (int attempt = 0; attempt < 3; attempt++) begin
             send_hp(h_tp(4'b0001, 1, 1, 1, ep1_in_seq));
             wait_tp(h, ok); if (!ok) return;
@@ -599,6 +680,7 @@ module usb3_host_bfm #(
                 end
                 for (int i = 0; i < ev_dpp.size(); i++) data.push_back(ev_dpp[i]);
                 ep1_in_seq++;
+                if (h[38]) ep1_in_eob = 1;
                 // acknowledge with NumP 0 (no more packets wanted now)
                 send_hp(h_tp(4'b0001, 1, 1, 0, ep1_in_seq));
                 result = 0;

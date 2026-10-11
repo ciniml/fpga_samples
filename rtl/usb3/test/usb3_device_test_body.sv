@@ -28,6 +28,8 @@ module usb3_device_test_body #(parameter bit RUN = 0);
     logic dev_configured, dev_reset; logic [6:0] dev_address; logic [15:0] vendor_reg;
     logic [31:0] vendor_status = 32'hCAFE1234;
     logic app_rx_valid, app_rx_ready = 1, app_tx_valid = 0, app_tx_ready; logic [7:0] app_rx_data, app_tx_data = 0;
+    logic app_txw_valid = 0, app_txw_ready; logic [31:0] app_txw_data = 0;
+    logic [7:0] q2_short[$];
 
     Usb3Top #(.TSEQ_COUNT(64)) dut(.i_clk(clk), .i_rst(rst),
         .i_rx_data(rx_data), .i_rx_k(rx_k), .i_rx_valid(rx_valid), .i_rx_status(rx_status), .i_rx_elecidle(rx_elecidle),
@@ -51,7 +53,8 @@ module usb3_device_test_body #(parameter bit RUN = 0);
         .o_configured(dev_configured), .o_address(dev_address), .o_reset(dev_reset),
         .o_vendor_reg(vendor_reg), .i_vendor_status(vendor_status),
         .o_rx_valid(app_rx_valid), .o_rx_data(app_rx_data), .i_rx_ready(app_rx_ready),
-        .i_tx_valid(app_tx_valid), .i_tx_data(app_tx_data), .o_tx_ready(app_tx_ready));
+        .i_tx_valid(app_tx_valid), .i_tx_data(app_tx_data), .o_tx_ready(app_tx_ready),
+        .i_txw_valid(app_txw_valid), .i_txw_data(app_txw_data), .o_txw_ready(app_txw_ready));
 
     usb3_host_bfm host(.clk(clk), .rst(rst),
         .d_tx_data(tx_data), .d_tx_k(tx_k), .d_tx_elecidle(tx_elecidle), .d_tx_detectrx(tx_detectrx),
@@ -68,6 +71,22 @@ module usb3_device_test_body #(parameter bit RUN = 0);
             @(posedge clk); while (!app_tx_ready) @(posedge clk);
         end
         app_tx_valid = 0;
+    endtask
+    // the same through the 32-bit entry (length a multiple of 4)
+    // the same through the 32-bit entry (length a multiple of 4): a clocked valid/ready driver fed
+    // from a queue (a task stepping clock edges itself raced the DUT's flops)
+    logic [31:0] txw_q[$];
+    always @(posedge clk) begin
+        if (app_txw_valid && app_txw_ready) void'(txw_q.pop_front());
+        if (txw_q.size() > (app_txw_valid && app_txw_ready ? 0 : 0)) begin
+            app_txw_valid <= 1; app_txw_data <= txw_q[0];
+        end else begin
+            app_txw_valid <= 0;
+        end
+    end
+    task automatic app_send_words(logic [7:0] b[$]);
+        for (int i = 0; i < b.size(); i += 4) txw_q.push_back({b[i + 3], b[i + 2], b[i + 1], b[i]});
+        do @(posedge clk); while (txw_q.size() != 0);
     endtask
     // background helpers (Verilator's fork/join is not reliable with nested tasks)
     logic [7:0] app_q[$];
@@ -249,6 +268,65 @@ module usb3_device_test_body #(parameter bit RUN = 0);
         if (res != 0 || d.size() != 1024) fail("exact packet");
         host.bulk_in(d, res);
         if (res != 0 || d.size() != 0) fail($sformatf("zlp: res %0d len %0d", res, d.size()));
+        // 32-bit entry: two full packets and a 12-byte tail, 4 bytes per clock
+        stage = "bulk in words";
+        q.delete(); for (int i = 0; i < 2060; i++) q.push_back(8'(i * 11 + 5));
+        begin logic [7:0] q2[$]; q2 = q[0:2047]; app_send_words(q2); end   // fills both packet buffers
+        wait_clk(125 * 30);
+        host.bulk_in(d, res);
+        if (res != 0 || d.size() != 1024) fail($sformatf("word packet 1: res %0d len %0d", res, d.size()));
+        else for (int i = 0; i < 1024; i++) if (d[i] != q[i]) begin fail($sformatf("word packet 1 data at %0d", i)); break; end
+        host.bulk_in(d, res);
+        if (res != 0 || d.size() != 1024) fail($sformatf("word packet 2: res %0d len %0d", res, d.size()));
+        else for (int i = 0; i < 1024; i++) if (d[i] != q[1024 + i]) begin fail("word packet 2 data"); break; end
+        // the stream went idle after full packets: a ZLP ends that transfer first
+        host.bulk_in(d, res);
+        if (res != 0 || d.size() != 0) fail($sformatf("word zlp: res %0d len %0d", res, d.size()));
+        begin logic [7:0] q3[$]; q3 = q[2048:2059]; app_send_words(q3); end
+        wait_clk(125 * 30);
+        host.bulk_in(d, res);
+        if (res != 0 || d.size() != 12) fail($sformatf("word tail: res %0d len %0d", res, d.size()));
+        else for (int i = 0; i < 12; i++) if (d[i] != q[2048 + i]) begin fail("word tail data"); break; end
+        // bursts: 6 full packets and a 100-byte tail through the 32-bit entry (fits the 8 buffers),
+        // read with NumP 4 (several packets per acknowledgement); the 3rd packet is answered with a
+        // retry once, so the device resends it and the ones after it
+        stage = "bulk in burst";
+        q.delete(); for (int i = 0; i < 6244; i++) q.push_back(8'(i * 7 + 13));
+        app_send_words(q);
+        wait_clk(125 * 30);
+        host.bulk_in_burst(4, 16, 2, d, res);
+        if (res != 0 || d.size() != 6244) fail($sformatf("burst: res %0d len %0d", res, d.size()));
+        else for (int i = 0; i < 6244; i++) if (d[i] != q[i]) begin fail($sformatf("burst data at %0d", i)); break; end
+        if (host.burst_dropped == 0) fail("burst: no packets were in flight at the retry");
+        // flow control within a burst: read with nothing queued (NRDY), the data arrives later (ERDY),
+        // then the host's ACK - no data packet may go out before it
+        stage = "bulk in burst flow";
+        app_q.delete(); for (int i = 0; i < 200; i++) app_q.push_back(8'h80 + 8'(i));
+        app_delay = 500; app_done = 0; app_go = 1;
+        host.bulk_in_burst(4, 16, -1, d, res);
+        if (res != 0 || d.size() != 200) fail($sformatf("burst flow: res %0d len %0d", res, d.size()));
+        else for (int i = 0; i < 200; i++) if (d[i] != 8'h80 + 8'(i)) begin fail("burst flow data"); break; end
+        if (host.proto_err != 0) fail($sformatf("host protocol errors %0d", host.proto_err));
+        // a short packet inside the queued data ends the host's transfer: the device must not run
+        // ahead into the next packets (the host drops them) - 2 full packets, a 100-byte short one,
+        // then 3 more full ones, read with NumP 8 as two transfers
+        stage = "bulk in burst short";
+        q.delete(); for (int i = 0; i < 2148; i++) q.push_back(8'(i * 3 + 1));
+        app_send_words(q);
+        wait_clk(125 * 30);         // idle: the 100-byte tail closes as a short packet
+        q2_short.delete(); for (int i = 0; i < 3072; i++) q2_short.push_back(8'(i * 5 + 2));
+        app_send_words(q2_short);
+        wait_clk(125 * 5);
+        host.bulk_in_burst(8, 16, -1, d, res);
+        if (res != 0 || d.size() != 2148) fail($sformatf("short 1: res %0d len %0d", res, d.size()));
+        else for (int i = 0; i < 2148; i++) if (d[i] != q[i]) begin fail("short 1 data"); break; end
+        host.bulk_in_burst(8, 3, -1, d, res);
+        if (res != 0 || d.size() != 3072) fail($sformatf("short 2: res %0d len %0d (discarded %0d)", res, d.size(), host.burst_discarded));
+        else for (int i = 0; i < 3072; i++) if (d[i] != q2_short[i]) begin fail("short 2 data"); break; end
+        wait_clk(125 * 30);
+        host.bulk_in(d, res);       // the ZLP after the idle full packets
+        if (res != 0 || d.size() != 0) fail($sformatf("short zlp: res %0d len %0d", res, d.size()));
+        if (host.proto_err != 0) fail($sformatf("host protocol errors %0d", host.proto_err));
         // SeqNum wraps 31 -> 0: 34 more IN transfers (the device ignored the ACK with SeqNum 0
         // after 31 - a widened "seq + 1" compare - and the host timed out on the 33rd packet)
         stage = "seq wrap";

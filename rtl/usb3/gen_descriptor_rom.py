@@ -4,7 +4,8 @@ for the SuperSpeed device core.
 
 Descriptors (USB 3.2 9.6): device (bcdUSB 3.10, bMaxPacketSize0 = 9 -> 512), one
 configuration with one vendor-specific interface and two bulk endpoints (EP1 OUT /
-EP1 IN, 1024 bytes) each followed by a SuperSpeed Endpoint Companion (bMaxBurst 0),
+EP1 IN, 1024 bytes) each followed by a SuperSpeed Endpoint Companion (bMaxBurst 0 for
+EP1 OUT, IN_MAX_BURST for EP1 IN = Usb3Device IN_BUFS - 1),
 strings, the BOS with the USB 2.0 Extension, SuperSpeed USB Device Capability and
 Microsoft OS 2.0 platform capability, and the MS OS 2.0 descriptor set (Compatible
 ID WINUSB). Each descriptor starts on a 4-byte boundary so that the data packet
@@ -21,10 +22,12 @@ def string_desc(s):
 
 dev = ([0x12, 0x01] + le16(0x0310) + [0xFF, 0x00, 0x00, 0x09, "VID_L", "VID_H", "PID_L", "PID_H"]
        + le16(0x0100) + [0x01, 0x02, 0x03, 0x01])
+IN_MAX_BURST = 7   # EP1 IN: up to 8 packets per burst (Usb3Device IN_BUFS = 8 packet buffers)
 ep_comp = [0x06, 0x30, 0x00, 0x00, 0x00, 0x00]
+ep_comp_in = [0x06, 0x30, IN_MAX_BURST, 0x00, 0x00, 0x00]
 cfg_body = ([0x09, 0x04, 0x00, 0x00, 0x02, 0xFF, 0x00, 0x00, 0x00] +
             [0x07, 0x05, 0x01, 0x02] + le16(1024) + [0x00] + ep_comp +
-            [0x07, 0x05, 0x81, 0x02] + le16(1024) + [0x00] + ep_comp)
+            [0x07, 0x05, 0x81, 0x02] + le16(1024) + [0x00] + ep_comp_in)
 cfg = [0x09, 0x02] + le16(9 + len(cfg_body)) + [0x01, 0x01, 0x00, 0x80, 0x0D] + cfg_body  # 104 mA (8 mA units)
 str0 = [0x04, 0x03, 0x09, 0x04]
 str1 = string_desc("fpga_samples")

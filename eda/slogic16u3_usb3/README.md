@@ -1,7 +1,7 @@
 # slogic16u3_usb3 — Sipeed SLogic16U3 の USB 3.0 (SuperSpeed) を rtl/usb3 で動かす
 
 状態 (2026-10-11): **SuperSpeed で動作**。1209:0001 "USB SS Sample" (5000M、bcdUSB 3.10) で列挙し、
-EP1 ループバックで 1 GiB をストリーミング往復してデータ一致、片方向 51.5 MB/s (その間 Recovery 0 回)。
+EP1 IN (デバイス → ホスト) は PRBS で 362 MB/s・21.8 GB 誤り 0、ループバックの送受信同時 1 GiB 一致 (下記)。
 FPGA をロードし直すと、ホストが前のデバイスとしてリセットを試み "device firmware changed" → 切断 → 再列挙を
 1 回経て列挙する (ディスクリプタは 200 回読んで常に同一。電源投入から繋ぐ通常の使い方では起きない見込み)。
 
@@ -30,7 +30,7 @@ python3 host/usb3_trace.py              # ER2: U0 の PIPE 送受信 1024 語 (�
 python3 host/usb3_trace.py --hdr        # ER2: 送受信ヘッダパケットのログ (時刻付き 128 個)
 python3 host/usb3_lanes.py [-w]         # SERDES_IP=serdes_4ln: レーンごとの signal_detect など
 python3 host/usb3_ref_status.py [-w]    # REF=1: PIPE 統計
-python3 host/usb3_prbs.py [-s 10]       # EP1 IN を PRBS15 送出に切り替えて帯域とバイト誤りを測る (ベンダ要求 0x02 bit0)
+python3 host/usb3_prbs.py [-s 10]       # EP1 IN を PRBS15 送出に切り替えて帯域とバイト誤りを測る (ベンダ要求 0x02 で 0x0001)
 ```
 
 - `REF=1` は `eda/targets/tangconsole60k/doc/gowin_usb3_ref` (Gowin の GW5AT-60 用リファレンス、このリポジトリの
@@ -86,14 +86,28 @@ UART_TX / UART_RX (F14 / E14、JTAG コネクタ) を LVCMOS33D の擬似差動�
 
 ## EP1 IN の帯域 (PRBS15)
 
-ホスト向け (IN) の帯域が SLogic の用途では重要。`o_vendor_reg` bit0 (ベンダ要求 0x02) で EP1 IN を PRBS15
-(x^15 + x^14 + 1、1 バイト 8 ビット、先頭ビットが bit0) の送出に切り替え、`host/usb3_prbs.py` が全バイトを照合する。
+ホスト向け (IN) の帯域が SLogic の用途では重要。`o_vendor_reg` = 0x0001 (ベンダ要求 0x02) で EP1 IN を PRBS15
+(x^15 + x^14 + 1、1 バイト 8 ビット、先頭ビットが bit0、32 ビット/クロックで生成) の送出に切り替え、
+`host/usb3_prbs.py` が全バイトを照合する。
 
-| 読み出し要求 | 帯域 | 転送量 | バイト誤り |
+| 構成 | 読み出し要求 1 MiB | 64 KiB | 16 KiB |
 |---|---|---|---|
-| 1 MiB | 118.7 MB/s | 1187 MB | 0 |
-| 64 KiB | 111.6 MB/s | 558 MB | 0 |
-| 16 KiB | 96.0 MB/s | 480 MB | 0 |
+| 8 ビット入口、bMaxBurst 0 | 118.7 MB/s | 111.6 | 96.0 |
+| 32 ビット入口 (`i_txw_*`)、bMaxBurst 0 | 233.2 | 205.7 | 150.1 |
+| 32 ビット入口、**bMaxBurst 7 (IN バッファ 8 面)** | **362.0** | 300.1 | 192.9 |
 
-Usb3Device の EP1 入口が 8 ビット (125 MHz × 1 バイト = 125 MB/s) で頭打ち。次は入口の 32 ビット化と bMaxBurst / IN バッファの拡大。
-(参考: ループバックを送受信スレッドで同時に回すと片方向 51.5 MB/s、1 GiB 一致。)
+最終構成で 60 秒 21.8 GB を 362.5 MB/s、バイト誤り 0、Recovery 0 回。照合なしの読み出しだけなら 383 MB/s
+(Python の同期読み出し、ハブ経由)。ループバックは 8〜3072 B × 200 回、送受信同時の 1 GiB が一致 (片方向 53.8 MB/s)。
+
+バースト化で見つけた不具合 (いずれもシミュレーションに再現テストを追加、修正前の RTL で失敗することを確認):
+- 応答の受け渡し口が埋まっていると応答 (EP1 OUT の ACK など) を捨てていた → 2 段の応答キュー。
+- NRDY 後、ERDY に続くホストの ACK を待たずに残っていた NumP でデータを送っていた → NRDY で許可数を 0。
+- 短いパケット / ZLP の後も同じバーストで送り続けていた (ホストは転送を終えて捨てる) → それが ACK されるまで停止 (`in_stop`)。
+  EOB は 0 のまま: xHC は EOB = 1 を「データ無し」と扱い ERDY を待つ (次の読み出しが始まらなかった)。
+- ACK 処理と DP 送出が同じクロックに重なると `in_nsent` の更新が後勝ちで ACK 分の減算が消え、SeqNum が 1 つ飛んで停止
+  → ACK を処理したクロックは送らない (デバイス内部状態をヘッダログに混ぜて記録するリングモード (トレースモード 3) で特定)。
+- `flush` (短いパケットの送出) が一度立つとリセットまで立ちっぱなしで、以後は 1 クロックの空きで短いパケットを作っていた。
+- NumP = 0 の ACK で送信中のパケットを送り直す規則は誤り (xHC はその後も受け取る。帯域が 25 % 落ちた)。
+
+デバッグ用に Usb3Device は `o_dbg_event` (EP1 IN の ACK 無視 / Retry / 応答喪失 / SeqNum 飛び) と
+`o_dbg_strobe` / `o_dbg_state` (EP1 IN の内部状態) を出す。
