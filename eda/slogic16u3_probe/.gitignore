@@ -1,0 +1,5 @@
+__pycache__/
+/classify.json
+/bsrmap.json
+/blink_notes.json
+/classify_cfg.json

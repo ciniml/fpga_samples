@@ -1,0 +1,71 @@
+# SLogic16U3 (GW5AT-LV15MG132) probe pin list -- single source for the CST, the RTL
+# parameters and the host tool. Row order = bit index of io[].
+#
+# class:
+#   probe   unknown destination; drivable by the soft boundary scan (host still requires
+#           a 'floating' classification or --force before driving)
+#   la      logic-analyser channel per litex-boards (may sit behind an input buffer)  -> input only
+#   uart_tx UART TX per litex-boards                                                  -> drivable
+#   uart_rx UART RX per litex-boards                                                  -> input only
+#   mipi    M0 D-PHY pad, read/driven in LP mode through MIPI_DPHY (PINSET=mipi only; must stay
+#           last and in CKP CKN D0P D0N D1P D1N D2P D2N D3P D3N order); a lane is driven as a whole
+#   cfg     configuration dual-purpose pin (DONE/READY/MODE); drivable, but reads high so --force is needed
+# PINSET=main builds everything but 'cfg', PINSET=cfg everything but 'la', PINSET=la everything
+# but 'probe' except the probe pins tagged '@la', PINSET=mipi = the 'la' set plus 'mipi'
+# (42-port limit incl. JTAG). Only PINSET=mipi includes the 'mipi' rows.
+# Not listed on purpose: JTAG G2/G3/J3/J2 (needed for this design), MSPI flash K13/K14/L13/L14/M13/M14,
+# RECONFIG_N M3 (GW5AT-15 cannot make it GPIO),
+# SerDes Q0 / MIPI M1 (not GPIO).
+ball,name,class,note
+J14,CH0,la,IOB41B
+J13,CH1,la,IOB41A
+N14,CH2,la,IOB12B
+P14,CH3,la,IOB12A
+N13,CH4,la,IOB14B D14
+P13,CH5,la,IOB14A D15
+N12,CH6,la,IOB16A
+P12,CH7,la,IOB16B
+N11,CH8,la,IOB22A GCLKT_3
+P11,CH9,la,IOB22B GCLKC_3
+N10,CH10,la,IOB18B D12
+P10,CH11,la,IOB18A D13
+N9,CH12,la,IOB24A GCLKT_2
+P9,CH13,la,IOB24B GCLKC_2
+N8,CH14,la,IOB20A
+P8,CH15,la,IOB20B
+F14,UART_TX,uart_tx,IOB43A D09
+E14,UART_RX,uart_rx,IOB43B D08
+C13,IOB36B,probe,bank1
+C14,IOB39B,probe,bank1 D10 @la
+D13,IOB36A,probe,bank1; pulled up; driving it low reconfigures the FPGA like MODE (RECONFIG_N net?; 2026-10-10)
+D14,IOB39A,probe,bank1 D11 @la
+E13,IOB34B,probe,bank1 GCLKC_0
+F13,IOB34A,probe,bank1 GCLKT_0 (oscillator candidate)
+G13,IOB32B,probe,bank1 GCLKC_1; header CK (second; 2026-10-10); not divided like H13 (3.35 V stays 1 up to VREF 127/128; floats high without a pull-down; 2026-10-11) @la
+H13,IOB32A,probe,bank1 GCLKT_1; header CK (first; 2026-10-10); not divided (3.35 V stays 1 up to VREF 127/128; floats high without a pull-down; 2026-10-11) @la
+G14,IOB45B,probe,bank1 EMCCLK; ACT LED red (active high; 2026-10-10) @la
+H14,IOB45A,probe,bank1; as SSTL33 external VREF it reads ~0 V regardless of J12 (second threshold VREF with its PWM source idle?; 2026-10-11)
+J12,IOB31A,probe,bank1; threshold PWM: RC-filtered into M8 (bank1 external VREF); Vth ~ 6.7 V x duty (3.35 V trips at 62.5/128; 4.9 V at ~92/128; 2026-10-11) @la
+M8,IOB11A,probe,bank1; external VREF of the LA inputs (SSTL33_I VREF=USE_VREF_DRIVER M8) fed by filtered J12 PWM (2026-10-11)
+M1,IOL33B,probe,bank3 GCLKC_4 SDA
+M2,IOL33A,probe,bank3 GCLKT_4 SCL
+H2,IOL22B,probe,bank4 GCLKC_7 SO
+H3,IOL22A,probe,bank4 GCLKT_7 SSPI_CLK
+K2,IOL26B,probe,bank4 GCLKC_6 D07 SSPI_WPN
+K3,IOL26A,probe,bank4 GCLKT_6 D06 CLKHOLD_N
+P1,IOL35B,probe,bank3 D05 SSPI_CS_N
+P2,IOL35A,probe,bank3 D04 SI
+L3,DONE,cfg,IOL29A; ACT LED green: lit while DONE is high; off when pulled low (2026-10-10; dim)
+M12,READY,cfg,IOB9A
+N1,MODE1,cfg,IOL31A GCLKT_5
+N2,MODE0,cfg,IOL31B GCLKC_5
+N5,M0_CKP,mipi,MIPI_DPHY LP (1.2 V); lane CK
+P5,M0_CKN,mipi,MIPI_DPHY LP (1.2 V); lane CK
+N7,M0_D0P,mipi,MIPI_DPHY LP (1.2 V); lane D0
+P7,M0_D0N,mipi,MIPI_DPHY LP (1.2 V); lane D0
+N6,M0_D1P,mipi,MIPI_DPHY LP (1.2 V); lane D1
+P6,M0_D1N,mipi,MIPI_DPHY LP (1.2 V); lane D1
+N4,M0_D2P,mipi,MIPI_DPHY LP (1.2 V); lane D2
+P4,M0_D2N,mipi,MIPI_DPHY LP (1.2 V); lane D2
+N3,M0_D3P,mipi,MIPI_DPHY LP (1.2 V); lane D3
+P3,M0_D3N,mipi,MIPI_DPHY LP (1.2 V); lane D3
