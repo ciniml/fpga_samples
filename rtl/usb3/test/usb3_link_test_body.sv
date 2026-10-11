@@ -62,10 +62,12 @@ module usb3_link_test_body;
 `ifdef USB3_DBG
     logic [4:0] st_q; int ls_q;
     always @(posedge clk) begin
-        if (ltssm_state != st_q) $display("t=%0t LTSSM %0d -> %0d (host stage %0d dev_bursts %0d)", $time, st_q, ltssm_state, host.link_stage, host.dev_bursts);
+        if (ltssm_state != st_q) $display("t=%0t LTSSM %0d -> %0d (host stage %0d dev_bursts %0d) go_rec=%0d ts1_seen=%0d u0rec=%0d pend=%0d/%0d cred=%0d/%0d", $time, st_q, ltssm_state, host.link_stage, host.dev_bursts,
+            dut.go_recovery, dut.u_ltssm.ts1_seen, dut.u_link.u0rec_us, dut.u_link.pending_on, dut.u_link.pending_us, dut.u_link.credit_on, dut.u_link.credit_us);
         st_q <= ltssm_state;
         if (host.link_stage != ls_q) $display("t=%0t host stage %0d (ltssm %0d ts1_rx %0d ts2_rx %0d consec %0d idle_rx %0d)", $time, host.link_stage, ltssm_state, host.ts1_rx, host.ts2_rx, host.ts_rx_consec, host.idle_rx);
         ls_q <= host.link_stage;
+        if (in_u0 && (dut.go_recovery || dut.u_ltssm.ts1_seen || dut.ts_valid || warm_reset)) $display("t=%0t U0 event: go_rec=%0d ts1_seen=%0d ts_valid=%0d type=%0d warm=%0d", $time, dut.go_recovery, dut.u_ltssm.ts1_seen, dut.ts_valid, dut.ts_type, warm_reset);
         if (dut.hp_valid) $display("t=%0t dev: parser HP ok=%0d lcw %04x", $time, dut.hp_crc_ok, dut.hp_lcw);
         if (dut.lc_valid) $display("t=%0t dev: parser LC %03x", $time, dut.lc_word);
         if (dut.u_link.lcq_pop) $display("t=%0t dev: framer takes LC %03x (queue %0d)", $time, dut.f_lc_word, dut.u_link.lcq_cnt);
@@ -85,9 +87,9 @@ module usb3_link_test_body;
 
     // device sends a header packet (no DPP)
     task automatic dev_send_hp(logic [95:0] h, logic dpp = 0, int len = 0, int base = 0);
-        tx_hp_hdr = h; tx_dpp = dpp; tx_dpp_len = len; tx_dpp_base = base; tx_hp_valid = 1;
+        @(negedge clk); tx_hp_hdr = h; tx_dpp = dpp; tx_dpp_len = len; tx_dpp_base = base; tx_hp_valid = 1;
         @(posedge clk); while (!tx_hp_ready) @(posedge clk);
-        tx_hp_valid = 0;
+        @(negedge clk); tx_hp_valid = 0;
     endtask
 
     localparam logic [95:0] TP_PING = {32'h0, 32'h0000_0107, 27'h0, 5'b00100}; // SubType PING, EP1
@@ -261,10 +263,10 @@ module usb3_link_test_body;
             host.hmode = host.HM_TS2; host.ts2_rx = 0;
             begin int n = 0; while (host.ts2_rx < 8 && n < 20000) begin @(posedge clk); n++; end end
             host.ts_sent = 0; while (host.ts_sent < 16) @(posedge clk);
+            host.h_credits = 0; host.h_cred_tx = 0; host.h_cred_rx = 0; host.dev_adv_rx = 0; host.dev_lcrd_rx = 0;
             host.txq.delete(); host.ts_raw = 0; host.hmode = host.HM_IDLE; host.idle_rx = 0;
             begin int n = 0; while (host.idle_rx < 8 && n < 20000) begin @(posedge clk); n++; end end
             wait_clk(8);
-            host.h_credits = 0; host.h_cred_tx = 0; host.h_cred_rx = 0; host.dev_adv_rx = 0; host.dev_lcrd_rx = 0;
             host.push_lc({8'h0, host.h_rx_hsn - 3'd1});
             host.push_lc(11'h080); host.push_lc(11'h081); host.push_lc(11'h082); host.push_lc(11'h083);
             begin int n = 0; while ((!host.dev_adv_rx || host.dev_lcrd_rx < 4) && n < 20000) begin @(posedge clk); n++; end end

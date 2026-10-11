@@ -90,6 +90,17 @@ module Usb3Link #(
         }
     }
 
+    // U0 as seen by this module: one clock behind the LTSSM so that the cycle
+    // carrying i_u0_entry still runs the "outside U0" initialisation
+    var in_u0: logic;
+    always_ff {
+        if_reset {
+            in_u0 = 0;
+        } else {
+            in_u0 = i_in_u0;
+        }
+    }
+
     // ---------------------------------------------------------------- link command queue
     // Up to three commands can be queued per clock (slot a: LGOOD/LBAD/LUP,
     // slot b: LCRD, slot c: LRTY/LXU/LAU); the framer drains one per 2 clocks.
@@ -105,7 +116,7 @@ module Usb3Link #(
     var lc_c   : logic<11>    ;
     var lcq_pop: logic        ;
 
-    assign o_lc_valid = lcq_cnt != 0 && i_in_u0;
+    assign o_lc_valid = lcq_cnt != 0 && in_u0;
     assign o_lc_word  = lcq[lcq_rd];
     assign lcq_pop    = o_lc_valid && i_lc_ready;
 
@@ -114,7 +125,7 @@ module Usb3Link #(
             lcq_wr  = 0;
             lcq_rd  = 0;
             lcq_cnt = 0;
-        } else if !i_in_u0 {
+        } else if !in_u0 {
             lcq_wr  = 0;
             lcq_rd  = 0;
             lcq_cnt = 0;
@@ -203,14 +214,14 @@ module Usb3Link #(
     // A header packet may be handed to the framer when the partner advertised
     // and credits remain. New requests are queued into the Tx buffer first.
     var can_send: logic;
-    assign can_send = i_in_u0 && adv_rx && cred_rx && remote_credit != 0;
+    assign can_send = in_u0 && adv_rx && cred_rx && remote_credit != 0;
 
     var hp_present: logic   ; // an entry is being offered to the framer
     var txb_unsent: logic<3>; // entries queued but not yet transmitted
     assign txb_unsent = txb_cnt - txb_sent;
 
     // link commands (including a just-queued LRTY) always go first
-    assign hp_present    = i_in_u0 && lcq_cnt == 0 && !push_a && !push_b && !push_c && txb_unsent != 0
+    assign hp_present    = in_u0 && lcq_cnt == 0 && !push_a && !push_b && !push_c && txb_unsent != 0
         && (retry || can_send);
     assign o_hp_valid    = hp_present;
     assign o_hp_hdr      = txb_hdr[txb_next];
@@ -224,7 +235,7 @@ module Usb3Link #(
 
     // queue acceptance: internal LMP first, then the protocol layer
     var queue_room: logic;
-    assign queue_room    = i_in_u0 && txb_cnt != 4 && !retry && adv_cnt == 4;
+    assign queue_room    = in_u0 && txb_cnt != 4 && !retry && adv_cnt == 4;
     assign o_tx_hp_ready = queue_room && lmp_req == 0 && i_tx_hp_valid;
 
     function lmp_port_capability () -> logic<96> {
@@ -303,7 +314,7 @@ module Usb3Link #(
             go_inactive   = 0;
             go_disabled   = 0;
 
-            if !i_in_u0 {
+            if !in_u0 {
                 // outside U0: hold state; counters reset on U0 entry
                 adv_rx       = 0;
                 cred_rx      = 0;
@@ -445,20 +456,17 @@ module Usb3Link #(
                             // after Recovery: drop entries the partner already received,
                             // the rest is retransmitted
                             if i_from_recovery {
-                                var h: logic<2>;
-                                var c: logic<3>;
-                                h = head;
-                                c = cnt;
-                                for i in 0..4 {
-                                    if c != 0 && txb_hsn[h] != ngp {
-                                        h = h + 1;
-                                        c = c - 1;
-                                    }
+                                // entries carry consecutive HSNs, so the number already
+                                // received by the partner is (ngp - head HSN) mod 8, capped
+                                var drop: logic<3>;
+                                drop = ngp - txb_hsn[head];
+                                if drop >: cnt {
+                                    drop = cnt;
                                 }
-                                head = h;
-                                cnt  = c;
+                                head = head + drop[1:0];
+                                cnt  = cnt - drop;
                                 sent = 0;
-                                if c != 0 {
+                                if cnt != 0 {
                                     retry = 1;
                                 }
                             }
@@ -564,7 +572,7 @@ module Usb3Link #(
                 // ---- queue new header packets into the Tx buffer
                 if queue_room && lmp_req != 0 {
                     var w          : logic<2>;
-                    w           = head + cnt[1:0];
+                    w           = txb_head + txb_cnt[1:0]; // free slot from the registered state (a pop this clock only moves head)
                     txb_hdr[w]  = if lmp_req == 1 ? lmp_port_capability() : lmp_port_config_response();
                     txb_dpp[w]  = 0;
                     txb_len[w]  = 0;
@@ -575,7 +583,7 @@ module Usb3Link #(
                     lmp_req     = 0;
                 } else if o_tx_hp_ready {
                     var w          : logic<2>;
-                    w           = head + cnt[1:0];
+                    w           = txb_head + txb_cnt[1:0]; // free slot from the registered state (a pop this clock only moves head)
                     txb_hdr[w]  = i_tx_hp_hdr;
                     txb_dpp[w]  = i_tx_dpp;
                     txb_len[w]  = i_tx_dpp_len;

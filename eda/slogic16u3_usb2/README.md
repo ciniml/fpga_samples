@@ -1,4 +1,4 @@
-# slogic16u3_usb2 — Sipeed SLogic16U3 の USB 2.0 を rtl/usb で動かす (現状: full speed)
+# slogic16u3_usb2 — Sipeed SLogic16U3 の USB 2.0 を rtl/usb で動かす (full speed / high speed)
 
 SLogic16U3 (GW5AT-LV15MG132C1/I0) の USB-C の D+/D- は、Gowin USB 2.0 SoftPHY の "Single LVDS" 配線
 (IPUG781) になっている。ピンは `eda/slogic16u3_probe` の調査で特定した。
@@ -7,7 +7,7 @@ SLogic16U3 (GW5AT-LV15MG132C1/I0) の USB-C の D+/D- は、Gowin USB 2.0 SoftPH
 |---|---|---|
 | D+ | H3 (比較器、H2 = VREF)、K3、P2 | |
 | D- | M2 (比較器、M1 = VREF)、K2、P1 | |
-| dx / term の対 | K3/K2 と P2/P1 | どちらが dx かは未確定 (FS ではどちらでも動く) |
+| dx / term の対 | K3/K2 = dx、P2/P1 = term | HS で確定 (FS ではどちらを dx にしても動く) |
 | 1.5k プルアップ | C14 | High で有効 |
 | 125 MHz 発振器の OE | D14 | High で発振 (SerDes Q0 REFCLK0) |
 | ACT LED 赤 | G14 | configured で点灯 |

@@ -60,6 +60,35 @@ pub package usb3_pkg {
 
     const LFSR_INIT: logic<16> = 16'hFFFF;
 
+    // Symbol class bits precomputed at the receive FIFO input (keeps the
+    // parser's ordered-set detection off the K-code comparators)
+    const CLS_COM : u32 = 0;
+    const CLS_SHP : u32 = 1;
+    const CLS_SLC : u32 = 2;
+    const CLS_SDP : u32 = 3;
+    const CLS_END : u32 = 4;
+    const CLS_SKP : u32 = 5; // K28.1 (left in the stream; neutral for idle counting)
+    const CLS_EPF : u32 = 6;
+    const CLS_IDLE: u32 = 7; // descrambled D0.0
+
+    function sym_class (
+        k   : input logic   ,
+        raw : input logic<8>,
+        desc: input logic<8>,
+    ) -> logic<8> {
+        var c          : logic<8>;
+        c           = 0;
+        c[CLS_COM]  = k && raw == K_COM;
+        c[CLS_SHP]  = k && raw == K_SHP;
+        c[CLS_SLC]  = k && raw == K_SLC;
+        c[CLS_SDP]  = k && raw == K_SDP;
+        c[CLS_END]  = k && raw == K_END;
+        c[CLS_SKP]  = k && raw == K_SKP;
+        c[CLS_EPF]  = k && raw == K_EPF;
+        c[CLS_IDLE] = !k && desc == 8'h00;
+        return c;
+    }
+
     /// Advance the x^16+x^5+x^4+x^3+1 LFSR by 8 serial shifts (Appendix B).
     function lfsr_adv8 (
         b: input logic<16>,

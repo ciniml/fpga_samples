@@ -1,0 +1,11 @@
+// SLogic16U3 USB 3.0 bring-up: the SerDes Q0 lanes / REFCLK0 are placed by the IP; only the fabric pins here
+IO_LOC "usb_cmp_dp" H3,H2;
+IO_PORT "usb_cmp_dp" IO_TYPE=LVDS25 PULL_MODE=NONE DIFF_RESISTOR=OFF;
+IO_LOC "usb_cmp_dn" M2,M1;
+IO_PORT "usb_cmp_dn" IO_TYPE=LVDS25 PULL_MODE=NONE DIFF_RESISTOR=OFF;
+IO_LOC "usb_pullup" C14;
+IO_PORT "usb_pullup" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "xo_en" D14;
+IO_PORT "xo_en" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "led_r" G14;
+IO_PORT "led_r" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;

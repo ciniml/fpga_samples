@@ -73,7 +73,6 @@ module Usb3Top #(
 
     // ---------------------------------------------------------------- receive
     var rx_desc : logic<32>;
-    var rx_keep : logic<4> ;
     var rx_flush: logic    ;
     var rx_en   : logic    ;
 
@@ -88,32 +87,54 @@ module Usb3Top #(
         o_lfsr  : _         ,
     );
 
+    var rx_cls: logic<32>;
     always_comb {
         for i in 0..4 {
-            rx_keep[i] = !(i_rx_k[i] && i_rx_data[i * 8+:8] == K_SKP);
+            rx_cls[i * 8+:8] = sym_class(i_rx_k[i], i_rx_data[i * 8+:8], rx_desc[i * 8+:8]);
+        }
+    }
+    // pipeline stage in front of the FIFO (descrambler + class decode)
+    var p_valid: logic    ;
+    var p_raw  : logic<32>;
+    var p_desc : logic<32>;
+    var p_k    : logic<4> ;
+    var p_cls  : logic<32>;
+    always_ff {
+        if_reset {
+            p_valid = 0;
+            p_raw   = 0;
+            p_desc  = 0;
+            p_k     = 0;
+            p_cls   = 0;
+        } else {
+            p_valid = i_rx_valid;
+            p_raw   = i_rx_data;
+            p_desc  = rx_desc;
+            p_k     = i_rx_k;
+            p_cls   = rx_cls;
         }
     }
 
-    var f_raw  : logic<64>;
-    var f_desc : logic<64>;
-    var f_k    : logic<8> ;
-    var f_avail: logic<5> ;
-    var f_pop  : logic<4> ;
+    var f_raw : logic<192>;
+    var f_desc: logic<192>;
+    var f_k   : logic<24> ;
+    var f_cls : logic<192>;
+    var f_fill: logic<5>  ;
 
     inst u_fifo: Usb3RxFifo (
-        i_clk              ,
-        i_rst              ,
-        i_flush: rx_flush  ,
-        i_valid: i_rx_valid,
-        i_raw  : i_rx_data ,
-        i_desc : rx_desc   ,
-        i_k    : i_rx_k    ,
-        i_keep : rx_keep   ,
-        o_raw  : f_raw     ,
-        o_desc : f_desc    ,
-        o_k    : f_k       ,
-        o_avail: f_avail   ,
-        i_pop  : f_pop     ,
+        i_clk            ,
+        i_rst            ,
+        i_flush: rx_flush,
+        i_valid: p_valid ,
+        i_raw  : p_raw   ,
+        i_desc : p_desc  ,
+        i_k    : p_k     ,
+        i_cls  : p_cls   ,
+        o_raw  : f_raw   ,
+        o_desc : f_desc  ,
+        o_k    : f_k     ,
+        o_cls  : f_cls   ,
+        o_fill : f_fill  ,
     );
 
     var ts_valid    : logic    ;
@@ -136,8 +157,8 @@ module Usb3Top #(
         i_raw         : f_raw       ,
         i_desc        : f_desc      ,
         i_k           : f_k         ,
-        i_avail       : f_avail     ,
-        o_pop         : f_pop       ,
+        i_cls         : f_cls       ,
+        i_fill        : f_fill      ,
         o_ts_valid    : ts_valid    ,
         o_ts_type     : ts_type     ,
         o_ts_cfg      : ts_cfg      ,
@@ -295,13 +316,23 @@ module Usb3Top #(
         o_busy       : f_busy          ,
     );
 
+    // pipeline register between the framer / LTSSM word mux and the scrambler
+    // (the DPP tail builder and the scrambler chain do not fit one 8 ns cycle)
     var tx_mux_data: logic<32>;
     var tx_mux_k   : logic<4> ;
     var tx_bypass  : logic    ;
     var scr_data   : logic<32>;
-    assign tx_mux_data = if tx_sel_ts ? ts_data : fr_data;
-    assign tx_mux_k    = if tx_sel_ts ? ts_k : fr_k;
-    assign tx_bypass   = tx_sel_ts || scr_bypass;
+    always_ff {
+        if_reset {
+            tx_mux_data = 0;
+            tx_mux_k    = 0;
+            tx_bypass   = 0;
+        } else {
+            tx_mux_data = if tx_sel_ts ? ts_data : fr_data;
+            tx_mux_k    = if tx_sel_ts ? ts_k : fr_k;
+            tx_bypass   = tx_sel_ts || scr_bypass;
+        }
+    }
 
     inst u_scr: Usb3Scrambler (
         i_clk                ,

@@ -17,7 +17,8 @@
  * scheduled SKPs).
  *
  * DPP data is pulled from a synchronous read port: o_dpp_rd requests
- * word o_dpp_addr and i_dpp_data must carry it on the next clock.
+ * word o_dpp_addr and i_dpp_data must carry it on the next clock. Words
+ * are requested two ahead and registered (dq) before use.
  */
 module Usb3TxFramer (
     i_clk   : input clock,
@@ -45,6 +46,7 @@ module Usb3TxFramer (
     o_busy: output logic    , // a packet / link command is being sent
 ) {
     import usb3_pkg::*;
+    import usb3_crc_pkg::*;
 
     enum State: logic<4> {
         Idle,
@@ -79,33 +81,32 @@ module Usb3TxFramer (
     var skp_due: logic;
     assign skp_due = skp_cnt >= SKP_INTERVAL;
 
+    // Data words are requested two words ahead and land in dq one clock
+    // after i_dpp_data, so the DPP tail builder works from a register.
+    var dq: logic<32>; // word being emitted / next word
+
     assign o_dpp_addr = addr;
 
     // CRC helpers over the word being emitted
-    var crc16_w: logic<16>;
-    always_comb {
-        var c: logic<16>;
-        c = crc16;
-        for i in 0..4 {
-            c = crc16_byte(c, o_data[i * 8+:8]);
-        }
-        crc16_w = c;
-    }
+    // CRC-16 runs over the three header words only (not the data path)
+    var crc16_w : logic<16>;
+    var hdr_word: logic<32>;
+    assign hdr_word = case state {
+        State::Hp0: hdr[31:0],
+        State::Hp1: hdr[63:32],
+        default   : hdr[95:64],
+    };
+    assign crc16_w = crc16_w4(crc16, hdr_word);
     var crc32_w: logic<32>; // over a full data word
     var crc32_t: logic<32>; // over the (remain % 4) tail bytes
+    assign crc32_w = crc32_w4(crc32, dq);
     always_comb {
-        var d: logic<32>;
-        var t: logic<32>;
-        d = crc32;
-        t = crc32;
-        for i in 0..4 {
-            d = crc32_byte(d, i_dpp_data[i * 8+:8]);
-            if (i as 11) <: remain {
-                t = crc32_byte(t, i_dpp_data[i * 8+:8]);
-            }
-        }
-        crc32_w = d;
-        crc32_t = t;
+        crc32_t = case remain[1:0] {
+            1      : crc32_w1(crc32, dq[7:0]),
+            2      : crc32_w2(crc32, dq[15:0]),
+            3      : crc32_w3(crc32, dq[23:0]),
+            default: crc32,
+        };
     }
 
     // tail of the DPP: m = remain (0..3) data bytes, CRC-32, DPPEND, idle pad
@@ -128,7 +129,7 @@ module Usb3TxFramer (
             jj = j;
             mm = {2'b00, m};
             if jj <: mm {
-                t[j * 8+:8] = i_dpp_data[jj[1:0] * 8+:8];
+                t[j * 8+:8] = dq[jj[1:0] * 8+:8];
             } else if jj <: mm + 4 {
                 t[j * 8+:8] = cfin[(jj - mm) * 8+:8];
             } else if jj <: mm + 8 {
@@ -187,18 +188,19 @@ module Usb3TxFramer (
                 o_data = hdr[95:64];
             }
             State::Hp3: {
-                o_data = {lcw, ~crc16[15:8], ~crc16[7:0]};
+                o_data   = {lcw, ~crc16[15:8], ~crc16[7:0]};
+                o_dpp_rd = has_dpp && remain != 0; // word 0, two clocks ahead
             }
             State::Hp4: {
-                // DPPSTART (only reached when has_dpp); prefetch data word 0
+                // DPPSTART (only reached when has_dpp); request word 1
                 o_data   = {K_EPF, K_SDP, K_SDP, K_SDP};
                 o_k      = 4'b1111;
-                o_dpp_rd = remain != 0;
+                o_dpp_rd = remain >= 5;
             }
             State::DppData: {
-                // one full data word (remain >= 4); prefetch the next word if any byte is left
-                o_data   = i_dpp_data;
-                o_dpp_rd = remain >= 5;
+                // one full data word (remain >= 4) from dq; request the word after next
+                o_data   = dq;
+                o_dpp_rd = remain >= 9;
             }
             State::DppTail0: {
                 // first word of [data(remain)] CRC-32 DPPEND [idle pad]
@@ -230,7 +232,15 @@ module Usb3TxFramer (
             tail_k  = 0;
             tail_n  = 0;
             addr    = 0;
+            dq      = 0;
         } else {
+            // prefetch bookkeeping: the read address advances with every
+            // request, the returned word is registered into dq one clock later
+            if o_dpp_rd {
+                addr = addr + 1;
+            }
+            dq = i_dpp_data;
+
             // symbol counter for SKP scheduling (reset while not enabled)
             if !i_enable {
                 skp_cnt = 0;
@@ -276,11 +286,9 @@ module Usb3TxFramer (
                     state = if has_dpp ? State::Hp4 : State::Idle;
                 }
                 State::Hp4: {
-                    addr  = addr + 1;
                     state = if remain >= 4 ? State::DppData : State::DppTail0;
                 }
                 State::DppData: {
-                    addr   = addr + 1;
                     crc32  = crc32_w;
                     remain = remain - 4;
                     state  = if remain >= 8 ? State::DppData : State::DppTail0;

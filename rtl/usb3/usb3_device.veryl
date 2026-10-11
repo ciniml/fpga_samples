@@ -126,9 +126,42 @@ module Usb3Device #(
     assign o_vendor_reg = vendor_reg;
     assign o_reset      = reset_evt;
 
-    // ---------------------------------------------------------------- received header decode
+    // ---------------------------------------------------------------- input pipeline stage
+    // The link's header and the parser's DPP stream are registered here so
+    // that the request decode starts from local registers (timing).
+    var q_hp_valid : logic    ;
+    var q_hp_hdr   : logic<96>;
+    var q_dpp_start: logic    ;
+    var q_dpp_valid: logic    ;
+    var q_dpp_data : logic<32>;
+    var q_dpp_be   : logic<4> ;
+    var q_dpp_end  : logic    ;
+    var q_dpp_err  : logic    ;
+    always_ff {
+        if_reset {
+            q_hp_valid  = 0;
+            q_hp_hdr    = 0;
+            q_dpp_start = 0;
+            q_dpp_valid = 0;
+            q_dpp_data  = 0;
+            q_dpp_be    = 0;
+            q_dpp_end   = 0;
+            q_dpp_err   = 0;
+        } else {
+            q_hp_valid  = i_rx_hp_valid;
+            q_hp_hdr    = i_rx_hp_hdr;
+            q_dpp_start = i_dpp_start;
+            q_dpp_valid = i_dpp_valid;
+            q_dpp_data  = i_dpp_data;
+            q_dpp_be    = i_dpp_be;
+            q_dpp_end   = i_dpp_end;
+            q_dpp_err   = i_dpp_err;
+        }
+    }
+
+    // ---------------------------------------------------------------- received header decode (second register stage)
+    var hp_valid: logic    ;
     var hp_type : logic<5> ;
-    var hp_addr : logic<7> ;
     var hp_sub  : logic<4> ;
     var hp_rty  : logic    ;
     var hp_dir  : logic    ;
@@ -139,21 +172,60 @@ module Usb3Device #(
     var dp_setup: logic    ;
     var dp_len  : logic<16>;
     var hp_mine : logic    ;
-    assign hp_type  = i_rx_hp_hdr[4:0];
-    assign hp_addr  = i_rx_hp_hdr[31:25];
-    assign hp_sub   = i_rx_hp_hdr[35:32];
-    assign hp_rty   = i_rx_hp_hdr[38];
-    assign hp_dir   = i_rx_hp_hdr[39];
-    assign hp_ept   = i_rx_hp_hdr[43:40];
-    assign hp_nump  = i_rx_hp_hdr[52:48];
-    assign hp_seq   = i_rx_hp_hdr[57:53];
-    assign dp_seq   = i_rx_hp_hdr[36:32];
-    assign dp_setup = i_rx_hp_hdr[47];
-    assign dp_len   = i_rx_hp_hdr[63:48];
-    assign hp_mine  = hp_addr == dev_addr;
+    var d_start : logic    ;
+    var d_valid : logic    ;
+    var d_data  : logic<32>;
+    var d_be    : logic<4> ;
+    var d_end   : logic    ;
+    var d_err   : logic    ;
+    always_ff {
+        if_reset {
+            hp_valid = 0;
+            hp_type  = 0;
+            hp_sub   = 0;
+            hp_rty   = 0;
+            hp_dir   = 0;
+            hp_ept   = 0;
+            hp_nump  = 0;
+            hp_seq   = 0;
+            dp_seq   = 0;
+            dp_setup = 0;
+            dp_len   = 0;
+            hp_mine  = 0;
+            d_start  = 0;
+            d_valid  = 0;
+            d_data   = 0;
+            d_be     = 0;
+            d_end    = 0;
+            d_err    = 0;
+        } else {
+            hp_valid = q_hp_valid;
+            hp_type  = q_hp_hdr[4:0];
+            hp_sub   = q_hp_hdr[35:32];
+            hp_rty   = q_hp_hdr[38];
+            hp_dir   = q_hp_hdr[39];
+            hp_ept   = q_hp_hdr[43:40];
+            hp_nump  = q_hp_hdr[52:48];
+            hp_seq   = q_hp_hdr[57:53];
+            dp_seq   = q_hp_hdr[36:32];
+            dp_setup = q_hp_hdr[47];
+            dp_len   = q_hp_hdr[63:48];
+            hp_mine  = q_hp_hdr[31:25] == dev_addr;
+            d_start  = q_dpp_start;
+            d_valid  = q_dpp_valid;
+            d_data   = q_dpp_data;
+            d_be     = q_dpp_be;
+            d_end    = q_dpp_end;
+            d_err    = q_dpp_err;
+        }
+    }
 
     // ---------------------------------------------------------------- header builders
+    // addr: the device address the packet is sent from, latched with the request (tx_addr): the ACK
+    // that completes a SET_ADDRESS status stage still goes out from the old address (9.4.6), while
+    // dev_addr already holds the new one
     function tp_hdr (
+        addr: input logic<7>,
         sub : input logic<4>,
         dir : input logic   ,
         ept : input logic<4>,
@@ -161,15 +233,16 @@ module Usb3Device #(
         seq : input logic<5>,
         rty : input logic   ,
     ) -> logic<96> {
-        return {32'h0, 6'h0, seq, nump, 4'h0, ept, dir, rty, 2'b00, sub, dev_addr, 20'h0, PKT_TP};
+        return {32'h0, 6'h0, seq, nump, 4'h0, ept, dir, rty, 2'b00, sub, addr, 20'h0, PKT_TP};
     }
     function dp_hdr (
-        ept: input logic<4> ,
+        addr: input logic<7> ,
+        ept : input logic<4> ,
         seq: input logic<5> ,
         len: input logic<16>,
         eob: input logic    ,
     ) -> logic<96> {
-        return {32'h0, len, 4'h0, ept, 1'b1, eob, 1'b0, seq, dev_addr, 20'h0, PKT_DP};
+        return {32'h0, len, 4'h0, ept, 1'b1, eob, 1'b0, seq, addr, 20'h0, PKT_DP};
     }
     const SUB_ACK      : logic<4> = 4'b0001;
     const SUB_NRDY     : logic<4> = 4'b0010;
@@ -181,12 +254,25 @@ module Usb3Device #(
 
     // ---------------------------------------------------------------- transmit request queue (one at a time)
     var tx_valid: logic    ;
-    var tx_hdr  : logic<96>;
+    var tx_is_dp: logic    ;
+    var tx_sub  : logic<4> ;
+    var tx_dir  : logic    ;
+    var tx_ept  : logic<4> ;
+    var tx_nump : logic<5> ;
+    var tx_seq  : logic<5> ;
+    var tx_rty  : logic    ;
+    var tx_addr : logic<7> ;
+    var tx_eob  : logic    ;
+    var tx_dlen : logic<16>;
     var tx_dpp  : logic    ;
     var tx_len  : logic<11>;
     var tx_base : logic<12>;
     assign o_tx_hp_valid = tx_valid;
-    assign o_tx_hp_hdr   = tx_hdr;
+    assign o_tx_hp_hdr   = if tx_is_dp ?
+        dp_hdr(tx_addr, tx_ept, tx_seq, tx_dlen, tx_eob)
+    :
+        tp_hdr(tx_addr, tx_sub, tx_dir, tx_ept, tx_nump, tx_seq, tx_rty)
+    ;
     assign o_tx_dpp      = tx_dpp;
     assign o_tx_dpp_len  = tx_len;
     assign o_tx_dpp_base = tx_base;
@@ -206,10 +292,20 @@ module Usb3Device #(
     var ctrl_remain  : logic<11>; // bytes still to send
     var ctrl_zlp     : logic    ; // a zero-length DP terminates the transfer
     var ctrl_seq     : logic<5> ;
+    var ep0_rx_seq   : logic<5> ; // EP0: next expected OUT data packet sequence number (SETUP 0 -> 1, + data stage)
     var ctrl_sending : logic    ; // a DP was handed to the link, waiting for its ACK
     var ctrl_last_len: logic<11>;
     var setup_buf    : logic<64>;
     var setup_pend   : logic    ; // SETUP DPP complete, to be processed
+    var setup_go     : logic    ; // decode registered, act now
+    var r_desc_addr  : logic<12>;
+    var r_desc_ok    : logic    ;
+    var r_len_desc   : logic<11>;
+    var r_zlp_desc   : logic    ;
+    var r_len1       : logic<11>;
+    var r_len2       : logic<11>;
+    var r_len4       : logic<11>;
+    var r_len_msos   : logic<11>;
     var dpp_target   : logic<2> ; // 0 none, 1 setup, 2 EP1 OUT, 3 control OUT data (discarded)
     var dpp_widx     : logic<8> ;
     var dpp_len_q    : logic<11>; // Data Length of the DP header being received
@@ -332,7 +428,16 @@ module Usb3Device #(
             seq_in        = 0;
             seq_out       = 0;
             tx_valid      = 0;
-            tx_hdr        = 0;
+            tx_is_dp      = 0;
+            tx_sub        = 0;
+            tx_dir        = 0;
+            tx_ept        = 0;
+            tx_nump       = 0;
+            tx_seq        = 0;
+            tx_rty        = 0;
+            tx_addr       = 0;
+            tx_eob        = 0;
+            tx_dlen       = 0;
             tx_dpp        = 0;
             tx_len        = 0;
             tx_base       = 0;
@@ -341,10 +446,20 @@ module Usb3Device #(
             ctrl_remain   = 0;
             ctrl_zlp      = 0;
             ctrl_seq      = 0;
+            ep0_rx_seq    = 0;
             ctrl_sending  = 0;
             ctrl_last_len = 0;
             setup_buf     = 0;
             setup_pend    = 0;
+            setup_go      = 0;
+            r_desc_addr   = 0;
+            r_desc_ok     = 0;
+            r_len_desc    = 0;
+            r_zlp_desc    = 0;
+            r_len1        = 0;
+            r_len2        = 0;
+            r_len4        = 0;
+            r_len_msos    = 0;
             dpp_target    = 0;
             dpp_widx      = 0;
             dpp_len_q     = 0;
@@ -369,12 +484,28 @@ module Usb3Device #(
             out_qidx      = 0;
         } else {
             var send     : logic    ; // request a transmission this clock
-            var s_hdr    : logic<96>;
+            var s_is_dp  : logic    ;
+            var s_sub    : logic<4> ;
+            var s_dir    : logic    ;
+            var s_ept    : logic<4> ;
+            var s_nump   : logic<5> ;
+            var s_seq    : logic<5> ;
+            var s_rty    : logic    ;
+            var s_eob    : logic    ;
+            var s_dlen   : logic<16>;
             var s_dpp    : logic    ;
             var s_len    : logic<11>;
             var s_base   : logic<12>;
             send      = 0;
-            s_hdr     = 0;
+            s_is_dp   = 0;
+            s_sub     = 0;
+            s_dir     = 0;
+            s_ept     = 0;
+            s_nump    = 0;
+            s_seq     = 0;
+            s_rty     = 0;
+            s_eob     = 0;
+            s_dlen    = 0;
             s_dpp     = 0;
             s_len     = 0;
             s_base    = 0;
@@ -397,6 +528,7 @@ module Usb3Device #(
                 ctrl         = Ctrl::Idle;
                 ctrl_sending = 0;
                 setup_pend   = 0;
+                setup_go     = 0;
                 dpp_target   = 0;
                 in_wptr      = 0;
                 in_ready     = 0;
@@ -462,32 +594,39 @@ module Usb3Device #(
             }
 
             // ---- DPP reception
-            if i_dpp_start {
+            if d_start {
                 dpp_widx = 0;
                 dpp_good = 1;
             }
-            if i_dpp_valid {
+            if d_valid {
                 if dpp_target == 1 {
                     if dpp_widx == 0 {
-                        setup_buf[31:0] = i_dpp_data;
+                        setup_buf[31:0] = d_data;
                     } else if dpp_widx == 1 {
-                        setup_buf[63:32] = i_dpp_data;
+                        setup_buf[63:32] = d_data;
                     }
                 } else if dpp_target == 2 {
-                    out_ram[dpp_widx] = i_dpp_data;
+                    out_ram[dpp_widx] = d_data;
                 }
                 dpp_widx = dpp_widx + 1;
             }
-            if i_dpp_end || i_dpp_err {
+            if d_end || d_err {
                 var ok: logic;
-                ok = i_dpp_end;
+                ok = d_end;
                 case dpp_target {
                     1: {
                         // SETUP: ACK Seq 1 NumP 1 (good) / ACK Seq 0 rty (bad)
-                        send  = 1;
-                        s_hdr = tp_hdr(SUB_ACK, 0, 0, 1, if ok ? 1 : 0, !ok);
+                        send    = 1;
+                        s_is_dp = 0;
+                        s_sub   = SUB_ACK;
+                        s_dir   = 0;
+                        s_ept   = 0;
+                        s_nump  = 1;
+                        s_seq   = if ok ? 1 : 0;
+                        s_rty   = !ok;
                         if ok {
                             setup_pend = 1;
+                            ep0_rx_seq = 1;
                         }
                     }
                     2: {
@@ -497,18 +636,37 @@ module Usb3Device #(
                             out_rptr = 0;
                             out_full = 1;
                             seq_out  = seq_out + 1;
-                            s_hdr    = tp_hdr(SUB_ACK, 0, 1, 1, seq_out + 1, 0);
+                            s_is_dp  = 0;
+                            s_sub    = SUB_ACK;
+                            s_dir    = 0;
+                            s_ept    = 1;
+                            s_nump   = 1;
+                            s_seq    = seq_out + 1;
+                            s_rty    = 0;
                         } else {
-                            s_hdr = tp_hdr(SUB_ACK, 0, 1, 1, seq_out, 1);
+                            s_is_dp = 0;
+                            s_sub   = SUB_ACK;
+                            s_dir   = 0;
+                            s_ept   = 1;
+                            s_nump  = 1;
+                            s_seq   = seq_out;
+                            s_rty   = 1;
                         }
                     }
                     3: {
                         // control OUT data (SET_SEL ...): accepted and discarded
                         send     = 1;
                         ctrl_seq = ctrl_seq + 1;
-                        s_hdr    = tp_hdr(SUB_ACK, 0, 0, 1, ctrl_seq + 1, 0);
+                        s_is_dp  = 0;
+                        s_sub    = SUB_ACK;
+                        s_dir    = 0;
+                        s_ept    = 0;
+                        s_nump   = 1;
+                        s_seq    = ctrl_seq + 1;
+                        s_rty    = 0;
                         if ok {
-                            ctrl = Ctrl::Status;
+                            ctrl       = Ctrl::Status;
+                            ep0_rx_seq = ctrl_seq + 1;
                         }
                     }
                     default: {}
@@ -517,7 +675,7 @@ module Usb3Device #(
             }
 
             // ---- received header packets
-            if i_rx_hp_valid && hp_mine && (hp_type == PKT_TP || hp_type == PKT_DP) {
+            if hp_valid && hp_mine && (hp_type == PKT_TP || hp_type == PKT_DP) {
                 if hp_type == PKT_DP {
                     if dp_setup && hp_ept == 0 && dp_seq == 0 && dp_len == 8 {
                         dpp_target   = 1;
@@ -528,13 +686,25 @@ module Usb3Device #(
                         dpp_target = 3;
                     } else if hp_ept == 1 && !hp_dir && configured {
                         if halt_out {
-                            send  = 1;
-                            s_hdr = tp_hdr(SUB_STALL, 0, 1, 0, 0, 0);
+                            send    = 1;
+                            s_is_dp = 0;
+                            s_sub   = SUB_STALL;
+                            s_dir   = 0;
+                            s_ept   = 1;
+                            s_nump  = 0;
+                            s_seq   = 0;
+                            s_rty   = 0;
                         } else if dp_seq != seq_out {
                             // unexpected sequence number: ignore
                         } else if out_full {
                             send     = 1;
-                            s_hdr    = tp_hdr(SUB_NRDY, 0, 1, 0, 0, 0);
+                            s_is_dp  = 0;
+                            s_sub    = SUB_NRDY;
+                            s_dir    = 0;
+                            s_ept    = 1;
+                            s_nump   = 0;
+                            s_seq    = 0;
+                            s_rty    = 0;
                             out_flow = 1;
                         } else {
                             dpp_target = 2;
@@ -567,7 +737,11 @@ module Usb3Device #(
                                                 n = ctrl_last_len;
                                             }
                                             send          = 1;
-                                            s_hdr         = dp_hdr(0, ctrl_seq, {5'h0, n}, 0);
+                                            s_is_dp       = 1;
+                                            s_ept         = 0;
+                                            s_seq         = ctrl_seq;
+                                            s_dlen        = {5'h0, n};
+                                            s_eob         = 0;
                                             s_dpp         = 1;
                                             s_len         = n;
                                             s_base        = ctrl_base;
@@ -579,14 +753,26 @@ module Usb3Device #(
                                         }
                                     }
                                 } else if ctrl == Ctrl::Stall {
-                                    send  = 1;
-                                    s_hdr = tp_hdr(SUB_STALL, 0, 0, 0, 0, 0);
+                                    send    = 1;
+                                    s_is_dp = 0;
+                                    s_sub   = SUB_STALL;
+                                    s_dir   = 0;
+                                    s_ept   = 0;
+                                    s_nump  = 0;
+                                    s_seq   = 0;
+                                    s_rty   = 0;
                                 }
                             } else if hp_ept == 1 && hp_dir && configured {
                                 // host asks for EP1 IN data
                                 if halt_in {
-                                    send  = 1;
-                                    s_hdr = tp_hdr(SUB_STALL, 1, 1, 0, 0, 0);
+                                    send    = 1;
+                                    s_is_dp = 0;
+                                    s_sub   = SUB_STALL;
+                                    s_dir   = 1;
+                                    s_ept   = 1;
+                                    s_nump  = 0;
+                                    s_seq   = 0;
+                                    s_rty   = 0;
                                 } else if in_active && hp_seq == seq_in + 1 && !hp_rty {
                                     // packet accepted
                                     in_active         = 0;
@@ -595,27 +781,47 @@ module Usb3Device #(
                                     seq_in            = seq_in + 1;
                                     if hp_nump != 0 && in_ready[!in_send] {
                                         send      = 1;
-                                        s_hdr     = dp_hdr(1, seq_in + 1, {5'h0, in_len[!in_send]}, 0);
+                                        s_is_dp   = 1;
+                                        s_ept     = 1;
+                                        s_seq     = seq_in + 1;
+                                        s_dlen    = {5'h0, in_len[!in_send]};
+                                        s_eob     = 0;
                                         s_dpp     = 1;
                                         s_len     = in_len[!in_send];
                                         s_base    = {3'h0, !in_send, 8'h0};
                                         in_active = 1;
                                     } else if hp_nump != 0 {
                                         send    = 1;
-                                        s_hdr   = tp_hdr(SUB_NRDY, 1, 1, 0, 0, 0);
+                                        s_is_dp = 0;
+                                        s_sub   = SUB_NRDY;
+                                        s_dir   = 1;
+                                        s_ept   = 1;
+                                        s_nump  = 0;
+                                        s_seq   = 0;
+                                        s_rty   = 0;
                                         in_flow = 1;
                                     }
                                 } else if hp_nump != 0 && hp_seq == seq_in {
                                     if in_ready[in_send] {
                                         send      = 1;
-                                        s_hdr     = dp_hdr(1, seq_in, {5'h0, in_len[in_send]}, 0);
+                                        s_is_dp   = 1;
+                                        s_ept     = 1;
+                                        s_seq     = seq_in;
+                                        s_dlen    = {5'h0, in_len[in_send]};
+                                        s_eob     = 0;
                                         s_dpp     = 1;
                                         s_len     = in_len[in_send];
                                         s_base    = {3'h0, in_send, 8'h0};
                                         in_active = 1;
                                     } else {
                                         send    = 1;
-                                        s_hdr   = tp_hdr(SUB_NRDY, 1, 1, 0, 0, 0);
+                                        s_is_dp = 0;
+                                        s_sub   = SUB_NRDY;
+                                        s_dir   = 1;
+                                        s_ept   = 1;
+                                        s_nump  = 0;
+                                        s_seq   = 0;
+                                        s_rty   = 0;
                                         in_flow = 1;
                                     }
                                 }
@@ -626,21 +832,42 @@ module Usb3Device #(
                                 send = 1;
                                 if ctrl == Ctrl::Status || ctrl == Ctrl::Idle
                                     || (ctrl == Ctrl::DataIn && !ctrl_sending) {
-                                    s_hdr = tp_hdr(SUB_ACK, 0, 0, 0, 0, 0);
-                                    ctrl  = Ctrl::Idle;
+                                    // SeqNum: the next OUT data packet sequence number expected on
+                                    // EP0 (1 after a SETUP alone), as Gowin's reference device; an
+                                    // xHC behind a hub failed SET_ADDRESS on Seq 0 (8.12.2.3)
+                                    s_is_dp = 0;
+                                    s_sub   = SUB_ACK;
+                                    s_dir   = 0;
+                                    s_ept   = 0;
+                                    s_nump  = 0;
+                                    s_seq   = ep0_rx_seq;
+                                    s_rty   = 0;
+                                    ctrl    = Ctrl::Idle;
                                     if addr_apply {
                                         dev_addr   = addr_pend;
                                         addr_apply = 0;
                                     }
                                 } else {
-                                    s_hdr = tp_hdr(SUB_STALL, 0, 0, 0, 0, 0);
-                                    ctrl  = Ctrl::Idle;
+                                    s_is_dp = 0;
+                                    s_sub   = SUB_STALL;
+                                    s_dir   = 0;
+                                    s_ept   = 0;
+                                    s_nump  = 0;
+                                    s_seq   = 0;
+                                    s_rty   = 0;
+                                    ctrl    = Ctrl::Idle;
                                 }
                             }
                         }
                         SUB_PING: {
-                            send  = 1;
-                            s_hdr = tp_hdr(SUB_PING_RESP, hp_dir, hp_ept, 0, 0, 0);
+                            send    = 1;
+                            s_is_dp = 0;
+                            s_sub   = SUB_PING_RESP;
+                            s_dir   = hp_dir;
+                            s_ept   = hp_ept;
+                            s_nump  = 0;
+                            s_seq   = 0;
+                            s_rty   = 0;
                         }
                         default: {}
                     }
@@ -651,21 +878,45 @@ module Usb3Device #(
             if !send && !tx_valid {
                 if in_flow && in_ready[in_send] && !in_active {
                     send    = 1;
-                    s_hdr   = tp_hdr(SUB_ERDY, 1, 1, 1, 0, 0);
+                    s_is_dp = 0;
+                    s_sub   = SUB_ERDY;
+                    s_dir   = 1;
+                    s_ept   = 1;
+                    s_nump  = 1;
+                    s_seq   = 0;
+                    s_rty   = 0;
                     in_flow = 0;
                 } else if out_flow && !out_full {
                     send     = 1;
-                    s_hdr    = tp_hdr(SUB_ERDY, 0, 1, 1, 0, 0);
+                    s_is_dp  = 0;
+                    s_sub    = SUB_ERDY;
+                    s_dir    = 0;
+                    s_ept    = 1;
+                    s_nump   = 1;
+                    s_seq    = 0;
+                    s_rty    = 0;
                     out_flow = 0;
                 }
             }
 
-            // ---- SETUP processing
-            if setup_pend && !send {
+            // ---- SETUP processing: one clock to register the decode, one to act
+            if setup_pend {
+                setup_pend  = 0;
+                setup_go    = 1;
+                r_desc_addr = desc_addr;
+                r_desc_ok   = desc_ok;
+                r_len_desc  = min_len(desc_len, w_length);
+                r_zlp_desc  = ({5'b0, desc_len} <: w_length) && desc_len[8:0] == 0;
+                r_len1      = min_len(1, w_length);
+                r_len2      = min_len(2, w_length);
+                r_len4      = min_len(4, w_length);
+                r_len_msos  = min_len(MSOS_LEN, w_length);
+            }
+            if setup_go {
                 var req_in     : logic   ;
                 var req_type   : logic<2>;
                 var req_rcpt   : logic<5>;
-                setup_pend  = 0;
+                setup_go    = 0;
                 req_in      = bm_req[7];
                 req_type    = bm_req[6:5];
                 req_rcpt    = bm_req[4:0];
@@ -713,10 +964,10 @@ module Usb3Device #(
                             ctrl       = Ctrl::Status;
                         }
                         8'h06: { // GET_DESCRIPTOR
-                            if req_in && desc_ok {
-                                ctrl_base   = desc_addr;
-                                ctrl_remain = min_len(desc_len, w_length);
-                                ctrl_zlp    = ({5'b0, desc_len} <: w_length) && desc_len[8:0] == 0;
+                            if req_in && r_desc_ok {
+                                ctrl_base   = r_desc_addr;
+                                ctrl_remain = r_len_desc;
+                                ctrl_zlp    = r_zlp_desc;
                                 ctrl        = if w_length == 0 ? Ctrl::Status : Ctrl::DataIn;
                             }
                         }
@@ -724,7 +975,7 @@ module Usb3Device #(
                             if req_in {
                                 small_r     = {31'b0, configured};
                                 ctrl_base   = SMALL_ADDR as 12;
-                                ctrl_remain = min_len(1, w_length);
+                                ctrl_remain = r_len1;
                                 ctrl        = if w_length == 0 ? Ctrl::Status : Ctrl::DataIn;
                             }
                         }
@@ -752,7 +1003,7 @@ module Usb3Device #(
                             if req_in && configured && w_index[7:0] == 0 {
                                 small_r     = 0;
                                 ctrl_base   = SMALL_ADDR as 12;
-                                ctrl_remain = min_len(1, w_length);
+                                ctrl_remain = r_len1;
                                 ctrl        = if w_length == 0 ? Ctrl::Status : Ctrl::DataIn;
                             }
                         }
@@ -781,7 +1032,7 @@ module Usb3Device #(
                             if req_in {
                                 small_r     = i_vendor_status;
                                 ctrl_base   = SMALL_ADDR as 12;
-                                ctrl_remain = min_len(4, w_length);
+                                ctrl_remain = r_len4;
                                 ctrl        = if w_length == 0 ? Ctrl::Status : Ctrl::DataIn;
                             }
                         }
@@ -794,7 +1045,7 @@ module Usb3Device #(
                         MS_VENDOR_CODE: { // MS OS 2.0 descriptor set
                             if req_in && w_index == 7 {
                                 ctrl_base   = MSOS_ADDR;
-                                ctrl_remain = min_len(MSOS_LEN, w_length);
+                                ctrl_remain = r_len_msos;
                                 ctrl_zlp    = 0;
                                 ctrl        = if w_length == 0 ? Ctrl::Status : Ctrl::DataIn;
                             }
@@ -812,7 +1063,16 @@ module Usb3Device #(
             // ---- hand the request to the link
             if send && !tx_valid {
                 tx_valid = 1;
-                tx_hdr   = s_hdr;
+                tx_is_dp = s_is_dp;
+                tx_sub   = s_sub;
+                tx_dir   = s_dir;
+                tx_ept   = s_ept;
+                tx_nump  = s_nump;
+                tx_seq   = s_seq;
+                tx_rty   = s_rty;
+                tx_addr  = dev_addr; // the value before this clock's update (old address for SET_ADDRESS)
+                tx_eob   = s_eob;
+                tx_dlen  = s_dlen;
                 tx_dpp   = s_dpp;
                 tx_len   = s_len;
                 tx_base  = s_base;

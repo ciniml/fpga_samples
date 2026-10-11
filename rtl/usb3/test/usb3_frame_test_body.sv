@@ -49,7 +49,8 @@ module usb3_frame_test_body;
     logic [8:0] raw_in[4];
     logic        raw_valid = 0;   // raw bypass (TS injection) when set the wire feeds ts_word
     logic [31:0] ts_word; logic [3:0] ts_k; logic ts_bypass;
-    int corrupt_at = -1;     // symbol index (within the queue) to corrupt once
+    int corrupt_at = -1;     // countdown (symbols) once armed by the next SHP; -1 idle
+    int corrupt_off = -1;    // arm: offset from the first SHP symbol of the next header packet
     int qcount = 0;
 
     logic [31:0] w_data; logic [3:0] w_k; logic w_bypass;
@@ -75,6 +76,7 @@ module usb3_frame_test_body;
         end else if (q.size() >= 4) begin
             for (int i = 0; i < 4; i++) begin
                 logic [8:0] e = q.pop_front();
+                if (corrupt_off >= 0 && e == {1'b1, K_SHP}) begin corrupt_at = corrupt_off; corrupt_off = -1; end
                 if (corrupt_at == 0) begin e[0] = ~e[0]; corrupt_at = -1; end
                 else if (corrupt_at > 0) corrupt_at--;
                 s_data[8*i +: 8] = e[7:0]; s_k[i] = e[8];
@@ -95,20 +97,20 @@ module usb3_frame_test_body;
     logic [31:0] desc;
     Usb3Scrambler dscr(.i_clk(clk), .i_rst(rst), .i_valid(l_valid), .i_bypass(1'b0),
                        .i_data(l_data), .i_k(l_k), .o_data(desc), .o_lfsr(lfsr_rx));
-    logic [3:0] keep;
-    always_comb for (int i = 0; i < 4; i++) keep[i] = !(l_k[i] && l_data[8*i +: 8] == K_SKP);
+    logic [31:0] cls;
+    always_comb for (int i = 0; i < 4; i++) cls[8*i +: 8] = sym_class(l_k[i], l_data[8*i +: 8], desc[8*i +: 8]);
 
-    logic [63:0] f_raw, f_desc; logic [7:0] f_k; logic [4:0] f_avail; logic [3:0] f_pop;
+    logic [127:0] f_raw, f_desc, f_cls; logic [15:0] f_k; logic [4:0] f_fill;
     Usb3RxFifo fifo(.i_clk(clk), .i_rst(rst), .i_flush(1'b0), .i_valid(l_valid),
-        .i_raw(l_data), .i_desc(desc), .i_k(l_k), .i_keep(keep),
-        .o_raw(f_raw), .o_desc(f_desc), .o_k(f_k), .o_avail(f_avail), .i_pop(f_pop));
+        .i_raw(l_data), .i_desc(desc), .i_k(l_k), .i_cls(cls),
+        .o_raw(f_raw), .o_desc(f_desc), .o_k(f_k), .o_cls(f_cls), .o_fill(f_fill));
 
     logic ts_valid, ts_inv, pol_hint, idle8, rlc_valid, rhp_valid, rhp_ok;
     logic [1:0] ts_type; logic [7:0] ts_cfg; logic [10:0] rlc_word;
     logic [95:0] rhp_hdr; logic [15:0] rhp_lcw;
     logic dpp_start, dpp_valid, dpp_end, dpp_err; logic [31:0] dpp_w; logic [3:0] dpp_be;
     Usb3RxParser par(.i_clk(clk), .i_rst(rst), .i_enable(1'b1),
-        .i_raw(f_raw), .i_desc(f_desc), .i_k(f_k), .i_avail(f_avail), .o_pop(f_pop),
+        .i_raw(f_raw), .i_desc(f_desc), .i_k(f_k), .i_cls(f_cls), .i_fill(f_fill),
         .o_ts_valid(ts_valid), .o_ts_type(ts_type), .o_ts_cfg(ts_cfg), .o_ts_inv(ts_inv),
         .o_pol_inv_hint(pol_hint), .o_idle8(idle8),
         .o_lc_valid(rlc_valid), .o_lc_word(rlc_word),
@@ -138,9 +140,9 @@ module usb3_frame_test_body;
         #200;
         forever begin
             @(posedge clk);
-            if (raw_valid) $display("t=%0t tx=%08x k=%b busy=%b | s=%08x k=%b v=%b | l=%08x k=%b v=%b desc=%08x keep=%b | avail=%0d pop=%0d st=%0d win=%016x k=%08b",
-                $time, tx_data, tx_k, tx_busy, s_data, s_k, s_valid, l_data, l_k, l_valid, desc, keep,
-                f_avail, f_pop, par.state, f_raw, f_k);
+            if (raw_valid || $time < 400000) $display("t=%0t tx=%08x k=%b busy=%b | s=%08x k=%b v=%b | l=%08x k=%b v=%b desc=%08x | fill=%0d pos=%0d pop=%0d st=%0d win=%016x k=%08b",
+                $time, tx_data, tx_k, tx_busy, s_data, s_k, s_valid, l_data, l_k, l_valid, desc,
+                f_fill, par.pos, par.pop, par.state, par.v_raw, par.v_k);
             if (par.state >= 3) $display("   remain=%0d crc32=%08x crc_rx=%08x txst=%0d txrem=%0d tail0=%024x k=%03x", par.remain, par.crc32, par.crc_rx, txf.state, txf.remain, txf.tail0, txf.tail0_k);
         end
     end
@@ -148,17 +150,19 @@ module usb3_frame_test_body;
 
     int errors = 0;
     string stage = "init";
+
     task automatic fail(string m); $display("FAIL [%s] %s", stage, m); errors++; endtask
 
+    // inputs change on the falling edge (no race with the DUT's clock edge)
     task automatic send_lc(logic [10:0] w);
-        lc_word = w; lc_valid = 1;
+        @(negedge clk); lc_word = w; lc_valid = 1;
         @(posedge clk); while (!lc_ready) @(posedge clk);
-        lc_valid = 0;
+        @(negedge clk); lc_valid = 0;
     endtask
     task automatic send_hp(logic [95:0] h, logic [10:0] l, logic dpp, int len);
-        hp_hdr = h; hp_lcw = l; hp_dpp = dpp; hp_len = len; hp_valid = 1;
+        @(negedge clk); hp_hdr = h; hp_lcw = l; hp_dpp = dpp; hp_len = len; hp_valid = 1;
         @(posedge clk); while (!hp_ready) @(posedge clk);
-        hp_valid = 0;
+        @(negedge clk); hp_valid = 0;
     endtask
     task automatic wait_events(int n);
         int guard = 0;
@@ -184,6 +188,20 @@ module usb3_frame_test_body;
         if (evq[2].kind != 1 || evq[2].lc != LC_LUP) fail("lc2");
         evq.delete();
 
+        // ---- bursts of link commands under every wire perturbation
+        for (int mode = 0; mode < 4; mode++) begin
+            ins_mode = mode;
+            for (int rep = 0; rep < 20; rep++) begin
+                stage = $sformatf("lc burst mode%0d rep%0d", mode, rep);
+                for (int i = 0; i < 8; i++) send_lc(LC_LCRD + (i & 3) + ((i & 4) ? 11'h100 : 0));
+                wait_events(8);
+                for (int i = 0; i < 8 && i < evq.size(); i++)
+                    if (evq[i].kind != 1 || evq[i].lc != (LC_LCRD + (i & 3) + ((i & 4) ? 11'h100 : 0))) begin fail($sformatf("lc %0d got %03x", i, evq[i].lc)); break; end
+                evq.delete();
+            end
+        end
+        ins_mode = 0;
+
         // ---- header packet without DPP (Port Capability LMP), HSN 5
         stage = "hp";
         h = {32'h0, 32'h0002_0004, 32'h0000_0280};
@@ -204,7 +222,7 @@ module usb3_frame_test_body;
                 send_hp(h, 11'd1, 1, len);
                 send_lc(LC_LGOOD + 1);            // something right after
                 wait_events(2);
-                if (evq[0].kind != 2 || !evq[0].ok || evq[0].hdr != h) fail("dph");
+                if (evq[0].kind != 2 || !evq[0].ok || evq[0].hdr != h) fail($sformatf("dph: ev0 kind=%0d ok=%0d hdr=%024x lc=%03x (exp %024x) events=%0d", evq[0].kind, evq[0].ok, evq[0].hdr, evq[0].lc, h, evq.size()));
                 if (evq[1].kind != 1 || evq[1].lc != LC_LGOOD + 1) fail("lc after dpp");
                 evq.delete();
                 if (dpp_starts != 1) fail($sformatf("starts=%0d", dpp_starts));
@@ -219,7 +237,7 @@ module usb3_frame_test_body;
         // ---- corrupted header (one bit in byte 2 of the header): crc_ok must be 0
         stage = "hp corrupt";
         settle();
-        corrupt_at = q.size() + 4 + 2;   // the framer word enters the queue at the next edge: HPSTART (4) then byte 2
+        corrupt_off = 4 + 2;   // HPSTART (4) then header byte 2
         h = {32'h1111_2222, 32'h3333_4444, 32'h5555_6660};
         send_hp(h, 11'd2, 0, 0);
         wait_events(1);
@@ -228,7 +246,7 @@ module usb3_frame_test_body;
         // corrupted DPP data: dpp_err, no dpp_end
         stage = "dpp corrupt";
         settle();
-        corrupt_at = q.size() + 4 + 20 + 4 + 3;   // HPSTART(4) hdr(16) DPPSTART(4) byte 3
+        corrupt_off = 4 + 16 + 4 + 3;   // HPSTART(4) hdr(16) DPPSTART(4) byte 3
         h = {32'h0, 16'd16, 16'h0180, 27'h0, PKT_DP};
         dpp_ends = 0; dpp_errs = 0;
         send_hp(h, 11'd3, 1, 16);

@@ -452,14 +452,15 @@ module usb3_host_bfm (
         while (ts2_rx < 8) @(posedge clk);
         ts_sent = 0;
         while (ts_sent < 16) @(posedge clk);
-        // Polling.Idle
+        // Polling.Idle (the device may reach U0 and advertise before we do: reset the
+        // link bookkeeping before the idle handshake)
         link_stage = 6;
+        h_tx_hsn = 0; h_rx_hsn = 0; h_credits = 0; h_cred_tx = 0; h_cred_rx = 0; dev_adv_rx = 0; dev_lcrd_rx = 0;
         txq.delete(); ts_raw = 0; hmode = HM_IDLE; idle_rx = 0;
         while (idle_rx < 8) @(posedge clk);
         repeat (8) @(posedge clk);
         // U0: advertise
         link_stage = 7;
-        h_tx_hsn = 0; h_rx_hsn = 0; h_credits = 0; h_cred_tx = 0; h_cred_rx = 0; dev_adv_rx = 0; dev_lcrd_rx = 0;
         push_lc(11'h007);
         push_lc(11'h080); push_lc(11'h081); push_lc(11'h082); push_lc(11'h083);
         while (!dev_adv_rx || dev_lcrd_rx < 4) @(posedge clk);
