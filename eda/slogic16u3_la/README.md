@@ -161,3 +161,27 @@ cd util/serial_bridge && cargo build --release
 実機 (2026-10-12、Tang Primer 25K のパターン): 4 CH 800 MS/s 3 秒を 400.6 MB/s で取り込み、4.0 秒後に表示。
 16 CH 200 MS/s で CH7 立ち上がりトリガ、外部クロック (CK0 立ち上がり、A/B 共用) でトリガ位置の値が
 A = 128 / B = Gray(128) = 192 にそろうことを確認。
+
+## フラッシュへの書き込み (公式 DFU、2026-10-12 実機確認)
+
+SLogic16U3 の SPI フラッシュはアプリが 0x0、Sipeed の DFU イメージが 0x800000。MODE ボタンは FPGA を
+再コンフィグし、そのとき動いている位流の「次の multiboot アドレス」が読まれる (純正はアプリ → DFU → アプリと
+交互)。DFU では USB2 の 359f:30f1 "SLogic DFU" (USB-SPI ブリッジ) として見え、公式ツールがフラッシュを読み書きする。
+
+```
+make PLACE_OPT=3 TAG=base dfu       # build/dfu/slogic16u3_la_p3_base.{bin,fs}: 次アドレスを 0x800000 にした位流
+# MODE を押して DFU にする (lsusb に 359f:30f1)
+cd <sipeed/slogic16u3-tools> && python3 -m slogicpt.dfu.spi_flash <repo>/eda/slogic16u3_la/build/dfu/slogic16u3_la_p3_base.bin --pid 0x30F1 --addr 0x0
+# MODE を押す (または挿し直す) と 0x0 から起動
+```
+
+- `host/mkdfu.py` は位流ヘッダのコマンド 0xD2 の次の語 (.bin の 0x4C、Gowin の `-multi_boot 1
+  -multiboot_spi_flash_address`) だけを書き換える。PnR をやり直さないのでタイミングは元のビルドのまま
+  (同じオプションで作り直したら pclk 122 MHz で閉じなかった)。これを 0x800000 にしないと MODE で同じ
+  位流が再ロードされ、DFU に戻れない。
+- 平文の位流は、eFuse に AES 鍵が書かれた量産品でもフラッシュから起動する (純正は暗号化)。
+- 実機: 書き込み 0x9186A バイト + 回読照合 OK、MODE で起動 (USERCODE 0x4041、USB3 列挙、400 MB/s 取り込み)、
+  挿し直しでも起動、MODE で DFU に戻る (書き込み前に JTAG SRAM ロード + MODE で確認)。
+- 純正に戻す: DFU で 0x0 に純正アプリを書く (DFU ブリッジで読んだバックアップ。JTAG の `gowin-prog dump-spi`
+  のダンプは 256 バイトごとに 3 バイトずれていて使えなかった)。
+- DFU に入れなくなったら: `build/dfu/*.fs` を JTAG で SRAM にロード → MODE で DFU。

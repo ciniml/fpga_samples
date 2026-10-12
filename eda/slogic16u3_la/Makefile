@@ -25,3 +25,11 @@ $(USB3_VERYL_SV): $(wildcard ../../rtl/usb3/*.veryl)
 	cd ../../rtl/usb3 && veryl build
 $(LA_VERYL_SV): $(wildcard ../../rtl/la/*.veryl)
 	cd ../../rtl/la && veryl build
+
+# flash application image for the official DFU tool (see README "DFU"): the built bitstream with the
+# next multiboot address set to the DFU image, so that MODE still reaches DFU
+DFU_OUT := build/dfu/$(PROJECT_NAME)$(BUILD_SUFFIX)
+dfu: $(BITSTREAM)
+	mkdir -p build/dfu
+	python3 host/mkdfu.py $(BITSTREAM) $(DFU_OUT)
+.PHONY: dfu
