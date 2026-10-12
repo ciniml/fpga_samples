@@ -15,17 +15,26 @@
 //!   POST /api/flush             drop pending RX bytes, cancel a pending xfer
 //!   POST /api/xfer              {write:[u8], read:n, timeout_ms} -> {data:[u8], timeout:bool}
 //!
+//! The SLogic16U3 logic analyzer (eda/slogic16u3_la) is served too: its
+//! capture runs here (USB 3.0, see la.rs) and the UI asks for views of it:
+//!
+//!   GET  /la, /wave.js          LA UI (eda/slogic16u3_la/host/web/la.html) and the
+//!                               waveform view shared with the trace viewer
+//!   *    /api/la/...            see la.rs
+//!
 //! /api/xfer writes the bytes, then reads until `read` bytes arrived or
 //! the timeout elapsed. Requests are serialised on the port (one at a time).
 
 use axum::{
-    extract::State,
+    extract::{Query, State},
     http::{header, StatusCode},
     response::{Html, IntoResponse},
     routing::{get, post},
     Json, Router,
 };
 use clap::Parser;
+
+mod la;
 use serde::{Deserialize, Serialize};
 use std::{
     io::{Read, Write},
@@ -38,6 +47,8 @@ use std::{
 
 const BERT_HTML: &str = include_str!("../../../eda/easycdr_bert/host/bert.html");
 const TRACE_HTML: &str = include_str!("../../../eda/easycdr_trace/host/web/index.html");
+const LA_HTML: &str = include_str!("../../../eda/slogic16u3_la/host/web/la.html");
+const WAVE_JS: &str = include_str!("../../../eda/easycdr_trace/host/web/wave.js");
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -52,6 +63,22 @@ struct Args {
     /// Listen address
     #[arg(short, long, default_value = "127.0.0.1:8080")]
     listen: String,
+    /// Serve the UIs from this repository checkout instead of the copies
+    /// built in (for editing them without rebuilding)
+    #[arg(long)]
+    ui_root: Option<std::path::PathBuf>,
+}
+
+static UI_ROOT: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+
+/// a UI file: from --ui-root when given, else the built-in copy
+fn ui_file(path: &str, built_in: &'static str) -> String {
+    if let Some(Some(root)) = UI_ROOT.get() {
+        if let Ok(s) = std::fs::read_to_string(root.join(path)) {
+            return s;
+        }
+    }
+    built_in.to_string()
 }
 
 struct PortState {
@@ -61,6 +88,7 @@ struct PortState {
 }
 
 struct AppState {
+    la: la::LaShared,
     port: Mutex<PortState>,
     /// bumped by flush/open/close: an xfer that observes a change aborts
     cancel_gen: AtomicU64,
@@ -126,18 +154,112 @@ async fn index() -> Html<&'static str> {
         "<!doctype html><meta charset=utf-8><title>serial-bridge</title>\
          <body style='font:14px system-ui;padding:16px'><h1>serial-bridge</h1>\
          <ul><li><a href='/bert'>EasyCDR BERT</a></li>\
-         <li><a href='/trace'>EasyCDR Trace Viewer</a></li></ul>\
+         <li><a href='/trace'>EasyCDR Trace Viewer</a></li>\
+         <li><a href='/la'>SLogic16U3 Logic Analyzer</a></li></ul>\
          <p>API: <code>/api/ports</code>, <code>/api/state</code>, <code>/api/open</code>, \
          <code>/api/close</code>, <code>/api/flush</code>, <code>/api/xfer</code></p>",
     )
 }
 
 async fn bert() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], BERT_HTML)
+    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], ui_file("eda/easycdr_bert/host/bert.html", BERT_HTML))
 }
 
 async fn trace() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], TRACE_HTML)
+    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], ui_file("eda/easycdr_trace/host/web/index.html", TRACE_HTML))
+}
+
+async fn la_page() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], ui_file("eda/slogic16u3_la/host/web/la.html", LA_HTML))
+}
+
+async fn wave_js() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "text/javascript; charset=utf-8")], ui_file("eda/easycdr_trace/host/web/wave.js", WAVE_JS))
+}
+
+// ---------------------------------------------------------------- logic analyzer
+
+type ApiErr = (StatusCode, Json<serde_json::Value>);
+
+async fn la_device(State(app): State<Shared>) -> Json<serde_json::Value> {
+    let la = app.la.clone();
+    Json(tokio::task::spawn_blocking(move || la.device()).await.unwrap())
+}
+
+async fn la_capture(State(app): State<Shared>, Json(req): Json<la::CaptureReq>) -> Result<Json<serde_json::Value>, ApiErr> {
+    let id = app.la.start(req).map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
+    Ok(Json(serde_json::json!({ "id": id })))
+}
+
+async fn la_stop(State(app): State<Shared>) -> StatusCode {
+    app.la.request_stop();
+    StatusCode::NO_CONTENT
+}
+
+async fn la_status(State(app): State<Shared>) -> Json<la::Status> {
+    Json(app.la.status())
+}
+
+fn la_cap(app: &Shared) -> Result<Arc<la::Capture>, ApiErr> {
+    app.la.cap.read().unwrap().clone().ok_or_else(|| err(StatusCode::NOT_FOUND, "no capture"))
+}
+
+async fn la_meta(State(app): State<Shared>) -> Result<Json<serde_json::Value>, ApiErr> {
+    Ok(Json(la_cap(&app)?.meta()))
+}
+
+#[derive(Deserialize)]
+struct ViewQ {
+    g: usize,
+    x0: f64,
+    x1: f64,
+    n: usize,
+}
+
+async fn la_view(State(app): State<Shared>, Query(q): Query<ViewQ>) -> Result<impl IntoResponse, ApiErr> {
+    let cap = la_cap(&app)?;
+    let v = tokio::task::spawn_blocking(move || cap.view(q.g, q.x0, q.x1, q.n)).await.unwrap();
+    let v = v.ok_or_else(|| err(StatusCode::NOT_FOUND, "group not captured"))?;
+    Ok(([(header::CONTENT_TYPE, "application/octet-stream")], v))
+}
+
+#[derive(Deserialize)]
+struct FindQ {
+    g: usize,
+    x: f64,
+    dir: i32,
+    cond: String,
+}
+
+async fn la_find(State(app): State<Shared>, Query(q): Query<FindQ>) -> Result<Json<serde_json::Value>, ApiErr> {
+    let cap = la_cap(&app)?;
+    let r = tokio::task::spawn_blocking(move || cap.find(q.g, q.x, q.dir, &q.cond)).await.unwrap();
+    let x = r.map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
+    Ok(Json(serde_json::json!({ "x": x })))
+}
+
+#[derive(Deserialize)]
+struct VcdQ {
+    x0: f64,
+    x1: f64,
+    #[serde(default = "vcd_limit")]
+    limit: usize,
+}
+fn vcd_limit() -> usize {
+    20_000_000
+}
+
+async fn la_vcd(State(app): State<Shared>, Query(q): Query<VcdQ>) -> Result<impl IntoResponse, ApiErr> {
+    let cap = la_cap(&app)?;
+    let id = cap.id;
+    let v = tokio::task::spawn_blocking(move || cap.vcd(q.x0, q.x1, q.limit)).await.unwrap();
+    Ok((
+        [
+            (header::CONTENT_TYPE, "text/plain; charset=utf-8".to_string()),
+            (header::CONTENT_DISPOSITION, format!("attachment; filename=\"la_{id}.vcd\"")),
+        ],
+        v,
+    ))
 }
 
 async fn ports() -> Result<Json<Vec<PortInfo>>, (StatusCode, Json<serde_json::Value>)> {
@@ -282,7 +404,9 @@ async fn main() {
             Err(e) => eprintln!("warning: {e} (open it from the UI)"),
         }
     }
+    UI_ROOT.set(args.ui_root.clone()).unwrap();
     let app = Arc::new(AppState {
+        la: la::new(),
         port: Mutex::new(st),
         cancel_gen: AtomicU64::new(0),
     });
@@ -297,6 +421,16 @@ async fn main() {
         .route("/api/close", post(close))
         .route("/api/flush", post(flush))
         .route("/api/xfer", post(xfer))
+        .route("/la", get(la_page))
+        .route("/wave.js", get(wave_js))
+        .route("/api/la/device", get(la_device))
+        .route("/api/la/capture", post(la_capture))
+        .route("/api/la/stop", post(la_stop))
+        .route("/api/la/status", get(la_status))
+        .route("/api/la/meta", get(la_meta))
+        .route("/api/la/view", get(la_view))
+        .route("/api/la/find", get(la_find))
+        .route("/api/la/vcd", get(la_vcd))
         .with_state(app);
 
     let listener = tokio::net::TcpListener::bind(&args.listen)

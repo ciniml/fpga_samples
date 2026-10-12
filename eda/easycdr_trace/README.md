@@ -261,5 +261,7 @@ ENABLE 0/1、RESET でタイムスタンプ再始動、`Z` アボート — ALL 
 
 ## ブラウザ版ホストツール
 
+波形ビューと信号マップ・条件式は `host/web/wave.js` (SLogic16U3 ロジアナ UI `/la` と共通、
+index.html と同じディレクトリに置く)。
 `host/web/index.html` を Chrome/Edge で開くと Web Serial (UART) / WebUSB (ベンダクラス USB) 経由で
 キャプチャ・波形表示・CSV/VCD 出力ができる (Python/pyserial 不要)。設計は `doc/web_host_design.md`。

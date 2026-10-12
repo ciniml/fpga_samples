@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SLogic16U3 Logic Analyzer</title>
+<!-- served by util/serial_bridge (/la): the capture runs in the server (USB 3.0), this page asks
+     it for what the screen shows. The waveform view is /wave.js, shared with the EasyCDR trace viewer. -->
+<style>
+  :root { --bg:#f7f7f5; --fg:#222; --mut:#666; --line:#ccc; --acc:#2a6fdb; --trig:#d33; --cur:#c80; --panel:#fff; --bad:#c00; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg:#151618; --fg:#e6e6e6; --mut:#999; --line:#444; --acc:#5b9cff; --trig:#ff6b6b; --cur:#fb4; --panel:#1f2124; --bad:#f66; }
+  }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px system-ui,sans-serif; }
+  header { padding:10px 16px; border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0 12px 0 0; }
+  main { padding:12px 16px; display:grid; gap:12px; }
+  fieldset { border:1px solid var(--line); border-radius:6px; background:var(--panel); min-width:0; }
+  legend { color:var(--mut); font-size:12px; }
+  label { display:inline-flex; align-items:center; gap:4px; margin-right:12px; white-space:nowrap; }
+  input[type=number], input[type=text], select { width:6em; font:inherit; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:2px 4px; }
+  textarea { font:13px monospace; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; }
+  button { font:inherit; padding:4px 12px; border:1px solid var(--line); border-radius:4px; background:var(--panel); color:var(--fg); cursor:pointer; }
+  button.primary { background:var(--acc); color:#fff; border-color:var(--acc); }
+  button:disabled { opacity:.4; cursor:default; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:4px 0; }
+  .grp { display:grid; grid-template-columns:auto 1fr; gap:4px 8px; align-items:center; }
+  .mut { color:var(--mut); }
+  .bad { color:var(--bad); }
+  #wave { width:100%; height:420px; display:block; background:var(--panel); border:1px solid var(--line); border-radius:6px; touch-action:none; color:var(--fg); }
+  #status { font-family:monospace; white-space:pre-wrap; }
+  .cols { display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>SLogic16U3 Logic Analyzer</h1>
+  <button id="btnDev">Check device</button>
+  <span id="dev" class="mut">-</span>
+</header>
+<main>
+  <div class="cols">
+    <fieldset>
+      <legend>Group A (CH0..7, clock input CK0)</legend>
+      <div id="grpA"></div>
+    </fieldset>
+    <fieldset>
+      <legend>Group B (CH8..15, clock input CK1)</legend>
+      <div id="grpB"></div>
+    </fieldset>
+    <fieldset>
+      <legend>Capture</legend>
+      <div class="row">
+        <label>length <input type="text" id="len" value="10ms" style="width:6em" title="internal clocks: time (s, ms, us, ns)"></label>
+        <label>ext samples <input type="text" id="extN" value="" style="width:7em" title="external-clock groups: samples to keep (empty: their share of the memory)"></label>
+      </div>
+      <div class="row">
+        <label>threshold [V] <input type="number" id="vth" value="1.65" step="0.05" min="0" max="6"></label>
+        <label>memory [MiB] <input type="number" id="mem" value="8192" step="1024" min="64"></label>
+      </div>
+      <div class="row mut" id="bw"></div>
+    </fieldset>
+  </div>
+  <fieldset>
+    <legend>Trigger (signal-map names; terms joined by &amp;&amp;: name == value, name, !name, rise(name), fall(name), edge(name); one group's channels)</legend>
+    <div class="row">
+      <label><input type="checkbox" id="useTrig"> trigger</label>
+      <input type="text" id="trig" value="rise(CH0)" style="width:24em">
+      <label>pre-trigger [%] <input type="number" id="pre" value="10" min="0" max="100"></label>
+      <span id="trigCodes" class="mut" style="font-family:monospace"></span>
+    </div>
+    <div class="row">
+      <button id="btnCap" class="primary">Capture</button>
+      <button id="btnStop" disabled>Stop</button>
+      <span id="status"></span>
+    </div>
+  </fieldset>
+  <fieldset>
+    <legend>Signal map (name[:width[:radix]], CH0 first; radix hex|dec|bin|enum(A,B,..); derived: name = expr) - the same syntax as the EasyCDR trace viewer</legend>
+    <div class="row">
+      <textarea id="sigmap" rows="4" style="width:34em">CH0, CH1, CH2, CH3, CH4, CH5, CH6, CH7
+CH8, CH9, CH10, CH11, CH12, CH13, CH14, CH15</textarea>
+      <button id="btnMap">Apply map</button>
+      <span id="mapInfo" class="mut"></span>
+    </div>
+  </fieldset>
+  <fieldset>
+    <legend>Waveform (wheel: zoom, drag: pan, click: cursor A, shift+click: cursor B)</legend>
+    <div class="row">
+      <button id="btnFit">Fit</button>
+      <button id="btnTrig">Go to trigger</button>
+      <label>search <input type="text" id="find" value="rise(CH0)" style="width:16em"></label>
+      <button id="btnPrev">◀ prev</button>
+      <button id="btnNext">next ▶</button>
+      <button id="btnVcdView">VCD (view)</button>
+      <button id="btnVcdAll">VCD (all)</button>
+      <span id="cursor" class="mut"></span>
+    </div>
+    <canvas id="wave"></canvas>
+    <div id="capInfo" class="mut"></div>
+  </fieldset>
+</main>
+<script src="/wave.js"></script>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const RATES = ['800M', '400M', '200M', '100M', '80M', '50M', '40M', '25M', '20M', '10M', '5M', '2M', '1M', '500k', '200k', '100k', '50k'];
+
+// ---------------------------------------------------------------- settings
+function groupUi(id, defCh) {
+  const el = $(id), p = id;
+  el.innerHTML = `
+    <div class="row">
+      <label>channels <select id="${p}ch"><option value="0">off</option><option>1</option><option>2</option><option>4</option><option>8</option></select></label>
+      <label>clock <select id="${p}clk"><option value="int">internal</option><option value="rise">ext rising</option><option value="fall">ext falling</option><option value="both">ext both</option></select></label>
+    </div>
+    <div class="row">
+      <label>rate <select id="${p}rate">${RATES.map(r => `<option>${r}</option>`).join('')}</select></label>
+      <label>skew <input type="number" id="${p}skew" value="2" min="0" max="7" style="width:3.5em" title="ext clocks: take the sample this many 1.25 ns before the edge"></label>
+      <label><input type="checkbox" id="${p}other"> other CK</label>
+      <label><input type="checkbox" id="${p}test"> test (PRBS)</label>
+    </div>`;
+  $(p + 'ch').value = String(defCh); $(p + 'rate').value = '200M';
+  for (const k of ['ch', 'clk', 'rate', 'skew', 'other', 'test']) $(p + k).addEventListener('change', () => { saveSettings(); showBw(); });
+}
+groupUi('grpA', 8); groupUi('grpB', 8);
+function parseNum(s) {
+  const m = String(s).trim().match(/^([0-9.eE+-]+)\s*([a-zA-Zµ]*)$/); if (!m) throw new Error('bad number: ' + s);
+  const k = { '': 1, s: 1, ms: 1e-3, us: 1e-6, 'µs': 1e-6, ns: 1e-9, k: 1e3, K: 1e3, M: 1e6, G: 1e9 }[m[2]];
+  if (k === undefined) throw new Error('bad unit: ' + m[2]);
+  return parseFloat(m[1]) * k;
+}
+function groupReq(p) {
+  return { ch: +$(p + 'ch').value, clk: $(p + 'clk').value, rate: parseNum($(p + 'rate').value), skew: +$(p + 'skew').value,
+           other_clk: $(p + 'other').checked, test: $(p + 'test').checked };
+}
+function showBw() {
+  let t = 0; const parts = [];
+  for (const [p, n] of [['grpA', 'A'], ['grpB', 'B']]) {
+    const g = groupReq(p); if (!g.ch) continue;
+    if (g.clk === 'int') { const b = g.ch * g.rate / 8; t += b; parts.push(`${n}: ${g.ch} ch × ${$(p + 'rate').value}S/s = ${(b / 1e6).toFixed(1)} MB/s`); }
+    else parts.push(`${n}: ${g.ch} ch, external clock (≤ 100 MHz one edge / 50 MHz both)`);
+  }
+  let s = parts.join(', ') + (t ? `; total ${(t / 1e6).toFixed(1)} MB/s` : '');
+  if (t > 401e6) s += ' — over the USB 3.0 stream (≈ 400 MB/s): it will overflow';
+  try { const L = parseNum($('len').value); if (t) s += `; ${(t * L / 2 ** 20).toFixed(0)} MiB`; } catch (e) {}
+  $('bw').textContent = s; $('bw').className = 'row ' + (t > 401e6 ? 'bad' : 'mut');
+}
+const SAVED = ['len', 'extN', 'vth', 'mem', 'trig', 'pre', 'find', 'sigmap', 'useTrig'];
+function saveSettings() {
+  try {
+    const o = {};
+    for (const id of SAVED) o[id] = $(id).type === 'checkbox' ? $(id).checked : $(id).value;
+    for (const p of ['grpA', 'grpB']) for (const k of ['ch', 'clk', 'rate', 'skew', 'other', 'test']) { const e = $(p + k); o[p + k] = e.type === 'checkbox' ? e.checked : e.value; }
+    localStorage.setItem('la_settings', JSON.stringify(o));
+  } catch (e) {}
+}
+function loadSettings() {
+  try {
+    const o = JSON.parse(localStorage.getItem('la_settings') || '{}');
+    for (const [k, v] of Object.entries(o)) { const e = $(k); if (!e) continue; if (e.type === 'checkbox') e.checked = v; else e.value = v; }
+  } catch (e) {}
+}
+loadSettings();
+for (const id of SAVED) $(id).addEventListener('change', () => { saveSettings(); showBw(); });
+showBw();
+
+// ---------------------------------------------------------------- signal map
+let sigMap = null;
+function applyMap() {
+  try { sigMap = Wave.parseMap($('sigmap').value); }
+  catch (e) { $('mapInfo').textContent = 'map error: ' + e.message; $('mapInfo').className = 'bad'; return; }
+  $('mapInfo').className = 'mut';
+  $('mapInfo').textContent = `${sigMap.sigs.length} signals${sigMap.derived.length ? ' + ' + sigMap.derived.length + ' derived' : ''}, ${sigMap.width} bits` + (sigMap.width > 16 ? ' (only 16 channels: the rest is empty)' : '');
+  view.setRows([...sigMap.sigs, ...sigMap.derived]);
+  showTrig(); saveSettings();
+}
+$('btnMap').onclick = applyMap;
+
+// condition text -> {g, codes (8 chars)} for one group, or null when empty
+function condFor(expr) {
+  if (!expr.trim()) return null;
+  const c = Wave.parseCond(sigMap, expr), codes = Wave.condCodes(c, 16);
+  const a = /[^X]/.test(codes.slice(0, 8)), b = /[^X]/.test(codes.slice(8));
+  if (a && b) throw new Error('the channels of one group only (CH0..7 or CH8..15)');
+  return { codes, g: b ? 1 : 0, group: b ? codes.slice(8) : codes.slice(0, 8) };
+}
+function showTrig() {
+  try { const c = condFor($('trig').value); $('trigCodes').textContent = c ? `CH0→15: ${c.codes}` : ''; $('trigCodes').className = 'mut'; }
+  catch (e) { $('trigCodes').textContent = e.message; $('trigCodes').className = 'bad'; }
+}
+$('trig').addEventListener('input', showTrig);
+
+// ---------------------------------------------------------------- device / capture
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) { let m = r.statusText; try { m = (await r.json()).error || m; } catch (e) {} throw new Error(m); }
+  const ct = r.headers.get('content-type') || '';
+  return ct.includes('json') ? r.json() : r.status === 204 ? null : r.arrayBuffer();
+}
+async function checkDev() {
+  try {
+    const d = await api('/api/la/device');
+    $('dev').textContent = d.ok ? (d.busy ? 'capturing' : `LA design (id ${d.id}), status 0x${d.status.toString(16)}`) : 'no device: ' + d.error;
+    $('dev').className = d.ok ? 'mut' : 'bad';
+  } catch (e) { $('dev').textContent = e.message; $('dev').className = 'bad'; }
+}
+$('btnDev').onclick = checkDev;
+
+let polling = false;
+async function capture() {
+  let req;
+  try {
+    req = { a: groupReq('grpA'), b: groupReq('grpB'), length_s: parseNum($('len').value), threshold_v: +$('vth').value,
+            mem_mb: +$('mem').value, ext_samples: $('extN').value.trim() ? Math.round(parseNum($('extN').value)) : 0, pre: +$('pre').value / 100, trigger: '' };
+    if ($('useTrig').checked) { const c = condFor($('trig').value); if (c) req.trigger = c.codes; }
+  } catch (e) { $('status').textContent = e.message; $('status').className = 'bad'; return; }
+  try { await api('/api/la/capture', req); }
+  catch (e) { $('status').textContent = e.message; $('status').className = 'bad'; return; }
+  $('btnCap').disabled = true; $('btnStop').disabled = false; $('status').className = '';
+  poll();
+}
+async function poll() {
+  if (polling) return; polling = true;
+  try {
+    for (;;) {
+      const s = await api('/api/la/status');
+      const sm = s.samples.map((n, i) => n ? `${'AB'[i]} ${(n / 1e6).toFixed(1)} M` : '').filter(Boolean).join(', ');
+      $('status').textContent = `${s.state}${s.msg ? ': ' + s.msg : ''}  ${(s.bytes / 2 ** 20).toFixed(0)} MiB, ${s.mbps.toFixed(1)} MB/s, ${s.elapsed.toFixed(2)} s` + (sm ? `, samples ${sm}` : '');
+      $('status').className = s.state === 'error' || /OVERFLOW/.test(s.msg) ? 'bad' : '';
+      if (s.state === 'done' || s.state === 'error' || s.state === 'idle') { if (s.state === 'done') await loadCapture(true); break; }
+      await new Promise(r => setTimeout(r, 200));
+    }
+  } catch (e) { $('status').textContent = e.message; $('status').className = 'bad'; }
+  finally { polling = false; $('btnCap').disabled = false; $('btnStop').disabled = true; }
+}
+$('btnCap').onclick = capture;
+$('btnStop').onclick = () => api('/api/la/stop', {});
+
+// ---------------------------------------------------------------- view
+let meta = null, reqSeq = 0, fetchTimer = null;
+const view = new Wave.View($('wave'), {
+  unit: 'ns',
+  onChange: () => { if (!meta) return; clearTimeout(fetchTimer); fetchTimer = setTimeout(fetchView, 15); },
+  onCursor: () => { $('cursor').textContent = view.cursorText(); },
+});
+$('cursor').textContent = view.cursorText();
+
+async function loadCapture(fit) {
+  meta = await api('/api/la/meta');
+  view.unit = meta.unit;
+  const gs = meta.groups.filter(Boolean);
+  view.bounds = { x0: Math.min(...gs.map(g => g.x_first)), x1: Math.max(...gs.map(g => g.x_last)) };
+  view.markers = [];
+  if (meta.trigger) view.markers.push({ x: 0, label: 'T', color: 'trig' });
+  const desc = meta.groups.map((g, i) => g && `${'AB'[i]}: ${g.ch} ch ${g.clock === 'int' ? (g.rate / 1e6) + ' MS/s' : 'ext ' + g.clock}, ${g.n.toLocaleString()} samples` + (g.flags & 1 ? ' OVERFLOW' : '') + (g.flags & 2 ? ' CLOCK TOO FAST' : '')).filter(Boolean);
+  $('capInfo').textContent = `capture ${meta.id}: ${desc.join('; ')}${meta.trigger ? `; trigger at ${'AB'[meta.trigger.group]} sample ${meta.trigger.sample}` : ''}${meta.note ? '; ' + meta.note : ''}`;
+  if (fit) { if (meta.trigger) zoomTrigger(); else view.fit(); } else fetchView();
+}
+function zoomTrigger() {
+  if (!meta || !meta.trigger) return;
+  const g = meta.groups[meta.trigger.group];
+  view.center(0, Math.min(view.bounds.x1 - view.bounds.x0, g.scale * 2000));
+}
+
+// one group's view -> segments in x with the group's bits at 8 * g
+function groupSegs(gi, g, buf, x0, x1, n) {
+  const dv = new DataView(buf), mode = dv.getUint32(0, true), count = dv.getUint32(4, true), first = dv.getFloat64(8, true);
+  const bytes = new Uint8Array(buf, 16), sh = BigInt(8 * gi), segs = [];
+  const chMask = (1 << g.ch) - 1, nd = BigInt(0xff & ~chMask) << sh;
+  if (mode === 0) {
+    const dx = (x1 - x0) / count;
+    for (let i = 0; i < count; i++) {
+      const o = bytes[2 * i], a = bytes[2 * i + 1];
+      if (a & ~o) continue;   // no data
+      segs.push({ xa: x0 + i * dx, xb: x0 + (i + 1) * dx, or: BigInt(o) << sh, and: BigInt(a) << sh, nd });
+    }
+  } else {
+    for (let i = 0; i < count; i++) {
+      const s = first + i, v = BigInt(bytes[i]) << sh;
+      const xa = s * g.scale - g.offset, xb = xa + g.scale, p = segs[segs.length - 1];
+      if (p && p.or === v) { p.xb = xb; continue; }
+      segs.push({ xa, xb, or: v, and: v, nd });
+    }
+  }
+  return segs;
+}
+// two sorted segment lists -> one: OR of the fields, a group missing at a place = its bits nd
+function mergeSegs(lists, ndAll) {
+  const out = [], idx = lists.map(() => 0), bounds = new Set();
+  for (const l of lists) for (const s of l) { bounds.add(s.xa); bounds.add(s.xb); }
+  const xs = [...bounds].sort((p, q) => p - q);
+  for (let k = 0; k + 1 < xs.length; k++) {
+    const xa = xs[k], xb = xs[k + 1], mid = (xa + xb) / 2;
+    let or = 0n, and = 0n, nd = 0n, any = false;
+    lists.forEach((l, i) => {
+      while (idx[i] < l.length && l[idx[i]].xb <= mid) idx[i]++;
+      const s = l[idx[i]];
+      if (s && s.xa <= mid) { or |= s.or; and |= s.and; nd |= s.nd; any = true; }
+      else nd |= ndAll[i];
+    });
+    if (!any) continue;
+    const p = out[out.length - 1];
+    if (p && p.xb === xa && p.or === or && p.and === and && p.nd === nd) { p.xb = xb; continue; }
+    out.push({ xa, xb, or, and, nd });
+  }
+  return out;
+}
+async function fetchView() {
+  if (!meta) return;
+  const seq = ++reqSeq, x0 = view.t0, x1 = view.t0 + view.span, n = Math.max(1, Math.round(view.plotW()));
+  const lists = [], ndAll = [];
+  try {
+    for (let gi = 0; gi < 2; gi++) {
+      const g = meta.groups[gi]; if (!g) continue;
+      const buf = await api(`/api/la/view?g=${gi}&x0=${x0}&x1=${x1}&n=${n}`);
+      if (seq !== reqSeq) return;
+      lists.push(groupSegs(gi, g, buf, x0, x1, n)); ndAll.push(0xffn << BigInt(8 * gi));
+    }
+  } catch (e) { $('capInfo').textContent = e.message; return; }
+  // channels of a group that is off: no data
+  let off = 0n; meta.groups.forEach((g, i) => { if (!g) off |= 0xffn << BigInt(8 * i); });
+  const segs = lists.length === 1 ? lists[0] : mergeSegs(lists, ndAll);
+  if (off) for (const s of segs) s.nd |= off;
+  view.setSegments(segs);
+}
+$('btnFit').onclick = () => view.fit();
+$('btnTrig').onclick = zoomTrigger;
+
+async function search(dir) {
+  if (!meta) return;
+  let c;
+  try { c = condFor($('find').value); if (!c) return; } catch (e) { $('cursor').textContent = e.message; return; }
+  const from = view.cursors.a !== null ? view.cursors.a : view.t0 + view.span / 2;
+  try {
+    const r = await api(`/api/la/find?g=${c.g}&x=${from}&dir=${dir}&cond=${c.group}`);
+    if (r.x === null) { $('cursor').textContent = 'not found'; return; }
+    view.cursors.a = r.x; view.center(r.x); $('cursor').textContent = view.cursorText();
+  } catch (e) { $('cursor').textContent = e.message; }
+}
+$('btnNext').onclick = () => search(1);
+$('btnPrev').onclick = () => search(-1);
+$('btnVcdView').onclick = () => { if (meta) location.href = `/api/la/vcd?x0=${view.t0}&x1=${view.t0 + view.span}`; };
+$('btnVcdAll').onclick = () => { if (meta) location.href = `/api/la/vcd?x0=${view.bounds.x0}&x1=${view.bounds.x1}`; };
+
+applyMap(); checkDev();
+api('/api/la/status').then(s => { if (['starting', 'waiting', 'capturing', 'stopping', 'processing'].includes(s.state)) { $('btnCap').disabled = true; $('btnStop').disabled = false; poll(); } else if (s.state === 'done') loadCapture(true); }).catch(() => {});
+</script>
+</body>
+</html>

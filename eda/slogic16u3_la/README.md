@@ -6,7 +6,8 @@ Sipeed SLogic16U3 (GW5AT-LV15MG132C1/I0) を USB 3.0 のロジックアナライ
 
 - RTL: `rtl/la` (Veryl、`veryl test` で LaCore 全体を試験)
 - USB 3.0 コア: `rtl/usb3`、PHY IP と共通部品: `../slogic16u3_usb3/src/slogic16u3`
-- ホスト: `host/la_stream.c` (取り込み・テストモード検証・自動マトリクス)、`host/la_status.py` (JTAG 状態)
+- ホスト: `host/la_stream.c` (取り込み・テストモード検証・自動マトリクス)、`host/la_status.py` (JTAG 状態)、
+  GUI は `util/serial_bridge` の `/la` (`host/web/la.html`、下記)
 
 ## 構成
 
@@ -137,3 +138,26 @@ pclk 124.67 MHz、サンプルクロック 99.73 MHz (JTAG で実測)。リソ�
 
 注意: 「4 CH 800 MS/s」は合計 4 CH (片方のグループだけ)。A と B を両方 4 CH 800 MS/s にすると 800 MB/s で、
 すぐオーバーフロー (END フラグ 1) する。
+
+## GUI (util/serial_bridge の /la)
+
+```
+cd util/serial_bridge && cargo build --release
+./target/release/serial-bridge -l 127.0.0.1:8082      # ブラウザで http://127.0.0.1:8082/la
+```
+
+取り込みはサーバ (Rust、nusb) が行い、ブラウザは画面に見える範囲の要約 (ピクセルごとの OR/AND) か
+サンプルそのものを問い合わせる。詳細と API は `util/serial_bridge/README.md`。
+
+- 設定: グループごとのチャネル数・クロック (内部レート / 外部エッジ、skew、他方の CK)・テストモード、
+  長さ、しきい値、メモリ上限。帯域 (MB/s) と 400 MB/s 超過の警告を表示
+- トリガ: 信号マップの名前で `rise(CH3) && CH5 == 0` のように書く (1 グループのチャネルのみ、
+  ソフトウェア: サーバが取り込みながら全サンプルを判定)。プリトリガ % 指定
+- 波形: EasyCDR トレースビューアと同じ `wave.js` (信号マップの構文・バス表示・派生信号も共通)。
+  ホイールでズーム、ドラッグでパン、クリック / Shift+クリックでカーソル A/B (Δt と周波数)。
+  引いた表示では変化のある区間を帯で示す
+- 検索 (条件の次 / 前)、VCD 出力 (表示範囲 / 全体)
+
+実機 (2026-10-12、Tang Primer 25K のパターン): 4 CH 800 MS/s 3 秒を 400.6 MB/s で取り込み、4.0 秒後に表示。
+16 CH 200 MS/s で CH7 立ち上がりトリガ、外部クロック (CK0 立ち上がり、A/B 共用) でトリガ位置の値が
+A = 128 / B = Gray(128) = 192 にそろうことを確認。
