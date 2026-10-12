@@ -120,8 +120,14 @@ host/la_stream -a ch=8,rate=100M -b ch=8,clk=rise,skew=2 -s 1 -o cap   # 実入�
 ## ビルド
 
 ```
-make PLACE_OPT=3 TAG=base          # (125 MHz のタイミングは PnR 次第: PLACE_OPT / PNR_EXTRA を変えて数通り)
+make PLACE_OPT=4 ROUTE_OPT=2 LA_TIMEOUT=2600 TAG=rep   # bitstream/ の v2 はこれ (pclk 125.04 / sclk 104.8 MHz)
 ```
+
+125 MHz の pclk が閉じるかは PnR 次第です。CLS が 94 % あり、同じソースでも PLACE_OPT / ROUTE_OPT を変えると
+pclk が 110〜125 MHz の幅でぶれます。Gowin の PnR は決定的でシードがないので、`LA_TIMEOUT` (LaFramer
+の部分ブロックのタイムアウト、既定 2500) を少し変えて配置を揺らし、数通りを並列に回して閉じたものを使います。
+v2 では USB3 コアの長い経路 (受信パーサの CRC-32 とリンクコマンド判定、デバイスの EP1 IN 発行判定、
+LTSSM の状態遷移で消すカウンタ) を 1 段ずつ切り、最悪スラックを -1.1 ns から -0.45 ns 程度まで縮めました。
 
 ## 実機結果 (2026-10-12、Linux xHC、ハブ経由、build p3_base: pclk 125.1 MHz / sclk 104.3 MHz で閉じた)
 
@@ -239,7 +245,7 @@ JTAG の `gowin-prog dump-spi` で取ったダンプは使えない: 256 バイ�
 ```
 cd ~/slogic16u3-tools
 python3 -m slogicpt.dfu.spi_flash <repo>/eda/slogic16u3_la/bitstream/slogic16u3_la.bin --pid 0x30F1 --addr 0x0
-#   (自分でビルドしたもの: make PLACE_OPT=3 TAG=base dfu → build/dfu/slogic16u3_la_p3_base.bin)
+#   (自分でビルドしたもの: make PLACE_OPT=4 ROUTE_OPT=2 LA_TIMEOUT=2600 TAG=rep dfu → build/dfu/slogic16u3_la_p4_r2_to2600_rep.bin)
 ```
 
 ツールは書き込む範囲だけを 64 KiB 単位で消去し、消えたことを確かめてから書き込み、回読で照合する (最後に `Verify OK`)。

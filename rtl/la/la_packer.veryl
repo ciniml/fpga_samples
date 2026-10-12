@@ -55,8 +55,9 @@ module LaPacker (
     var count  : logic<48>;
     var endw   : logic<16>; // END beat [63:48]
 
-    let adv: logic     = !o_tvalid || i_tready; // the output register can take a word this clock
-    let k  : logic<4>  = popcount8(i_tkeep);
+    let adv: logic = !o_tvalid || i_tready; // the output register can take a word this clock
+    // tkeep is 8'hFF / 8'h0F / 8'h03 / 8'h01 (LaFront): no popcount needed
+    let k  : logic<4>  = if i_tkeep[7] ? 4'd8 : if i_tkeep[3] ? 4'd4 : if i_tkeep[1] ? 4'd2 : 4'd1;
     let fk : logic<4>  = {1'b0, f} + k;
     var ins: logic<64>; // the waiting samples with the beat's in place
     always_comb {

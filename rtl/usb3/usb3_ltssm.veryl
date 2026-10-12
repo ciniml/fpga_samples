@@ -401,6 +401,20 @@ module Usb3Ltssm #(
             if tick_us && t_us != 20'hFFFFF {
                 t_us = t_us + 1;
             }
+            // restarted in the clock after a state change (st_chg), not by the change itself:
+            // keeps the next-state logic off the 20-bit counter (tmo is masked in that clock)
+            if st_chg {
+                t_us = 0;
+            }
+            // counters that only run in one state are held clear outside it (was: cleared on
+            // entry, which put the next-state logic in front of their enables)
+            if state != State::PollingRxEq {
+                tseq_cnt  = 0;
+                tseq_done = 0;
+            }
+            if state == State::Disabled || state == State::Inactive || state == State::U3 {
+                det_fail = 0;
+            }
 
             // ---- PowerDown / PhyStatus handshake
             if i_phy_status {
@@ -573,7 +587,7 @@ module Usb3Ltssm #(
                     }
                     State::RxDetectActive: {
                         pd = 2'b10;
-                        if !det_req && !pd_wait && !det_done && t_us >= 2 {
+                        if !det_req && !pd_wait && !det_done && t_us >= 2 && !st_chg {
                             det_req = 1;
                         }
                         if det_done {
@@ -710,7 +724,6 @@ module Usb3Ltssm #(
             st_chg = ns != state;
             if ns != state {
                 state     = ns;
-                t_us      = 0;
                 ts_cnt    = 0;
                 ts8       = 0;
                 ts_sent   = 0;
@@ -734,9 +747,7 @@ module Usb3Ltssm #(
                         o_rx_polarity = 0;
                     }
                     State::PollingRxEq: {
-                        tseq_cnt  = 0;
-                        tseq_done = 0;
-                        skp_cnt   = 0;
+                        skp_cnt = 0;
                     }
                     State::PollingActive, State::RecoveryActive: {
                         ts_cfg_tx = 0;
@@ -754,9 +765,6 @@ module Usb3Ltssm #(
                     State::U0: {
                         o_u0_entry      = 1;
                         o_from_recovery = state == State::RecoveryIdle;
-                    }
-                    State::Disabled, State::Inactive, State::RxDetectActive, State::U3: {
-                        det_fail = if ns == State::RxDetectActive ? det_fail : 0;
                     }
                     default: {}
                 }

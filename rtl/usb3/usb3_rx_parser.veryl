@@ -19,7 +19,8 @@
  *     as words with byte enables, then CRC-32 and DPPEND/DPPABORT are
  *     checked (7.2.4.1.9)
  *   - TS1/TS2 (16 symbols, raw) -> o_ts_* for the LTSSM
- * Outputs are registered (one clock after the symbols were consumed).
+ * Outputs are registered (one clock after the symbols were consumed; link
+ * commands and the DPP end / CRC result one clock later).
  * Clocks without a PHY word (RxValid 0, which the PHY may insert anywhere,
  * also inside a packet) are skipped: the window holds and the parser stalls
  * (i_adv = 0); only a long gap advances the window with empty words.
@@ -167,6 +168,14 @@ module Usb3RxParser (
     var remain  : logic<11>    ; // DPP data bytes still to come
     var crc32   : logic<32>    ;
     var crc_rx  : logic<32>    ;
+    var cd      : logic<32>    ; // data word folded into crc32 on the next clock
+    var cm      : logic<3>     ; // its byte count (0: nothing pending)
+    var chk     : logic        ; // DPP end check on the next clock (crc32 then includes the last word)
+    var chk_ok  : logic        ; // no K-code in the CRC bytes and DPPEND found
+    var chk_crc : logic<32>    ; // received CRC-32
+    var lc_p    : logic        ; // link command word checked on the next clock
+    var lc_d    : logic<32>    ;
+    var lc_k    : logic        ; // a K-code was inside
     var ts_cnt  : logic<2>  [3]; // filler votes: [0] D10.2, [1] D5.2, [2] D21.5 (per word, 0..4 -> saturate)
     var ts_ok   : logic<3>     ; // all fillers so far matched: {D21.5, D5.2, D10.2}
     var idle_cnt: logic<4>     ;
@@ -243,17 +252,16 @@ module Usb3RxParser (
     var crc16_w: logic<16>;
     var crc32_w: logic<32>;
     assign crc16_w = crc16_w4(crc16, w_desc);
+    // CRC-32 runs one clock behind the data (cd / cm registered from the
+    // window), keeping the read-position mux out of the CRC logic
     always_comb {
-        if remain >= 4 {
-            crc32_w = crc32_w4(crc32, w_desc);
-        } else {
-            crc32_w = case remain[1:0] {
-                1      : crc32_w1(crc32, w_desc[7:0]),
-                2      : crc32_w2(crc32, w_desc[15:0]),
-                3      : crc32_w3(crc32, w_desc[23:0]),
-                default: crc32,
-            };
-        }
+        crc32_w = case cm {
+            1      : crc32_w1(crc32, cd[7:0]),
+            2      : crc32_w2(crc32, cd[15:0]),
+            3      : crc32_w3(crc32, cd[23:0]),
+            4      : crc32_w4(crc32, cd),
+            default: crc32,
+        };
     }
 
     always_comb {
@@ -355,6 +363,14 @@ module Usb3RxParser (
             remain         = 0;
             crc32          = 0;
             crc_rx         = 0;
+            cd             = 0;
+            cm             = 0;
+            chk            = 0;
+            chk_ok         = 0;
+            chk_crc        = 0;
+            lc_p           = 0;
+            lc_d           = 0;
+            lc_k           = 0;
             ts_ok          = 0;
             idle_cnt       = 0;
             o_ts_valid     = 0;
@@ -384,6 +400,22 @@ module Usb3RxParser (
             o_dpp_valid    = 0;
             o_dpp_end      = 0;
             o_dpp_err      = 0;
+            // pending CRC word and DPP end check (independent of i_adv)
+            crc32 = crc32_w;
+            cm    = 0;
+            if lc_p {
+                lc_p       = 0;
+                o_lc_valid = !lc_k && lc_d[15:0] == lc_d[31:16] && lcw_ok(lc_d[15:0]);
+                o_lc_word  = lc_d[10:0];
+            }
+            if chk {
+                chk = 0;
+                if chk_ok && chk_crc == ~crc32 { // cm is 0 here: crc32 holds the last word
+                    o_dpp_end = 1;
+                } else {
+                    o_dpp_err = 1;
+                }
+            }
             // a clock without a PHY word (RxValid 0) does not exist for the parser: the window
             // holds (Usb3RxFifo), so nothing is consumed and no state moves; only the pulses drop
             if i_adv {
@@ -452,14 +484,15 @@ module Usb3RxParser (
                                     if hdr[63:59] != 0 {
                                         remain = 11'h7FF; // > 1024: treat as babble, DPP will fail
                                     }
-                                    crc32 = 32'hFFFFFFFF;
+                                    crc32 = 32'hFFFFFFFF; // nothing pending here (cm = 0)
                                 }
                             }
                         }
                         State::LcBody: {
                             if i_avail >= 4 {
-                                o_lc_valid = w_k == 0 && w_desc[15:0] == w_desc[31:16] && lcw_ok(w_desc[15:0]);
-                                o_lc_word  = w_desc[10:0];
+                                lc_p = 1;
+                                lc_d = w_desc;
+                                lc_k = w_k != 0;
                             }
                         }
                         State::DppStart: {
@@ -479,7 +512,8 @@ module Usb3RxParser (
                                     o_dpp_valid = 1;
                                     o_dpp_data  = w_desc;
                                     o_dpp_be    = 4'b1111;
-                                    crc32       = crc32_w;
+                                    cd          = w_desc;
+                                    cm          = 4;
                                     remain      = remain - 4;
                                 }
                             }
@@ -497,7 +531,8 @@ module Usb3RxParser (
                                     2      : 4'b0011,
                                     default: 4'b0111,
                                 };
-                                crc32 = crc32_w;
+                                cd = w_desc;
+                                cm = {1'b0, remain[1:0]};
                                 case remain[1:0] {
                                     0      : crc_rx[31:0] = w_desc;
                                     1      : crc_rx[23:0] = w_desc[31:8];
@@ -529,11 +564,9 @@ module Usb3RxParser (
                                         kk             = v_k[0] | v_k[1] | v_k[2];
                                     }
                                 }
-                                if !kk && hit_at(r, H_END) && crc_full == ~crc32 {
-                                    o_dpp_end = 1;
-                                } else {
-                                    o_dpp_err = 1;
-                                }
+                                chk     = 1;
+                                chk_ok  = !kk && hit_at(r, H_END);
+                                chk_crc = crc_full;
                             }
                         }
                         State::TsBody: {

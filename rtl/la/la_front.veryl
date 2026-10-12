@@ -112,8 +112,13 @@ module LaFront #(
     var pp7    : logic    ; // the clock sample before P's first
 
     // one sample per word: the internal clock's next sample (rem samples ahead), or the edge
-    var rem : logic<24>;
-    let tk  : logic<8>  = if rem <: 24'd8 ? (8'd1 << rem[2:0]) : 8'd0;
+    var rem: logic<24>;
+    var tk : logic<8> ; // the sample of this word (one-hot, 0: none), registered with rem
+    function tk_of (
+        r: input logic<24>,
+    ) -> logic<8> {
+        return if r <: 24'd8 ? (8'd1 << r[2:0]) : 8'd0;
+    }
     let cw  : logic<17> = {a_ck, p_ck, pp7};
     let rise: logic<16> = cw[16:1] & ~cw[15:0];
     let fall: logic<16> = ~cw[16:1] & cw[15:0];
@@ -168,6 +173,7 @@ module LaFront #(
             bad      = 0;
             esent    = 0;
             rem      = 0;
+            tk       = 1;
             prbs     = '1;
             wc       = 0;
             w0       = 0;
@@ -223,6 +229,7 @@ module LaFront #(
                         bad      = i_cfg[3:2] == 0 && dv <: 24'd8 && dv != 1 && dv != 2 && dv != 4;
                         esent    = 0;
                         rem      = 0;
+                        tk       = 1;
                         prbs     = '1;
                         wc       = 0;
                         w0       = 1;
@@ -266,7 +273,10 @@ module LaFront #(
                                 };
                             } else {
                                 if cmode == 0 {
-                                    rem = if rem <: 24'd8 ? rem + div - 24'd8 : rem - 24'd8;
+                                    var rn : logic<24>;
+                                    rn  = if rem <: 24'd8 ? rem + div - 24'd8 : rem - 24'd8;
+                                    rem = rn;
+                                    tk  = tk_of(rn);
                                 }
                                 nk   = if m1 != 0 ? 4'd1 : 4'd0;
                                 lane = {56'h0, s1};

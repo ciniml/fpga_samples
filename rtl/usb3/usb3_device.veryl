@@ -430,6 +430,9 @@ module Usb3Device #(
     var in_limit: logic<5>                ; // packets the host accepts from in_ack on (NumP of its last ACK)
     var in_stop : logic                   ; // a short packet / ZLP in flight: hold further packets until it is acknowledged
     var in_acked: logic<5>                ; // packets a received EP1 IN ACK acknowledges (its SeqNum - seq_in)
+    var nx_rdy  : logic                   ; // in_ready / in_len of buffer in_ack + in_nsent, registered
+    var nx_len  : logic<11>               ; // (one clock late: off the issue decision's critical path)
+    var nx_stale: logic                   ; // in_ack / in_nsent / in_ready were changed last clock: nx_* not valid yet
     assign in_acked = hp_acked;
     var in_flow    : logic    ; // NRDY answered: ERDY when a packet becomes ready
     var in_zlp_pend: logic    ; // last closed packet was full: ZLP after idle
@@ -522,6 +525,9 @@ module Usb3Device #(
             in_fill       = 0;
             in_word       = 0;
             in_ready      = 0;
+            nx_rdy        = 0;
+            nx_len        = 0;
+            nx_stale      = 1;
             in_ack        = 0;
             in_flow       = 0;
             in_nsent      = 0;
@@ -554,6 +560,9 @@ module Usb3Device #(
             var s_base   : logic<13>;
             send      = 0;
             in_acknow = 0;
+            nx_rdy    = in_ready[in_ack + in_nsent[3:0]];
+            nx_len    = in_len[in_ack + in_nsent[3:0]];
+            nx_stale  = 0;
             s_is_dp   = 0;
             s_sub     = 0;
             s_dir     = 0;
@@ -593,6 +602,7 @@ module Usb3Device #(
                 dpp_target   = 0;
                 in_wptr      = 0;
                 in_ready     = 0;
+                nx_stale     = 1;
                 in_fill      = 0;
                 in_ack       = 0;
                 in_flow      = 0;
@@ -858,8 +868,9 @@ module Usb3Device #(
                                             in_ready[i] = 0;
                                         }
                                     }
-                                    in_ack = in_ack + in_acked[3:0];
-                                    seq_in = seq_in + in_acked;
+                                    in_ack   = in_ack + in_acked[3:0];
+                                    nx_stale = 1;
+                                    seq_in   = seq_in + in_acked;
                                     // Retry: send again from SeqNum. (NumP 0 is not a reason: an xHC still takes packets in
                                     // flight after it, resending them cost 25 % of the throughput)
                                     in_nsent = if hp_rty ? 5'd0 : in_nsent - in_acked;
@@ -943,7 +954,7 @@ module Usb3Device #(
                 // (not in the clock an ACK is handled: both update in_nsent, the later nonblocking
                 // assignment won and the ACK's decrement was lost - a SeqNum then got skipped)
                 if configured && !halt_in && !in_flow && !in_stop && !in_acknow && in_nsent <: in_limit && in_nsent
-                    != IN_BUFS as 5 && in_ready[in_ack + in_nsent[3:0]] {
+                    != IN_BUFS as 5 && nx_rdy && !nx_stale {
                     send     = 1;
                     s_is_dp  = 1;
                     s_ept    = 1;
@@ -951,20 +962,21 @@ module Usb3Device #(
                     dbg_ev   = (seq_in + in_nsent) != dbg_nseq; // (debug) a SeqNum skipped or repeated
                     dbg_stb  = 1;
                     dbg_nseq = seq_in + in_nsent + 5'd1;
-                    s_dlen   = {5'h0, in_len[in_ack + in_nsent[3:0]]};
+                    s_dlen   = {5'h0, nx_len};
                     // EOB stays 0: an xHC takes EOB = 1 as "no more data" and then waits for an ERDY
                     // before it asks again (the next read never started). A short packet / ZLP ends
                     // the host's transfer, though: nothing more goes out until the host has
                     // acknowledged it (in_stop; it drops packets sent after it, which used to leave us
                     // a burst ahead, and ACKs of earlier packets must not restart the burst)
                     s_eob = 0;
-                    if in_len[in_ack + in_nsent[3:0]] != 11'd1024 {
+                    if nx_len != 11'd1024 {
                         in_stop = 1;
                     }
                     s_dpp    = 1;
-                    s_len    = in_len[in_ack + in_nsent[3:0]];
+                    s_len    = nx_len;
                     s_base   = {1'b0, in_ack + in_nsent[3:0], 8'h0};
                     in_nsent = in_nsent + 1;
+                    nx_stale = 1;
                 } else if in_flow && in_ready[in_ack] && in_nsent == 0 {
                     send    = 1;
                     s_is_dp = 0;
@@ -1079,6 +1091,7 @@ module Usb3Device #(
                                 seq_out     = 0;
                                 in_wptr     = 0;
                                 in_ready    = 0;
+                                nx_stale    = 1;
                                 in_fill     = 0;
                                 in_ack      = 0;
                                 in_flow     = 0;
