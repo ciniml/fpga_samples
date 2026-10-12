@@ -164,24 +164,80 @@ A = 128 / B = Gray(128) = 192 にそろうことを確認。
 
 ## フラッシュへの書き込み (公式 DFU、2026-10-12 実機確認)
 
-SLogic16U3 の SPI フラッシュはアプリが 0x0、Sipeed の DFU イメージが 0x800000。MODE ボタンは FPGA を
-再コンフィグし、そのとき動いている位流の「次の multiboot アドレス」が読まれる (純正はアプリ → DFU → アプリと
-交互)。DFU では USB2 の 359f:30f1 "SLogic DFU" (USB-SPI ブリッジ) として見え、公式ツールがフラッシュを読み書きする。
+### しくみ
+
+- SLogic16U3 の SPI フラッシュ (XT25F128F、16 MiB) には、純正アプリが 0x0、Sipeed の DFU イメージが 0x800000 に入っている。
+- MODE ボタンを押すと FPGA が再コンフィグされ、動いている位流が持つ「次の multiboot アドレス」から読み直す。
+  純正の 2 つは互いを指しているので、MODE を押すたびにアプリと DFU が切り替わる。電源投入時は 0x0 から起動する。
+- DFU モードでは USB2 の 359f:30f1 "SLogic DFU" として見える。これは USB-SPI ブリッジで、公式ツール
+  (sipeed/slogic16u3-tools の `slogicpt.dfu`) がこれ越しにフラッシュを読み書きする。
+- 自前の位流を 0x0 に書くときは、次アドレスを 0x800000 にしておく (`make dfu` / `host/mkdfu.py`、
+  ビルド済みの `bitstream/slogic16u3_la.bin` は設定済み)。0 のままだと MODE で同じ位流が読み直され、DFU に戻れない。
+- `host/mkdfu.py` が書き換えるのは位流ヘッダのコマンド 0xD2 の次の語 (.bin の 0x4C、Gowin の `-multi_boot 1
+  -multiboot_spi_flash_address` に当たる) だけ。PnR をやり直さないので、元のビルドのタイミングが保たれる
+  (同じオプションで作り直したら pclk 122 MHz になり、125 MHz を満たさなかった)。
+- 平文の位流は、eFuse に AES 鍵が書かれた量産品でもフラッシュから起動する (純正の位流は暗号化されている)。
+
+### 準備 (初回のみ)
 
 ```
-make PLACE_OPT=3 TAG=base dfu       # build/dfu/slogic16u3_la_p3_base.{bin,fs}: 次アドレスを 0x800000 にした位流
-# MODE を押して DFU にする (lsusb に 359f:30f1)
-cd <sipeed/slogic16u3-tools> && python3 -m slogicpt.dfu.spi_flash <repo>/eda/slogic16u3_la/build/dfu/slogic16u3_la_p3_base.bin --pid 0x30F1 --addr 0x0
-# MODE を押す (または挿し直す) と 0x0 から起動
+git clone https://github.com/sipeed/slogic16u3-tools ~/slogic16u3-tools   # (確認したのは 018a75b)
+pip install pyusb                              # (公式ツールは requirements.txt。DFU 部分は pyusb だけ使う)
+# Linux: 359f (DFU / 純正アプリ) と 1209:0001 (このデザイン) をユーザーで開けるようにする
+echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="359f", MODE="0666"
+SUBSYSTEM=="usb", ATTR{idVendor}=="1209", ATTR{idProduct}=="0001", MODE="0666"' | sudo tee /etc/udev/rules.d/60-slogic.rules
+sudo udevadm control --reload
 ```
 
-- `host/mkdfu.py` は位流ヘッダのコマンド 0xD2 の次の語 (.bin の 0x4C、Gowin の `-multi_boot 1
-  -multiboot_spi_flash_address`) だけを書き換える。PnR をやり直さないのでタイミングは元のビルドのまま
-  (同じオプションで作り直したら pclk 122 MHz で閉じなかった)。これを 0x800000 にしないと MODE で同じ
-  位流が再ロードされ、DFU に戻れない。
-- 平文の位流は、eFuse に AES 鍵が書かれた量産品でもフラッシュから起動する (純正は暗号化)。
-- 実機: 書き込み 0x9186A バイト + 回読照合 OK、MODE で起動 (USERCODE 0x4041、USB3 列挙、400 MB/s 取り込み)、
-  挿し直しでも起動、MODE で DFU に戻る (書き込み前に JTAG SRAM ロード + MODE で確認)。
-- 純正に戻す: DFU で 0x0 に純正アプリを書く (DFU ブリッジで読んだバックアップ。JTAG の `gowin-prog dump-spi`
-  のダンプは 256 バイトごとに 3 バイトずれていて使えなかった)。
-- DFU に入れなくなったら: `build/dfu/*.fs` を JTAG で SRAM にロード → MODE で DFU。
+### 1. DFU モードにする
+
+純正アプリ、またはこのデザインが動いている状態で MODE を 1 回押す。`lsusb` に `359f:30f1 Sipeed SLogic DFU` が
+出れば DFU モード (約 1 秒かかる)。
+
+### 2. バックアップ (書き込む前に必ず)
+
+```
+python3 host/dfu_backup.py --tools ~/slogic16u3-tools --out ~/slogic16u3-backup
+# -> slogic16u3_0x000000.bin (アプリ 0x0 から 1 MiB)、slogic16u3_0x800000.bin (DFU 0x800000 から 384 KiB)、SHA256SUMS
+```
+
+読み出しだけで、消去も書き込みもしない。各領域を 2 回読み、一致したものだけを保存する (全体で約 13 秒)。
+純正アプリの実体は 0x0 から約 0x78CF7 まで (このデザインは 0x9186A まで)、DFU イメージは 0x800000 から約 0x853877 まで。
+JTAG の `gowin-prog dump-spi` で取ったダンプは使えない: 256 バイトごとに 3 バイトずれ、各ページの末尾 3 バイトが FF になっていた。
+
+### 3. 書き込み
+
+```
+cd ~/slogic16u3-tools
+python3 -m slogicpt.dfu.spi_flash <repo>/eda/slogic16u3_la/bitstream/slogic16u3_la.bin --pid 0x30F1 --addr 0x0
+#   (自分でビルドしたもの: make PLACE_OPT=3 TAG=base dfu → build/dfu/slogic16u3_la_p3_base.bin)
+```
+
+ツールは書き込む範囲だけを 64 KiB 単位で消去し、消えたことを確かめてから書き込み、回読で照合する (最後に `Verify OK`)。
+596 KB で数分かかる。0x800000 の DFU イメージには触れない。
+
+### 4. 起動の確認
+
+MODE を押すか USB を挿し直す。`lsusb` に `1209:0001 ... USB SS Sample` が出て (USB 3.0 ポート、`lsusb -t` で 5000M)、
+`serial-bridge` の `/la` で取り込めれば成功。もう一度 MODE を押すと DFU に戻る。
+
+### 5. 純正に戻す
+
+DFU モードで、手順 2 のバックアップのアプリ領域を 0x0 に書き戻す:
+
+```
+cd ~/slogic16u3-tools
+python3 -m slogicpt.dfu.spi_flash ~/slogic16u3-backup/slogic16u3_0x000000.bin --pid 0x30F1 --addr 0x0
+```
+
+その後 MODE を押せば純正アプリ (359f:3031) が起動する。0x800000 の DFU イメージは書き換えていないので、戻す必要はない。
+
+### DFU に入れなくなったとき
+
+0x0 の位流が起動しない、または次アドレスを設定し忘れた場合は、JTAG で次アドレス設定済みの位流を SRAM に読み込み、
+MODE で DFU に入る (フラッシュは使わない):
+
+```
+gowin-prog --cable dap sram bitstream/slogic16u3_la.fs      # JTAG: G2 TCK / G3 TMS / J3 TDI / J2 TDO (基板の JST SH 8P)
+# MODE を押す → 359f:30f1 → 手順 2〜5
+```
