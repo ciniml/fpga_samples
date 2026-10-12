@@ -7,7 +7,10 @@ export DX
 # HS=1: high-speed capable build (usb_phy_gowin_sl)
 HS ?=
 export HS
-BUILD_SUFFIX := _dx$(shell echo $(DX) | tr A-Z a-z)$(if $(filter 1,$(HS)),_hs)
+# CMP1=1 (with HS=1): 7-pin variant, D+ comparator only (usb_phy_gowin_sl CMP1)
+CMP1 ?=
+export CMP1
+BUILD_SUFFIX := _dx$(shell echo $(DX) | tr A-Z a-z)$(if $(filter 1,$(HS)),_hs)$(if $(filter 1,$(CMP1)),_c1)
 
 USB_VERYL_SV := $(addprefix ../../rtl/usb/,usb_pkg.sv usb_phy_rx.sv usb_phy_tx.sv usb_phy.sv usb_sie.sv usb_descriptor_rom.sv usb_device.sv)
 

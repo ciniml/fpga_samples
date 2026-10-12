@@ -33,8 +33,11 @@ set_option -use_i2c_as_gpio 1
 set_option -use_sspi_as_gpio 1
 set_device -name $DEVICE_FAMILY $DEVICE_PART
 
+set CMP1 [expr {[info exists ::env(CMP1)] && $::env(CMP1) eq "1"}]
 if {$HS} {
-    set fh [open defines_gen.v w]; puts $fh "`define USB_HS"; close $fh
+    set fh [open defines_gen.v w]; puts $fh "`define USB_HS"
+    if {$CMP1} { puts $fh "`define USB_CMP1" }
+    close $fh
 } else {
     set fh [open defines_gen.v w]; puts $fh "// full speed"; close $fh
 }

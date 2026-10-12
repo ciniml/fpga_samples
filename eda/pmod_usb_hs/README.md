@@ -200,6 +200,8 @@ IO_PORT "usb_pullup_en_o" IO_TYPE=LVCMOS33 DRIVE=8 PULL_MODE=NONE;
 
 ## 9. 代替案
 
+- **Pmod 1 ポート版 (Single LVDS、7 I/O + VBUS 検出)**: D- 比較器を省いた構成。RTL は SLogic16U3 で
+  HS 実機確認済み。詳細は [SINGLE_PMOD.md](SINGLE_PMOD.md)
 - **FS 専用ミニ基板 (1 Pmod, 3 I/O)**: D+/D- を 27Ω 直列で双方向ピンに直結、D+ 1.5k
   プルアップ制御の 3 本のみ。RX は同じ双方向ピンの入力を使う。HS の評価はできないが
   半日で作れるので先行して作る価値がある

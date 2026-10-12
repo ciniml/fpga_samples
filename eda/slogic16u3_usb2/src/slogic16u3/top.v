@@ -118,9 +118,19 @@ module top (
         .i_tx_valid(1'b0), .i_tx_data(8'd0), .o_tx_ready());
 
 `ifdef USB_HS
+`ifdef USB_CMP1
+    // CMP1: the 7-pin variant (D+ comparator only, SE0 from the term pins). M2/M1 stay declared as
+    // inputs (kept for the status) so the default pull-up does not pull D- up; the PHY ignores them.
+    localparam CMP1 = 1;
+    wire cmp_dn_mon /* synthesis syn_keep=1 */;
+    TLVDS_IBUF u_cmp_dn (.I(usb_cmp_dn), .IB(usb_cmp_dn_n), .O(cmp_dn_mon));
+    wire [1:0] cmp_dn_x = {2{cmp_dn_mon}};
+`else
+    localparam CMP1 = 0;
+`endif
     wire [1:0] mon_line;
     wire       phy_tx_oe, phy_pullup;
-    usb_phy_gowin_sl u_phy(
+    usb_phy_gowin_sl #(.CMP1(CMP1)) u_phy(
         .clk_ref_i(osc), .rstn_ref_i(~pll_rst), .pll_lock_i(os_lock & pll_lock),
         .fclk_i(os_f960), .fclk480_i(os_f480), .pclk_o(os_pclk), .clk60_o(clk60), .rst60_o(rst60), .rst_i(rst),
         .i_scan_freeze(1'b0), .i_scan_ofs(1'b0), .i_scan_class(2'd0), .i_hist_run(1'b0), .o_hist(),
@@ -131,13 +141,24 @@ module top (
         .utmi_opmode_i(utmi_opmode), .utmi_xcvrselect_i(utmi_xcvrselect), .utmi_termselect_i(utmi_termselect),
         .usb_dxp_io(usb_dp), .usb_dxn_io(usb_dn),
         .usb_rxdp_p_i(usb_cmp_dp), .usb_rxdp_n_i(usb_cmp_dp_n),
+`ifdef USB_CMP1
+        .usb_rxdn_p_i(1'b0), .usb_rxdn_n_i(1'b1),
+`else
         .usb_rxdn_p_i(usb_cmp_dn), .usb_rxdn_n_i(usb_cmp_dn_n),
-        .usb_pullup_en_o(phy_pullup), .usb_term_dp_o(usb_term_dp), .usb_term_dn_o(usb_term_dn));
+`endif
+        .usb_pullup_en_o(phy_pullup), .usb_term_dp_o(usb_term_dp), .usb_term_dn_o(usb_term_dn),
+        .usb_term_dp_i(usb_term_dp), .usb_term_dn_i(usb_term_dn));
     assign usb_pullup = phy_pullup & ~rst;
     wire tx_oe = phy_tx_oe;
+`ifdef USB_CMP1
+    // status view of the pads: term pins (mon_line, one sample per clk60), D- comparator (unused by the PHY)
+    wire [1:0] dp_s = 2'b00, dn_s = 2'b00, tdp_s = {2{mon_line[0]}}, tdn_s = {2{mon_line[1]}};
+    wire [1:0] cdp_s = 2'b00, cdn_s = cmp_dn_x;
+`else
     // status view of the pads: the comparators (one sample per clk60), no dx / term readback
     wire [1:0] dp_s = {2{mon_line[0]}}, dn_s = {2{mon_line[1]}}, tdp_s = 2'b00, tdn_s = 2'b00;
     wire [1:0] cdp_s = {2{mon_line[0]}}, cdn_s = {2{mon_line[1]}};
+`endif
 `else
     // pads: one sample per 60 MHz clock (two-flop synchroniser), replicated over UsbPhy's 8 sample slots
     reg [1:0] dp_s = 2'b00, dn_s = 2'b00;

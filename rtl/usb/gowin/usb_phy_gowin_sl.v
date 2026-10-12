@@ -28,9 +28,22 @@
 // register delayed to line up with the serialiser (data appears ~1.9 pclk after the OSER16 captures
 // it, prim_sim) and stretched by one word at either end; the data is held at the last line bit while
 // the driver is off, so the stretch (and any misalignment) only lengthens the first / last level.
+//
+// CMP1 = 1: one comparator (D+ / VREF) only, 7 pins (dx pair, D+ comparator pair, term pair,
+// pull-up) - fits one Pmod. The D- comparator was only used for the squelch (D+ | D-) and for SE0
+// (both low); without it:
+// - squelch: D+ alone, ORed over 3 words (48 samples = 12 UI). Bit stuffing limits a run without a
+//   transition to 7 UI inside a packet, so D+ goes high at least once in any 8 UI.
+// - FS SE0 / line state: the term pins' LVCMOS33 input buffers (usb_term_dp_i / usb_term_dn_i),
+//   which are tri-stated whenever FS signalling is on the lines (0 / 3.3 V levels).
+// - chirp (HS transceiver + FS termination): host chirps (~800 mV) read low on LVCMOS, so SE0 is
+//   suppressed there and the line state is J / K from the dx receiver alone. UsbDevice only waits
+//   for K and J lasting 2.5 us each; an FS host that keeps SE0 cannot produce K-J pairs.
+// The D- comparator inputs are left unused.
 `timescale 1ns/1ps
 module usb_phy_gowin_sl #(
-    parameter OE_DLY = 2    // driver enable delay (pclk) behind the word handed to the OSER16 (>= 2)
+    parameter OE_DLY = 2,   // driver enable delay (pclk) behind the word handed to the OSER16 (>= 2)
+    parameter CMP1   = 0    // 1: D+ comparator only, SE0 from the term pins' inputs (see above)
 ) (
     input  wire        clk_ref_i,     // 50 MHz (reset sequencing)
     input  wire        rstn_ref_i,
@@ -51,7 +64,7 @@ module usb_phy_gowin_sl #(
     output wire [15:0] o_samples,     // raw IDES16 word (pclk)
     output wire [31:0] o_cmp_dbg,     // {cdp, cdn} comparator words (pclk)
     output wire        o_tx_oe,       // PHY driver enable (clk60)
-    output wire [1:0]  o_mon_line,    // {D-, D+} comparator levels, one sample per clk60 (FS line state)
+    output wire [1:0]  o_mon_line,    // {D-, D+} comparator levels (CMP1: term pin inputs), one sample per clk60
 
     // UTMI (clk60)
     input  wire [7:0]  utmi_data_out_i,
@@ -75,7 +88,9 @@ module usb_phy_gowin_sl #(
     input  wire        usb_rxdn_n_i,    // VREF
     output wire        usb_pullup_en_o,
     output wire        usb_term_dp_o,
-    output wire        usb_term_dn_o
+    output wire        usb_term_dn_o,
+    input  wire        usb_term_dp_i,   // term pin inputs (pad readback, LVCMOS33; used with CMP1 only)
+    input  wire        usb_term_dn_i
 );
     // ---- clocking / reset (as usb_hs_os32.v / eda/easycdr_bert oscdr_phy_gw5a.v) ----
     reg [3:0] delay_cnt;
@@ -139,7 +154,6 @@ module usb_phy_gowin_sl #(
     wire tx_dx_q; reg tx_dx_oen = 1'b1;
     ELVDS_IOBUF u_iobuf_dx (.O(rx_dd_ib), .IO(usb_dxp_io), .IOB(usb_dxn_io), .I(tx_dx_q), .OEN(tx_dx_oen));
     TLVDS_IBUF u_ibuf_dp (.I(usb_rxdp_p_i), .IB(usb_rxdp_n_i), .O(rx_dp_ib));
-    TLVDS_IBUF u_ibuf_dn (.I(usb_rxdn_p_i), .IB(usb_rxdn_n_i), .O(rx_dn_ib));
     IDES16 u_ides_dx(.D(rx_dd_ib), .FCLK(fclk), .PCLK(pclk), .CALIB(1'b0), .RESET(prst),
         .Q0(samples[0]), .Q1(samples[1]), .Q2(samples[2]), .Q3(samples[3]), .Q4(samples[4]), .Q5(samples[5]),
         .Q6(samples[6]), .Q7(samples[7]), .Q8(samples[8]), .Q9(samples[9]), .Q10(samples[10]), .Q11(samples[11]),
@@ -147,24 +161,31 @@ module usb_phy_gowin_sl #(
     IDES16 u_ides_dp(.D(rx_dp_ib), .FCLK(fclk), .PCLK(pclk), .CALIB(1'b0), .RESET(prst),
         .Q0(cdp[0]), .Q1(cdp[1]), .Q2(cdp[2]), .Q3(cdp[3]), .Q4(cdp[4]), .Q5(cdp[5]), .Q6(cdp[6]), .Q7(cdp[7]),
         .Q8(cdp[8]), .Q9(cdp[9]), .Q10(cdp[10]), .Q11(cdp[11]), .Q12(cdp[12]), .Q13(cdp[13]), .Q14(cdp[14]), .Q15(cdp[15]));
-    IDES16 u_ides_dn(.D(rx_dn_ib), .FCLK(fclk), .PCLK(pclk), .CALIB(1'b0), .RESET(prst),
-        .Q0(cdn[0]), .Q1(cdn[1]), .Q2(cdn[2]), .Q3(cdn[3]), .Q4(cdn[4]), .Q5(cdn[5]), .Q6(cdn[6]), .Q7(cdn[7]),
-        .Q8(cdn[8]), .Q9(cdn[9]), .Q10(cdn[10]), .Q11(cdn[11]), .Q12(cdn[12]), .Q13(cdn[13]), .Q14(cdn[14]), .Q15(cdn[15]));
+    generate if (CMP1) begin : g_no_dn
+        assign rx_dn_ib = 1'b0; assign cdn = 16'h0;
+    end else begin : g_dn
+        TLVDS_IBUF u_ibuf_dn (.I(usb_rxdn_p_i), .IB(usb_rxdn_n_i), .O(rx_dn_ib));
+        IDES16 u_ides_dn(.D(rx_dn_ib), .FCLK(fclk), .PCLK(pclk), .CALIB(1'b0), .RESET(prst),
+            .Q0(cdn[0]), .Q1(cdn[1]), .Q2(cdn[2]), .Q3(cdn[3]), .Q4(cdn[4]), .Q5(cdn[5]), .Q6(cdn[6]), .Q7(cdn[7]),
+            .Q8(cdn[8]), .Q9(cdn[9]), .Q10(cdn[10]), .Q11(cdn[11]), .Q12(cdn[12]), .Q13(cdn[13]), .Q14(cdn[14]), .Q15(cdn[15]));
+    end endgenerate
 
     // (see usb_hs_os32.v for the reasoning behind the squelch, the mask timing and the hold level)
     // (wire declarations used above: the comparator words and the transmit enable in pclk)
-    reg         cmp_r, cmp_r2;
+    reg         cmp_r, cmp_r2, cmp_r3;
     reg  [15:0] samples_d, samples_d2;
     always @(posedge pclk) begin
-        cmp_r <= |cdp | |cdn; cmp_r2 <= cmp_r;
+        cmp_r <= CMP1 ? |cdp : (|cdp | |cdn); cmp_r2 <= cmp_r; cmp_r3 <= cmp_r2;
         samples_d <= samples; samples_d2 <= samples_d;
     end
+    // CMP1: D+ only, the window also covers the word before the sample word (3 words, 12 UI)
+    wire cmp_any = cmp_r | cmp_r2 | (CMP1 ? cmp_r3 : 1'b0);
     // own transmission: masked from the driver enable request on, for 13 words after it (the echo
     // lags it by OE_DLY + the IDES16 latency, a few words; the margin is that of usb_hs_os32.v)
     reg  [13:0] drv_sh;
     always @(posedge pclk) drv_sh <= {drv_sh[12:0], w_oe};
     wire tx_mask = |drv_sh | w_oe;
-    wire sq = ~(cmp_r | cmp_r2) | tx_mask;       // squelched: idle line or own transmission (aligned with samples_d2)
+    wire sq = ~cmp_any | tx_mask;       // squelched: idle line or own transmission (aligned with samples_d2)
     reg  hold;
     always @(posedge pclk) if (!sq) hold <= samples_d2[15];
     wire [15:0] samples_m = sq ? {16{hold}} : samples_d2;
@@ -208,7 +229,10 @@ module usb_phy_gowin_sl #(
     function [4:0] popcnt16(input [15:0] v);
         integer k; begin popcnt16 = 0; for (k = 0; k < 16; k = k + 1) popcnt16 = popcnt16 + v[k]; end
     endfunction
-    wire [15:0] se0_raw = ~cdp & ~cdn;
+    // CMP1: the term pins' input buffers (two-flop synchroniser, one level per word)
+    reg  [1:0] tdp_s, tdn_s;
+    always @(posedge pclk) begin tdp_s <= {tdp_s[0], usb_term_dp_i}; tdn_s <= {tdn_s[0], usb_term_dn_i}; end
+    wire [15:0] se0_raw = CMP1 ? {16{~tdp_s[1] & ~tdn_s[1]}} : ~cdp & ~cdn;
     // majority over 96 samples (50 ns, as the original's three 60 MHz words) surrounding the 3-word-delayed level
     reg  [4:0] se0_c [0:5];
     reg  [2:0] dd_d; wire dd_d2 = dd_d[2];
@@ -221,7 +245,7 @@ module usb_phy_gowin_sl #(
     reg  [6:0] se0_sum;
     always @(posedge pclk) se0_sum <= se0_c[0] + se0_c[1] + se0_c[2] + se0_c[3] + se0_c[4] + se0_c[5];
     wire se0_f = se0_sum >= 7'd48;
-    reg [1:0] mon_line; always @(posedge clk60) mon_line <= {cdn[0], cdp[0]};
+    reg [1:0] mon_line; always @(posedge clk60) mon_line <= CMP1 ? {tdn_s[1], tdp_s[1]} : {cdn[0], cdp[0]};
     assign o_mon_line = mon_line;
 
     // ---- PHY (UsbPhy at clk60, 8 line bits per clock) ----
@@ -256,14 +280,18 @@ module usb_phy_gowin_sl #(
     // (SE_FROM_DIFF of usb_phy_gowin.v: J/K from the differential receiver, SE0 from the comparators;
     // in HS the line state is SE0 while idle, else the last recovered level)
     wire       hs_sel = (utmi_xcvrselect_i == 2'b00) && !utmi_termselect_i;
+    // CMP1: chirp (HS transceiver, FS termination) - the LVCMOS inputs read the chirps as SE0, so the
+    // line state is J / K from the dx receiver only
+    wire       se0_ok = !(CMP1 && (utmi_xcvrselect_i == 2'b00) && utmi_termselect_i);
+    wire       l_se0m = l_se0 & se0_ok;
     // The pclk registers above are launched at E + T and sampled at the clk60 edge E'; the two CLKDIVs
     // can leave reset one FCLK apart (2 ns) and the placement adds skew, so the crossing must stay a
     // plain register-to-register path: the mux below is quasi-static (hs_sel) and its result is
     // re-registered in clk60 before any PHY logic sees it (one clk60 of extra receive latency).
     wire [7:0] m_dd = hs_sel ? l_word : {8{l_dd}};
     wire       m_dd_valid = hs_sel ? l_valid : 1'b1;
-    wire [7:0] m_dp = hs_sel ? ( l_word & {8{l_act}}) : {8{ l_dd & ~l_se0}};
-    wire [7:0] m_dn = hs_sel ? (~l_word & {8{l_act}}) : {8{~l_dd & ~l_se0}};
+    wire [7:0] m_dp = hs_sel ? ( l_word & {8{l_act}}) : {8{ l_dd & ~l_se0m}};
+    wire [7:0] m_dn = hs_sel ? (~l_word & {8{l_act}}) : {8{~l_dd & ~l_se0m}};
     reg  [7:0] rx_dd, rx_dp, rx_dn; reg rx_dd_valid;
     always @(posedge clk60) begin rx_dd <= m_dd; rx_dd_valid <= m_dd_valid; rx_dp <= m_dp; rx_dn <= m_dn; end
     wire [7:0] tx_dp8, tx_dn8; wire tx_oe;
