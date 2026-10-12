@@ -9,12 +9,15 @@
 //   LaCore stream (AXI4-Stream, 32 bits, pclk) -> Usb3Device EP1 IN word input
 //   LaCore registers <- vendor requests 0x03 (write) / 0x04 (read) (host/la_stream.c)
 //
-// Status over JTAG: ER1 (IR 0x42) read-only (jtag_status.v of ../slogic16u3_usb3, host/la_status.py).
+// Status over JTAG (built with JTAG_STATUS=1, `LA_JTAG_STATUS): ER1 (IR 0x42) read-only (jtag_status.v of
+// ../slogic16u3_usb3, host/la_status.py).
 module top (
+`ifdef LA_JTAG_STATUS
     input  wire tck_pad_i,
     input  wire tms_pad_i,
     input  wire tdi_pad_i,
     output wire tdo_pad_o,
+`endif
 
     input  wire usb_cmp_dp,    // H3 / H2: USB 2.0 D+ comparator (unused, kept quiet)
     input  wire usb_cmp_dp_n,
@@ -155,6 +158,7 @@ module top (
     wire dev_configured, dev_reset, dbg_event, dbg_strobe; wire [63:0] dbg_state; wire [6:0] dev_address; wire [15:0] vendor_reg;
     wire ep_rx_valid, ep_tx_ready; wire [7:0] ep_rx_data;
     wire la_tvalid, la_tready, la_tlast; wire [31:0] la_tdata;
+    wire dw_valid, dw_ready; wire [31:0] dw_data;   // LaCore stream after the register slice
     wire reg_wr; wire [7:0] reg_addr; wire [15:0] reg_wdata; wire [31:0] reg_rdata;
 
     Usb3Top u_usb3 (.i_clk(pclk), .i_rst(prst),
@@ -181,13 +185,34 @@ module top (
         .o_reg_wr(reg_wr), .o_reg_addr(reg_addr), .o_reg_wdata(reg_wdata), .i_reg_rdata(reg_rdata),
         .o_rx_valid(ep_rx_valid), .o_rx_data(ep_rx_data), .i_rx_ready(1'b1),     // EP1 OUT: discarded
         .i_tx_valid(1'b0), .i_tx_data(8'h00), .o_tx_ready(ep_tx_ready),
-        .i_txw_valid(la_tvalid), .i_txw_data(la_tdata), .o_txw_ready(la_tready));
+        .i_txw_valid(dw_valid), .i_txw_data(dw_data), .o_txw_ready(dw_ready));
+
+    // register slice (2 entries) from LaCore to the device's word input: the device's ready no longer
+    // runs through LaFramer into the FIFO pointers in the same clock (a pclk critical path)
+    reg sk_v = 1'b0, sk2_v = 1'b0; reg [31:0] sk_d = 32'd0, sk2_d = 32'd0;
+    wire sk_up = la_tvalid && !sk2_v;
+    assign la_tready = !sk2_v;
+    assign dw_valid = sk_v;
+    assign dw_data = sk_d;
+    always @(posedge pclk) begin
+        if (prst) begin
+            sk_v <= 1'b0; sk2_v <= 1'b0;
+        end else if (!sk_v || dw_ready) begin       // the main entry is free this clock
+            if (sk2_v) begin sk_v <= 1'b1; sk_d <= sk2_d; sk2_v <= 1'b0; end
+            else begin sk_v <= sk_up; if (sk_up) sk_d <= la_tdata; end
+        end else if (sk_up) begin
+            sk2_v <= 1'b1; sk2_d <= la_tdata;
+        end
+    end
 
     // ---------------------------------------------------------------- logic analyzer
     reg [2:0] slock_s = 3'd0;
     always @(posedge pclk) slock_s <= {slock_s[1:0], !srst};
     wire la_pwm, la_active;
-    LaCore #(.FIFO_AW(11), .BLK(256), .TIMEOUT(2500)) u_la (
+`ifndef LA_TIMEOUT
+`define LA_TIMEOUT 2500
+`endif
+    LaCore #(.FIFO_AW(11), .BLK(256), .TIMEOUT(`LA_TIMEOUT)) u_la (
         .i_uclk(pclk), .i_urst(prst),
         .i_reg_wr(reg_wr), .i_reg_addr(reg_addr), .i_reg_wdata(reg_wdata), .o_reg_rdata(reg_rdata),
         .o_tvalid(la_tvalid), .o_tdata(la_tdata), .o_tlast(la_tlast), .i_tready(la_tready),
@@ -196,6 +221,7 @@ module top (
     assign vref_pwm = la_pwm;
     assign led_r = la_active;
 
+`ifdef LA_JTAG_STATUS
     // ---------------------------------------------------------------- status (JTAG ER1)
     // clock checks: pclk / 16 and sclk / 16 edges per 2^22 osc
     reg [3:0] pdiv = 4'd0 /* synthesis syn_preserve=1 */, sdiv = 4'd0 /* synthesis syn_preserve=1 */;
@@ -232,4 +258,5 @@ module top (
     wire [151:0] cap = {snap, sf, pf, 16'h5B4C};
     jtag_status #(.L(152), .L2(32)) u_jtag (.tck_pad_i(tck_pad_i), .tms_pad_i(tms_pad_i), .tdi_pad_i(tdi_pad_i), .tdo_pad_o(tdo_pad_o),
         .osc(osc), .cap(cap), .cap2(32'h00005B4D), .o_w2(), .o_w2_data());
+`endif
 endmodule

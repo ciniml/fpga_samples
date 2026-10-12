@@ -16,23 +16,29 @@
  * header promises the beats counted from the fill level, so they must all
  * be data: LaPacker writes a control beat only into an empty FIFO. One idle
  * clock after each block lets the registered level catch up with the reads.
+ *
+ * An event (LaTrig, i_ev rising; i_ev_data stable while i_ev is high) goes
+ * out first, between blocks, as a TRIG block of two beats.
  */
 module LaFramer #(
     param BLK    : u32 = 256 , // beats per full block (<= 32767)
     param TIMEOUT: u32 = 2500, // clocks before a partial block goes out
     param LW     : u32 = 12  , // level width
 ) (
-    i_clk   : input  clock        ,
-    i_rst   : input  reset        ,
-    i_tvalid: input  logic<2>     ,
-    i_tdata : input  logic<64> [2],
-    i_tuser : input  logic<2>     ,
-    o_tready: output logic<2>     ,
-    i_level : input  logic<LW> [2],
-    o_tvalid: output logic        ,
-    o_tdata : output logic<32>    ,
-    o_tlast : output logic        ,
-    i_tready: input  logic        ,
+    i_clk    : input  clock         ,
+    i_rst    : input  reset         ,
+    i_tvalid : input  logic<2>      ,
+    i_tdata  : input  logic<64>  [2],
+    i_tuser  : input  logic<2>      ,
+    o_tready : output logic<2>      ,
+    i_level  : input  logic<LW>  [2],
+    i_ev     : input  logic         , // trigger event (level, synchronised)
+    i_ev_data: input  logic<128>    , //   its two beats (low first)
+    i_capid  : input  logic<8>      ,
+    o_tvalid : output logic         ,
+    o_tdata  : output logic<32>     ,
+    o_tlast  : output logic         ,
+    i_tready : input  logic         ,
 ) {
     import la_pkg::*;
 
@@ -50,6 +56,8 @@ module LaFramer #(
     var hdr  : logic<32>    ;
     var seq  : logic<8>  [2];
     var tmo  : logic<16> [2];
+    var evb  : logic        ; // sending the event block
+    var evs  : logic        ; // the event of this i_ev pulse is out
 
     var cand: logic<2>;
     always_comb {
@@ -58,7 +66,7 @@ module LaFramer #(
         }
     }
     let pick: logic     = if cand[~rr] ? ~rr : rr;
-    let cdat: logic<64> = i_tdata[cur];
+    let cdat: logic<64> = if evb ? (if n == 2 ? i_ev_data[63:0] : i_ev_data[127:64]) : i_tdata[cur];
     let pdat: logic<64> = i_tdata[pick];
     let plev: logic<LW> = i_level[pick];
     let pn  : logic<16> = if plev >= BLK ? BLK as 16 : plev as 16;
@@ -66,7 +74,7 @@ module LaFramer #(
     let out_free: logic = !o_tvalid || i_tready;
     always_comb {
         for s in 0..2 {
-            o_tready[s] = state == State::Hi && cur == s && out_free;
+            o_tready[s] = state == State::Hi && cur == s && out_free && !evb;
         }
     }
 
@@ -79,6 +87,8 @@ module LaFramer #(
             hdr      = 0;
             seq      = '{0, 0};
             tmo      = '{0, 0};
+            evb      = 0;
+            evs      = 0;
             o_tvalid = 0;
             o_tdata  = 0;
             o_tlast  = 0;
@@ -93,9 +103,19 @@ module LaFramer #(
                     tmo[s] = tmo[s] + 1;
                 }
             }
+            if !i_ev {
+                evs = 0;
+            }
             case state {
                 State::Idle: {
-                    if |cand {
+                    if i_ev && !evs {
+                        evs   = 1;
+                        evb   = 1;
+                        hdr   = {HDR_TRIG, 4'h0, i_capid, 16'd4};
+                        n     = 2;
+                        state = State::Hdr;
+                    } else if |cand {
+                        evb       = 0;
                         cur       = pick;
                         rr        = pick;
                         tmo[pick] = 0;
@@ -122,7 +142,7 @@ module LaFramer #(
                     }
                 }
                 State::Lo: {
-                    if out_free && i_tvalid[cur] {
+                    if out_free && (evb || i_tvalid[cur]) {
                         o_tvalid = 1;
                         o_tdata  = cdat[31:0];
                         o_tlast  = 0;

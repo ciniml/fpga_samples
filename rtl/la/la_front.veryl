@@ -60,6 +60,10 @@ module LaFront #(
     o_idle  : output logic    ,
     o_run   : output logic    ,
     o_ovf   : output logic    , // the last capture ended in an overflow
+    o_wv    : output logic    , // o_wdata holds the next word of the capture (for LaTrig)
+    o_wdata : output logic<64>, //   (pins or test pattern, all 8 channels)
+    o_nout  : output logic<32>, // samples taken so far in this capture (low 32 bits), one clock
+    //   after they are output (an adder after the selection was too slow)
 ) {
     import la_pkg::*;
 
@@ -80,6 +84,7 @@ module LaFront #(
     var ovf  : logic    ;
     var bad  : logic    ; // unsupported timing
     var esent: logic    ; // END beat loaded
+    var nadd : logic<4> ; // samples output in the clock before (for o_nout)
 
     // ---- generator: the word of this clock (pins or test pattern)
     var prbs: logic<17>;
@@ -143,9 +148,11 @@ module LaFront #(
     }
 
     let out_free: logic = !o_tvalid || i_tready;
-    assign o_idle = state == State::Idle && !o_tvalid;
-    assign o_run  = state == State::Run;
-    assign o_ovf  = ovf;
+    assign o_idle  = state == State::Idle && !o_tvalid;
+    assign o_run   = state == State::Run;
+    assign o_ovf   = ovf;
+    assign o_wv    = a_v;
+    assign o_wdata = a_data;
 
     always_ff {
         if_reset {
@@ -177,7 +184,11 @@ module LaFront #(
             o_tdata  = 0;
             o_tkeep  = 0;
             o_tuser  = 0;
+            o_nout   = 0;
+            nadd     = 0;
         } else {
+            o_nout = o_nout + {28'h0, nadd};
+            nadd   = 0;
             if o_tvalid && i_tready {
                 o_tvalid = 0;
             }
@@ -206,6 +217,8 @@ module LaFront #(
                             }
                         }
                         capid    = i_capid;
+                        o_nout   = 0;
+                        nadd     = 0;
                         ovf      = 0;
                         bad      = i_cfg[3:2] == 0 && dv <: 24'd8 && dv != 1 && dv != 2 && dv != 4;
                         esent    = 0;
@@ -267,6 +280,7 @@ module LaFront #(
                                     o_tuser  = U_DATA;
                                     o_tdata  = lane;
                                     o_tkeep  = ((9'd1 << nk) - 9'd1) as 8;
+                                    nadd     = nk;
                                 } else {
                                     ovf   = 1; // samples lost: end here (the held beat still goes out)
                                     state = State::End;

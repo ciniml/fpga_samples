@@ -62,7 +62,7 @@
     </fieldset>
   </div>
   <fieldset>
-    <legend>Trigger (signal-map names; terms joined by &amp;&amp;: name == value, name, !name, rise(name), fall(name), edge(name); one group's channels)</legend>
+    <legend>Trigger (signal-map names; terms joined by &amp;&amp;: name == value, name, !name, rise(name), fall(name), edge(name); hardware trigger: levels on any of the 16 channels and an edge on one, every 800 MS/s sample; an older design: one group's channels)</legend>
     <div class="row">
       <label><input type="checkbox" id="useTrig"> trigger</label>
       <input type="text" id="trig" value="rise(CH0)" style="width:24em">
@@ -177,16 +177,19 @@ function applyMap() {
 }
 $('btnMap').onclick = applyMap;
 
-// condition text -> {g, codes (8 chars)} for one group, or null when empty
-function condFor(expr) {
+// condition text -> {codes (16 chars), g, group (8 chars)}, or null when empty; both: channels of
+// both groups allowed (the hardware trigger), else one group's (the server's search / trigger)
+let devVer = 0;
+function condFor(expr, both = false) {
   if (!expr.trim()) return null;
   const c = Wave.parseCond(sigMap, expr), codes = Wave.condCodes(c, 16);
   const a = /[^X]/.test(codes.slice(0, 8)), b = /[^X]/.test(codes.slice(8));
-  if (a && b) throw new Error('the channels of one group only (CH0..7 or CH8..15)');
-  return { codes, g: b ? 1 : 0, group: b ? codes.slice(8) : codes.slice(0, 8) };
+  if (a && b && !both) throw new Error('the channels of one group only (CH0..7 or CH8..15)');
+  if (both && (codes.match(/[RFE]/g) || []).length > 1) throw new Error('hardware trigger: an edge on one channel only (levels on the others)');
+  return { codes, g: b && !a ? 1 : 0, group: b && !a ? codes.slice(8) : codes.slice(0, 8) };
 }
 function showTrig() {
-  try { const c = condFor($('trig').value); $('trigCodes').textContent = c ? `CH0→15: ${c.codes}` : ''; $('trigCodes').className = 'mut'; }
+  try { const c = condFor($('trig').value, devVer >= 2); $('trigCodes').textContent = c ? `CH0→15: ${c.codes} (${devVer >= 2 ? 'hardware' : 'software'})` : ''; $('trigCodes').className = 'mut'; }
   catch (e) { $('trigCodes').textContent = e.message; $('trigCodes').className = 'bad'; }
 }
 $('trig').addEventListener('input', showTrig);
@@ -201,7 +204,9 @@ async function api(path, body) {
 async function checkDev() {
   try {
     const d = await api('/api/la/device');
-    $('dev').textContent = d.ok ? (d.busy ? 'capturing' : `LA design (id ${d.id}), status 0x${d.status.toString(16)}`) : 'no device: ' + d.error;
+    if (d.ok && d.id) devVer = parseInt(d.id, 16) >>> 24;
+    $('dev').textContent = d.ok ? (d.busy ? 'capturing' : `LA design v${devVer} (id ${d.id})${devVer >= 2 ? ', hardware trigger' : ''}, status 0x${d.status.toString(16)}`) : 'no device: ' + d.error;
+    showTrig();
     $('dev').className = d.ok ? 'mut' : 'bad';
   } catch (e) { $('dev').textContent = e.message; $('dev').className = 'bad'; }
 }
@@ -213,7 +218,7 @@ async function capture() {
   try {
     req = { a: groupReq('grpA'), b: groupReq('grpB'), length_s: parseNum($('len').value), threshold_v: +$('vth').value,
             mem_mb: +$('mem').value, ext_samples: $('extN').value.trim() ? Math.round(parseNum($('extN').value)) : 0, pre: +$('pre').value / 100, trigger: '' };
-    if ($('useTrig').checked) { const c = condFor($('trig').value); if (c) req.trigger = c.codes; }
+    if ($('useTrig').checked) { const c = condFor($('trig').value, devVer >= 2); if (c) req.trigger = c.codes; }
   } catch (e) { $('status').textContent = e.message; $('status').className = 'bad'; return; }
   try { await api('/api/la/capture', req); }
   catch (e) { $('status').textContent = e.message; $('status').className = 'bad'; return; }

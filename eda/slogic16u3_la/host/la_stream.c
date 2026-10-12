@@ -138,7 +138,7 @@ static void parse(const uint8_t *buf, int n) {
         uint32_t w = buf[i] | buf[i + 1] << 8 | buf[i + 2] << 16 | (uint32_t)buf[i + 3] << 24;
         if (p_state == 0) {
             int ty = w >> 28, g = (w >> 26) & 3;
-            if (g > 1 || (w >> 24 & 3) || (ty != 1 && ty != 4 && ty != 5)) {
+            if (g > 1 || (w >> 24 & 3) || (ty != 1 && ty != 4 && ty != 5 && ty != 6)) {
                 if (!p_err) fprintf(stderr, "bad header %08x\n", w);
                 p_err++;
                 continue;
@@ -166,7 +166,7 @@ static void parse(const uint8_t *buf, int n) {
             p_have++;
             if (--p_left == 0) {
                 p_state = 0;
-                if (ty != 1) {
+                if (ty != 1 && ty != 6) {   /* (6: hardware trigger, not used here) */
                     uint64_t b = (uint64_t)p_ev[1] << 32 | p_ev[0];
                     if (((p_hdr >> 16) & 0xFF) == (unsigned)(capid & 0xFF)) {
                         if (ty == 4) { st[g].started++; st[g].nseq = 0; }

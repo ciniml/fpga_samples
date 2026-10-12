@@ -212,6 +212,7 @@ module Usb3Ltssm #(
     var skp_cnt  : logic<10>; // symbols since the last SKP OS during training
     var skp_now  : logic    ; // this word is SKP SKP SKP SKP
     var idle_sent: logic<5> ; // idle words sent after idle received (16 symbols = 4 words)
+    var idle4    : logic    ; // idle_sent >= 4, registered with it (off the state decision's critical path)
     var idle_rx  : logic    ; // 8 consecutive idle symbols were received in this state
 
     // receive-side consecutive TS counting
@@ -368,6 +369,7 @@ module Usb3Ltssm #(
             skp_cnt         = 0;
             skp_now         = 0;
             idle_sent       = 0;
+            idle4           = 0;
             idle_rx         = 0;
             ts_cnt          = 0;
             ts_last         = 0;
@@ -494,6 +496,9 @@ module Usb3Ltssm #(
             // idle words sent after idle received
             if o_tx_idle && idle_rx && idle_sent != 31 {
                 idle_sent = idle_sent + 1;
+                if idle_sent >= 3 {
+                    idle4 = 1;
+                }
             }
 
             // ---- Polling.LFPS burst generator: 1 us on, 10 us period
@@ -621,7 +626,7 @@ module Usb3Ltssm #(
                         }
                     }
                     State::PollingIdle: {
-                        if idle_rx && idle_sent >= 4 {
+                        if idle_rx && idle4 {
                             ns = if ts8_cfg[0] ? State::HotResetActive : State::U0;
                         } else if tmo[2] {
                             ns = State::Disabled;
@@ -671,7 +676,7 @@ module Usb3Ltssm #(
                         }
                     }
                     State::RecoveryIdle: {
-                        if idle_rx && idle_sent >= 4 {
+                        if idle_rx && idle4 {
                             ns = if ts8_cfg[0] ? State::HotResetActive : State::U0;
                         } else if tmo[2] {
                             ns = State::Inactive;
@@ -691,7 +696,7 @@ module Usb3Ltssm #(
                         }
                     }
                     State::HotResetExit: {
-                        if idle_rx && idle_sent >= 4 {
+                        if idle_rx && idle4 {
                             ns = State::U0;
                         } else if tmo[2] {
                             ns = State::Inactive;
@@ -714,6 +719,7 @@ module Usb3Ltssm #(
                 ts1_seen  = 0;
                 idle_rx   = 0;
                 idle_sent = 0;
+                idle4     = 0;
                 skp_now   = 0;
                 // drop buffered symbols only where a new training phase starts;
                 // entering U0 / Idle must keep the partner's symbols already received

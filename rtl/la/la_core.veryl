@@ -12,17 +12,23 @@
  *
  * Registers (uclk; 16-bit writes, 32-bit reads, address = USB wIndex):
  *   0x00 CTRL   W [0] run (0 -> 1 starts a capture, 1 -> 0 stops it),
- *                 [15:8] capture id (in the START / END blocks)
- *               R {version 8'h01, 8'h00, 16'h4C41 ("LA")}
+ *                 [15:8] capture id (in the START / END / TRIG blocks)
+ *               R {version 8'h02, 8'h00, 16'h4C41 ("LA")}  (version 2: hardware trigger)
  *   0x01 GROUPS W [0] group A (CH0..7) enable, [1] group B (CH8..15) enable
- *               R status {.., sclk alive [5], ovf B [4], ovf A [3], run B [2], run A [1], run [0]}
+ *               R status {.., trigger fired [6], sclk alive [5], ovf B [4], ovf A [3], run B [2],
+ *                 run A [1], run [0]}
  *   0x02 A_CFG  {ck_sel (8: 0 = own clock input, 1 = the other group's), skew (7:5),
  *                test (4), cmode (3:2), wlog (1:0)}   (LaFront)
  *   0x03 A_DIVL / 0x04 A_DIVH  internal clock divider, 800 MHz / div (24 bits)
  *   0x05 A_THALF test clock half period in samples
  *   0x0A..0x0D the same for group B
  *   0x10 VREF   threshold PWM duty (10 bits, of 1024; ~122 kHz)
- * Reads of 0x02..0x10 return the value written.
+ *   0x18 TRIG   [0] enable, [1] auto stop (end the capture `post` words after the trigger word)
+ *   0x19 MC / 0x1A VC  trigger pattern: channels / levels, bit c = CH c (LaTrig)
+ *   0x1B EDGE   [3:0] edge channel, [5:4] 0 none, 1 rising, 2 falling, 3 either
+ *   0x1E / 0x1F HOLDOFF  low / high 16 bits: first word (10 ns) of the capture that may fire
+ *   0x20 / 0x21 POST     low / high 16 bits
+ * Reads of 0x02..0x21 return the value written.
  *
  * A capture starts on both enabled groups in the same sclk (sample positions
  * line up) once both are idle with their FIFOs empty (the previous capture
@@ -63,7 +69,13 @@ module LaCore #(
     var r_div   : 'u logic<24> [2];
     var r_thalf : 'u logic<16> [2];
     var r_vref  : 'u logic<10>    ;
+    var r_tctl  : 'u logic<2>     ;
+    var r_tm    : 'u logic<16> [2]; // mc, vc
+    var r_tedge : 'u logic<6>     ;
+    var r_thold : 'u logic<32>    ;
+    var r_tpost : 'u logic<32>    ;
     var st_s    : 'u logic<4>     ; // {ovf B, ovf A, run B, run A} synchronised
+    var tf_u    : 'u logic        ; // trigger fired, synchronised
     always_ff (i_uclk, i_urst) {
         if_reset {
             r_run    = 0;
@@ -73,6 +85,11 @@ module LaCore #(
             r_div    = '{24'd1, 24'd1};
             r_thalf  = '{16'd4, 16'd4};
             r_vref   = 10'd252; // ~1.65 V threshold (3.3 V logic)
+            r_tctl   = 0;
+            r_tm     = '{0, 0};
+            r_tedge  = 0;
+            r_thold  = 0;
+            r_tpost  = 0;
         } else if i_reg_wr {
             case i_reg_addr {
                 8'h00: {
@@ -89,14 +106,22 @@ module LaCore #(
                 8'h0C  : r_div[1][23:16] = i_reg_wdata[7:0];
                 8'h0D  : r_thalf[1]      = i_reg_wdata;
                 8'h10  : r_vref          = i_reg_wdata[9:0];
+                8'h18  : r_tctl          = i_reg_wdata[1:0];
+                8'h19  : r_tm[0]         = i_reg_wdata;
+                8'h1A  : r_tm[1]         = i_reg_wdata;
+                8'h1B  : r_tedge         = i_reg_wdata[5:0];
+                8'h1E  : r_thold[15:0]   = i_reg_wdata;
+                8'h1F  : r_thold[31:16]  = i_reg_wdata;
+                8'h20  : r_tpost[15:0]   = i_reg_wdata;
+                8'h21  : r_tpost[31:16]  = i_reg_wdata;
                 default: {}
             }
         }
     }
     always_comb {
         o_reg_rdata = case i_reg_addr {
-            8'h00  : {8'h01, 8'h00, 16'h4C41},
-            8'h01  : {26'h0, i_salive, st_s, r_run},
+            8'h00  : {8'h02, 8'h00, 16'h4C41},
+            8'h01  : {25'h0, tf_u, i_salive, st_s, r_run},
             8'h02  : {23'h0, r_cfg[0]},
             8'h03  : {16'h0, r_div[0][15:0]},
             8'h04  : {24'h0, r_div[0][23:16]},
@@ -106,6 +131,14 @@ module LaCore #(
             8'h0C  : {24'h0, r_div[1][23:16]},
             8'h0D  : {16'h0, r_thalf[1]},
             8'h10  : {22'h0, r_vref},
+            8'h18  : {30'h0, r_tctl},
+            8'h19  : {16'h0, r_tm[0]},
+            8'h1A  : {16'h0, r_tm[1]},
+            8'h1B  : {26'h0, r_tedge},
+            8'h1E  : {16'h0, r_thold[15:0]},
+            8'h1F  : {16'h0, r_thold[31:16]},
+            8'h20  : {16'h0, r_tpost[15:0]},
+            8'h21  : {16'h0, r_tpost[31:16]},
             default: 32'h0,
         };
     }
@@ -123,24 +156,29 @@ module LaCore #(
     }
 
     // ---------------------------------------------------------------- to sclk (quasi-static)
-    const CW    : u32       = 1 + 8 + 2 + 2 * (9 + 24 + 16);
-    let   cfg_u : 'u logic<CW> = {
+    const CW   : u32       = 1 + 8 + 2 + 2 * (9 + 24 + 16);
+    let   cfg_u: 'u logic<CW> = {
         r_run, r_capid, r_groups, r_cfg[1], r_div[1], r_thalf[1], r_cfg[0], r_div[0], r_thalf[0]
     };
-    var   cfg_s1: 's logic<CW>;
-    var   cfg_s : 's logic<CW>;
+    // (the settings are quasi-static: written before run, one register stage; run itself, which starts
+    // and stops the capture, through two)
+    var cfg_s : 's logic<CW>;
+    var run_s1: 's logic    ;
+    var run_s : 's logic    ;
     unsafe (cdc) {
         always_ff (i_sclk, i_srst) {
             if_reset {
-                cfg_s1 = 0;
                 cfg_s  = 0;
+                run_s1 = 0;
+                run_s  = 0;
             } else {
-                cfg_s1 = cfg_u;
-                cfg_s  = cfg_s1;
+                cfg_s  = cfg_u;
+                run_s1 = r_run;
+                run_s  = run_s1;
             }
         }
     }
-    let s_run   : 's logic     = cfg_s[CW - 1];
+    let s_run   : 's logic     = run_s;
     let s_capid : 's logic<8>  = cfg_s[CW - 2:CW - 9];
     let s_groups: 's logic<2>  = cfg_s[CW - 10:CW - 11];
     let s_cfg_b : 's logic<9>  = cfg_s[97:89];
@@ -151,27 +189,35 @@ module LaCore #(
     let s_thal_a: 's logic<16> = cfg_s[15:0];
 
     // ---------------------------------------------------------------- capture control (sclk)
-    var run_d    : 's logic   ;
-    var start_pnd: 's logic   ;
-    var fe_idle  : 's logic<2>;
-    var pk_idle  : 's logic<2>;
-    var wempty   : 's logic<2>;
-    var fe_run   : 's logic<2>;
-    var fe_ovf   : 's logic<2>;
-    var ready_g  : 's logic<2>;
+    var run_d    : 's logic        ;
+    var start_pnd: 's logic        ;
+    var fe_idle  : 's logic<2>     ;
+    var pk_idle  : 's logic<2>     ;
+    var wempty   : 's logic<2>     ;
+    var fe_run   : 's logic<2>     ;
+    var fe_ovf   : 's logic<2>     ;
+    var ready_g  : 's logic<2>     ;
+    var fe_wv    : 's logic<2>     ;
+    var sl_empty : 's logic<2>     ; // the front -> packer slices are empty
+    var fe_word  : 's logic<64> [2];
+    var fe_nout  : 's logic<32> [2];
     always_comb {
         for g in 0..2 {
-            ready_g[g] = !s_groups[g] || (fe_idle[g] && pk_idle[g] && wempty[g]);
+            ready_g[g] = !s_groups[g] || (fe_idle[g] && sl_empty[g] && pk_idle[g] && wempty[g]);
         }
     }
-    let go  : 's logic = start_pnd && s_run && &ready_g && |s_groups;
-    let stop: 's logic = run_d && !s_run;
+    var t_stop: 's logic;
+    var rdy_r : 's logic; // every group ready, a clock ago (the FIFO compare off the start's fan-out)
+    let go    : 's logic = start_pnd && s_run && rdy_r && |s_groups;
+    let stop  : 's logic = (run_d && !s_run) || t_stop;
     always_ff (i_sclk, i_srst) {
         if_reset {
             run_d     = 0;
             start_pnd = 0;
+            rdy_r     = 0;
         } else {
             run_d = s_run;
+            rdy_r = &ready_g;
             if s_run && !run_d {
                 start_pnd = 1;
             } else if go || !s_run {
@@ -216,6 +262,9 @@ module LaCore #(
         o_idle  : fe_idle[0]                     ,
         o_run   : fe_run[0]                      ,
         o_ovf   : fe_ovf[0]                      ,
+        o_wv    : fe_wv[0]                       ,
+        o_wdata : fe_word[0]                     ,
+        o_nout  : fe_nout[0]                     ,
     );
     inst u_fe_b: LaFront #(
         PRBS17: 1'b1,
@@ -238,23 +287,44 @@ module LaCore #(
         o_idle  : fe_idle[1]                     ,
         o_run   : fe_run[1]                      ,
         o_ovf   : fe_ovf[1]                      ,
+        o_wv    : fe_wv[1]                       ,
+        o_wdata : fe_word[1]                     ,
+        o_nout  : fe_nout[1]                     ,
     );
 
     for g in 0..2 :g_grp {
+        // a register slice from the front to the packer: the packer's ready (its output register and the
+        // FIFO) does not reach the front's output registers in the same clock
+        var l_tvalid: 's logic    ;
+        var l_tdata : 's logic<74>;
+        var l_tready: 's logic    ;
+        inst u_sl: LaSlice #(
+            W: 74,
+        ) (
+            i_clk   : i_sclk                              ,
+            i_rst   : i_srst                              ,
+            s_tvalid: f_tvalid[g]                         ,
+            s_tdata : {f_tuser[g], f_tkeep[g], f_tdata[g]},
+            s_tready: f_tready[g]                         ,
+            m_tvalid: l_tvalid                            ,
+            m_tdata : l_tdata                             ,
+            m_tready: l_tready                            ,
+        );
+        assign sl_empty[g] = !l_tvalid && f_tready[g];
         inst u_pk: LaPacker (
-            i_clk       : i_sclk     ,
-            i_rst       : i_srst     ,
-            i_tvalid    : f_tvalid[g],
-            i_tdata     : f_tdata[g] ,
-            i_tkeep     : f_tkeep[g] ,
-            i_tuser     : f_tuser[g] ,
-            o_tready    : f_tready[g],
-            o_tvalid    : p_tvalid[g],
-            o_tdata     : p_tdata[g] ,
-            o_tuser     : p_tuser[g] ,
-            i_tready    : p_tready[g],
-            i_fifo_empty: wempty[g]  ,
-            o_idle      : pk_idle[g] ,
+            i_clk       : i_sclk        ,
+            i_rst       : i_srst        ,
+            i_tvalid    : l_tvalid      ,
+            i_tdata     : l_tdata[63:0] ,
+            i_tkeep     : l_tdata[71:64],
+            i_tuser     : l_tdata[73:72],
+            o_tready    : l_tready      ,
+            o_tvalid    : p_tvalid[g]   ,
+            o_tdata     : p_tdata[g]    ,
+            o_tuser     : p_tuser[g]    ,
+            i_tready    : p_tready[g]   ,
+            i_fifo_empty: wempty[g]     ,
+            o_idle      : pk_idle[g]    ,
         );
         inst u_fifo: LaAfifo #(
             DW: 65     ,
@@ -288,22 +358,71 @@ module LaCore #(
         }
     }
 
+    // ---------------------------------------------------------------- hardware trigger (sclk)
+    // (its configuration is quasi-static like the rest: written before run, taken as it is)
+    var tcfg_s: 's logic<2 + 32 + 6 + 64>;
+    unsafe (cdc) {
+        assign tcfg_s = {r_tctl, r_tm[0], r_tm[1], r_tedge, r_thold, r_tpost};
+    }
+    var t_fired: 's logic        ;
+    var t_pos  : 's logic<48>    ;
+    var t_cnt  : 's logic<32> [2];
+    inst u_trig: LaTrig (
+        i_clk    : i_sclk        ,
+        i_rst    : i_srst        ,
+        i_go     : go            ,
+        i_wv     : |fe_wv        ,
+        i_wa     : fe_word[0]    ,
+        i_wb     : fe_word[1]    ,
+        i_nout   : fe_nout       ,
+        i_en     : tcfg_s[102]   ,
+        i_astop  : tcfg_s[103]   ,
+        i_mc     : tcfg_s[101:86],
+        i_vc     : tcfg_s[85:70] ,
+        i_esel   : tcfg_s[67:64] ,
+        i_etype  : tcfg_s[69:68] ,
+        i_holdoff: tcfg_s[63:32] ,
+        i_post   : tcfg_s[31:0]  ,
+        o_fired  : t_fired       ,
+        o_pos    : t_pos         ,
+        o_cnt    : t_cnt         ,
+        o_stop   : t_stop        ,
+    );
+    // to uclk: the fired flag synchronised; the position and counts are stable while it is set
+    var tf_u1: 'u logic     ;
+    var ev_u : 'u logic<128>;
+    unsafe (cdc) {
+        always_ff (i_uclk, i_urst) {
+            if_reset {
+                tf_u1 = 0;
+                tf_u  = 0;
+            } else {
+                tf_u1 = t_fired;
+                tf_u  = tf_u1;
+            }
+        }
+        assign ev_u = {t_cnt[1], t_cnt[0], 16'h0, t_pos};
+    }
+
     // ---------------------------------------------------------------- framer (uclk)
     inst u_framer: LaFramer #(
         BLK    : BLK        ,
         TIMEOUT: TIMEOUT    ,
         LW     : FIFO_AW + 2,
     ) (
-        i_clk   : i_uclk                               ,
-        i_rst   : i_urst                               ,
-        i_tvalid: q_tvalid                             ,
-        i_tdata : '{q_tdata[0][63:0], q_tdata[1][63:0]},
-        i_tuser : {q_tdata[1][64], q_tdata[0][64]},
-        o_tready: q_tready                             ,
-        i_level : q_level                              ,
-        o_tvalid: o_tvalid                             ,
-        o_tdata : o_tdata                              ,
-        o_tlast : o_tlast                              ,
-        i_tready: i_tready                             ,
+        i_clk    : i_uclk                               ,
+        i_rst    : i_urst                               ,
+        i_tvalid : q_tvalid                             ,
+        i_tdata  : '{q_tdata[0][63:0], q_tdata[1][63:0]},
+        i_tuser  : {q_tdata[1][64], q_tdata[0][64]},
+        o_tready : q_tready                             ,
+        i_level  : q_level                              ,
+        i_ev     : tf_u                                 ,
+        i_ev_data: ev_u                                 ,
+        i_capid  : r_capid                              ,
+        o_tvalid : o_tvalid                             ,
+        o_tdata  : o_tdata                              ,
+        o_tlast  : o_tlast                              ,
+        i_tready : i_tready                             ,
     );
 }

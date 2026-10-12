@@ -24,8 +24,14 @@
 //!
 //! A trigger condition is one character per channel, CH0 first: X (any),
 //! 0, 1, R (rising), F (falling), E (changes). All the non-X channels must
-//! hold at the same sample; they must be in one group (a software trigger
-//! looks at one group's samples).
+//! hold at the same sample. With a design of version 2 or later (register 0
+//! [31:24]) it is the hardware trigger (rtl/la LaTrig: levels on any
+//! channels, an edge on one of them): every 800 MS/s sample of all 16
+//! channels, armed once the pre-trigger samples are there,
+//! the capture ended by the device after the post-trigger ones (internal
+//! clocks); its TRIG block gives the position. Otherwise (or sw_trigger)
+//! the server looks at the samples of one group, so the channels must be in
+//! one group.
 
 use nusb::{
     transfer::{Bulk, ControlIn, ControlOut, ControlType, In, Recipient},
@@ -55,6 +61,7 @@ const MARGIN: u64 = 1 << 16;
 pub struct Dev {
     iface: nusb::Interface,
     _dev: nusb::Device,
+    ver: u32, // register 0 [31:24]: 2 = hardware trigger
 }
 
 impl Dev {
@@ -68,11 +75,12 @@ impl Dev {
                     .claim_interface(0)
                     .wait()
                     .map_err(|e| format!("claim: {e}"))?;
-                let d = Dev { iface, _dev: dev };
+                let mut d = Dev { iface, _dev: dev, ver: 0 };
                 let id = d.reg_rd(0)?;
-                if id != LA_ID {
+                if id & 0xFFFF != LA_ID & 0xFFFF {
                     return Err(format!("not the LA design (reg 0 = {id:08x})"));
                 }
+                d.ver = id >> 24;
                 Ok(d)
             })();
             match r {
@@ -161,6 +169,9 @@ pub struct CaptureReq {
     pub pre: f64,
     #[serde(default = "d_mem")]
     pub mem_mb: u64,
+    /// look for the trigger in the server even when the design has the hardware one
+    #[serde(default)]
+    pub sw_trigger: bool,
 }
 fn d_len() -> f64 {
     0.01
@@ -333,6 +344,59 @@ fn hits(cur: u64, prev_word: u64, w: u32, c: &Cond, lsb: u64) -> u64 {
         s <<= 1;
     }
     !t & lsb
+}
+
+/// The hardware trigger's condition (LaTrig): a pattern (mc channels at the levels vc, bit c = CH c)
+/// and an edge on one channel (etype 1 rising, 2 falling, 3 either, 0 none).
+#[derive(Clone, Copy, Default, Debug)]
+pub struct HwTrig {
+    mc: u16,
+    vc: u16,
+    esel: u16,
+    etype: u16,
+}
+
+/// the trigger string -> hardware condition or None (no condition)
+fn parse_hw(t: &str, cfg: &[GCfg; 2]) -> Result<Option<HwTrig>, String> {
+    let t = t.trim().as_bytes();
+    if t.is_empty() || t.iter().all(|&c| c == b'X' || c == b'x') {
+        return Ok(None);
+    }
+    if t.len() != 16 {
+        return Err("trigger: 16 characters (CH0 first)".into());
+    }
+    let mut h = HwTrig::default();
+    for (i, &c) in t.iter().enumerate() {
+        let b = 1u16 << i;
+        let c = c.to_ascii_uppercase();
+        if c != b'X' && !cfg[i / 8].en {
+            return Err(format!("trigger: CH{i} is in a group that is off"));
+        }
+        let edge = match c {
+            b'X' => 0,
+            b'0' => {
+                h.mc |= b;
+                0
+            }
+            b'1' => {
+                h.mc |= b;
+                h.vc |= b;
+                0
+            }
+            b'R' => 1,
+            b'F' => 2,
+            b'E' => 3,
+            _ => return Err(format!("condition character {}", c as char)),
+        };
+        if edge != 0 {
+            if h.etype != 0 {
+                return Err("trigger: an edge on one channel only (the others: levels)".into());
+            }
+            h.esel = i as u16;
+            h.etype = edge;
+        }
+    }
+    Ok(Some(h))
 }
 
 /// the trigger string -> (group, condition) or None
@@ -630,7 +694,7 @@ impl La {
         if !cfg[0].en && !cfg[1].en {
             return Err("no group enabled".into());
         }
-        let trig = parse_trigger(&req.trigger, &cfg)?;
+        let hw = parse_hw(&req.trigger, &cfg)?;
         if !(req.length_s > 0.0) {
             return Err("length_s".into());
         }
@@ -643,7 +707,7 @@ impl La {
         self.set(|s| *s = Status { state: "starting".into(), id, ..Default::default() });
         let me = self.clone();
         std::thread::spawn(move || {
-            let r = me.run(id, &req, cfg, trig);
+            let r = me.run(id, &req, cfg, hw);
             match r {
                 Ok(c) => {
                     let msg = c.note.clone();
@@ -663,7 +727,7 @@ impl La {
         Ok(id)
     }
 
-    fn run(&self, id: u64, req: &CaptureReq, cfg: [GCfg; 2], trig: Option<(usize, Cond)>) -> Result<Capture, String> {
+    fn run(&self, id: u64, req: &CaptureReq, cfg: [GCfg; 2], hw: Option<HwTrig>) -> Result<Capture, String> {
         let mut dg = self.dev.lock().unwrap();
         if dg.is_none() {
             *dg = Some(Dev::open()?);
@@ -673,14 +737,29 @@ impl La {
             *dg = Some(Dev::open()?);
         }
         let d = dg.as_ref().unwrap();
-        let r = self.run_dev(d, id, req, cfg, trig);
+        // the hardware trigger when the design has it, else the server looks for it (one group)
+        let (trig, hw) = match hw {
+            Some(h) if d.ver >= 2 && !req.sw_trigger => (None, Some(h)),
+            Some(_) => (parse_trigger(&req.trigger, &cfg)?, None),
+            None => (None, None),
+        };
+        let r = self.run_dev(d, id, req, cfg, trig, hw);
         if r.is_err() {
             let _ = d.reg_wr(0, 0);
         }
         r
     }
 
-    fn run_dev(&self, d: &Dev, id: u64, req: &CaptureReq, cfg: [GCfg; 2], trig: Option<(usize, Cond)>) -> Result<Capture, String> {
+    fn run_dev(
+        &self,
+        d: &Dev,
+        id: u64,
+        req: &CaptureReq,
+        cfg: [GCfg; 2],
+        trig: Option<(usize, Cond)>,
+        hw: Option<HwTrig>,
+    ) -> Result<Capture, String> {
+        let has_trig = trig.is_some() || hw.is_some();
         // ---- sizes: samples per group and rings
         let mem_words = req.mem_mb * (1 << 20) / 8;
         let mut g: Vec<GRun> = Vec::new();
@@ -710,7 +789,7 @@ impl La {
                     ((mem_words - used) / n_ext).saturating_sub(2 + MARGIN) * spw
                 };
             }
-            let pre = if trig.is_some() { (need[k] as f64 * req.pre.clamp(0.0, 1.0)) as u64 } else { 0 };
+            let pre = if has_trig { (need[k] as f64 * req.pre.clamp(0.0, 1.0)) as u64 } else { 0 };
             let cap = if c.en { need[k] / spw + 2 + MARGIN } else { 0 };
             if c.en && (cap == 0 || cap > mem_words) {
                 return Err("capture too long for mem_mb".into());
@@ -724,7 +803,7 @@ impl La {
                 words: 0,
                 stored: 0,
                 frozen: !c.en,
-                freeze_at: if trig.is_none() && c.en && (c.cmode == 0 || n_int == 0) {
+                freeze_at: if !has_trig && c.en && (c.cmode == 0 || n_int == 0) {
                     need[k]
                 } else {
                     u64::MAX
@@ -778,10 +857,38 @@ impl La {
             group_regs(d, k, c)?;
         }
         d.reg_wr(1, (cfg[0].en as u16) | (cfg[1].en as u16) << 1)?;
+        if d.ver >= 2 {
+            match hw {
+                Some(h) => {
+                    // armed once every group has its pre-trigger samples; the device ends the capture
+                    // after the post-trigger ones when every group is on the internal clock (an
+                    // edge clock's rate is unknown: the server stops it)
+                    let words = |r: &GRun, n: u64| if r.cfg.cmode == 0 { (n * r.cfg.div as u64 + 7) / 8 } else { n };
+                    let en = g.iter().filter(|r| r.cfg.en);
+                    let hold = en.clone().map(|r| words(r, r.pre)).max().unwrap_or(0) + 2;
+                    let post = en.clone().map(|r| words(r, r.post)).max().unwrap_or(0) + 2;
+                    let astop = n_ext == 0;
+                    d.reg_wr(0x19, h.mc)?;
+                    d.reg_wr(0x1A, h.vc)?;
+                    d.reg_wr(0x1B, h.etype << 4 | h.esel)?;
+                    let hold = hold.min(u32::MAX as u64) as u32;
+                    let post = post.min(u32::MAX as u64) as u32;
+                    d.reg_wr(0x1E, hold as u16)?;
+                    d.reg_wr(0x1F, (hold >> 16) as u16)?;
+                    d.reg_wr(0x20, post as u16)?;
+                    d.reg_wr(0x21, (post >> 16) as u16)?;
+                    d.reg_wr(0x18, 1 | (astop as u16) << 1)?;
+                }
+                None => d.reg_wr(0x18, 0)?,
+            }
+        }
         let capid = (id & 0xFF) as u32;
 
         let mut p = Parser::default();
         let mut trig_pos: Option<u64> = None;
+        // hardware trigger: its position, and the sample of each group it falls on
+        let mut hw_pos: Option<u64> = None;
+        let mut hw_at: [Option<u64>; 2] = [None, None];
         let tg = trig.map(|t| t.0);
         let tc = trig.map(|t| t.1).unwrap_or_default();
         let lsb = trig.map(|t| lane_lsb(1 << cfg[t.0].wlog)).unwrap_or(0);
@@ -789,7 +896,7 @@ impl La {
         d.reg_wr(0, (capid << 8 | 1) as u16)?;
         let t0 = Instant::now();
         self.set(|s| {
-            s.state = if trig.is_some() { "waiting" } else { "capturing" }.into();
+            s.state = if has_trig { "waiting" } else { "capturing" }.into();
             s.msg.clear();
         });
         let mut stop_sent: Option<Instant> = None;
@@ -810,6 +917,31 @@ impl La {
                 let mut b = c.buffer;
                 b.clear();
                 ep.submit(b);
+                if let (Some(_), None, Some((pos, cnt))) = (hw, hw_pos, p.trig) {
+                    hw_pos = Some(pos);
+                    for (k, r) in g.iter_mut().enumerate() {
+                        if !r.cfg.en {
+                            continue;
+                        }
+                        let t = if r.cfg.cmode == 0 {
+                            // the first sample at or after it (sample j is at position 8 + j div)
+                            (pos.saturating_sub(8) + r.cfg.div as u64 - 1) / r.cfg.div as u64
+                        } else {
+                            // the edge samples before its word (32 bits: completed from the count here)
+                            let approx = r.words * r.spw;
+                            let mut t = (approx & !0xFFFF_FFFF) | cnt[k] as u64;
+                            if t > approx + (1 << 31) {
+                                t = t.saturating_sub(1 << 32);
+                            }
+                            t
+                        };
+                        hw_at[k] = Some(t);
+                        r.freeze_at = t + r.post;
+                        if r.words * r.spw >= r.freeze_at {
+                            r.frozen = true;
+                        }
+                    }
+                }
             }
             if self.stop.load(Ordering::SeqCst) && !user_stop {
                 user_stop = true;
@@ -849,7 +981,7 @@ impl La {
                 last_status = Instant::now();
                 let el = t0.elapsed().as_secs_f64();
                 let by = self.bytes.load(Ordering::Relaxed);
-                let tp = trig_pos.map(|t| (tg.unwrap(), t));
+                let tp = trig_pos.map(|t| (tg.unwrap(), t)).or_else(|| first_at(&hw_at));
                 let sm = [g[0].words * g[0].spw, g[1].words * g[1].spw];
                 self.set(|s| {
                     s.bytes = by;
@@ -887,8 +1019,8 @@ impl La {
 
         // ---- the kept range of each group
         let mut note = Vec::new();
-        let tpos = trig_pos.map(|t| (tg.unwrap(), t));
-        if tg.is_some() && tpos.is_none() {
+        let tpos = trig_pos.map(|t| (tg.unwrap(), t)).or_else(|| first_at(&hw_at));
+        if has_trig && tpos.is_none() {
             note.push("no trigger (stopped while waiting): the latest samples".to_string());
         }
         let period = |c: &GCfg| c.div as f64 * T_NS;
@@ -912,6 +1044,7 @@ impl La {
             let valid = r.end_count.min(r.stored * r.spw);
             let avail_lo = r.stored.saturating_sub(r.cap) * r.spw;
             let th = match tpos {
+                _ if hw_pos.is_some() => hw_at[k],
                 Some((tgk, t)) if tgk == k => Some(t),
                 Some((tgk, t)) if aligned(&cfg, tgk, k) => {
                     Some((t as f64 * cfg[tgk].div as f64 / r.cfg.div as f64) as u64)
@@ -956,6 +1089,9 @@ impl La {
             // x = (first + s) * scale - origin: origin = the trigger (x = 0 there) on the trigger
             // group's scale (internal clocks share it; an external one only its own trigger)
             let origin = match tpos {
+                // (hardware: the trigger's own position, 1.25 ns, from the first sample at 8)
+                _ if hw_pos.is_some() && internal => (hw_pos.unwrap() as f64 - 8.0) * T_NS,
+                _ if hw_pos.is_some() => hw_at[k].unwrap_or(0) as f64,
                 Some((tgk, t)) if internal && cfg[tgk].cmode == 0 => t as f64 * period(&cfg[tgk]),
                 Some((tgk, t)) if aligned(&cfg, tgk, k) => t as f64,
                 _ => 0.0,
@@ -977,6 +1113,11 @@ impl La {
 fn aligned(cfg: &[GCfg; 2], a: usize, b: usize) -> bool {
     let (x, y) = (&cfg[a], &cfg[b]);
     (x.cmode == 0 && y.cmode == 0) || (x.cmode != 0 && x.cmode == y.cmode && (a ^ x.cksel as usize) == (b ^ y.cksel as usize))
+}
+
+/// the (group, sample) to report for a hardware trigger: the first group that has it
+fn first_at(at: &[Option<u64>; 2]) -> Option<(usize, u64)> {
+    at.iter().enumerate().find_map(|(k, t)| t.map(|t| (k, t)))
 }
 
 fn gname(k: usize) -> &'static str {
@@ -1113,6 +1254,9 @@ struct Parser {
     lo: u32,
     err: u64,
     scratch: Vec<u64>,
+    ev4: [u32; 4],
+    /// the TRIG block of this capture: position, samples of A / B before its word
+    trig: Option<(u64, [u32; 2])>,
 }
 
 impl Parser {
@@ -1140,7 +1284,7 @@ impl Parser {
             if self.state == 0 {
                 let ty = w >> 28;
                 let k = ((w >> 26) & 3) as usize;
-                if k > 1 || (w >> 24 & 3) != 0 || !(ty == 1 || ty == 4 || ty == 5) {
+                if k > 1 || (w >> 24 & 3) != 0 || !(ty == 1 || ty == 4 || ty == 5 || ty == 6) {
                     self.err += 1;
                     continue;
                 }
@@ -1169,14 +1313,20 @@ impl Parser {
                     } else {
                         self.lo = w;
                     }
-                } else if self.have < 2 {
-                    self.ev[self.have as usize] = w;
+                } else if self.have < 4 {
+                    if self.have < 2 {
+                        self.ev[self.have as usize] = w;
+                    }
+                    self.ev4[self.have as usize] = w;
                 }
                 self.have += 1;
                 self.left -= 1;
                 if self.left == 0 {
                     self.state = 0;
-                    if ty != 1 && (self.hdr >> 16) & 0xFF == capid {
+                    if ty == 6 && (self.hdr >> 16) & 0xFF == capid && self.trig.is_none() {
+                        let e = self.ev4;
+                        self.trig = Some((((e[1] as u64) << 32 | e[0] as u64) & 0xFFFF_FFFF_FFFF, [e[2], e[3]]));
+                    } else if ty != 1 && ty != 6 && (self.hdr >> 16) & 0xFF == capid {
                         let b = (self.ev[1] as u64) << 32 | self.ev[0] as u64;
                         let r = &mut g[k];
                         if ty == 4 {

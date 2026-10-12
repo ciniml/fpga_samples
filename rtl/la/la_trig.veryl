@@ -1,0 +1,148 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file la_trig.veryl
+ * @brief Hardware trigger: one condition over all 16 channels, checked on
+ *        every 800 MS/s sample of the capture (the words of both LaFronts,
+ *        8 samples per clock, test patterns included), whatever the groups
+ *        take from them.
+ *
+ * The condition: a pattern (the mc channels have the levels vc; channel c
+ * = bit c, CH0..15) and an edge on one channel (esel; etype 1 rising, 2
+ * falling, 3 either, 0 none), at the same sample. (An edge on every channel
+ * cost 690 LUTs: a 7-input function per channel and sample; this is about
+ * a third of it.)
+ *
+ * Armed from word `holdoff` of the capture on (positions count as in
+ * LaFront: word 0 is history, samples from position 8); the first match
+ * fires once per capture and is kept until the next one: o_pos = its
+ * position (word * 8 + sample), o_cnt = how many samples each group had
+ * taken before its word (LaFront's o_nout then: exact for an edge clock up
+ * to the word, the host refines an internal clock from o_pos). With
+ * auto stop, o_stop asks for the end of the capture `post` words later.
+ *
+ * Pipeline: the words of a clock are matched and the 8 sample results
+ * registered, the first one is picked into a register, and it fires a
+ * clock later - when the fronts' counters (o_nout, a clock behind their
+ * output) cover exactly the words before it.
+ */
+module LaTrig (
+    i_clk    : input  clock        ,
+    i_rst    : input  reset        ,
+    i_go     : input  logic        , // a capture starts
+    i_wv     : input  logic        , // i_wa / i_wb hold the next word of the capture
+    i_wa     : input  logic<64>    , // group A word: sample i in [8i+7:8i]
+    i_wb     : input  logic<64>    ,
+    i_nout   : input  logic<32> [2], // samples taken by each group so far
+    i_en     : input  logic        ,
+    i_astop  : input  logic        , // auto stop
+    i_mc     : input  logic<16>    , // pattern: channels
+    i_vc     : input  logic<16>    , //   and their levels
+    i_esel   : input  logic<4>     , // edge channel
+    i_etype  : input  logic<2>     , //   0 none, 1 rising, 2 falling, 3 either
+    i_holdoff: input  logic<32>    , // first word that may fire
+    i_post   : input  logic<32>    , // words after the trigger word before o_stop
+    o_fired  : output logic        ,
+    o_pos    : output logic<48>    ,
+    o_cnt    : output logic<32> [2],
+    o_stop   : output logic        ,
+) {
+    var widx : logic<40>; // index of the word in i_wa / i_wb (40 bits: 3 hours)
+    var plast: logic<16>; // the last sample of the word before
+    var hit  : logic<8> ; // stage 1: samples of the word that match
+    var hidx : logic<40>;
+    var fv   : logic    ; // stage 2: a match, at fpos
+    var fpos : logic<43>; // (o_pos is it, held once fired)
+    var armed: logic    ;
+    var hcnt : logic<32>; // words until armed
+    var pcnt : logic<32>;
+    var pact : logic    ; // counting the post words
+
+    var cs: logic<16> [9]; // cs[0]: the last sample of the word before, cs[i + 1]: sample i
+    var e : logic<9>     ; // the edge channel in them
+    var m : logic<8>     ;
+    always_comb {
+        cs[0] = plast;
+        for i in 0..8 {
+            cs[i + 1] = {i_wb[i * 8+:8], i_wa[i * 8+:8]};
+        }
+        for j in 0..9 {
+            e[j] = cs[j][i_esel];
+        }
+        for i in 0..8 {
+            m[i] = ((cs[i + 1] ^ i_vc) & i_mc) == 0
+                && (i_etype == 0 || (i_etype[0] && !e[i] && e[i + 1]) || (i_etype[1] && e[i] && !e[i + 1]));
+        }
+    }
+    // the first matching sample of the registered word
+    assign o_pos = {5'h0, fpos};
+    var first: logic<3>;
+    always_comb {
+        first = 0;
+        for i in 0..8 {
+            if hit[7 - i] {
+                first = 7 - i;
+            }
+        }
+    }
+
+    always_ff {
+        if_reset {
+            widx    = 0;
+            plast   = 0;
+            hit     = 0;
+            hidx    = 0;
+            fv      = 0;
+            fpos    = 0;
+            armed   = 0;
+            hcnt    = 0;
+            pcnt    = 0;
+            pact    = 0;
+            o_fired = 0;
+            o_cnt   = '{0, 0};
+            o_stop  = 0;
+        } else {
+            o_stop = 0;
+            hit    = 0;
+            if !o_fired && !fv {
+                fv   = hit != 0;
+                fpos = {hidx, first};
+            }
+            if i_go {
+                widx    = 0;
+                armed   = 0;
+                hcnt    = i_holdoff;
+                pact    = 0;
+                fv      = 0;
+                o_fired = 0;
+            } else if i_wv {
+                // (word 0 is history: never fires, and it has no sample before it)
+                hit   = if i_en && widx != 0 && armed ? m : 8'd0;
+                hidx  = widx;
+                plast = {i_wb[63:56], i_wa[63:56]};
+                widx  = widx + 1;
+                if hcnt <= 1 {
+                    armed = 1;
+                } else {
+                    hcnt = hcnt - 1;
+                }
+            }
+            if fv && !o_fired {
+                o_fired = 1;
+                o_cnt   = i_nout;
+                pact    = i_astop;
+                pcnt    = i_post;
+            } else if pact && i_wv {
+                if pcnt == 0 {
+                    o_stop = 1;
+                    pact   = 0;
+                } else {
+                    pcnt = pcnt - 1;
+                }
+            }
+        }
+    }
+}

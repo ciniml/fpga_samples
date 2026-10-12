@@ -96,11 +96,13 @@ module la_core_test_body #(parameter RUN = 0) ();
     logic [31:0] sw[2][$];
     int s_started[2], s_ended[2], s_nseq[2], s_seqerr[2];
     logic [63:0] s_sbeat[2], s_ebeat[2];
+    int s_ntrig; longint s_tpos; longint s_tcnt[2];
     function automatic void parse(input int capid);
         int i = 0;
         for (int g = 0; g < 2; g++) begin
             sw[g].delete(); s_started[g] = 0; s_ended[g] = 0; s_nseq[g] = 0; s_seqerr[g] = 0; s_sbeat[g] = 0; s_ebeat[g] = 0;
         end
+        s_ntrig = 0; s_tpos = -1; s_tcnt[0] = -1; s_tcnt[1] = -1;
         while (i < rxq.size()) begin
             logic [31:0] h = rxq[i]; int ty = h[31:28], s = h[26], len = h[15:0];
             if (h[27] || h[25:24] != 0 || i + len >= rxq.size() + 1) begin
@@ -117,6 +119,11 @@ module la_core_test_body #(parameter RUN = 0) ();
                 if (h[23:16] != 8'(s_nseq[s])) s_seqerr[s]++;
                 s_nseq[s]++;
                 for (int k = 1; k <= len; k++) sw[s].push_back(rxq[i + k]);
+            end else if (ty == 6) begin
+                if (len != 4 || s != 0) fail($sformatf("TRIG header %08x", h));
+                if (h[23:16] != capid) fail($sformatf("TRIG capture id %0d", h[23:16]));
+                s_ntrig++; s_tpos = {rxq[i+2], rxq[i+1]} & 48'hFFFF_FFFF_FFFF;
+                s_tcnt[0] = rxq[i+3]; s_tcnt[1] = rxq[i+4];
             end else fail($sformatf("header type %0d", ty));
             i += len + 1;
         end
@@ -183,7 +190,8 @@ module la_core_test_body #(parameter RUN = 0) ();
 
     // one capture: configure, run `clocks` sclk, stop, read everything out, check
     task automatic capture(input string name, input int groups, input cfg_t ca, input cfg_t cb, input int clocks,
-                           input int mode, input int ovf_a = 0, input int ovf_b = 0, input int capid = 5);
+                           input int mode, input int ovf_a = 0, input int ovf_b = 0, input int capid = 5,
+                           input int expect_trig = 0);
         stage = name;
         rxq.delete();
         wr(8'h01, 16'(groups));
@@ -219,17 +227,72 @@ module la_core_test_body #(parameter RUN = 0) ();
             if (groups & (1 << g)) check_stream(g, g ? cb : ca, mode, g ? ovf_b : ovf_a);
             else if (s_started[g] || sw[g].size()) fail($sformatf("group %0d disabled but sent data", g));
         end
+        if (!expect_trig && s_ntrig) fail($sformatf("unexpected TRIG block (pos %0d)", s_tpos));
         $display("  %-28s A %0d samples, B %0d samples, %0d words, errors so far %0d", name,
                  s_ebeat[0][47:0], s_ebeat[1][47:0], rxq.size(), errors);
     endtask
 
+    // ---------------------------------------------------------------- hardware trigger
+    // condition as LaTrig takes it; the 16-bit sample at position k of the test patterns
+    typedef struct { logic [15:0] mc, vc; int esel, etype, holdoff, post, astop; } trig_t;
+    function automatic logic [15:0] tsample(input longint k);
+        return {tab17[k % 131071], tab15[k % 32767]};
+    endfunction
+    function automatic longint trig_expect(input trig_t t, input longint limit);
+        longint k0 = 8 * (t.holdoff > 1 ? t.holdoff : 1);
+        for (longint k = k0; k < limit; k++) begin
+            logic [15:0] c = tsample(k), p = tsample(k - 1);
+            logic ec = c[t.esel], ep = p[t.esel];
+            if (((c ^ t.vc) & t.mc) == 0 &&
+                (t.etype == 0 || (t.etype[0] && !ep && ec) || (t.etype[1] && ep && !ec))) return k;
+        end
+        return -1;
+    endfunction
+    task automatic trig_cfg(input int en, input trig_t t);
+        wr(8'h18, 16'({t.astop[0], en[0]}));
+        wr(8'h19, t.mc); wr(8'h1A, t.vc); wr(8'h1B, 16'({t.etype[1:0], t.esel[3:0]}));
+        wr(8'h1E, 16'(t.holdoff)); wr(8'h1F, 16'(t.holdoff >> 16));
+        wr(8'h20, 16'(t.post)); wr(8'h21, 16'(t.post >> 16));
+    endtask
+    // samples a group takes before word w (test patterns)
+    function automatic longint cnt_before(input cfg_t c, input longint w);
+        longint kpos = 8 + (c.cmode != 0 ? c.skew : 0), n = 0;
+        if (c.cmode == 0) return (8 * w - 8 + c.div - 1) / c.div;
+        while (next_pos(c, c.thalf, kpos, n) < 8 * w) n++;
+        return n;
+    endfunction
+    // a capture of test patterns (both groups) with the trigger: position and counts
+    task automatic trig_capture(input string name, input trig_t t, input cfg_t a, input cfg_t b, input int clocks);
+        longint exp = trig_expect(t, longint'(clocks) * 8);
+        trig_cfg(1, t);
+        capture(name, 3, a, b, clocks, 0, 0, 0, 7, 1);
+        if (exp < 0) begin
+            if (s_ntrig) fail($sformatf("TRIG at %0d, expected none", s_tpos));
+        end else if (s_ntrig != 1) fail($sformatf("%0d TRIG blocks, expected one at %0d", s_ntrig, exp));
+        else begin
+            longint w = exp / 8;
+            longint ca = cnt_before(a, w), cb = cnt_before(b, w);
+            if (s_tpos != exp) fail($sformatf("TRIG at %0d, expected %0d", s_tpos, exp));
+            if (s_tcnt[0] != ca || s_tcnt[1] != cb)
+                fail($sformatf("TRIG counts %0d / %0d, expected %0d / %0d", s_tcnt[0], s_tcnt[1], ca, cb));
+            if (t.astop) begin
+                // ends post words after the trigger word (plus the pipeline): A's samples stop there
+                longint last = 8 + (s_ebeat[0][47:0] - 1) * a.div, stopw = w + t.post + 1;
+                if (last < 8 * stopw || last >= 8 * (stopw + 6))
+                    fail($sformatf("auto stop: last sample at %0d, trigger word %0d + post %0d", last, w, t.post));
+            end
+        end
+        $display("    trigger at %0d (expected %0d), counts %0d / %0d", s_tpos, exp, s_tcnt[0], s_tcnt[1]);
+        trig_cfg(0, t);
+    endtask
+
     initial if (RUN) begin
-        cfg_t a, b; logic [31:0] v;
+        cfg_t a, b; logic [31:0] v; trig_t t;
         make_tabs();
         repeat (5) @(posedge uclk); urst = 0;
         repeat (5) @(posedge sclk); srst = 0;
         repeat (5) @(posedge uclk);
-        stage = "id"; rd(8'h00, v); if (v != 32'h01004C41) fail($sformatf("id %08x", v));
+        stage = "id"; rd(8'h00, v); if (v != 32'h02004C41) fail($sformatf("id %08x", v));
 
         // test patterns, internal clock
         a = '{cmode: 0, wlog: 2, skew: 0, test: 1, div: 1, thalf: 4, ck_sel: 0};
@@ -271,6 +334,32 @@ module la_core_test_body #(parameter RUN = 0) ();
         ready_pct = 100;
         a = '{cmode: 0, wlog: 1, skew: 0, test: 1, div: 1, thalf: 4, ck_sel: 0};
         capture("again (new capture id)", 1, a, b, 200, 0, 0, 0, 9);
+
+        // hardware trigger on the test patterns (both groups: CH0..7 PRBS15, CH8..15 PRBS17; it looks
+        // at every 800 MS/s sample whatever the groups take; rates below the 500 MB/s of the stream here)
+        a = '{cmode: 0, wlog: 2, skew: 0, test: 1, div: 2, thalf: 4, ck_sel: 0};
+        b = '{cmode: 0, wlog: 2, skew: 0, test: 1, div: 2, thalf: 4, ck_sel: 0};
+        t = '{mc: 16'h0208, vc: 16'h0200, esel: 0, etype: 1, holdoff: 20, post: 0, astop: 0};
+        trig_capture("trig CH0 rise, CH3 0, CH9 1", t, a, b, 400);
+        t = '{mc: 16'h00F0, vc: 16'h00A0, esel: 15, etype: 2, holdoff: 0, post: 0, astop: 0};
+        b.div = 4;
+        trig_capture("trig CH4..7 = 1010, CH15 fall", t, a, b, 400);
+        t = '{mc: 16'h0100, vc: 16'h0100, esel: 10, etype: 3, holdoff: 7, post: 0, astop: 0};
+        a.div = 9; b.div = 2;
+        trig_capture("trig CH10 either, CH8 1", t, a, b, 600);
+        t = '{mc: 16'h0003, vc: 16'h0003, esel: 0, etype: 0, holdoff: 30, post: 25, astop: 1};
+        a.div = 1; b.div = 4;
+        trig_capture("trig + auto stop", t, a, b, 2000);
+        a.div = 2;
+        t = '{mc: 16'h8181, vc: 16'h0101, esel: 0, etype: 0, holdoff: 0, post: 0, astop: 0};
+        trig_capture("trig pattern over A and B", t, a, b, 400);
+        t = '{mc: 16'h0001, vc: 16'h0001, esel: 0, etype: 2, holdoff: 0, post: 0, astop: 1};
+        trig_capture("trig impossible (CH0 1, falling)", t, a, b, 300);
+        // a group on an edge clock: its count is of the edges before the trigger word
+        a = '{cmode: 1, wlog: 3, skew: 3, test: 1, div: 1, thalf: 4, ck_sel: 0};
+        b = '{cmode: 3, wlog: 2, skew: 1, test: 1, div: 1, thalf: 16, ck_sel: 0};
+        t = '{mc: 16'h0000, vc: 16'h0000, esel: 8, etype: 1, holdoff: 40, post: 0, astop: 0};
+        trig_capture("trig, edge clocks", t, a, b, 400);
 
         if (errors == 0) begin $display("la_core: PASS"); $finish; end
         else $fatal(1, "la_core: FAIL (%0d errors)", errors);

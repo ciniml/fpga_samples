@@ -17,10 +17,17 @@
  *                  HDR_RLE   (reserved for a compressed form of the same)
  *                  HDR_START capture start: payload = the start beat (below)
  *                  HDR_END   capture end:   payload = the end beat (below)
+ *                  HDR_TRIG  hardware trigger (LaTrig), stream 0, 4 payload words:
+ *                            [47:0] position of the matching sample (word * 8 + sample,
+ *                            as in LaFront: the capture's samples start at 8), then the
+ *                            samples group A and group B had taken before its word
+ *                            (32 bits each). At most once per capture, between blocks;
+ *                            it bypasses the FIFOs, so it may come before that
+ *                            capture's START blocks (the capture id tells).
  *   [27:26] stream (0: group A = CH0..7, 1: group B = CH8..15)
  *   [25:24] 0
  *   [23:16] DATA: block sequence number per stream (0 after START, wraps)
- *           START / END: capture id
+ *           START / END / TRIG: capture id
  *   [15:0]  len: payload words
  * Packed samples: the samples of a group, W = 2^wlog bits each (its lowest W
  * channels), back to back from bit 0 of the first payload word on; the
@@ -38,6 +45,7 @@ pub package la_pkg {
     const HDR_RLE  : logic<4> = 4'h2;
     const HDR_START: logic<4> = 4'h4;
     const HDR_END  : logic<4> = 4'h5;
+    const HDR_TRIG : logic<4> = 4'h6;
 
     // LaFront -> LaPacker tuser
     const U_DATA : logic<2> = 2'd0;

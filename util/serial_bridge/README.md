@@ -58,9 +58,11 @@ SLogic16U3 ─USB3─ serial-bridge (la.rs)                     ─HTTP─ /la (
 
 - 取り込み: 4 CH 800 MS/s 3 秒 (2.4 G サンプル、1.2 GB) を 400.6 MB/s でオーバーフローなし。
   要求から表示可能まで 4.0 秒 (確保と要約で約 1 秒)。表示問い合わせは 1 画面 0.5〜3.4 ms
-- トリガ: 1 グループのチャネル条件 (CH ごとに X / 0 / 1 / R / F / E、全部が同じサンプルで成立)。
-  プリトリガ分がたまってから有効になり、ポスト分で止まる。プリ分はリングで保持するので待ち時間に上限は無い
-  (その間も 400 MB/s を受け続ける)。x = 0 がトリガ
+- トリガ: チャネル条件 (CH ごとに X / 0 / 1 / R / F / E、全部が同じサンプルで成立)。デザインが版 2 以上
+  (レジスタ 0 [31:24]) ならハードウェアトリガ (16 CH 全部、800 MS/s の全サンプル、A/B にまたがってよい、
+  TRIG ブロックで位置を受ける)。それより前の版や `sw_trigger: true` ならサーバが 1 グループのサンプルを調べる。
+  どちらもプリトリガ分がたまってから有効になり、ポスト分で止まる。プリ分はリングで保持するので待ち時間に上限は無い
+  (その間も 400 MB/s を受け続ける)。x = 0 がトリガ (ハードウェアは 1.25 ns の位置そのもの)
 - 位置: x = s × scale − offset。内部クロックは ns (両グループのサンプル 0 は同じ 1.25 ns 位置)、
   外部クロックはサンプル番号 (同じクロック入力・同じエッジの 2 グループは揃う)
 
@@ -68,7 +70,7 @@ SLogic16U3 ─USB3─ serial-bridge (la.rs)                     ─HTTP─ /la (
 |---|---|---|
 | GET | `/la`, `/wave.js` | LA UI、波形ビュー (トレースビューアと共通) |
 | GET | `/api/la/device` | `{ok, id, status}` / `{ok:false, error}` |
-| POST | `/api/la/capture` | `{a:{ch,clk,rate,skew,other_clk,test,thalf}, b:{..}, length_s, ext_samples, threshold_v, trigger:"16 文字", pre, mem_mb}` |
+| POST | `/api/la/capture` | `{a:{ch,clk,rate,skew,other_clk,test,thalf}, b:{..}, length_s, ext_samples, threshold_v, trigger:"16 文字", pre, mem_mb, sw_trigger}` |
 | POST | `/api/la/stop` | 停止 (トリガ待ちなら最新の分を残す) |
 | GET | `/api/la/status` | `{state, msg, bytes, mbps, elapsed, samples, trig}` |
 | GET | `/api/la/meta` | グループごとの ch / クロック / scale / offset / サンプル数 / フラグ、トリガ |

@@ -1,0 +1,52 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file la_slice.veryl
+ * @brief AXI4-Stream register slice of two entries: s_tready is a register
+ *        (the spare entry is empty), so the ready of the sink does not reach
+ *        the source's logic in the same clock; one beat per clock through.
+ */
+module LaSlice #(
+    param W: u32 = 64,
+) (
+    i_clk   : input  clock   ,
+    i_rst   : input  reset   ,
+    s_tvalid: input  logic   ,
+    s_tdata : input  logic<W>,
+    s_tready: output logic   ,
+    m_tvalid: output logic   ,
+    m_tdata : output logic<W>,
+    m_tready: input  logic   ,
+) {
+    var sp_v: logic   ; // spare entry
+    var sp_d: logic<W>;
+    let up  : logic    = s_tvalid && !sp_v;
+    assign s_tready = !sp_v;
+
+    always_ff {
+        if_reset {
+            m_tvalid = 0;
+            m_tdata  = 0;
+            sp_v     = 0;
+            sp_d     = 0;
+        } else if !m_tvalid || m_tready {
+            // the main entry is free this clock
+            if sp_v {
+                m_tvalid = 1;
+                m_tdata  = sp_d;
+                sp_v     = 0;
+            } else {
+                m_tvalid = up;
+                if up {
+                    m_tdata = s_tdata;
+                }
+            }
+        } else if up {
+            sp_v = 1;
+            sp_d = s_tdata;
+        }
+    }
+}
