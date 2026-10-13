@@ -50,6 +50,8 @@ def read(j):
         'lfps': f(192, 16), 'seen': f(208, 32), 'trace': [f(240 + 5 * i, 5) for i in range(16)],
         'bytes': f(320, 32), 'up': f(352, 32) * 65536 / OSC_HZ,
         'com': f(384, 16), 'dec_err': f(400, 16), 'disp_err': f(416, 16),
+        # Tang Console build: SerDes lane debug in the spare bits
+        'cmu_ok': f(79, 1), 'rx_lock': f(78, 1), 'lane_rstn': f(71, 1), 'lane_stat': f(69, 2) | (f(61, 3) << 2) | (f(55, 1) << 5),
     }
 
 
@@ -61,10 +63,23 @@ def fmt(s):
 
 
 def main():
+    global OSC_HZ
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('-w', '--watch', action='store_true')
     ap.add_argument('-i', '--interval', type=float, default=0.1)
+    ap.add_argument('--cable', choices=['dap', 'ftdi'], default='dap', help='JTAG cable: dap (rust-dap, SLogic16U3) or ftdi (Sipeed USB debugger, Tang Console)')
+    ap.add_argument('--osc-hz', type=float, default=OSC_HZ, help='clock of the status block (SLogic: ~51.66 MHz oscillator, Console: 50 MHz sys_clk)')
+    ap.add_argument('--upar', action='store_true', help='decode the Tang Console UPAR diagnostic build (TAG=upar)')
+    ap.add_argument('--two', action='store_true', help='decode the Tang Console two-lane cable self-test build (LANE=2ln FORCE_TX=1)')
+    ap.add_argument('--det', action='store_true', help='decode the Tang Console receiver-detect test build (FORCE_DET=1)')
+    ap.add_argument('--lfps', action='store_true', help='decode the Tang Console LFPS diagnostic build (LFPS_DIAG=1)')
+    ap.add_argument('--serial', help='probe serial number when several are connected (lsusb -v / pyusb)')
     a = ap.parse_args()
+    ap_serial = a.serial
+    Args.cable = a.cable
+    Args.serial = a.serial
+    Args.any_device = a.cable == 'ftdi'   # the Console is a GW5AT-60
+    OSC_HZ = a.osc_hz
     j = sp.open_jtag(Args())
     s = read(j)
     print(f"uptime {s['up']:.1f} s  ref_lock={s['ref_lock']} phy_resetn={s['phy_resetn']} prst={s['prst']} "
@@ -74,6 +89,20 @@ def main():
     print('trace (old -> new):', ' > '.join(st(x) for x in reversed(s['trace'])))
     print(fmt(s))
     print(f"rx: COM={s['com']} decode_err={s['dec_err']} disparity_err={s['disp_err']}")
+    print(f"lane (Console build): rx_term={s['rx_term']} qpll_ok={s['cmu_ok']} pma_rx_lock={s['rx_lock']} rstn={s['lane_rstn']} stat[5:0]=0x{s['lane_stat']:02x} astat[5:0]=0x{s['pads']:02x}")
+    if a.upar:
+        b, l, v = s['bytes'], s['lfps'], s['vreg']
+        print(f"upar diag: life_clk={(b & 0xFFFF) * 16 * OSC_HZ / (1 << 18) / 1e6:.3f} MHz drp_clk={(b >> 16) * 16 * OSC_HZ / (1 << 18) / 1e6:.3f} MHz "
+              f"phy port2: wren#={s['dpp_err'] & 0xFF} rden#={s['dpp_err'] >> 8} ready#={l & 0xFF} rdvld#={l >> 8} ready={v >> 14 & 1} | "
+              f"master: wren#={v & 0xFF} ready={v >> 15 & 1}")
+    if a.two:
+        v = s['vreg']
+        print(f"lane 3 (port 2P): pma_rx_lock={v >> 9 & 1} rx_eidle={v >> 8 & 1} stat[3:0]=0x{v >> 10 & 0xF:x} COM={s['hp']} decode_err={s['u0']} phy_status#={s['resets']}")
+    if a.det:
+        v = s['vreg']
+        print(f"detect test: attempts={s['u0']} answers={s['hp']} detected={s['resets']} state={v >> 10 & 3} rxdet_result={v >> 9 & 1} detrx={v >> 8 & 1}")
+    if a.lfps:
+        print(f"lfps diag (pclk cycles seen, saturating): PHY RxElecIdle low={s['bytes'] & 0xFFFF} quad rxelecidle_o high={s['bytes'] >> 16} sigdet_duty/1024={s['com']} astat0={s['dec_err']} astat5={s['disp_err']}")
     if not a.watch:
         return
     last = None

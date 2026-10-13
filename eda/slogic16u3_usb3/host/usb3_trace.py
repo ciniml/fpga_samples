@@ -19,6 +19,9 @@ K_NAMES = {0x3C: 'SKP', 0x5C: 'SDP', 0x7C: 'EDB', 0x9C: 'SUB', 0xBC: 'COM', 0xFB
            0xFE: 'SLC', 0xF7: 'EPF'}
 
 
+OSC_HZ = 51.66e6
+
+
 class Args:
     sim = None
     cable = 'dap'
@@ -211,6 +214,7 @@ def fmt_stream(ds):
 
 
 def main():
+    global OSC_HZ
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('-o', '--out')
     ap.add_argument('-i', '--input', help='decode a saved trace instead of reading the board')
@@ -218,7 +222,15 @@ def main():
     ap.add_argument('--hdr', action='store_true', help='header packet log instead of the word trace')
     ap.add_argument('--arm', type=int, choices=[0, 1, 2, 3], help='re-arm the trace (and the header log) with trigger mode '
                     '0 = after the first SETUP, 1 = U0 -> Recovery, 2 = bad DPP, 3 = Usb3Device debug event (header log as a ring, stops 64 after), then exit')
+    ap.add_argument('--cable', choices=['dap', 'ftdi'], default='dap', help='JTAG cable: dap (rust-dap, SLogic16U3) or ftdi (Sipeed USB debugger, Tang Console)')
+    ap.add_argument('--osc-hz', type=float, default=OSC_HZ, help='clock of the status block (SLogic: ~51.66 MHz oscillator, Console: 50 MHz sys_clk)')
+    ap.add_argument('--serial', help='probe serial number when several are connected (lsusb -v / pyusb)')
     a = ap.parse_args()
+    ap_serial = a.serial
+    Args.cable = a.cable
+    Args.serial = a.serial
+    Args.any_device = a.cable == 'ftdi'   # the Console is a GW5AT-60
+    OSC_HZ = a.osc_hz
     if a.arm is not None:
         j = sp.open_jtag(Args())
         off = find_off(j)

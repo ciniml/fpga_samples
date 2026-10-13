@@ -38,7 +38,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('-w', '--watch', action='store_true')
     ap.add_argument('-i', '--interval', type=float, default=1.0)
+    ap.add_argument('--cable', choices=['dap', 'ftdi'], default='dap')
+    ap.add_argument('--serial')
     a = ap.parse_args()
+    Args.cable = a.cable
+    Args.serial = a.serial
+    Args.any_device = a.cable == 'ftdi'
     j = sp.open_jtag(Args())
     prev = None
     while True:

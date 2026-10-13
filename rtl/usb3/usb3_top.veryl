@@ -19,8 +19,13 @@
  * to the board top (i_rst must stay asserted until PCLK is running).
  */
 module Usb3Top #(
-    param CLK_HZ    : u32 = 125_000_000,
-    param TSEQ_COUNT: u32 = 65536      ,
+    param CLK_HZ            : u32      = 125_000_000,
+    param TSEQ_COUNT        : u32      = 65536      ,
+    param LOW_PD            : logic<2> = 2'b10      , // see Usb3Ltssm
+    param RXDET_PD          : logic<2> = 2'b10      ,
+    param RXDET_ASSUME_US   : u32      = 0          ,
+    param POLL_LFPS_P2      : bit      = 1          ,
+    param POLL_LFPS_BLIND_US: u32      = 0          ,
 ) (
     i_clk: input clock,
     i_rst: input reset,
@@ -197,8 +202,13 @@ module Usb3Top #(
     var ts_k         : logic<4> ;
 
     inst u_ltssm: Usb3Ltssm #(
-        CLK_HZ    : CLK_HZ    ,
-        TSEQ_COUNT: TSEQ_COUNT,
+        CLK_HZ            : CLK_HZ            ,
+        TSEQ_COUNT        : TSEQ_COUNT        ,
+        LOW_PD            : LOW_PD            ,
+        RXDET_PD          : RXDET_PD          ,
+        RXDET_ASSUME_US   : RXDET_ASSUME_US   ,
+        POLL_LFPS_P2      : POLL_LFPS_P2      ,
+        POLL_LFPS_BLIND_US: POLL_LFPS_BLIND_US,
     ) (
         i_clk                          ,
         i_rst                          ,

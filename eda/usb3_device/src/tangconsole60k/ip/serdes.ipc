@@ -1,0 +1,30 @@
+[General]
+ipc_version=4
+target_device=gw5at60b-002
+type=Serdes
+version=1.2
+
+[All_access]
+Q0_LANE2_RX=Q0_LANE2_RX -> Q0_MUX0 -> Q0_REFCLK1
+Q0_LANE2_TX=Q0_LANE2_TX -> Q0_QPLL0 -> Q0_MUX0 -> Q0_REFCLK1
+
+[Config]
+LANG=0
+Synthesis_tool=GowinSynthesis
+file=serdes
+module=SerDes_Top
+
+[USB%203.0%20PHY%3Ausb3_0_phy%3AUSB3_0_PHY_Top]
+ChannelSel=Q0 Lane2
+LANG=0
+Line_Rate=5
+Loopback_Mode=OFF
+PLL_Selection=QPLL0
+Reference_CLK_Frequency=125
+Reference_CLK_Source=Q0 REFCLK1
+Synthesis_tool=GowinSynthesis
+file=usb3_0_phy
+module=USB3_0_PHY_Top
+target_device=gw5at60b-002
+type=usb3_0_phy
+version=1.0
