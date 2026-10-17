@@ -60,9 +60,9 @@ FPGA 側の定義は `mod/pmod_rpi_camera/pmod_pins.csv`。
 | `fab/*.png` | 3D レンダリング |
 | `fab/erc.rpt`, `fab/drc.rpt` | 検査結果 (ライブラリ表の警告はヘッドレス環境由来) |
 
-回路図 (`tools/gen_sch.py`) と基板 (`tools/gen_pcb.py`、配置・配線・ベタを座標で記述) は
-スクリプトから生成している。KiCad で手を入れた場合は再生成で上書きされるので、
-以後は GUI 側を正としてスクリプトは参考扱いにすること。
+回路図・基板の初版は `tools/gen_sch.py` / `tools/gen_pcb.py` で生成し、その後 KiCad で手を入れている
+(rev A: P 側の等長化ミアンダ、ティアドロップ)。**KiCad のファイルが正**。`tools/build.sh` は既定で
+現状のファイルを検査して出力するだけ。`--regen` を付けるとスクリプトから作り直し、KiCad での修正は消える。
 
 ## 部品
 

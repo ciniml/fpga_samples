@@ -1,17 +1,23 @@
 #!/bin/bash
-# Regenerate the schematic and the board, check them, and write the
-# fabrication outputs to fab/ (Gerbers + drill zip, BOM, placement,
-# schematic PDF, board images).
+# Check the schematic and the board (ERC, DRC with schematic parity) and
+# write the fabrication outputs to fab/ (Gerbers + drill zip, BOM,
+# placement, schematic PDF, board images) from the files as they are.
+#
+# The KiCad files are the master since they were edited in KiCad
+# (rev A: length tuning, teardrops). `--regen` rebuilds them from
+# tools/gen_sch.py / gen_pcb.py first, which DISCARDS those edits.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 N=Pmod_RPiCamera
 export TMPDIR=${TMPDIR:-/tmp}
-python3 tools/gen_sch.py
-python3 tools/gen_pcb.py 2>&1 | grep -v 'assert' || true
+if [ "${1:-}" = "--regen" ]; then
+    python3 tools/gen_sch.py
+    python3 tools/gen_pcb.py 2>&1 | grep -v 'assert' || true
+fi
 mkdir -p fab/gerber
 # library-table warnings are environment dependent (headless kicad-cli without global tables)
 kicad-cli sch erc --severity-all -o fab/erc.rpt $N.kicad_sch >/dev/null
-kicad-cli pcb drc --schematic-parity --severity-all -o fab/drc.rpt $N.kicad_pcb >/dev/null
+kicad-cli pcb drc --schematic-parity --refill-zones --severity-all -o fab/drc.rpt $N.kicad_pcb >/dev/null
 for f in fab/erc.rpt fab/drc.rpt; do
     if grep '^\[' "$f" | grep -qv 'lib_symbol_issues\|footprint_link_issues\|lib_footprint_issues'; then
         echo "== $f:"; grep '^\[' "$f" | grep -v 'lib_symbol_issues\|footprint_link_issues\|lib_footprint_issues' | sort | uniq -c
