@@ -1,6 +1,6 @@
 //! DPCD address constants + helper accessors over AUX (DP 1.2 Tab 2-75).
 
-use crate::aux::{AuxCh, AuxCommand, AuxError, AuxReply, AuxRequest, AuxResponseKind};
+use crate::dp_aux::{AuxCh, AuxCommand, AuxError, AuxReply, AuxRequest, AuxResponseKind};
 
 /// Detailed failure cause of a DPCD transaction, for bring-up logging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

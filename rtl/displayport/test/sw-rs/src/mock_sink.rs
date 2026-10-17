@@ -3,7 +3,7 @@
 //! requires the source to update its drive setting once per phase before
 //! reporting CR / EQ done.
 
-use crate::aux::{AuxCh, AuxCommand, AuxResponseKind};
+use crate::dp_aux::{AuxCh, AuxCommand, AuxResponseKind};
 use crate::dpcd;
 
 const DPCD_TABLE_SIZE: usize = 0x300;

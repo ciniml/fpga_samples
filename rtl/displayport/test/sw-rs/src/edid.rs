@@ -5,7 +5,7 @@
 //! then read 128 bytes in chunks (MOT=1 except for the final chunk,
 //! which ends the I2C transaction with MOT=0).
 
-use crate::aux::{AuxCh, AuxCommand, AuxError, AuxRequest, AuxResponseKind};
+use crate::dp_aux::{AuxCh, AuxCommand, AuxError, AuxRequest, AuxResponseKind};
 
 const EDID_I2C_ADDR: u32 = 0x50;
 /// I2C-over-AUX sinks answer DEFER (or ACK with no data) while the

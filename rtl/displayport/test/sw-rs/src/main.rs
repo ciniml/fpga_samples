@@ -10,7 +10,7 @@ use core::{
 
 use bootrom_pac;
 
-mod aux;
+mod dp_aux;
 mod dpcd;
 mod edid;
 #[cfg(feature = "typec")]
@@ -27,7 +27,7 @@ mod mock_sink;
 mod serialout;
 mod video;
 
-use aux::AuxCh;
+use dp_aux::AuxCh;
 use main_link::MainLink;
 use mock_sink::MockSink;
 use serialout::SerialOut;

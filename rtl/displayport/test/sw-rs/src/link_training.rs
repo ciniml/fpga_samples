@@ -1,7 +1,7 @@
 //! Source-side link training state machine (DP 1.2 §3.5.1.2,
 //! Fig 3-32 / Fig 3-33).
 
-use crate::aux::AuxCh;
+use crate::dp_aux::AuxCh;
 use crate::dpcd::{self, DpcdError, DriveSetting};
 use crate::main_link::{MainLink, Pattern};
 
