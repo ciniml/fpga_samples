@@ -1,0 +1,7 @@
+"Reference","Value","Footprint","QUANTITY","MPN","Description"
+"C1","10u","Capacitor_SMD:C_0805_2012Metric","1","","10 uF 10 V X5R 0805"
+"F1","500mA hold","Fuse:Fuse_0805_2012Metric","1","PTC 0805, I_hold 0.5 A, >= 6 V (e.g. Littelfuse 0805L050)","Resettable fuse, 6 V, I_hold 0.5 A, 0805"
+"J1","Pmod (host)","local:Conn_Pmod_Spec_B_Thin","1","","Pmod 2x6 right angle (Digilent Pmod Type 1A / spec B)"
+"J2","TE 1-84952-5 (alt. 1-84953-5)","Connector_FFC-FPC:TE_1-84952-5_1x15-1MP_P1.0mm_Horizontal","1","","15-pin 1.0 mm FFC, bottom contact (top-contact 1-84953-5 has the same footprint)"
+"R1,R2","2.2k","Resistor_SMD:R_0402_1005Metric","2","","2.2k 1% 0402"
+"R3","10k","Resistor_SMD:R_0402_1005Metric","1","","10k 1% 0402"

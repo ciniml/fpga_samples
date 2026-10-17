@@ -1,0 +1,150 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file csi2_rx.veryl
+ * @brief 2-lane MIPI CSI-2 receiver on oversampled D-PHY lanes.
+ *
+ *   clock / D0 / D1 samples ─► Csi2EdgeSampler ─► Csi2LaneAligner ×2
+ *        ─► Csi2LaneMerge ─► Csi2Packet ─► headers / payload / CRC status
+ *
+ * Everything runs in the sampler's clock domain (i_clk = the oversampling
+ * word clock, e.g. 125 MHz for OSIDES32 at 500 MHz). See the sub-modules
+ * for the details; o_dbg_* expose per-stage events for statistics.
+ */
+pub module Csi2Rx #(
+    param SAMPLES: u32 = 32,
+    param MAXB   : u32 = 8 ,
+    param ZEROS  : u32 = 24,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_cs : input logic<SAMPLES>   ,
+    i_ds : input logic<2, SAMPLES>,
+    i_inv: input logic<2>         ,
+    i_ofs: input logic<2, 4>      ,
+
+    o_hdr     : output logic    ,
+    o_short   : output logic    ,
+    o_vc      : output logic<2> ,
+    o_dt      : output logic<6> ,
+    o_wc      : output logic<16>,
+    o_data    : output logic<16>,
+    o_data_be : output logic<2> ,
+    o_data_vld: output logic    ,
+    o_end     : output logic    ,
+    o_crc_ok  : output logic    ,
+    o_ecc_corr: output logic    ,
+    o_ecc_err : output logic    ,
+    o_abort   : output logic    ,
+
+    o_dbg_nbits : output logic<4>, // bits recovered this word (= clock edges)
+    o_dbg_ovf   : output logic   ,
+    o_dbg_sync  : output logic<2>, // per lane: sync byte found
+    o_dbg_drop  : output logic   , // lane merge discarded a byte
+    o_dbg_active: output logic<2>, // per lane: aligner in RX
+) {
+    var bits : logic<2, MAXB>;
+    var nbits: logic<4>;
+    inst u_sampler: Csi2EdgeSampler #(
+        SAMPLES: SAMPLES,
+        LANES  : 2      ,
+        MAXB   : MAXB   ,
+    ) (
+        i_clk                ,
+        i_rst                ,
+        i_cs                 ,
+        i_ds                 ,
+        i_inv                ,
+        i_ofs                ,
+        o_bits : bits        ,
+        o_nbits: nbits       ,
+        o_ovf  : o_dbg_ovf   ,
+    );
+    assign o_dbg_nbits = nbits;
+
+    var hunt : logic;
+    var lock : logic;
+    var byte0: logic<8>;
+    var vld0 : logic;
+    var fst0 : logic;
+    var byte1: logic<8>;
+    var vld1 : logic;
+    var fst1 : logic;
+    inst u_lane0: Csi2LaneAligner #(
+        MAXB : MAXB ,
+        ZEROS: ZEROS,
+    ) (
+        i_clk                     ,
+        i_rst                     ,
+        i_bits  : bits[0]         ,
+        i_nbits : nbits           ,
+        i_hunt  : hunt            ,
+        i_lock  : lock            ,
+        o_byte  : byte0           ,
+        o_valid : vld0            ,
+        o_first : fst0            ,
+        o_sync  : o_dbg_sync[0]   ,
+        o_active: o_dbg_active[0] ,
+    );
+    inst u_lane1: Csi2LaneAligner #(
+        MAXB : MAXB ,
+        ZEROS: ZEROS,
+    ) (
+        i_clk                     ,
+        i_rst                     ,
+        i_bits  : bits[1]         ,
+        i_nbits : nbits           ,
+        i_hunt  : hunt            ,
+        i_lock  : lock            ,
+        o_byte  : byte1           ,
+        o_valid : vld1            ,
+        o_first : fst1            ,
+        o_sync  : o_dbg_sync[1]   ,
+        o_active: o_dbg_active[1] ,
+    );
+
+    var beat : logic<16>;
+    var bvld : logic;
+    var bsot : logic;
+    inst u_merge: Csi2LaneMerge (
+        i_clk              ,
+        i_rst              ,
+        i_byte0 : byte0    ,
+        i_valid0: vld0     ,
+        i_first0: fst0     ,
+        i_byte1 : byte1    ,
+        i_valid1: vld1     ,
+        i_first1: fst1     ,
+        o_beat  : beat     ,
+        o_valid : bvld     ,
+        o_sot   : bsot     ,
+        o_drop  : o_dbg_drop,
+    );
+
+    inst u_packet: Csi2Packet (
+        i_clk              ,
+        i_rst              ,
+        i_beat_in : beat   ,
+        i_valid_in: bvld   ,
+        i_sot_in  : bsot   ,
+        o_hdr              ,
+        o_short            ,
+        o_vc               ,
+        o_dt               ,
+        o_wc               ,
+        o_data             ,
+        o_data_be          ,
+        o_data_vld         ,
+        o_end              ,
+        o_crc_ok           ,
+        o_ecc_corr         ,
+        o_ecc_err          ,
+        o_abort            ,
+        o_hunt : hunt      ,
+        o_lock : lock      ,
+    );
+}

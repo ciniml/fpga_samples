@@ -1,0 +1,9 @@
+signal_name,pmod_pin
+cam_scl,pmod0_1
+csi_clk_p,pmod0_2
+csi_d1_p,pmod0_3
+csi_d0_p,pmod0_4
+cam_sda,pmod0_7
+csi_clk_n,pmod0_8
+csi_d1_n,pmod0_9
+csi_d0_n,pmod0_10

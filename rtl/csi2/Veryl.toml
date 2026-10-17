@@ -1,0 +1,30 @@
+[project]
+name    = "csi2"
+version = "0.1.0"
+
+[build]
+clock_type          = "posedge"
+reset_type          = "sync_high"
+omit_project_prefix = true
+
+[test]
+include_files = [
+    "test/csi2_rx_body.sv",
+    "test/csi2_pkg_body.sv",
+]
+
+[test.verilator]
+compile_args = [
+    "csi2_rx_body.sv",
+    "csi2_pkg_body.sv",
+    "-Wno-WIDTHEXPAND",
+    "-Wno-WIDTHTRUNC",
+    "-Wno-CASEINCOMPLETE",
+    "-Wno-UNUSEDSIGNAL",
+    "-Wno-UNDRIVEN",
+    "-Wno-PINMISSING",
+    "-Wno-INITIALDLY",
+    "-Wno-TIMESCALEMOD",
+    "-Wno-UNUSEDPARAM",
+    "-Wno-REALCVT",
+]

@@ -1,0 +1,159 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file csi2_lane_aligner.veryl
+ * @brief D-PHY data lane: start-of-transmission search and byte assembly.
+ *
+ * Input: 0..MAXB (<= 8) bits per clock from Csi2EdgeSampler (bit 0
+ * earliest). A gearbox first packs them into 8-bit words (at most one per
+ * clock); everything after that works on whole words with fixed bit
+ * positions (no per-bit loop: 125 MHz on GW5A).
+ *
+ * HUNT: looks for ZEROS HS-zero bits followed by the sync byte 0xB8 (sent
+ * LSB first: 0 0 0 1 1 1 0 1) ending at any of the 8 bit positions of the
+ * newest word (8 compares of a 40-bit window in parallel). The receiver
+ * has no LP detector, so the leading zero run is what separates a real
+ * SoT from noise on an idle lane (the spec's THS-ZERO is >= 105 ns + 6 UI,
+ * i.e. > 50 zero bits at 456 Mbps); the packet header ECC checks the rest.
+ * RX: every following word yields one byte, taken from the last two words
+ * at the bit offset found with the sync; o_first marks the first byte
+ * after the sync byte (the first header byte). Leaves RX on i_hunt (the
+ * packet parser has seen the end of the packet) or when no word arrives
+ * for IDLE_WORDS clocks (the clock lane stopped: EoT of a truncated
+ * packet). Bits left in the gearbox at the end of a burst wait there for
+ * the next one, where they only precede its HS-zero run.
+ *
+ * False syncs: LP-01 (Dp low, Dn high) reads as a solid run of zeros and
+ * the LP-00 that follows (0 V differential) as noise, so ZEROS + 0xB8 can
+ * turn up just before the real HS-zero / sync (simulated: ~10 % of the
+ * bursts). The search therefore keeps running in RX until the packet
+ * parser accepts a header (i_lock): a later sync restarts the byte
+ * assembly with a new first byte, and the merge discards the earlier one.
+ */
+pub module Csi2LaneAligner #(
+    param MAXB      : u32 = 8 ,
+    param ZEROS     : u32 = 24, // <= 25 (40-bit search window)
+    param IDLE_WORDS: u32 = 16,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_bits : input logic<MAXB>,
+    i_nbits: input logic<4>   ,
+    i_hunt : input logic      , // pulse: back to HUNT
+    i_lock : input logic      , // level: header accepted, no more re-syncs
+
+    o_byte  : output logic<8>,
+    o_valid : output logic   ,
+    o_first : output logic   , // with o_valid: first byte of a transmission
+    o_sync  : output logic   , // pulse: sync byte found
+    o_active: output logic   , // in RX
+) {
+    const SW: u32 = ZEROS + 8;
+    const SYNC: logic<SW> = (8'hB8 as SW) << ZEROS;
+    const IW: u32 = $clog2(IDLE_WORDS + 1);
+
+    // ---- gearbox: variable bits -> 8-bit words ----
+    var gacc  : logic<16>;
+    var gcnt  : logic<4>;
+    var gacc_c: logic<16>;
+    var gcnt_c: logic<5>;
+    always_comb {
+        gacc_c = gacc | ((i_bits as 16) << gcnt);
+        gcnt_c = (gcnt as 5) + (i_nbits as 5);
+    }
+    var wv: logic;            // word valid
+    var w : logic<8>;         // word, bit 0 earliest
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            gacc = 0;
+            gcnt = 0;
+            wv   = 0;
+            w    = 0;
+        } else {
+            wv = gcnt_c >= 5'd8;
+            if gcnt_c >= 5'd8 {
+                w    = gacc_c[7:0];
+                gacc = gacc_c >> 8;
+                gcnt = (gcnt_c - 5'd8) as 4;
+            } else {
+                gacc = gacc_c;
+                gcnt = gcnt_c as 4;
+            }
+        }
+    }
+
+    // ---- sync search over the newest word's 8 end positions ----
+    var hist : logic<32>;     // the four previous words, bit 0 earliest
+    var win  : logic<40>;
+    var match: logic<8>;
+    var mpos : logic<4>;      // first matching end position + 1 (0 = none)
+    always_comb {
+        win = {w, hist};
+        for j in 0..8 {
+            // sync byte ends at window bit 32 + j: the SW bits ending there
+            match[j] = win[32 + j - SW + 1+:SW] == SYNC;
+        }
+        mpos = 0;
+        for j in 0..8 {
+            if match[7 - j] {
+                mpos = (8 - j) as 4;
+            }
+        }
+    }
+
+    var rx   : logic;
+    var sel  : logic<4>;      // byte start offset into {w, prev} (1..8)
+    var first: logic;
+    var idle : logic<IW>;
+    var two  : logic<16>;
+    var bsh  : logic<16>;
+    always_comb {
+        two = {w, hist[31:24]};
+        bsh = two >> sel;
+    }
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            hist     = 0;
+            rx       = 0;
+            sel      = 0;
+            first    = 0;
+            idle     = 0;
+            o_byte   = 0;
+            o_valid  = 0;
+            o_first  = 0;
+            o_sync   = 0;
+            o_active = 0;
+        } else {
+            o_valid = 0;
+            o_sync  = 0;
+            if wv {
+                hist = {w, hist[31:8]};
+                idle = 0;
+            } else if idle != (IDLE_WORDS - 1) as IW {
+                idle = idle + 1;
+            }
+            if i_hunt {
+                rx    = 0;
+                hist  = '1;           // a fresh hunt needs a fresh zero run
+            } else if wv && mpos != 4'd0 && !(rx && i_lock) {
+                rx     = 1;
+                sel    = mpos;
+                first  = 1;
+                o_sync = 1;
+            } else if wv && rx {
+                o_valid = 1;
+                o_first = first;
+                o_byte  = bsh[7:0];
+                first   = 0;
+            } else if rx && !wv && idle == (IDLE_WORDS - 1) as IW {
+                rx   = 0;
+                hist = '1;
+            }
+            o_active = rx;
+        }
+    }
+}

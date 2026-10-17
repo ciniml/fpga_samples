@@ -1,0 +1,51 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_csi2.veryl
+ * @brief Csi2Rx / csi2_pkg tests (bodies in test/).
+ *  csi2_pkg      : ECC / CRC against the CSI-2 spec examples
+ *  csi2_456      : 456 Mbps, non-continuous clock, LP chatter
+ *  csi2_456_q    : same, quiet LP (strict: no garbage events at all)
+ *  csi2_456_skew : +300 ppm, 0.1 UI jitter, lane 1 0.6 ns late
+ *  csi2_912      : 912 Mbps (the Linux default rate), 0.05 UI jitter
+ *  csi2_cont     : continuous clock
+ *  csi2_trim     : lane 1 1.5 ns late, fixed by its sample offset (+6)
+ *  csi2_912_long : 15 frames (150 packets) at 912 Mbps, +300 ppm, jitter
+ */
+module TbCsi2 {}
+
+#[test(csi2_pkg_t)]
+embed (inline) sv{{{
+module csi2_pkg_t; csi2_pkg_body #(.RUN(1)) body(); endmodule
+}}}
+#[test(csi2_456)]
+embed (inline) sv{{{
+module csi2_456; csi2_rx_body #(.RUN(1)) body(); endmodule
+}}}
+#[test(csi2_456_q)]
+embed (inline) sv{{{
+module csi2_456_q; csi2_rx_body #(.LP_NOISE(0), .SEED(2), .RUN(1)) body(); endmodule
+}}}
+#[test(csi2_456_skew)]
+embed (inline) sv{{{
+module csi2_456_skew; csi2_rx_body #(.PPM(300), .JITTER(0.1), .SKEW1_NS(0.6), .SEED(3), .RUN(1)) body(); endmodule
+}}}
+#[test(csi2_912)]
+embed (inline) sv{{{
+module csi2_912; csi2_rx_body #(.UI_NS(1.0965), .JITTER(0.05), .SEED(4), .RUN(1)) body(); endmodule
+}}}
+#[test(csi2_cont)]
+embed (inline) sv{{{
+module csi2_cont; csi2_rx_body #(.CONT_CLK(1), .SEED(5), .RUN(1)) body(); endmodule
+}}}
+#[test(csi2_trim)]
+embed (inline) sv{{{
+module csi2_trim; csi2_rx_body #(.SKEW1_NS(1.5), .OFS1(14), .SEED(6), .RUN(1)) body(); endmodule
+}}}
+#[test(csi2_912_long)]
+embed (inline) sv{{{
+module csi2_912_long; csi2_rx_body #(.UI_NS(1.0965), .NFRAMES(15), .PPM(300), .JITTER(0.05), .SEED(14), .RUN(1)) body(); endmodule
+}}}

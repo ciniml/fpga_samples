@@ -1,0 +1,228 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file csi2_packet.veryl
+ * @brief CSI-2 low-level protocol on 2-lane beats: header ECC, short /
+ *        long packets, payload CRC.
+ *
+ * Beat 0 of a transmission (i_sot) = {WC low, DI}, beat 1 = {ECC, WC high}.
+ * The header is ECC-checked; a single-bit error is corrected (o_ecc_corr),
+ * anything else drops the packet (o_ecc_err). Short packets (DT < 0x10:
+ * frame / line start and end, WC = frame / line number) end there; long
+ * packets stream WC payload bytes on o_data (2 per beat, o_data_be marks
+ * the valid ones, byte 0 = the earlier) and end with the 2-byte CRC,
+ * reported by o_end / o_crc_ok. o_hunt tells the lane aligners that the
+ * packet is over (the rest of the burst is the EoT trail). A sync in the
+ * middle of a packet restarts the parser (o_abort). o_lock stops the lane
+ * aligners' re-sync search once a header has checked clean (a corrected
+ * header may be noise: about half of all random headers are "correctable").
+ */
+pub module Csi2Packet (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_beat_in : input logic<16>,
+    i_valid_in: input logic    ,
+    i_sot_in  : input logic    ,
+
+    o_hdr     : output logic    , // pulse: valid header (also for short packets)
+    o_short   : output logic    , // with o_hdr: short packet
+    o_vc      : output logic<2> ,
+    o_dt      : output logic<6> ,
+    o_wc      : output logic<16>, // word count / short packet data field
+    o_data    : output logic<16>,
+    o_data_be : output logic<2> ,
+    o_data_vld: output logic    ,
+    o_end     : output logic    , // pulse: long packet complete (after its CRC)
+    o_crc_ok  : output logic    , // with o_end
+    o_ecc_corr: output logic    , // pulse: header corrected
+    o_ecc_err : output logic    , // pulse: header uncorrectable, packet dropped
+    o_abort   : output logic    , // pulse: new sync inside a packet
+    o_hunt    : output logic    , // pulse: packet over
+    o_lock    : output logic    , // level: inside a long packet with a clean (uncorrected) header
+) {
+    import csi2_pkg::*;
+
+    // input register (timing: the merge output fans out to the ECC check)
+    var i_beat : logic<16>;
+    var i_valid: logic    ;
+    var i_sot  : logic    ;
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            i_beat  = 0;
+            i_valid = 0;
+            i_sot   = 0;
+        } else {
+            i_beat  = i_beat_in;
+            i_valid = i_valid_in;
+            i_sot   = i_sot_in;
+        }
+    }
+
+    enum State: logic<2> {
+        Idle,
+        Hdr1,
+        Payload,
+    }
+    var state : State;
+    var di    : logic<8>;
+    var wc_lo : logic<8>;
+    var wc    : logic<16>;
+    var rem   : logic<17>;     // payload bytes still due
+    var crc_hi_p: logic;       // CRC low byte seen, high byte next
+    var fin   : logic;         // CRC compare in the next clock
+    var crc   : logic<16>;
+    var crc_rx: logic<16>;
+
+    // header check (beat 1 combinational with the registered beat 0)
+    var hd   : logic<24>;
+    var syn  : logic<6>;
+    var fix  : logic<24>;
+    var hfix : logic<24>;
+    var h_ok : logic;
+    var h_cor: logic;
+    always_comb {
+        hd    = {i_beat[7:0], wc_lo, di};
+        syn   = ecc6(hd) ^ i_beat[13:8];
+        fix   = ecc_fix(syn);
+        hfix  = hd ^ fix;
+        h_ok  = syn == 6'h00 || fix != 24'h0 || ecc_bit_err(syn);
+        h_cor = syn != 6'h00 && h_ok;
+    }
+
+    // payload beat: classify the two byte slots from the payload bytes
+    // still due (rem) and whether the CRC high byte is pending (crc_hi_p)
+    var b       : logic<2, 8>;
+    var be      : logic<2>;
+    var crc_n   : logic<16>;
+    var crc_rx_n: logic<16>;
+    var rem0    : logic;
+    var rem1    : logic;
+    var last    : logic;
+    always_comb {
+        b[0]     = i_beat[7:0];
+        b[1]     = i_beat[15:8];
+        rem0     = rem == 17'd0;
+        rem1     = rem == 17'd1;
+        be[0]    = !rem0;
+        be[1]    = !rem0 && !rem1;
+        crc_n    = crc;
+        crc_rx_n = crc_rx;
+        last     = 0;
+        if be[0] {
+            crc_n = crc16_byte(crc_n, b[0]);
+        }
+        if be[1] {
+            crc_n = crc16_byte(crc_n, b[1]);
+        }
+        if rem1 {
+            crc_rx_n[7:0] = b[1];
+        } else if rem0 {
+            if crc_hi_p {
+                crc_rx_n[15:8] = b[0];
+            } else {
+                crc_rx_n = {b[1], b[0]};
+            }
+            last = 1;
+        }
+    }
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            state      = State::Idle;
+            di         = 0;
+            wc_lo      = 0;
+            wc         = 0;
+            rem        = 0;
+            crc_hi_p   = 0;
+            fin        = 0;
+            crc        = 0;
+            crc_rx     = 0;
+            o_hdr      = 0;
+            o_short    = 0;
+            o_vc       = 0;
+            o_dt       = 0;
+            o_wc       = 0;
+            o_data     = 0;
+            o_data_be  = 0;
+            o_data_vld = 0;
+            o_end      = 0;
+            o_crc_ok   = 0;
+            o_ecc_corr = 0;
+            o_ecc_err  = 0;
+            o_abort    = 0;
+            o_hunt     = 0;
+            o_lock     = 0;
+        } else {
+            o_hdr      = 0;
+            o_short    = 0;
+            o_data_vld = 0;
+            o_end      = 0;
+            o_ecc_corr = 0;
+            o_ecc_err  = 0;
+            o_abort    = 0;
+            o_hunt     = 0;
+            fin        = 0;
+            if fin {
+                o_end    = 1;
+                o_crc_ok = crc == crc_rx;
+                o_hunt   = 1;
+                o_lock   = 0;
+            }
+            if i_valid {
+                if i_sot {
+                    o_abort = state != State::Idle;
+                    o_lock  = 0;
+                    di      = i_beat[7:0];
+                    wc_lo   = i_beat[15:8];
+                    state   = State::Hdr1;
+                } else {
+                    case state {
+                        State::Hdr1: {
+                            if h_ok {
+                                o_hdr      = 1;
+                                o_ecc_corr = h_cor;
+                                o_vc       = hfix[7:6];
+                                o_dt       = hfix[5:0];
+                                o_wc       = hfix[23:8];
+                                wc         = hfix[23:8];
+                                rem        = hfix[23:8] as 17;
+                                crc_hi_p   = 0;
+                                crc        = CRC16_INIT;
+                                if hfix[5:4] == 2'b00 {
+                                    o_short = 1;
+                                    o_hunt  = 1;
+                                    state   = State::Idle;
+                                } else {
+                                    state  = State::Payload;
+                                    o_lock = !h_cor;
+                                }
+                            } else {
+                                o_ecc_err = 1;
+                                o_hunt    = 1;
+                                state     = State::Idle;
+                            }
+                        }
+                        State::Payload: {
+                            o_data     = i_beat;
+                            o_data_be  = be;
+                            o_data_vld = be != 2'b00;
+                            crc        = crc_n;
+                            crc_rx     = crc_rx_n;
+                            rem        = if rem0 || rem1 ? 17'd0 : rem - 17'd2;
+                            crc_hi_p   = rem1;
+                            if last {
+                                fin   = 1;
+                                state = State::Idle;
+                            }
+                        }
+                        default: {}
+                    }
+                }
+            }
+        }
+    }
+}

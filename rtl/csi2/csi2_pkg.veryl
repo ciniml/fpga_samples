@@ -1,0 +1,71 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file csi2_pkg.veryl
+ * @brief MIPI CSI-2 constants, packet header ECC and payload CRC.
+ *
+ * Packet header (CSI-2 v1.x): DI (= {VC[1:0], DT[5:0]}), WC low, WC high,
+ * ECC, sent in that byte order. The ECC is a 6-bit Hamming code over the
+ * 24 bits D[23:0] = {WC, DI}; data bit k contributes the column
+ * ecc6(1 << k) (0x07, 0x0B, 0x0D, 0x0E, 0x13, ... 0x3B), checked against the
+ * spec example DI 0x37 / WC 0x01F0 -> ECC 0x3F. ECC[7:6] are 0 in v1.x.
+ *
+ * Payload CRC: x^16 + x^12 + x^5 + 1, seed 0xFFFF, bytes LSB first
+ * (reflected register, 0x8408), no final inversion; transmitted low byte
+ * first. Checked against the spec vectors (24 bytes -> 0x00F0 / 0xE569).
+ */
+pub package csi2_pkg {
+    // data types (DT[5:0])
+    const DT_FS      : logic<6> = 6'h00;
+    const DT_FE      : logic<6> = 6'h01;
+    const DT_LS      : logic<6> = 6'h02;
+    const DT_LE      : logic<6> = 6'h03;
+    const DT_EMBEDDED: logic<6> = 6'h12;
+    const DT_RAW8    : logic<6> = 6'h2A;
+    const DT_RAW10   : logic<6> = 6'h2B;
+
+    const CRC16_INIT: logic<16> = 16'hFFFF;
+
+    // 6-bit header ECC of d = {WC[15:0], DI[7:0]}
+    function ecc6(d: input logic<24>) -> logic<6> {
+        var p: logic<6>;
+        p[0] = d[0] ^ d[1] ^ d[2] ^ d[4] ^ d[5] ^ d[7] ^ d[10] ^ d[11] ^ d[13] ^ d[16] ^ d[20] ^ d[21] ^ d[22] ^ d[23];
+        p[1] = d[0] ^ d[1] ^ d[3] ^ d[4] ^ d[6] ^ d[8] ^ d[10] ^ d[12] ^ d[14] ^ d[17] ^ d[20] ^ d[21] ^ d[22] ^ d[23];
+        p[2] = d[0] ^ d[2] ^ d[3] ^ d[5] ^ d[6] ^ d[9] ^ d[11] ^ d[12] ^ d[15] ^ d[18] ^ d[20] ^ d[21] ^ d[22];
+        p[3] = d[1] ^ d[2] ^ d[3] ^ d[7] ^ d[8] ^ d[9] ^ d[13] ^ d[14] ^ d[15] ^ d[19] ^ d[20] ^ d[21] ^ d[23];
+        p[4] = d[4] ^ d[5] ^ d[6] ^ d[7] ^ d[8] ^ d[9] ^ d[16] ^ d[17] ^ d[18] ^ d[19] ^ d[20] ^ d[22] ^ d[23];
+        p[5] = d[10] ^ d[11] ^ d[12] ^ d[13] ^ d[14] ^ d[15] ^ d[16] ^ d[17] ^ d[18] ^ d[19] ^ d[21] ^ d[22] ^ d[23];
+        return p;
+    }
+
+    // Data-bit correction mask for a syndrome: one bit set when the syndrome
+    // is the column of that data bit (single-bit data error), else 0.
+    function ecc_fix(syn: input logic<6>) -> logic<24> {
+        var m: logic<24>;
+        for k in 0..24 {
+            m[k] = syn == ecc6(24'h000001 << k);
+        }
+        return m;
+    }
+
+    // Syndrome is a single ECC-bit error (data intact)
+    function ecc_bit_err(syn: input logic<6>) -> logic {
+        return syn != 6'h00 && (syn & (syn - 6'h01)) == 6'h00;
+    }
+
+    function crc16_byte(crc: input logic<16>, b: input logic<8>) -> logic<16> {
+        var c: logic<16>;
+        c = crc;
+        for i in 0..8 {
+            if c[0] ^ b[i] {
+                c = {1'b0, c[15:1]} ^ 16'h8408;
+            } else {
+                c = {1'b0, c[15:1]};
+            }
+        }
+        return c;
+    }
+}

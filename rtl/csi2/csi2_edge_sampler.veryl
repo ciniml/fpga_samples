@@ -1,0 +1,214 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file csi2_edge_sampler.veryl
+ * @brief D-PHY HS receiver datapath on oversampled lanes: the clock lane's
+ *        own edges pick the data samples (no PLL, no CDR loop).
+ *
+ * All lanes (clock + LANES data) are oversampled by the same free-running
+ * sampler (OSIDES32: 32 samples per word, i_*[0] = earliest, ~4 Gsps), far
+ * above the HS bit rate (456 Mbps: ~8.8 samples per UI, 912 Mbps: ~4.4).
+ * The D-PHY clock is DDR and centred in the data eye, so every clock-lane
+ * transition marks the middle of one data bit on every data lane:
+ *
+ *   1. the clock samples are median-filtered over 3 samples (a lone sample
+ *      flipped by noise near a crossing would add two edges = two bits)
+ *   2. e[i] = transition of the filtered clock at sample i
+ *   3. data lane l is sampled at i + (i_ofs[l] - 8): i_ofs = 8 takes the
+ *      data sample at the clock transition itself, other values trim lane
+ *      skew in sample steps (-8..+7)
+ *   4. the selected samples are compacted in time order into o_bits[l][0..]
+ *      (o_nbits of them; at most MAXB per word, o_ovf flags more)
+ *
+ * Because nothing depends on the clock lane running continuously, the
+ * non-continuous clock the Raspberry Pi cameras use (the clock lane drops
+ * to LP-11 between bursts) needs no special handling: no edges, no bits.
+ * Noise on an idle (LP, differential 0 V) lane yields garbage bits that
+ * the lane aligner rejects (it needs a run of HS-zero bits and the sync
+ * byte).
+ *
+ * Latency: 6 words from i_* to o_*. (SAMPLES must be a multiple of 8.)
+ */
+pub module Csi2EdgeSampler #(
+    param SAMPLES: u32 = 32,
+    param LANES  : u32 = 2 ,
+    param MAXB   : u32 = 8 , // bits per word (912 Mbps at 4 Gsps: <= 8)
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_cs : input logic<SAMPLES>       , // clock lane samples
+    i_ds : input logic<LANES, SAMPLES>, // data lane samples
+    i_inv: input logic<LANES>         , // per data lane polarity swap (P/N crossed on the board)
+    i_ofs: input logic<LANES, 4>      , // per data lane: sample offset + 8 (quasi-static)
+
+    o_bits : output logic<LANES, MAXB>, // [l][0] = earliest bit
+    o_nbits: output logic<4>          ,
+    o_ovf  : output logic             , // more than MAXB clock edges in this word (bits lost)
+) {
+    const PW: u32 = $clog2(SAMPLES + 1);   // prefix count width
+
+    // ---- stage 0: three-word windows (w2 oldest .. w0 newest) ----
+    var c0: logic<SAMPLES>;
+    var c1: logic<SAMPLES>;
+    var c2: logic<SAMPLES>;
+    var d0: logic<LANES, SAMPLES>;
+    var d1: logic<LANES, SAMPLES>;
+    var d2: logic<LANES, SAMPLES>;
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            c0 = 0;
+            c1 = 0;
+            c2 = 0;
+            d0 = 0;
+            d1 = 0;
+            d2 = 0;
+        } else {
+            c0 = i_cs;
+            c1 = c0;
+            c2 = c1;
+            for l in 0..LANES {
+                d0[l] = if i_inv[l] ? ~i_ds[l] : i_ds[l];
+            }
+            d1 = d0;
+            d2 = d1;
+        }
+    }
+
+    // ---- stage 1: filtered clock edges and offset data (word c1/d1) ----
+    var m     : logic<SAMPLES>;
+    var m_last: logic;                 // m[SAMPLES-1] of the previous word
+    var e_c   : logic<SAMPLES>;
+    var v_c   : logic<LANES, SAMPLES>;
+    var win   : logic<LANES, 3 * SAMPLES>;
+    var shf   : logic<LANES, 3 * SAMPLES>;
+    always_comb {
+        for i in 0..SAMPLES {
+            if i == 0 {
+                m[i] = (c2[SAMPLES - 1] & c1[0]) | (c2[SAMPLES - 1] & c1[1]) | (c1[0] & c1[1]);
+            } else if i == SAMPLES - 1 {
+                m[i] = (c1[i - 1] & c1[i]) | (c1[i - 1] & c0[0]) | (c1[i] & c0[0]);
+            } else {
+                m[i] = (c1[i - 1] & c1[i]) | (c1[i - 1] & c1[i + 1]) | (c1[i] & c1[i + 1]);
+            }
+        }
+        e_c[0] = m[0] ^ m_last;
+        for i in 1..SAMPLES {
+            e_c[i] = m[i] ^ m[i - 1];
+        }
+        for l in 0..LANES {
+            win[l] = {d0[l], d1[l], d2[l]};
+            // v[i] = win[SAMPLES + i + ofs - 8]
+            shf[l] = win[l] >> ((SAMPLES - 8) as u32 + i_ofs[l]);
+            v_c[l] = shf[l][SAMPLES - 1:0];
+        }
+    }
+
+    var e : logic<SAMPLES>;
+    var v : logic<LANES, SAMPLES>;
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            m_last = 0;
+            e      = 0;
+            v      = 0;
+        } else {
+            m_last = m[SAMPLES - 1];
+            e      = e_c;
+            v      = v_c;
+        }
+    }
+
+    // ---- stage 2: prefix counts (edges before sample i), in two steps:
+    //      2a within groups of 8, 2b plus the preceding groups' totals ----
+    const NG: u32 = SAMPLES / 8;
+    var lp_c: logic<SAMPLES, 4>;
+    var gt_c: logic<NG, 4>;
+    var acc8: logic<4>;
+    always_comb {
+        for g in 0..NG {
+            acc8 = 0;
+            for i in 0..8 {
+                lp_c[g * 8 + i] = acc8;
+                acc8            = acc8 + (e[g * 8 + i] as 4);
+            }
+            gt_c[g] = acc8;
+        }
+    }
+    var lp : logic<SAMPLES, 4>;
+    var gt : logic<NG, 4>;
+    var e1 : logic<SAMPLES>;
+    var v1 : logic<LANES, SAMPLES>;
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            lp = 0;
+            gt = 0;
+            e1 = 0;
+            v1 = 0;
+        } else {
+            lp = lp_c;
+            gt = gt_c;
+            e1 = e;
+            v1 = v;
+        }
+    }
+    var p_c : logic<SAMPLES, PW>;
+    var n_c : logic<PW>;
+    var goff: logic<NG, PW>;
+    always_comb {
+        n_c = 0;
+        for g in 0..NG {
+            goff[g] = n_c;
+            n_c     = n_c + (gt[g] as PW);
+        }
+        for i in 0..SAMPLES {
+            p_c[i] = goff[i / 8] + (lp[i] as PW);
+        }
+    }
+    var p  : logic<SAMPLES, PW>;
+    var n  : logic<PW>;
+    var e2 : logic<SAMPLES>;
+    var v2 : logic<LANES, SAMPLES>;
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            p  = 0;
+            n  = 0;
+            e2 = 0;
+            v2 = 0;
+        } else {
+            p  = p_c;
+            n  = n_c;
+            e2 = e1;
+            v2 = v1;
+        }
+    }
+
+    // ---- stage 3: compaction ----
+    var sel   : logic<MAXB, SAMPLES>;
+    var bits_c: logic<LANES, MAXB>;
+    always_comb {
+        for k in 0..MAXB {
+            for i in 0..SAMPLES {
+                sel[k][i] = e2[i] && p[i] == k as PW;
+            }
+        }
+        for l in 0..LANES {
+            for k in 0..MAXB {
+                bits_c[l][k] = |(sel[k] & v2[l]);
+            }
+        }
+    }
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            o_bits  = 0;
+            o_nbits = 0;
+            o_ovf   = 0;
+        } else {
+            o_bits  = bits_c;
+            o_nbits = if n >: MAXB as PW ? MAXB as 4 : n as 4;
+            o_ovf   = n >: MAXB as PW;
+        }
+    }
+}

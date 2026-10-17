@@ -1,0 +1,56 @@
+// Tang Primer 25K — MIPI CSI-2 camera adapter on pmod0 (bank 1).
+//
+// Adapter: hw/Pmod_RPiCamera (Pmod 12-pin -> Raspberry Pi 15-pin FFC):
+//   Pmod 1 / 7  = SCL / SDA   (FFC 13 / 14), 2.2k pull-ups to 3.3 V
+//   Pmod 2 / 8  = CLK P / N   (FFC 9 / 8)
+//   Pmod 3 / 9  = D1  P / N   (FFC 6 / 5)
+//   Pmod 4 / 10 = D0  P / N   (FFC 3 / 2)
+// (the order on the Pmod follows the FFC's, so the board's pairs never
+//  cross; the clock lane is oversampled like a data lane, any pin will do)
+//   Pmod 5, 11 = GND, 6, 12 = 3.3 V (FFC 15; FFC 11 CAM_GPIO pulled up)
+// Pmod pin N / N+6 are the board's differential pairs; the N pins are
+// placed by the tool. All four pairs of this slot are in bank 1, the only
+// Pmod bank with on-chip 100 ohm termination on every pair (bank 6 has
+// none) and the bank whose HCLK the PLL_T 4-phase clocks reach
+// (eda/easycdr_trace pins_usb.cst uses the same slot for its OSIDES32).
+// The termination stays on: D-PHY LP-11 puts 1.2 V on both wires (no
+// current), LP-01 / LP-00 only appear briefly before HS.
+IO_LOC "csi_clk_p" G7,G8;
+IO_PORT "csi_clk_p" IO_TYPE=LVDS25 PULL_MODE=NONE DIFF_RESISTOR=ON BANK_VCCIO=3.3;
+IO_LOC "csi_d0_p" H5,J5;
+IO_PORT "csi_d0_p" IO_TYPE=LVDS25 PULL_MODE=NONE DIFF_RESISTOR=ON BANK_VCCIO=3.3;
+IO_LOC "csi_d1_p" H8,H7;
+IO_PORT "csi_d1_p" IO_TYPE=LVDS25 PULL_MODE=NONE DIFF_RESISTOR=ON BANK_VCCIO=3.3;
+
+IO_LOC "cam_scl" F5;
+IO_PORT "cam_scl" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8 OPEN_DRAIN=ON;
+IO_LOC "cam_sda" G5;
+IO_PORT "cam_sda" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8 OPEN_DRAIN=ON;
+
+INS_LOC "u_phy/u_pll_rx/PLLA_inst" PLL_T;
+
+IO_LOC "clock" E2;
+IO_PORT "clock" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+IO_LOC "reset_button" H11;
+IO_PORT "reset_button" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+
+// USB-UART (USB Debugger, FT2232 if01), 115200 8N1
+IO_LOC "uart_txd" C3;
+IO_PORT "uart_txd" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "uart_rxd" B3;
+IO_PORT "uart_rxd" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+IO_LOC "led_rx" B2;
+IO_PORT "led_rx" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "led_err" C2;
+IO_PORT "led_err" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
+// scope taps: pmod2 bottom row (pmod2_7..10)
+IO_LOC "dbg[0]" G10;
+IO_PORT "dbg[0]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "dbg[1]" D10;
+IO_PORT "dbg[1]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "dbg[2]" B10;
+IO_PORT "dbg[2]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "dbg[3]" C10;
+IO_PORT "dbg[3]" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;

@@ -1,0 +1,122 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file csi2_lane_merge.veryl
+ * @brief Two data lanes -> 16-bit beats in packet byte order.
+ *
+ * CSI-2 distributes packet bytes round-robin: byte 0 on lane 0, byte 1 on
+ * lane 1, byte 2 on lane 0, ... Each lane finds its own sync byte, so the
+ * lanes may start a clock or a few apart; a 4-entry FIFO per lane absorbs
+ * that skew. Entries carry the aligner's "first byte" flag: a beat is
+ * formed only from two heads with the same flag, and a non-first head
+ * facing a first head is the tail of the previous transmission on the
+ * lagging lane and is dropped. A first byte flushes its lane's FIFO (a
+ * lane that re-synced after a false sync starts over; nothing is paired
+ * in that clock). A full FIFO drops its oldest entry (a lane that missed
+ * its sync; o_drop counts such events with the tail drops).
+ * o_beat = {lane 1 byte, lane 0 byte}.
+ */
+pub module Csi2LaneMerge (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_byte0 : input logic<8>,
+    i_valid0: input logic   ,
+    i_first0: input logic   ,
+    i_byte1 : input logic<8>,
+    i_valid1: input logic   ,
+    i_first1: input logic   ,
+
+    o_beat : output logic<16>,
+    o_valid: output logic    ,
+    o_sot  : output logic    , // first beat of a transmission (packet header bytes 0, 1)
+    o_drop : output logic    , // pulse: a byte was discarded
+) {
+    // (packed storage: unpacked small arrays become register "RAM" in Gowin synthesis)
+    var mem0: logic<4, 9>;
+    var mem1: logic<4, 9>;
+    var wp0 : logic<2>;
+    var rp0 : logic<2>;
+    var n0  : logic<3>;
+    var wp1 : logic<2>;
+    var rp1 : logic<2>;
+    var n1  : logic<3>;
+
+    var h0  : logic<9>;
+    var h1  : logic<9>;
+    var pop0: logic;
+    var pop1: logic;
+    var out : logic;
+    var full_drop0: logic;
+    var full_drop1: logic;
+    always_comb {
+        h0   = mem0[rp0];
+        h1   = mem1[rp1];
+        pop0 = 0;
+        pop1 = 0;
+        out  = 0;
+        if n0 != 3'd0 && n1 != 3'd0 && !(i_valid0 && i_first0) && !(i_valid1 && i_first1) {
+            if h0[8] == h1[8] {
+                pop0 = 1;
+                pop1 = 1;
+                out  = 1;
+            } else if !h0[8] {
+                pop0 = 1;
+            } else {
+                pop1 = 1;
+            }
+        }
+        full_drop0 = i_valid0 && !i_first0 && n0 == 3'd4 && !pop0;
+        full_drop1 = i_valid1 && !i_first1 && n1 == 3'd4 && !pop1;
+    }
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            mem0    = 0;
+            mem1    = 0;
+            wp0     = 0;
+            rp0     = 0;
+            n0      = 0;
+            wp1     = 0;
+            rp1     = 0;
+            n1      = 0;
+            o_beat  = 0;
+            o_valid = 0;
+            o_sot   = 0;
+            o_drop  = 0;
+        } else {
+            if i_valid0 {
+                mem0[wp0] = {i_first0, i_byte0};
+                wp0       = wp0 + 2'd1;
+            }
+            if i_valid1 {
+                mem1[wp1] = {i_first1, i_byte1};
+                wp1       = wp1 + 2'd1;
+            }
+            if pop0 || full_drop0 {
+                rp0 = rp0 + 2'd1;
+            }
+            if pop1 || full_drop1 {
+                rp1 = rp1 + 2'd1;
+            }
+            n0 = n0 + (i_valid0 as 3) - ((pop0 || full_drop0) as 3);
+            n1 = n1 + (i_valid1 as 3) - ((pop1 || full_drop1) as 3);
+            // a first byte starts the lane over (written at wp, everything older dropped)
+            if i_valid0 && i_first0 {
+                rp0 = wp0;   // (non-blocking: wp0 is the slot written now)
+                n0  = 3'd1;
+            }
+            if i_valid1 && i_first1 {
+                rp1 = wp1;
+                n1  = 3'd1;
+            }
+            o_valid = out;
+            o_beat  = {h1[7:0], h0[7:0]};
+            o_sot   = out && h0[8];
+            o_drop  = (pop0 != pop1) || full_drop0 || full_drop1 || (i_valid0 && i_first0 && n0 != 3'd0) || (i_valid1 && i_first1 && n1 != 3'd0);
+        }
+    }
+}
