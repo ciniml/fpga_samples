@@ -63,6 +63,7 @@ FPGA 側の定義は `mod/pmod_rpi_camera/pmod_pins.csv`。
 | `fab/Pmod_RPiCamera_bom.csv` | 部品表 (LCSC 番号、MPN 付き) |
 | `fab/Pmod_RPiCamera_pos.csv` | 実装位置 (表面のみ、原点は基板左下) |
 | `fab/jlc/Pmod_RPiCamera_jlc_bom.csv`, `..._jlc_cpl.csv` | JLCPCB 実装用 BOM / CPL (LCSC 番号のある部品のみ。J1 は手はんだ想定で除外) |
+| `fab/lcsc/Pmod_RPiCamera_lcsc_5pcs.csv` | LCSC 部品購入用 (5 枚分、J1 含む)。`tools/lcsc_order.py N` で N 枚分を作り直す (LCSC に問い合わせて最小発注数・単価・在庫を反映、要ネットワーク) |
 | `fab/Pmod_RPiCamera_schematic.pdf` | 回路図 |
 | `fab/*.png` | 3D レンダリング |
 | `fab/erc.rpt`, `fab/drc.rpt` | 検査結果 (ライブラリ表の警告はヘッドレス環境由来) |

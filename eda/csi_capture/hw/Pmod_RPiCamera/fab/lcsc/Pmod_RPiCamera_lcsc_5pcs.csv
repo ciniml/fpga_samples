@@ -1,0 +1,7 @@
+LCSC Part Number,Quantity,Manufacture Part Number,Manufacturer,Designator,Qty per board,Needed (5 boards + spares),LCSC min. order,Unit price (USD),Ext. price (USD),LCSC stock,Note
+C15850,20,CL21A106KAYNNNE,Samsung Electro-Mechanics,C1,1,5,20,0.0442,0.88,3339220,
+C20978,10,SMD0805P050TF,RUILON,F1,1,5,10,0.0739,0.74,18930,
+C3168538,6,SFW15R-1STE1LF,Amphenol,J2,1,6,1,0.6152,3.69,9155,
+C25879,100,0402WGF2201TCE,UNI-ROYAL,"R1,R2",2,10,100,0.0012,0.12,2583300,
+C25744,100,0402WGF1002TCE,UNI-ROYAL,R3,1,5,100,0.0016,0.16,1506000,
+C41417354,6,HX PZ2.54-2x6P WC-A,hanxia,J1,1,6,5,0.0962,0.58,4105,hand soldered; check pin length / body against the Pmod footprint before use
