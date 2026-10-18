@@ -15,6 +15,7 @@ import pcbnew
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from design import PARTS  # noqa: E402
 from gen_sch import uid, NAME  # noqa: E402
+import silk  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PRJ = os.path.dirname(HERE)
@@ -325,14 +326,8 @@ def main():
     text('B', 8.6, 5.75, 0.8)
     text('TX', 8.5, 13.55, 0.8)
     text('100BASE-TX direct', 18.3, 19.65, 0.8)
-    # back side: full pinout and notes
-    text('Pmod 100BASE-TX PHY Rev.A', 22.0, 2.0, 0.9, 0, pcbnew.B_SilkS)
-    text('1/7 A  2/8 B  3/9 PWM_A/B  4/10 TX_P/N', 24.0, 4.0, 0.8, 0, pcbnew.B_SilkS)
-    text('Peer must have magnetics. TVS: TPD4E02B04', 24.0, 15.6, 0.8, 0, pcbnew.B_SilkS)
-    text('L1 DNP (R5/R6 0R)  Bob Smith opt.', 24.0, 17.4, 0.8, 0, pcbnew.B_SilkS)
-    text('RJ45 (no magnetics): TD 1/2  RD 3/6', 22.0, 6.0, 0.8, 0, pcbnew.B_SilkS)
-    text('NOT PoE TOLERANT -', 22.0, 8.6, 1.0, 0, pcbnew.B_SilkS)
-    text('do not connect to passive PoE', 22.0, 10.2, 1.0, 0, pcbnew.B_SilkS)
+    # back side: pinout, notes, logo, name / revision / date / author (tools/silk.py)
+    silk.apply(board, load_fp('pmod_100base_tx:logo'))
 
     # ------------------------------------------------------------------ zones (GND both layers)
     for layer, prio in ((B, 0), (F, 0)):

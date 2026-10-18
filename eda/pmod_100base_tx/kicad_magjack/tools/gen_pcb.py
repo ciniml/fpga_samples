@@ -14,6 +14,7 @@ import pcbnew
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from design import PARTS, NAME  # noqa: E402
 from gen_sch import uid  # noqa: E402
+import silk  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PRJ = os.path.dirname(HERE)
@@ -291,13 +292,8 @@ def main():
     text('B', 8.6, 5.75, 0.8)
     text('TX', 8.5, 13.55, 0.8)
     text('100BASE-TX MagJack', 26.0, 19.45, 0.8)
-    # back side: pinout and notes
-    text('Pmod 100BASE-TX MagJack Rev.A', 18.5, 2.0, 0.9, 0, pcbnew.B_SilkS)
-    text('1/7 A 2/8 B 3/9 PWM 4/10 TX', 18.5, 3.8, 0.8, 0, pcbnew.B_SilkS)
-    text('J2 HR911105A, U1 TPD4E02B04', 18.5, 5.6, 0.8, 0, pcbnew.B_SilkS)
-    text('PoE: no PSE behind this board;', 18.5, 15.0, 0.8, 0, pcbnew.B_SilkS)
-    text('isolation by magnetics', 18.5, 16.6, 0.8, 0, pcbnew.B_SilkS)
-    text('TCT/RCT: AC GND only, no 3V3', 18.5, 18.6, 0.8, 0, pcbnew.B_SilkS)
+    # back side: pinout, notes, logo, name / revision / date / author (tools/silk.py)
+    silk.apply(board, load_fp('pmod_100base_tx:logo'))
 
     # ------------------------------------------------------------------ zones (GND both layers)
     for layer, prio in ((B, 0), (F, 0)):
