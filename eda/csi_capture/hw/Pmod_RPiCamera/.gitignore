@@ -4,3 +4,4 @@ fp-info-cache
 *.lck
 tools/__pycache__/
 !fab/*.zip
+fab/*_bom_full.csv

@@ -949,7 +949,7 @@
 					)
 				)
 			)
-			(property "Footprint" "Connector_FFC-FPC:TE_1-84952-5_1x15-1MP_P1.0mm_Horizontal"
+			(property "Footprint" "local:Amphenol_SFW15R-1STE1LF_1x15-1MP_P1.0mm_Horizontal"
 				(at 0 0 0)
 				(show_name no)
 				(do_not_autoplace no)
@@ -1712,7 +1712,7 @@
 		)
 		(uuid "c0a02a8d-0615-5869-92dc-fa393b8a096f")
 	)
-	(text "fit the top-contact 1-84953-5 instead (same footprint) and insert the cable the other way up."
+	(text "The standard RPi camera cable has its contacts on opposite faces at the two ends: pin n meets pin n. F1 limits a wrong cable."
 		(exclude_from_sim no)
 		(at 25.4 181.61 0)
 		(effects
@@ -1723,7 +1723,7 @@
 		)
 		(uuid "dbb563eb-9750-57bc-81b8-2065d85e2da6")
 	)
-	(text "J2: bottom-contact 1-84952-5. If the cable turns out reversed (F1 trips: 3V3 meets camera GND),"
+	(text "J2: Amphenol SFW15R-1STE1LF (bottom contact, pin 1 as in FCI JSA95855), the same part as J1 of the Camera Module 2."
 		(exclude_from_sim no)
 		(at 25.4 177.8 0)
 		(effects
@@ -2619,6 +2619,28 @@
 				)
 			)
 		)
+		(property "LCSC" "C25744"
+			(at 144.78 139.7 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "UNI-ROYAL 0402WGF1002TCE"
+			(at 144.78 139.7 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(pin "1"
 			(uuid "206e870a-02e4-5899-92a1-917a7124530c")
 		)
@@ -2764,7 +2786,29 @@
 				)
 			)
 		)
-		(property "Description" "10 uF 10 V X5R 0805"
+		(property "Description" "10 uF 25 V X5R 0805"
+			(at 142.24 50.8 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "LCSC" "C15850"
+			(at 142.24 50.8 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "Samsung CL21A106KAYNNNE"
 			(at 142.24 50.8 0)
 			(hide yes)
 			(show_name no)
@@ -2811,7 +2855,7 @@
 				)
 			)
 		)
-		(property "Value" "TE 1-84952-5 (alt. 1-84953-5)"
+		(property "Value" "SFW15R-1STE1LF"
 			(at 195.58 116.84 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -2821,7 +2865,7 @@
 				)
 			)
 		)
-		(property "Footprint" "Connector_FFC-FPC:TE_1-84952-5_1x15-1MP_P1.0mm_Horizontal"
+		(property "Footprint" "local:Amphenol_SFW15R-1STE1LF_1x15-1MP_P1.0mm_Horizontal"
 			(at 193.04 88.9 0)
 			(hide yes)
 			(show_name no)
@@ -2832,7 +2876,7 @@
 				)
 			)
 		)
-		(property "Datasheet" ""
+		(property "Datasheet" "https://www.amphenol-cs.com/product/sfw15r1ste1lf.html"
 			(at 193.04 88.9 0)
 			(hide yes)
 			(show_name no)
@@ -2843,7 +2887,29 @@
 				)
 			)
 		)
-		(property "Description" "15-pin 1.0 mm FFC, bottom contact (top-contact 1-84953-5 has the same footprint)"
+		(property "Description" "15-pin 1.0 mm FFC ZIF, bottom contact; the connector of the Raspberry Pi Camera Module 2 itself"
+			(at 193.04 88.9 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "LCSC" "C3168538"
+			(at 193.04 88.9 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "Amphenol ICC (FCI) SFW15R-1STE1LF"
 			(at 193.04 88.9 0)
 			(hide yes)
 			(show_name no)
@@ -2965,6 +3031,28 @@
 			)
 		)
 		(property "Description" "2.2k 1% 0402"
+			(at 114.3 139.7 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "LCSC" "C25879"
+			(at 114.3 139.7 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "UNI-ROYAL 0402WGF2201TCE"
 			(at 114.3 139.7 0)
 			(hide yes)
 			(show_name no)
@@ -3702,7 +3790,18 @@
 				)
 			)
 		)
-		(property "MPN" "PTC 0805, I_hold 0.5 A, >= 6 V (e.g. Littelfuse 0805L050)"
+		(property "LCSC" "C20978"
+			(at 127 50.8 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "RUILON SMD0805P050TF (alt. Littelfuse 0805L050WR, C207022)"
 			(at 127 50.8 0)
 			(hide yes)
 			(show_name no)
@@ -3782,6 +3881,28 @@
 			)
 		)
 		(property "Description" "2.2k 1% 0402"
+			(at 129.54 139.7 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "LCSC" "C25879"
+			(at 129.54 139.7 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "UNI-ROYAL 0402WGF2201TCE"
 			(at 129.54 139.7 0)
 			(hide yes)
 			(show_name no)

@@ -6,7 +6,7 @@
 		(on_board yes)
 		(property "Reference" "J" (at 0 22.86 0) (effects (font (size 1.27 1.27))))
 		(property "Value" "RPi_CSI_15" (at 2.54 -27.94 0) (effects (font (size 1.27 1.27))))
-		(property "Footprint" "Connector_FFC-FPC:TE_1-84952-5_1x15-1MP_P1.0mm_Horizontal"
+		(property "Footprint" "local:Amphenol_SFW15R-1STE1LF_1x15-1MP_P1.0mm_Horizontal"
 			(at 0 0 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
