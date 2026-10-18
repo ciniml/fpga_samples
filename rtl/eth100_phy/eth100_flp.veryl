@@ -1,0 +1,221 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file eth100_flp.veryl
+ * @brief Auto-negotiation Fast Link Pulse bursts (IEEE 802.3 cl. 28):
+ *        transmitter and receiver, 125 MHz clock.
+ *
+ * A burst is 33 pulse positions 62.5 us apart: 17 clock pulses (even
+ * positions) and 16 data positions D0..D15 (odd, pulse = 1), bursts every
+ * 16 ms. Pulses are 100 ns of +1 on the line.
+ *
+ * All 125 MHz clock counts are divided by TDIV (simulation speed-up;
+ * 1 in hardware). The pulse width and the receiver's quiet / width checks
+ * are not scaled: keep 62.5 us / TDIV well above QUIET clocks.
+ */
+pub module Eth100FlpTx #(
+    param TDIV: u32 = 1,
+    param PW  : u32 = 12, // pulse width [clocks] (96 ns)
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_en  : input  logic    , // send bursts (a burst starts right away)
+    i_page: input  logic<16>, // latched at the start of each burst
+    o_flp : output logic    ,
+    o_burst_end: output logic, // strobe: a whole burst period elapsed
+) {
+    const SLOT  : u32 = 7812 / TDIV;       // 62.5 us
+    const PERIOD: u32 = 2000000 / TDIV;    // 16 ms
+    const SW    : u32 = $clog2(SLOT + 1);
+    const PRW   : u32 = $clog2(PERIOD + 1);
+
+    var per_t : logic<PRW>;
+    var slot_t: logic<SW>;
+    var slot_i: logic<6>;
+    var page  : logic<16>;
+    var pw    : logic<5>;
+    var active: logic;
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            per_t       = 0;
+            slot_t      = 0;
+            slot_i      = 0;
+            page        = 0;
+            pw          = 0;
+            active      = 1'b0;
+            o_flp       = 1'b0;
+            o_burst_end = 1'b0;
+        } else {
+            o_burst_end = 1'b0;
+            if !i_en {
+                active = 1'b0;
+                pw     = 0;
+                o_flp  = 1'b0;
+            } else {
+                if !active || per_t == (PERIOD - 1) as PRW {
+                    // burst start
+                    o_burst_end = active;
+                    active      = 1'b1;
+                    per_t       = 0;
+                    slot_t      = 0;
+                    slot_i      = 0;
+                    page        = i_page;
+                    pw          = PW as 5;
+                } else {
+                    per_t = per_t + 1;
+                    if slot_i <: 6'd33 {
+                        if slot_t == (SLOT - 1) as SW {
+                            slot_t = 0;
+                            slot_i = slot_i + 1;
+                            // next position n = slot_i + 1 (< 33): even n is a
+                            // clock pulse, odd n carries D[(n-1)/2] = D[slot_i/2]
+                            if slot_i <: 6'd32 && (slot_i[0] || page[slot_i[5:1]]) {
+                                pw = PW as 5;
+                            }
+                        } else {
+                            slot_t = slot_t + 1;
+                        }
+                    }
+                    if pw != 0 {
+                        pw = pw - 1;
+                    }
+                }
+                o_flp = pw != 0;
+            }
+        }
+    }
+}
+
+/**
+ * FLP receiver. Pulses are taken from comparator A (v > +th) samples: a
+ * pulse is QUIET clocks of a quiet line (A low, B high = level 0) followed
+ * by A high for PW_MIN..PW_MAX clocks. The quiet requirement rejects a
+ * 100BASE-TX stream (MLT-3 never stays at 0 for more than ~100 ns).
+ *
+ * Decoding: after a clock pulse, a pulse at 55.5..69.5 us is a data 1;
+ * the next clock pulse comes at 111..139 us (data 0 if no data pulse
+ * came). A gap longer than that ends the burst; exactly 16 data bits make
+ * a page (o_page_valid strobe, o_page[0] = D0). Anything else restarts.
+ */
+pub module Eth100FlpRx #(
+    param SAMPLES: u32 = 4  ,
+    param TDIV   : u32 = 1  ,
+    param QUIET  : u32 = 125, // 1 us
+    param PW_MIN : u32 = 4  ,
+    param PW_MAX : u32 = 25 ,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_samp_a: input logic<SAMPLES>,
+    i_samp_b: input logic<SAMPLES>,
+
+    o_pulse     : output logic    , // strobe: a link pulse was seen
+    o_page_valid: output logic    ,
+    o_page      : output logic<16>,
+) {
+    const D_MIN: u32 = 6937 / TDIV;    // 55.5 us
+    const D_MAX: u32 = 8687 / TDIV;    // 69.5 us
+    const C_MIN: u32 = 13875 / TDIV;   // 111 us
+    const C_MAX: u32 = 17375 / TDIV;   // 139 us
+    const TW   : u32 = $clog2(C_MAX + 2);
+    const QW   : u32 = $clog2(QUIET + 1);
+
+    let hi   : logic = |i_samp_a;
+    let quiet: logic = !hi && (&i_samp_b);
+
+    // ---- pulse detector ----
+    var qcnt  : logic<QW>;
+    var in_p  : logic;
+    var pwid  : logic<5>;
+    var pulse : logic;
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            qcnt  = 0;
+            in_p  = 1'b0;
+            pwid  = 0;
+            pulse = 1'b0;
+        } else {
+            pulse = 1'b0;
+            if in_p {
+                if hi {
+                    if pwid != 5'd31 {
+                        pwid = pwid + 1;
+                    }
+                } else {
+                    in_p  = 1'b0;
+                    pulse = pwid >= PW_MIN as 5 && pwid <= PW_MAX as 5;
+                }
+            } else if hi && qcnt == QUIET as QW {
+                in_p = 1'b1;
+                pwid = 1;
+            }
+            if quiet {
+                if qcnt != QUIET as QW {
+                    qcnt = qcnt + 1;
+                }
+            } else {
+                qcnt = 0;
+            }
+        }
+    }
+    assign o_pulse = pulse;
+
+    // ---- burst decoder ----
+    var run  : logic;     // inside a burst
+    var t    : logic<TW>; // clocks since the last clock pulse
+    var dseen: logic;     // data pulse seen in this slot pair
+    var nb   : logic<5>;
+    var sh   : logic<16>;
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            run          = 1'b0;
+            t            = 0;
+            dseen        = 1'b0;
+            nb           = 0;
+            sh           = 0;
+            o_page_valid = 1'b0;
+            o_page       = 0;
+        } else {
+            o_page_valid = 1'b0;
+            if run && t != (C_MAX + 1) as TW {
+                t = t + 1;
+            }
+            if pulse {
+                if !run {
+                    run   = 1'b1;
+                    t     = 0;
+                    dseen = 1'b0;
+                    nb    = 0;
+                } else if !dseen && t >= D_MIN as TW && t <= D_MAX as TW {
+                    dseen = 1'b1;
+                    sh    = {1'b1, sh[15:1]};
+                    nb    = nb + 1;
+                } else if t >= C_MIN as TW && t <= C_MAX as TW {
+                    if !dseen {
+                        sh = {1'b0, sh[15:1]};
+                        nb = nb + 1;
+                    }
+                    t     = 0;
+                    dseen = 1'b0;
+                } else {
+                    // timing violation: take this pulse as a new first clock
+                    t     = 0;
+                    dseen = 1'b0;
+                    nb    = 0;
+                }
+            } else if run && t == (C_MAX + 1) as TW {
+                run = 1'b0;
+                if nb == 5'd16 {
+                    o_page_valid = 1'b1;
+                    o_page       = sh;
+                }
+            }
+        }
+    }
+}

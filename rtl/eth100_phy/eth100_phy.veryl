@@ -1,0 +1,173 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file eth100_phy.veryl
+ * @brief Transformerless 100BASE-TX PHY core (eda/pmod_100base_tx):
+ *        Eth100Tx + Eth100Rx + FLP + auto-negotiation + threshold PWMs.
+ *
+ * Family independent: the vendor wrapper supplies the comparator samples
+ * (two LVDS inputs, SAMPLES per 125 MHz clock, [0] earliest) and drives
+ * o_tx_p / o_tx_n / o_pwm_a / o_pwm_b from IOB registers.
+ *
+ * Thresholds: o_pwm_a / o_pwm_b (PWM_W-bit PWM, i_th_a / i_th_b duty)
+ * set VTH_A / VTH_B on the board; comparator A trips at
+ * v > VTH_A - VB, B at v > -(VTH_B - VB) (README §3.2).
+ *
+ * MII side (125 MHz domain, strobes instead of a 25 MHz clock):
+ * transmit nibbles on o_tx_req, receive nibbles on o_rx_valid.
+ */
+pub module Eth100Phy #(
+    param SAMPLES: u32 = 4 ,
+    param OSR    : u32 = 4 ,
+    param TDIV   : u32 = 1 , // FLP timing divider (simulation)
+    param AN_DIV : u32 = 1 , // auto-negotiation timer divider (simulation)
+    param HOLD   : u32 = 131072,
+    param PWM_W  : u32 = 10,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    // line
+    i_samp_a: input  logic<SAMPLES>,
+    i_samp_b: input  logic<SAMPLES>,
+    o_tx_p  : output logic         ,
+    o_tx_n  : output logic         ,
+    o_pwm_a : output logic         ,
+    o_pwm_b : output logic         ,
+
+    // control
+    i_th_a      : input logic<PWM_W>,
+    i_th_b      : input logic<PWM_W>,
+    i_force_100 : input logic       ,
+    i_an_restart: input logic       ,
+    i_cdr_freeze: input logic       ,
+
+    // MII (strobed)
+    o_tx_req  : output logic   ,
+    i_tx_en   : input  logic   ,
+    i_tx_er   : input  logic   ,
+    i_tx_data : input  logic<4>,
+    o_rx_valid: output logic   ,
+    o_rx_data : output logic<4>,
+    o_rx_er   : output logic   ,
+    o_rx_sof  : output logic   ,
+    o_rx_eof  : output logic   ,
+    o_rx_dv   : output logic   ,
+
+    // status
+    o_link       : output logic    ,
+    o_full_duplex: output logic    ,
+    o_parallel   : output logic    ,
+    o_an_state   : output logic<3> ,
+    o_lp_page    : output logic<16>,
+    o_cdr_lock   : output logic    ,
+    o_scr_lock   : output logic    ,
+    o_flp_pulse  : output logic    , // strobe: link pulse received
+    o_cdr_slip   : output logic    , // strobe: CDR pointer step (rate ~ frequency offset)
+) {
+    var flp       : logic    ;
+    var flp_en    : logic    ;
+    var our_page  : logic<16>;
+    var burst_end : logic    ;
+    var tx100_en  : logic    ;
+    var page_valid: logic    ;
+    var page      : logic<16>;
+    var scr_lock  : logic    ;
+
+    inst u_tx: Eth100Tx (
+        i_clk                ,
+        i_rst                ,
+        i_enable : tx100_en  ,
+        i_flp    : flp       ,
+        o_tx_req             ,
+        i_tx_en              ,
+        i_tx_er              ,
+        i_tx_data            ,
+        o_tx_p               ,
+        o_tx_n               ,
+    );
+
+    inst u_rx: Eth100Rx #(
+        SAMPLES: SAMPLES,
+        OSR    : OSR    ,
+        HOLD   : HOLD   ,
+    ) (
+        i_clk                     ,
+        i_rst                     ,
+        i_samp_a                  ,
+        i_samp_b                  ,
+        i_cdr_freeze              ,
+        o_cdr_lock                ,
+        o_cdr_slip                ,
+        o_scr_lock: scr_lock      ,
+        o_rx_valid                ,
+        o_rx_data                 ,
+        o_rx_er                   ,
+        o_rx_sof                  ,
+        o_rx_eof                  ,
+        o_rx_dv                   ,
+    );
+    assign o_scr_lock = scr_lock;
+
+    inst u_flp_tx: Eth100FlpTx #(
+        TDIV: TDIV,
+    ) (
+        i_clk                   ,
+        i_rst                   ,
+        i_en       : flp_en     ,
+        i_page     : our_page   ,
+        o_flp      : flp        ,
+        o_burst_end: burst_end  ,
+    );
+
+    inst u_flp_rx: Eth100FlpRx #(
+        SAMPLES: SAMPLES,
+        TDIV   : TDIV   ,
+    ) (
+        i_clk                      ,
+        i_rst                      ,
+        i_samp_a                   ,
+        i_samp_b                   ,
+        o_pulse     : o_flp_pulse  ,
+        o_page_valid: page_valid   ,
+        o_page      : page         ,
+    );
+
+    inst u_an: Eth100An #(
+        TDIV: AN_DIV,
+    ) (
+        i_clk                        ,
+        i_rst                        ,
+        i_force_100                  ,
+        i_restart    : i_an_restart  ,
+        i_page_valid : page_valid    ,
+        i_page       : page          ,
+        i_burst_end  : burst_end     ,
+        i_scr_lock   : scr_lock      ,
+        o_flp_en     : flp_en        ,
+        o_page       : our_page      ,
+        o_tx100_en   : tx100_en      ,
+        o_link                       ,
+        o_full_duplex                ,
+        o_parallel                   ,
+        o_state      : o_an_state    ,
+        o_lp_page                    ,
+    );
+
+    // threshold PWMs
+    var pwm_cnt: logic<PWM_W>;
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            pwm_cnt = 0;
+            o_pwm_a = 1'b0;
+            o_pwm_b = 1'b0;
+        } else {
+            pwm_cnt = pwm_cnt + 1;
+            o_pwm_a = pwm_cnt <: i_th_a;
+            o_pwm_b = pwm_cnt <: i_th_b;
+        }
+    }
+}

@@ -1,0 +1,150 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file eth100_tx.veryl
+ * @brief 100BASE-TX transmit PCS + PMA + TP-PMD, one symbol per clock
+ *        (125 MHz): MII nibbles -> 4B5B -> scrambler -> MLT-3 on two
+ *        LVCMOS pins.
+ *
+ * MII side: o_tx_req is a strobe every 5 clocks (the 25 MHz MII clock);
+ * i_tx_en / i_tx_er / i_tx_data are taken on that clock, low nibble of
+ * each byte first (MII order). As in IEEE 802.3 cl. 24 the first two
+ * nibbles of a frame (the first preamble octet) are replaced by /J/K/,
+ * the end of a frame (i_tx_en low) sends /T/R/, and the line carries
+ * /I/ (11111) between frames.
+ *
+ * Code groups are sent leftmost bit first as written in the standard
+ * (J = 11000, K = 10001, I = 11111, data 0 = 11110 ...).
+ * Scrambler (TP-PMD): key k[n] = k[n-11] ^ k[n-9] (X^11 + X^9 + 1),
+ * scrambled bit = code bit ^ key. MLT-3: every scrambled 1 moves the
+ * line one step along 0, +1, 0, -1.
+ *
+ * Line drive: (o_tx_p, o_tx_n) = (1,0) +1, (0,1) -1, (0,0) 0 (resistor
+ * network on the board). With i_enable low the 100BASE-TX stream stops and
+ * the pins carry i_flp (auto-negotiation link pulses, +1 while high).
+ */
+pub module Eth100Tx (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_enable: input logic, // 1: 100BASE-TX symbol stream, 0: link pulses only
+    i_flp   : input logic,
+
+    o_tx_req : output logic   , // MII nibble strobe (every 5 clocks)
+    i_tx_en  : input  logic   ,
+    i_tx_er  : input  logic   ,
+    i_tx_data: input  logic<4>,
+
+    o_tx_p: output logic,
+    o_tx_n: output logic,
+) {
+    // 4B5B data code groups (index = nibble value)
+    function enc (
+        d: input logic<4>,
+    ) -> logic<5> {
+        case d {
+            4'h0   : return 5'b11110;
+            4'h1   : return 5'b01001;
+            4'h2   : return 5'b10100;
+            4'h3   : return 5'b10101;
+            4'h4   : return 5'b01010;
+            4'h5   : return 5'b01011;
+            4'h6   : return 5'b01110;
+            4'h7   : return 5'b01111;
+            4'h8   : return 5'b10010;
+            4'h9   : return 5'b10011;
+            4'ha   : return 5'b10110;
+            4'hb   : return 5'b10111;
+            4'hc   : return 5'b11010;
+            4'hd   : return 5'b11011;
+            4'he   : return 5'b11100;
+            default: return 5'b11101;
+        }
+    }
+    const CG_I: logic<5> = 5'b11111;
+    const CG_J: logic<5> = 5'b11000;
+    const CG_K: logic<5> = 5'b10001;
+    const CG_T: logic<5> = 5'b01101;
+    const CG_R: logic<5> = 5'b00111;
+    const CG_H: logic<5> = 5'b00100;
+
+    // framing state
+    const ST_IDLE: logic<2> = 2'd0;
+    const ST_K   : logic<2> = 2'd1; // J sent, K next
+    const ST_DATA: logic<2> = 2'd2;
+    const ST_R   : logic<2> = 2'd3; // T sent, R next
+
+    var cnt  : logic<3> ; // symbol within the code group (0 = load)
+    var state: logic<2> ;
+    var code : logic<5> ; // remaining bits, [4] next on the line
+    var lfsr : logic<11>; // [10] = k[n-11], [8] = k[n-9]
+    var mlt  : logic<2> ; // 0: 0 (next +), 1: +1, 2: 0 (next -), 3: -1
+
+    assign o_tx_req = cnt == 3'd0;
+
+    // next code group, taken when cnt == 0
+    var load_code : logic<5>;
+    var load_state: logic<2>;
+    always_comb {
+        load_code  = CG_I;
+        load_state = state;
+        case state {
+            ST_IDLE: if i_tx_en {
+                load_code  = CG_J;
+                load_state = ST_K;
+            }
+            ST_K: {
+                load_code  = CG_K;
+                load_state = ST_DATA;
+            }
+            ST_DATA: if i_tx_en {
+                load_code = if i_tx_er ? CG_H : enc(i_tx_data);
+            } else {
+                load_code  = CG_T;
+                load_state = ST_R;
+            }
+            default: {
+                load_code  = CG_R;
+                load_state = ST_IDLE;
+            }
+        }
+    }
+
+    let cbit : logic = if cnt == 3'd0 ? load_code[4] : code[4];
+    let key  : logic = lfsr[10] ^ lfsr[8];
+    let sbit : logic = cbit ^ key;
+    let mlt_n: logic<2> = if sbit ? mlt + 2'd1 : mlt;
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            cnt    = 0;
+            state  = ST_IDLE;
+            code   = CG_I;
+            lfsr   = 11'h7ff;
+            mlt    = 0;
+            o_tx_p = 1'b0;
+            o_tx_n = 1'b0;
+        } else {
+            if cnt == 3'd0 {
+                state = load_state;
+                code  = {load_code[3:0], 1'b0};
+            } else {
+                code = {code[3:0], 1'b0};
+            }
+            cnt  = if cnt == 3'd4 ? 3'd0 : cnt + 3'd1;
+            lfsr = {lfsr[9:0], key};
+            if i_enable {
+                mlt    = mlt_n;
+                o_tx_p = mlt_n == 2'd1;
+                o_tx_n = mlt_n == 2'd3;
+            } else {
+                mlt    = 0;
+                o_tx_p = i_flp;
+                o_tx_n = 1'b0;
+            }
+        }
+    }
+}
