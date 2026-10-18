@@ -22,3 +22,23 @@ The BL616 enumerates as an FT2232-compatible JTAG + UART (`/dev/ttyUSB1` is the 
 
 `gw_ide.sh` launches the Gowin IDE on an X display with the Ubuntu 24.04 workarounds;
 `ip_trial/` holds the IP generation trials (USB 3.0 PHY, Customized PHY, EasyCDR).
+
+## BL616 console and the MS5351 reference clock
+
+Send Ctrl+X, Ctrl+C, Enter on `/dev/ttyUSB1` (115200) to get the `TangConsole60K />` prompt
+(`choose uart` returns the port to the FPGA UART pass-through). `pll_switch 0` is required before
+`pll_clk`/`pll` reach the MS5351 (with `1` the writes are lost and the register dump reads all
+zero). `pll_clk O0=<f> O1=<f>` re-targets CLK1 at a separate divider, so follow it with
+`pll O1@D0:0,1` to keep CLK1 as the inverted copy of CLK0. Settings are volatile unless `-s`
+is given; `reboot` restores 125 MHz. The SerDes PCLK follows the programmed frequency.
+
+## USB 3.0 bring-up status (2026-10-18, link not up)
+
+Hub ports see the Console's receiver termination (Polling, then SS.Inactive) but the Console
+never detects the hub's LFPS and the hub never answers the Console's LFPS. Unchanged by: cable
+(straight / crossover, old / new), partner (hub, SLogic16U3, USB memory), lane (2 / 3), reference
+100 MHz (as Gowin's reference design, `ip/serdes_r100.toml`) or 125 MHz, IDE 1.9.12 / 1.9.12.03,
+RX sensitivity thresholds, LTSSM power-state variants. Lane self-test: 2P TX -> 1P RX passes
+5 Gb/s data and LFPS, 1P TX -> 2P RX never. Next step is electrical measurement of the SS path.
+Sipeed publishes no USB 3.0 example for the 60K; the only public user of the Gowin USB 3.0 PHY IP is
+GOWIN-FPGA/USB3.0-Device-Controller (GW5AST-138, Q1 Lane1, 100 MHz REFCLK, QPLL1).

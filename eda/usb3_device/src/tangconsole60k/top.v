@@ -222,6 +222,10 @@ module top (
 `endif
 `endif
     SerDes_Top u_serdes (
+`ifdef FREF_SEL
+        // FREF_SEL: fabric reference clock (PLLA 125 MHz from sys_clk) into the quad's REFCLK1 fabric inputs
+        .fref_p(ref_clk), .fref_n(~ref_clk), .fref_sel(`FREF_SEL),
+`endif
 `ifdef TWO_LANES
         .USB3_0_PHY_Top_LN3_pclk(pclk3), .USB3_0_PHY_Top_LN3_PipeRxData(rx3_data), .USB3_0_PHY_Top_LN3_PipeRxDataK(rx3_k),
         .USB3_0_PHY_Top_LN3_PipeRxDataValid(rx3_valid), .USB3_0_PHY_Top_LN3_RxElecIdle(rx3_eidle), .USB3_0_PHY_Top_LN3_RxStatus(rx3_status),

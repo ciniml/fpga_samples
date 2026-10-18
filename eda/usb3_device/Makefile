@@ -22,14 +22,15 @@ POLL_LFPS_BLIND_US ?= 0
 EI_RAW ?=
 LFPS_DIAG ?=
 FORCE_LFPS ?=
+FREF_SEL ?=
 LFPS_BURST ?=
-export LFPS_BURST FORCE_LFPS POLL_LFPS_P2 EI_RAW LFPS_DIAG FORCE_TX FORCE_DET FD_PD CSR_FILE LTSSM_LOW_PD LTSSM_RXDET_PD RXDET_ASSUME_US
+export FREF_SEL LFPS_BURST FORCE_LFPS POLL_LFPS_P2 EI_RAW LFPS_DIAG FORCE_TX FORCE_DET FD_PD CSR_FILE LTSSM_LOW_PD LTSSM_RXDET_PD RXDET_ASSUME_US
 PLACE_OPT ?=
 ROUTE_OPT ?=
 PNR_EXTRA ?=
 TAG ?=
 export PLACE_OPT ROUTE_OPT PNR_EXTRA
-BUILD_SUFFIX := $(if $(filter 1,$(REF)),_ref)$(if $(filter 3,$(LANE)),_ln3)$(if $(filter 2ln,$(LANE)),_2ln)$(if $(filter 1,$(FORCE_TX)),_ftx)$(if $(filter 1,$(FORCE_DET)),_fdet)$(if $(filter 1,$(LFPS_DIAG)),_lfd)$(if $(filter 1,$(FORCE_LFPS)),_flf)$(if $(filter 1,$(LFPS_BURST)),_bst)$(if $(LTSSM_LOW_PD),_pd$(LTSSM_LOW_PD)r$(LTSSM_RXDET_PD)l$(POLL_LFPS_P2)$(if $(filter-out 0,$(POLL_LFPS_BLIND_US)),b$(POLL_LFPS_BLIND_US)))$(if $(EI_RAW),_eir$(EI_RAW))$(if $(PLACE_OPT),_p$(PLACE_OPT))$(if $(ROUTE_OPT),_r$(ROUTE_OPT))$(if $(TAG),_$(TAG))
+BUILD_SUFFIX := $(if $(filter 1,$(REF)),_ref)$(if $(filter 3,$(LANE)),_ln3)$(if $(filter 2ln,$(LANE)),_2ln)$(if $(filter 1,$(FORCE_TX)),_ftx)$(if $(filter 1,$(FORCE_DET)),_fdet)$(if $(filter 1,$(LFPS_DIAG)),_lfd)$(if $(FREF_SEL),_fref$(FREF_SEL))$(if $(filter 1,$(FORCE_LFPS)),_flf)$(if $(filter 1,$(LFPS_BURST)),_bst)$(if $(LTSSM_LOW_PD),_pd$(LTSSM_LOW_PD)r$(LTSSM_RXDET_PD)l$(POLL_LFPS_P2)$(if $(filter-out 0,$(POLL_LFPS_BLIND_US)),b$(POLL_LFPS_BLIND_US)))$(if $(EI_RAW),_eir$(EI_RAW))$(if $(PLACE_OPT),_p$(PLACE_OPT))$(if $(ROUTE_OPT),_r$(ROUTE_OPT))$(if $(TAG),_$(TAG))
 
 USB3_VERYL_SV := $(addprefix ../../rtl/usb3/,usb3_pkg.sv usb3_crc_pkg.sv usb3_scrambler.sv usb3_rx_fifo.sv usb3_rx_parser.sv usb3_tx_framer.sv usb3_ltssm.sv usb3_link.sv usb3_top.sv usb3_descriptor_rom.sv usb3_device.sv)
 
