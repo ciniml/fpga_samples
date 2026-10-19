@@ -1,0 +1,8 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "pmod_100base_tx")(type "KiCad")(uri "${KIPRJMOD}/lib/pmod_100base_tx.pretty")(options "")(descr "Project-local footprints (Pmod peripheral plug, flow-through CMC)"))
+  (lib (name "Resistor_SMD")(type "KiCad")(uri "${KICAD10_FOOTPRINT_DIR}/Resistor_SMD.pretty")(options "")(descr "KiCad stock"))
+  (lib (name "Capacitor_SMD")(type "KiCad")(uri "${KICAD10_FOOTPRINT_DIR}/Capacitor_SMD.pretty")(options "")(descr "KiCad stock"))
+  (lib (name "Connector_RJ")(type "KiCad")(uri "${KICAD10_FOOTPRINT_DIR}/Connector_RJ.pretty")(options "")(descr "KiCad stock"))
+  (lib (name "Package_SON")(type "KiCad")(uri "${KICAD10_FOOTPRINT_DIR}/Package_SON.pretty")(options "")(descr "KiCad stock"))
+)

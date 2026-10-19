@@ -1,0 +1,386 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file eth100_rx.veryl
+ * @brief 100BASE-TX receiver on two oversampled comparators:
+ *        window compare -> OsCdr -> NRZI -> descrambler -> /J/K/ -> 5B4B.
+ *
+ * Front end: comparator A = (v > +th), B = (v > -th), each sampled
+ * SAMPLES times per clock (IDES4 at 500 MS/s with a 125 MHz clock:
+ * 4 samples per 8 ns symbol, the OSR OsCdr's tracking is built for),
+ * [0] = earliest. Every MLT-3 step flips
+ * exactly one of A and B, so c = A ^ B (|v| < th) is the NRZI waveform of
+ * the scrambled stream and a single OsCdr recovers it. The CDR yields
+ * 0..2 bits per clock (plesiochronous link, the far end runs on its own
+ * crystal); everything below processes up to two bits per clock, so no
+ * FIFO is needed. With one symbol per word there is at most one
+ * transition per word, so the CDR histogram needs fractional bits
+ * (FRAC): the integer IIR decay would round to zero and saturate.
+ *
+ * Descrambler: while unlocked the line is assumed to carry /I/ (all ones),
+ * so key = ~bit is loaded into the LFSR and checked against its own
+ * prediction; LOCK_RUN consecutive matches lock it. Once locked the LFSR
+ * free-runs; the lock is dropped when no run of IDLE_RUN consecutive ones
+ * (idle) has been seen for HOLD clocks (the hold timer of the TP-PMD).
+ *
+ * Output: one nibble per strobe (o_rx_valid) at the far end's rate,
+ * MII order. /J/K/ is delivered as the two preamble nibbles 5, 5 (with
+ * o_rx_sof on the first), so the nibble stream equals what the far end's
+ * MAC presented on its MII. o_rx_eof is a strobe without data after the
+ * last nibble (/T/ seen, or /I/ = premature end with o_rx_er).
+ * An invalid code group inside a frame gives a nibble with o_rx_er.
+ */
+pub module Eth100Rx #(
+    param SAMPLES : u32 = 4 ,
+    param OSR     : u32 = 4 ,
+    param CDR_IIR : u32 = 4 ,
+    param CDR_FRAC: u32 = 4 ,
+    param CDR_HYST: u32 = 16, // in 2^CDR_FRAC units
+    param LOCK_RUN: u32 = 60,
+    param IDLE_RUN: u32 = 30,
+    param HOLD    : u32 = 131072, // clocks (~1 ms)
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_samp_a: input logic<SAMPLES>,
+    i_samp_b: input logic<SAMPLES>,
+
+    // CDR control (eye scans)
+    i_cdr_freeze: input logic,
+
+    o_cdr_lock: output logic,
+    o_cdr_slip: output logic,
+    o_scr_lock: output logic, // descrambler locked = 100BASE-TX link from the far end
+
+    o_rx_valid: output logic   ,
+    o_rx_data : output logic<4>,
+    o_rx_er   : output logic   ,
+    o_rx_sof  : output logic   ,
+    o_rx_eof  : output logic   ,
+    o_rx_dv   : output logic   , // inside a frame
+) {
+    const BPW: u32 = SAMPLES / OSR; // must be 1 (two bit steps per clock)
+    const LW : u32 = $clog2(LOCK_RUN + 1);
+    const IW : u32 = $clog2(IDLE_RUN + 1);
+    const HW : u32 = $clog2(HOLD + 1);
+
+    // ---- window comparator + CDR ----
+    var c_samp: logic<SAMPLES>;
+    assign c_samp = i_samp_a ^ i_samp_b;
+
+    // (an SV instance needs an explicit reset type)
+    let cdr_rst: reset_sync_high = i_rst;
+    var cdr_bits : logic<BPW + 1>;
+    var cdr_nbits: logic<4>;
+    inst u_cdr: $sv::OsCdr #(
+        SAMPLES: SAMPLES ,
+        OSR    : OSR     ,
+        IIR    : CDR_IIR ,
+        HYST   : CDR_HYST,
+        ACT_MIN: 0       ,
+        DLY    : 0       ,
+        FRAC   : CDR_FRAC,
+    ) (
+        i_clk                      ,
+        i_rst        : cdr_rst     ,
+        i_samples    : c_samp      ,
+        i_freeze     : i_cdr_freeze,
+        i_reacq      : 1'b0        ,
+        i_phase_force: 1'b0        ,
+        i_phase_val  : 0           ,
+        i_phase_ofs  : 1'b0        ,
+        o_bits       : cdr_bits    ,
+        o_nbits      : cdr_nbits   ,
+        o_phase      : _           ,
+        o_lock       : o_cdr_lock  ,
+        o_slip       : o_cdr_slip  ,
+        o_cnt        : _           ,
+        o_acq        : _           ,
+        o_acc_first  : _           ,
+        o_acc_last   : _           ,
+    );
+
+    // ---- bit-serial state (registered) ----
+    var prev_c  : logic;
+    var lfsr    : logic<11>;
+    var lock    : logic;
+    var run     : logic<LW>; // consecutive key predictions (unlocked)
+    var idle_run: logic<IW>; // consecutive ones (locked)
+    var hold    : logic<HW>; // clocks since the last idle run
+    var sh      : logic<10>; // descrambled bits, [0] newest
+    var in_frame: logic;
+    var bcnt    : logic<3>;
+    var pend    : logic;     // second preamble nibble of /J/K/ to deliver
+
+    // ---- next state: up to two bits this clock (two chained steps) ----
+    var prev_c_m  : logic;
+    var lfsr_m    : logic<11>;
+    var lock_m    : logic;
+    var run_m     : logic<LW>;
+    var idle_run_m: logic<IW>;
+    var sh_m      : logic<10>;
+    var in_frame_m: logic;
+    var bcnt_m    : logic<3>;
+    var prev_c_n  : logic;
+    var lfsr_n    : logic<11>;
+    var lock_n    : logic;
+    var run_n     : logic<LW>;
+    var idle_run_n: logic<IW>;
+    var sh_n      : logic<10>;
+    var in_frame_n: logic;
+    var bcnt_n    : logic<3>;
+    var ev0       : logic<10>; // {idle_seen, emit, emit_d[4], er, sof, jk, eof}
+    var ev1       : logic<10>;
+
+    inst u_step0: Eth100RxBit #(
+        LOCK_RUN: LOCK_RUN,
+        IDLE_RUN: IDLE_RUN,
+    ) (
+        i_en        : cdr_nbits >= 4'd1,
+        i_c         : cdr_bits[0]      ,
+        i_prev_c    : prev_c           ,
+        i_lfsr      : lfsr             ,
+        i_lock      : lock             ,
+        i_run       : run              ,
+        i_idle_run  : idle_run         ,
+        i_sh        : sh               ,
+        i_in_frame  : in_frame         ,
+        i_bcnt      : bcnt             ,
+        o_prev_c    : prev_c_m         ,
+        o_lfsr      : lfsr_m           ,
+        o_lock      : lock_m           ,
+        o_run       : run_m            ,
+        o_idle_run  : idle_run_m       ,
+        o_sh        : sh_m             ,
+        o_in_frame  : in_frame_m       ,
+        o_bcnt      : bcnt_m           ,
+        o_ev        : ev0              ,
+    );
+    inst u_step1: Eth100RxBit #(
+        LOCK_RUN: LOCK_RUN,
+        IDLE_RUN: IDLE_RUN,
+    ) (
+        i_en        : cdr_nbits >= 4'd2,
+        i_c         : cdr_bits[1]      ,
+        i_prev_c    : prev_c_m         ,
+        i_lfsr      : lfsr_m           ,
+        i_lock      : lock_m           ,
+        i_run       : run_m            ,
+        i_idle_run  : idle_run_m       ,
+        i_sh        : sh_m             ,
+        i_in_frame  : in_frame_m       ,
+        i_bcnt      : bcnt_m           ,
+        o_prev_c    : prev_c_n         ,
+        o_lfsr      : lfsr_n           ,
+        o_lock      : lock_n           ,
+        o_run       : run_n            ,
+        o_idle_run  : idle_run_n       ,
+        o_sh        : sh_n             ,
+        o_in_frame  : in_frame_n       ,
+        o_bcnt      : bcnt_n           ,
+        o_ev        : ev1              ,
+    );
+    // at most one of the two steps completes a code group / sees /J/K/
+    let ev       : logic<10> = if ev1[8] || ev1[0] ? ev1 : ev0;
+    let idle_seen: logic     = ev0[9] || ev1[9];
+    let emit     : logic     = ev[8];
+    let emit_d   : logic<4>  = ev[7:4];
+    let emit_er  : logic     = ev[3];
+    let emit_sof : logic     = ev[2];
+    let emit_jk  : logic     = ev[1] && ev[8];
+    let emit_eof : logic     = ev0[0] || ev1[0];
+
+    assign o_scr_lock = lock;
+    assign o_rx_dv    = in_frame;
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            prev_c     = 1'b0;
+            lfsr       = 0;
+            lock       = 1'b0;
+            run        = 0;
+            idle_run   = 0;
+            hold       = 0;
+            sh         = 0;
+            in_frame   = 1'b0;
+            bcnt       = 0;
+            pend       = 1'b0;
+            o_rx_valid = 1'b0;
+            o_rx_data  = 0;
+            o_rx_er    = 1'b0;
+            o_rx_sof   = 1'b0;
+            o_rx_eof   = 1'b0;
+        } else {
+            prev_c   = prev_c_n;
+            lfsr     = lfsr_n;
+            run      = run_n;
+            idle_run = idle_run_n;
+            sh       = sh_n;
+            in_frame = in_frame_n;
+            bcnt     = bcnt_n;
+            // hold timer: drop the lock without regular idle
+            if !lock_n {
+                lock = 1'b0;
+                hold = 0;
+            } else if idle_seen {
+                lock = 1'b1;
+                hold = 0;
+            } else if hold == HOLD as HW {
+                lock     = 1'b0;
+                run      = 0;
+                in_frame = 1'b0;
+                hold     = 0;
+            } else {
+                lock = 1'b1;
+                hold = hold + 1;
+            }
+            // output (the /J/K/ second nibble goes out on the next clock;
+            // the next code group needs 5 more bits, i.e. >= 3 clocks)
+            o_rx_valid = emit || pend;
+            o_rx_data  = if emit ? emit_d : 4'h5;
+            o_rx_er    = emit_er;
+            o_rx_sof   = emit && emit_sof;
+            o_rx_eof   = emit_eof;
+            pend       = emit && emit_jk;
+        }
+    }
+}
+
+/**
+ * One received bit through NRZI, the descrambler and the framer
+ * (combinational; Eth100Rx chains two of these per clock).
+ * o_ev = {idle_seen, emit, nibble[4], er, sof, jk, eof}.
+ */
+module Eth100RxBit #(
+    param LOCK_RUN: u32 = 60,
+    param IDLE_RUN: u32 = 30,
+    const LW      : u32 = $clog2(LOCK_RUN + 1),
+    const IW      : u32 = $clog2(IDLE_RUN + 1),
+) (
+    i_en      : input  logic    ,
+    i_c       : input  logic    ,
+    i_prev_c  : input  logic    ,
+    i_lfsr    : input  logic<11>,
+    i_lock    : input  logic    ,
+    i_run     : input  logic<LW>,
+    i_idle_run: input  logic<IW>,
+    i_sh      : input  logic<10>,
+    i_in_frame: input  logic    ,
+    i_bcnt    : input  logic<3> ,
+    o_prev_c  : output logic    ,
+    o_lfsr    : output logic<11>,
+    o_lock    : output logic    ,
+    o_run     : output logic<LW>,
+    o_idle_run: output logic<IW>,
+    o_sh      : output logic<10>,
+    o_in_frame: output logic    ,
+    o_bcnt    : output logic<3> ,
+    o_ev      : output logic<10>,
+) {
+    // 5B4B: {valid data, nibble}
+    function dec (
+        c: input logic<5>,
+    ) -> logic<5> {
+        case c {
+            5'b11110: return 5'h10;
+            5'b01001: return 5'h11;
+            5'b10100: return 5'h12;
+            5'b10101: return 5'h13;
+            5'b01010: return 5'h14;
+            5'b01011: return 5'h15;
+            5'b01110: return 5'h16;
+            5'b01111: return 5'h17;
+            5'b10010: return 5'h18;
+            5'b10011: return 5'h19;
+            5'b10110: return 5'h1a;
+            5'b10111: return 5'h1b;
+            5'b11010: return 5'h1c;
+            5'b11011: return 5'h1d;
+            5'b11100: return 5'h1e;
+            5'b11101: return 5'h1f;
+            default : return 5'h00;
+        }
+    }
+    const CG_I : logic<5>  = 5'b11111;
+    const CG_T : logic<5>  = 5'b01101;
+    const CG_JK: logic<10> = 10'b11000_10001;
+
+    let d    : logic     = i_c ^ i_prev_c;           // NRZI -> scrambled bit
+    let key  : logic     = i_lfsr[10] ^ i_lfsr[8];
+    let p    : logic     = if i_lock ? d ^ key : 1'b1; // unlocked: assume idle
+    let sh   : logic<10> = {i_sh[8:0], p};
+    let code : logic<5>  = sh[4:0];
+    let dcode: logic<5>  = dec(code);
+
+    always_comb {
+        o_prev_c   = i_prev_c;
+        o_lfsr     = i_lfsr;
+        o_lock     = i_lock;
+        o_run      = i_run;
+        o_idle_run = i_idle_run;
+        o_sh       = i_sh;
+        o_in_frame = i_in_frame;
+        o_bcnt     = i_bcnt;
+        o_ev       = 0;
+        if i_en {
+            o_prev_c = i_c;
+            o_sh     = sh;
+            // descrambler
+            if !i_lock {
+                // idle (plain 1) assumed: key = ~d; check the prediction
+                o_lfsr = {i_lfsr[9:0], ~d};
+                if ~d == key {
+                    if i_run == LOCK_RUN as LW {
+                        o_lock     = 1'b1;
+                        o_idle_run = 0;
+                    } else {
+                        o_run = i_run + 1;
+                    }
+                } else {
+                    o_run = 0;
+                }
+            } else {
+                o_lfsr = {i_lfsr[9:0], key};
+                if p {
+                    if i_idle_run == IDLE_RUN as IW {
+                        o_ev[9] = 1'b1;
+                    } else {
+                        o_idle_run = i_idle_run + 1;
+                    }
+                } else {
+                    o_idle_run = 0;
+                }
+            }
+            // framing (on the lock state before this bit)
+            if !i_lock {
+                o_in_frame = 1'b0;
+            } else if !i_in_frame {
+                if sh == CG_JK {
+                    o_in_frame = 1'b1;
+                    o_bcnt     = 0;
+                    o_ev[8:1]  = {1'b1, 4'h5, 1'b0, 1'b1, 1'b1};
+                }
+            } else if i_bcnt == 3'd4 {
+                o_bcnt = 0;
+                if dcode[4] {
+                    o_ev[8:1] = {1'b1, dcode[3:0], 3'b000};
+                } else if code == CG_T {
+                    o_in_frame = 1'b0;
+                    o_ev[0]    = 1'b1;
+                } else if code == CG_I {
+                    o_in_frame = 1'b0;
+                    o_ev[3]    = 1'b1;
+                    o_ev[0]    = 1'b1;
+                } else {
+                    o_ev[8:1] = {1'b1, 4'h0, 1'b1, 2'b00};
+                }
+            } else {
+                o_bcnt = i_bcnt + 1;
+            }
+        }
+    }
+}

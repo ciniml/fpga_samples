@@ -6,7 +6,7 @@ HS まで動かす。残る 1 本は VBUS 検出に使う。
 
 状態:
 - RTL (`rtl/usb/gowin/usb_phy_gowin_sl.v` の `CMP1=1`) は Sipeed SLogic16U3 で HS 実機確認済み (2026-10-12、§6)。
-- 回路図と基板は未作成。Tang Primer 25K での動作も未確認。
+- 回路図と基板: [`hw/Pmod_USB_HS_Single`](hw/Pmod_USB_HS_Single/README.md) (KiCad 10、22.86 × 27.94 mm 2 層、2026-10-18)。未発注で、Tang Primer 25K での動作も未確認。
 
 ## 1. 9 本 → 7 本にできる理由
 
@@ -46,7 +46,7 @@ PHY はモードを UTMI の xcvrselect / termselect で知るので、`UsbDevic
 
 ```
  Type-C (USB2.0 only)                     Pmod 基板                                    FPGA (Pmod 1 ポート)
- VBUS ──┬─ 100k/22k ──────────────────────────────── VBUS_DET ─────────────────────── 10: LVCMOS33 in
+ VBUS ──┬─ 100k/150k ─────────────────────────────── VBUS_DET ─────────────────────── 10: LVCMOS33 in
         └─ 1uF
  CC1 ── 5.1k ── GND, CC2 ── 5.1k ── GND   (UFP: Rd)
 
@@ -78,8 +78,8 @@ SLogic16U3 の実装値は未確認 (回路図なし)。TN710 の Arora-V の値
 | R8 / R9 | 1.8 kΩ / 75 Ω | VREF ≈ 130 mV | 比較器は 1 個 |
 | C1 | 1 µF + 0.1 µF | VREF バイパス | 0.1 µF は CMP_N ピンの直近 |
 | CC Rd | 5.1 kΩ ×2 | UFP 表示 | ないとホストが VBUS を出さない |
-| VBUS 分圧 | 100 kΩ / 22 kΩ | 5 V → 0.9 V | LVCMOS33 入力、PULL_MODE=DOWN |
-| ESD | TPD2E001 / USBLC6-2SC6 | | 低容量 |
+| VBUS 分圧 | 100 kΩ / 150 kΩ | 5 V → 3.0 V | LVCMOS33 入力 (VIH 2.0 V)、PULL_MODE=DOWN。2 ポート版 README の 100k/22k (0.9 V) では High と読めない |
+| ESD | TPD1E05U06DPY ×2 | | 0.42 pF、1 ライン 1 個 (基板で採用) |
 
 IO 属性 (IPUG781、Arora-V) は次のとおり。
 

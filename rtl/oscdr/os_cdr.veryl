@@ -46,6 +46,9 @@ pub module OsCdr #(
     param HYST   : u32 = 2 , // step when the neighbour cost is lower by more than this
     param ACT_MIN: u32 = 2 , // minimum transitions per word (smoothed) for lock
     param DLY    : u32 = 0 , // extraction delay in words (9 = acquisition latency, burst links)
+    param FRAC   : u32 = 0 , // fractional histogram bits: with ~1 transition per word or less
+                             // (one symbol per word) the integer IIR decay acc >> IIR rounds to 0
+                             // and every class saturates; HYST is in the scaled (x 2^FRAC) units
 ) (
     i_clk: input clock,
     i_rst: input reset,
@@ -64,15 +67,15 @@ pub module OsCdr #(
     o_slip : output logic                   , // pulse: pointer moved
     o_cnt      : output logic<OSR, $clog2(SAMPLES / OSR + 1)>,      // transitions per class in the last word (histograms)
     o_acq      : output logic                   , // phase acquired and tracking (outside a re-acquisition window)
-    o_acc_first: output logic<$clog2(SAMPLES / OSR + 1) + IIR + 1>, // smoothed transition count, class 0 (external phase loops)
-    o_acc_last : output logic<$clog2(SAMPLES / OSR + 1) + IIR + 1>, // class OSR-1
+    o_acc_first: output logic<$clog2(SAMPLES / OSR + 1) + IIR + 1 + FRAC>, // smoothed transition count, class 0 (external phase loops)
+    o_acc_last : output logic<$clog2(SAMPLES / OSR + 1) + IIR + 1 + FRAC>, // class OSR-1
 ) {
     const BPW: u32 = SAMPLES / OSR;             // bits per word, nominal (8)
     const CW : u32 = $clog2(BPW + 1);           // per-word class count (0..8)
-    const AW : u32 = CW + IIR + 1;              // smoothed count (max BPW * 2^IIR)
+    const AW : u32 = CW + IIR + 1 + FRAC;       // smoothed count (max BPW * 2^(IIR+FRAC))
     const CSW: u32 = AW + 1;                    // cost width
     const TW : u32 = AW + 2;                    // total width
-    const ACT: u32 = ACT_MIN << IIR;
+    const ACT: u32 = ACT_MIN << (IIR + FRAC);
     const DW : u32 = $clog2(OSR);               // class index width
 
     // ---- transitions and per-class counts ----
@@ -123,7 +126,7 @@ pub module OsCdr #(
 
     always_comb {
         for c in 0..OSR {
-            acc_c[c] = acc[c] - (acc[c] >> IIR) + (cnt_r[c] as AW);
+            acc_c[c] = acc[c] - (acc[c] >> IIR) + ((cnt_r[c] as AW) << FRAC);
         }
     }
 

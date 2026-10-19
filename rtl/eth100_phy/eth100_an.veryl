@@ -1,0 +1,202 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file eth100_an.veryl
+ * @brief Auto-negotiation arbitration (IEEE 802.3 cl. 28, base page only,
+ *        100BASE-TX only).
+ *
+ *  DISABLE  : transmit nothing for break_link_timer (1.2 s)
+ *  ABILITY  : FLP bursts with our page (Ack = 0); 3 consecutive identical
+ *             received pages (Ack ignored) = ability match -> ACK.
+ *             100BASE-TX idle from the far end instead (descrambler
+ *             lock) = parallel detection -> link, half duplex
+ *  ACK      : bursts with Ack = 1 until 3 consecutive matching pages with
+ *             Ack = 1 arrive -> COMPLETE
+ *  COMPLETE : 6 more bursts with Ack = 1 -> CHECK
+ *  CHECK    : highest common denominator (100BASE-TX FD > 100BASE-TX);
+ *             none -> DISABLE. Start the 100BASE-TX stream and wait up to
+ *             link_fail_inhibit_timer (750 ms) for the descrambler lock
+ *  LINK     : link up until the descrambler lock is lost -> DISABLE
+ *
+ * Our base page: selector 00001 (IEEE 802.3), technology ability A2
+ * (100BASE-TX) + A3 (100BASE-TX full duplex) = 0x0181, no next page.
+ * Timers in 125 MHz clocks divided by TDIV (simulation; 1 in hardware).
+ * i_force_100 skips negotiation: 100BASE-TX full duplex, link = lock.
+ */
+pub module Eth100An #(
+    param TDIV      : u32 = 1                  ,
+    param BREAK_LINK: u32 = 150000000 / TDIV   , // 1.2 s
+    param LINK_FAIL : u32 = 93750000 / TDIV    , // 750 ms
+    param PD_TIME   : u32 = 1250000 / TDIV     , // 10 ms of 100BASE-TX lock for parallel detection
+    param OUR_PAGE  : u32 = 32'h0181           ,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_force_100: input logic,
+    i_restart  : input logic,
+
+    i_page_valid: input logic    ,
+    i_page      : input logic<16>,
+    i_burst_end : input logic    ,
+    i_scr_lock  : input logic    ,
+
+    o_flp_en     : output logic    ,
+    o_page       : output logic<16>,
+    o_tx100_en   : output logic    ,
+    o_link       : output logic    ,
+    o_full_duplex: output logic    ,
+    o_parallel   : output logic    , // link came from parallel detection
+    o_state      : output logic<3> ,
+    o_lp_page    : output logic<16>,
+) {
+    const S_DISABLE : logic<3> = 3'd0;
+    const S_ABILITY : logic<3> = 3'd1;
+    const S_ACK     : logic<3> = 3'd2;
+    const S_COMPLETE: logic<3> = 3'd3;
+    const S_CHECK   : logic<3> = 3'd4;
+    const S_LINK    : logic<3> = 3'd5;
+    const S_FORCED  : logic<3> = 3'd6;
+
+    const TMAX: u32 = if BREAK_LINK >: LINK_FAIL ? BREAK_LINK : LINK_FAIL;
+    const TW  : u32 = $clog2(TMAX + 1);
+
+    var state: logic<3> ;
+    var timer: logic<TW>;
+    var prev : logic<16>;
+    var mcnt : logic<2> ;
+    var bcnt : logic<3> ;
+    var lp   : logic<16>;
+    var ack  : logic    ;
+    const PW: u32 = $clog2(PD_TIME + 1);
+    var pdt  : logic<PW>;
+
+    // page equality ignoring the Ack bit (14)
+    function page_eq (
+        a: input logic<16>,
+        b: input logic<16>,
+    ) -> logic {
+        return {a[15], a[13:0]} == {b[15], b[13:0]};
+    }
+
+    let common: logic<16> = OUR_PAGE[15:0] & lp;
+
+    assign o_flp_en   = state == S_ABILITY || state == S_ACK || state == S_COMPLETE;
+    assign o_page     = {OUR_PAGE[15], ack, OUR_PAGE[13:0]};
+    assign o_tx100_en = state == S_CHECK || state == S_LINK || state == S_FORCED;
+    assign o_state    = state;
+    assign o_lp_page  = lp;
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            state         = S_DISABLE;
+            timer         = 0;
+            prev          = 0;
+            mcnt          = 0;
+            bcnt          = 0;
+            lp            = 0;
+            ack           = 1'b0;
+            pdt           = 0;
+            o_link        = 1'b0;
+            o_full_duplex = 1'b0;
+            o_parallel    = 1'b0;
+        } else {
+            if timer != 0 {
+                timer = timer - 1;
+            }
+            if i_force_100 {
+                state         = S_FORCED;
+                o_link        = i_scr_lock;
+                o_full_duplex = 1'b1;
+                o_parallel    = 1'b0;
+            } else if i_restart {
+                state  = S_DISABLE;
+                timer  = BREAK_LINK as TW;
+                o_link = 1'b0;
+            } else {
+                case state {
+                    S_DISABLE: {
+                        o_link = 1'b0;
+                        ack    = 1'b0;
+                        mcnt   = 0;
+                        pdt    = 0;
+                        if timer == 0 {
+                            state = S_ABILITY;
+                        }
+                    }
+                    S_ABILITY: {
+                        if i_page_valid {
+                            if mcnt != 0 && page_eq(i_page, prev) {
+                                mcnt = if mcnt == 2'd3 ? mcnt : mcnt + 1;
+                            } else {
+                                mcnt = 1;
+                            }
+                            prev = i_page;
+                            if mcnt == 2'd3 {
+                                lp    = i_page;
+                                ack   = 1'b1;
+                                mcnt  = 0;
+                                state = S_ACK;
+                            }
+                        }
+                        // parallel detection: a steady 100BASE-TX stream
+                        if !i_scr_lock {
+                            pdt = 0;
+                        } else if pdt == PD_TIME as PW {
+                            o_link        = 1'b1;
+                            o_full_duplex = 1'b0;
+                            o_parallel    = 1'b1;
+                            state         = S_LINK;
+                        } else {
+                            pdt = pdt + 1;
+                        }
+                    }
+                    S_ACK: if i_page_valid {
+                        if i_page[14] && page_eq(i_page, lp) {
+                            mcnt = mcnt + 1;
+                            if mcnt == 2'd3 {
+                                bcnt  = 0;
+                                state = S_COMPLETE;
+                            }
+                        } else {
+                            mcnt = 0;
+                        }
+                    }
+                    S_COMPLETE: if i_burst_end {
+                        bcnt = bcnt + 1;
+                        if bcnt == 3'd6 {
+                            if common[8] || common[7] {
+                                o_full_duplex = common[8];
+                                o_parallel    = 1'b0;
+                                timer         = LINK_FAIL as TW;
+                                state         = S_CHECK;
+                            } else {
+                                timer = BREAK_LINK as TW;
+                                state = S_DISABLE;
+                            }
+                        }
+                    }
+                    S_CHECK: if i_scr_lock {
+                        o_link = 1'b1;
+                        state  = S_LINK;
+                    } else if timer == 0 {
+                        timer = BREAK_LINK as TW;
+                        state = S_DISABLE;
+                    }
+                    S_LINK: if !i_scr_lock {
+                        o_link = 1'b0;
+                        timer  = BREAK_LINK as TW;
+                        state  = S_DISABLE;
+                    }
+                    default: {
+                        timer = BREAK_LINK as TW;
+                        state = S_DISABLE;
+                    }
+                }
+            }
+        }
+    }
+}

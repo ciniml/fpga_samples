@@ -1,0 +1,6 @@
+*-backups/
+fp-info-cache
+*.kicad_prl
+*.lck
+tools/__pycache__/
+!fab/*.zip
