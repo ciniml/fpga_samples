@@ -10,6 +10,9 @@ hand-soldered parts listed in EXTRA, and asks LCSC for the current minimum
 order quantity, unit price (at the ordered quantity) and stock, so it needs
 network access (it is not part of build.sh). Quantity per line:
 N x per-board + spares (SPARE), rounded up to LCSC's minimum order.
+The schematic's LCSC numbers are chosen for JLC assembly (JLC and LCSC
+keep separate stock); when LCSC itself is short of one, the first
+equivalent in ALT that has the stock is ordered instead (noted per line).
 The upload columns LCSC's BOM tool maps are "LCSC Part Number" and
 "Quantity"; the rest is for the reader.
 """
@@ -30,6 +33,13 @@ NAME = 'Pmod_RPiCamera'
 EXTRA = [  # (designators, per board, LCSC, note)
     ('J1', 1, 'C41417354', 'hand soldered; check pin length / body against the Pmod footprint before use'),
 ]
+# equivalents to buy from LCSC when the schematic's part is out of stock there
+ALT = {
+    'C25744': ['C60490', 'C144807'],   # 10k 1% 100ppm 62.5mW 0402: YAGEO RC0402FR-0710KL, AC0402FR-0710KL
+    'C25879': ['C114762', 'C144773'],  # 2.2k 1% 0402: YAGEO RC0402FR-072K2L, AC0402FR-072K2L
+    'C20978': ['C207022'],             # PTC 0805 0.5 A 6 V: Littelfuse 0805L050WR
+    'C15850': ['C380331'],             # 10 uF X5R 0805
+}
 # spares on top of N x per-board (small passives are covered by the minimum order anyway)
 SPARE = {'J2': 1, 'J1': 1}
 
@@ -67,9 +77,16 @@ def main():
     out = []
     total = 0.0
     for refs, per_board, code, note in lines:
-        info = lcsc(code)
         spare = sum(SPARE.get(x.strip(), 0) for x in refs.split(','))
         need = boards * per_board + spare
+        info = lcsc(code)
+        if info['stock'] < max(need, info['min']):
+            for alt in ALT.get(code, []):
+                ai = lcsc(alt)
+                if ai['stock'] >= max(need, ai['min']):
+                    note = (note + '; ' if note else '') + f'{code} ({info["mpn"]}) out of stock at LCSC ({info["stock"]}), equivalent ordered'
+                    code, info = alt, ai
+                    break
         qty = max(need, info['min'])
         up = unit_price(info['prices'], qty)
         total += up * qty
