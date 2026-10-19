@@ -1,0 +1,10 @@
+LCSC Part Number,Quantity,Manufacture Part Number,Manufacturer,Designator,Qty per board,Needed (5 boards + spares),LCSC min. order,Unit price (USD),Ext. price (USD),LCSC stock,Note
+C107048,50,CC0603JRNPO9BN332,YAGEO,"C1,C11",2,10,50,0.0175,0.88,561650,
+C1664,50,CL10C331JB8NNNC,Samsung Electro-Mechanics,"C2,C12",2,10,50,0.0181,0.91,235200,
+C91185,20,CC0805KKX7R9BB105,YAGEO,"C3,C13",2,10,20,0.0342,0.68,516440,"C28323 (CL21B105KBFNNNE) out of stock at LCSC (0), equivalent ordered"
+C668608,6,PJ-313D,SHOU HAN,J2,1,6,5,0.1019,0.61,26535,
+C49257,20,2.54-1*3P,BOOMELE(Boom Precision Elec),J3,1,5,20,0.0286,0.57,184000,
+C22548,100,RC0603FR-071KL,YAGEO,"R1,R11",2,10,100,0.0036,0.36,10268000,"C21190 (0603WAF1001T5E) out of stock at LCSC (0), equivalent ordered"
+C25804,100,0603WAF1002T5E,UNI-ROYAL,"R2,R12",2,10,100,0.0054,0.54,10500,
+C25803,100,0603WAF1003T5E,UNI-ROYAL,"R3,R13",2,10,100,0.0031,0.31,10263600,
+C41417354,6,HX PZ2.54-2x6P WC-A,hanxia,J1,1,6,5,0.0962,0.58,4135,hand soldered; check pin length / body against the Pmod footprint before use
