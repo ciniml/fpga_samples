@@ -173,6 +173,11 @@ FPGA 側の回路・ピン割り当て・RTL は共通で、RJ45 周りだけが
 | J2 | HanRun HR911105A | C12074 | Extended (THT) | 在庫 1.1 万、$2.0。既定は手はんだ (JLC BOM から除外)。JLC で載せるなら Standard PCBA で `jlc_files.py ... --with-tht` |
 | J1 | 2×6 2.54mm 直角ピンヘッダ | — | 手はんだ | LCSC で買うなら C41417354 (Pmod_RPiCamera と同じ候補。ピン長・本体寸法をフットプリントと照合) |
 
+LCSC で部品を買うときは `kicad_magjack/tools/lcsc_order.py N` が N 枚分の購入一覧を `out/lcsc/` に作る
+(LCSC の BOM ツールにそのまま読ませる。回路図の LCSC 番号 + J1、最小発注数・単価・在庫を LCSC に問い合わせる、要ネットワーク)。
+5 枚分 `out/lcsc/pmod_100base_tx_magjack_lcsc_5pcs.csv` は 2026-10-20 時点で約 $20.39 (うち J2 が $12)。
+C12/C13 の C52923 は LCSC 在庫 0 のため、YAGEO CC0402KRX5R8BB105 (C326568、25 V) に置き換わる。
+
 SMD は 35 個 (15 種類)。Extended は R1/R2 と U1 の 2 種類 (Economic PCBA なら部品種ごとに段取り費 $3)。
 U1 は 0.5mm ピッチ USON なので、JLC の配置プレビューで 1 番ピンの向きを確認すること。
 
