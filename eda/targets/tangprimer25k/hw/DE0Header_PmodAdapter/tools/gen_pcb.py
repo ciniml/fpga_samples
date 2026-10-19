@@ -58,6 +58,13 @@ EXT1_X = 44.45                  # EXT1 column 1 (rows as a Pmod)
 EXT2_X, EXT2_YP = 67.31, 36.0   # EXT2 column 1, lower (P) row
 Y_TURN = YI - 4.52              # where the groups start their 45 degree runs
 Y_TURN_D = 32.0                 # Pmod D turns above EXT2
+# Dock mounting holes on both sides of the 40-pin header (Dock iBOM: J9 / J11, 2.7 mm drill
+# at (103.28, 70.95) / (161.27, 70.95); header pin 1 at (108.145, 72.525)): the same offsets
+# from J1 pin 1 here, so M2.5 standoffs (11 mm: 8.5 mm socket + 2.5 mm header base) fix the
+# board to the Dock
+HOLE_DX = (-4.865, 53.125)
+HOLE_DY = -1.575
+HOLES = [(X1 + dx, YI + HOLE_DY) for dx in HOLE_DX]
 
 
 def mm(v):
@@ -326,9 +333,9 @@ def add_silk():
         out.append(silk(f'PMOD {slot} ({pm.SLOT_NAME[slot]})', x1 + 6.35, 18.3))
         out.append(silk('1', x1 - 1.9, PY_TOP))
     out.append(silk('EXT1', EXT1_X + 1.27, 16.8))
-    out.append(silk('EXT2', 81.0, 35.4))
-    out.append(silk('F7 J11 GND', 81.0, 37.4, size=0.8))
-    out.append(silk('F6 J10 3V3', 81.0, 31.6, size=0.8))
+    out.append(silk('EXT2', 83.0, 35.4))
+    out.append(silk('F7 J11 GND', 83.0, 37.4, size=0.8))
+    out.append(silk('F6 J10 3V3', 83.0, 31.6, size=0.8))
     out.append(silk('1', EXT2_X - 1.9, EXT2_YP))
     bl = pcbnew.B_SilkS
     lines = ['Tang Primer 25K', '40-pin (J3) to Pmod Adapter', 'Rev.A  2026-10-20', 'Kenta Ida (@ciniml)']
@@ -378,7 +385,16 @@ def build():
     place('J7', {1: (EXT2_X, EXT2_YP), 2: (EXT2_X, EXT2_YP - 2.54), 3: (EXT2_X + 2.54, EXT2_YP)}, comps, nets)
     u1 = place('U1', {'1': (6.35, 37.7), '3': (6.35, 42.3)}, comps, nets)
     c1 = place('C1', {'1': (3.0, 42.45), '2': (3.0, 40.55)}, comps, nets)
-    c2 = place('C2', {'1': (15.6, 39.05), '2': (15.6, 40.95)}, comps, nets)
+    # C2 right above U1's tab (right of the tab is H1)
+    tabx0 = max(pcbnew.ToMM(p.GetPosition().x) - X0 for p in u1.Pads() if p.GetNumber() == '2')
+    c2 = place('C2', {'1': (tabx0, 35.0), '2': (tabx0 + 1.9, 35.0)}, comps, nets)
+    for i, (xh, yh) in enumerate(HOLES):
+        h = load_fp('MountingHole:MountingHole_2.7mm_M2.5_ISO7380')   # button head, head 4.5 mm
+        h.SetReference(f'H{i + 1}')
+        h.Reference().SetVisible(False)
+        h.SetAttributes(pcbnew.FP_BOARD_ONLY | pcbnew.FP_EXCLUDE_FROM_BOM | pcbnew.FP_EXCLUDE_FROM_POS_FILES)
+        board.Add(h)
+        h.SetPosition(pt(xh, yh))
     caps = {}
     for i, slot in enumerate(pm.PMODS):
         x5 = PMOD_X[slot] + 4 * 2.54
@@ -431,7 +447,7 @@ def build():
     zone(pcbnew.F_Cu, 'GND')
     zone(pcbnew.B_Cu, 'GND')
     texts = add_silk()
-    keep = []
+    keep = [(x - 3.3, y - 3.3, x + 3.3, y + 3.3) for x, y in HOLES]
     for t in texts:
         bb = t.GetBoundingBox()
         keep.append((pcbnew.ToMM(bb.GetX()) - X0 - 0.5, pcbnew.ToMM(bb.GetY()) - Y0 - 0.5,

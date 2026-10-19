@@ -41,10 +41,13 @@ EXT2 (2x3): 1 F7 (P), 2 F6 (N), 3 J11 (P), 4 J10 (N), 5 GND, 6 3V3.
 - Bank 2 has no on-chip 100 ohm termination (DIFF_RESISTOR); terminate LVDS inputs on the module or use SE.
 - B2 / C2 also drive LEDs on the Dock (pmod4 pin 2/8): expect extra load on those two.
 - 3V3 per Pmod is from the AMS1117 (about 0.8 A total budget, minus the Dock's own 5 V load).
-- **Mechanical fit is unverified**: J1 (8.5 mm female) on the bottom puts the board about
-  11 mm above the Dock; it overlaps the Dock only near the header and hangs out past
-  the Dock's top edge. Check clearance against the Dock's mounting holes / parts near J3
-  before ordering; standoffs are not provided.
+- **Mounting holes H1 / H2** (2.7 mm, M2.5, non-plated, ISO 7380 button-head keepout): at the same place
+  relative to the header as the Dock's own holes on both sides of J3 (Dock iBOM J9 / J11: 4.865 mm
+  outside pin 1 and pin 39/40, 1.575 mm from the odd row towards the even row; 57.99 mm apart).
+  Fix the board with two M2.5 female-female standoffs of about **11 mm** (8.5 mm socket J1 + the
+  2.5 mm plastic base of the Dock's header; measure the actual gap first) and M2.5 screws from both
+  sides. The board still overhangs the Dock's top edge (it overlaps the Dock only near the header)
+  and has no support at its far edge: do not lever the Pmod modules against it.
 
 ## Parts (LCSC, stock checked 2026-10-20)
 
