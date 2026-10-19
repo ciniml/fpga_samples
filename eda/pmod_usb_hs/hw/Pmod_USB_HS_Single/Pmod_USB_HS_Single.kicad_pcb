@@ -151,6 +151,28 @@
 				)
 			)
 		)
+		(property "LCSC" "C25133"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "3d43c9d8-359e-4db0-8622-b88dc3b7d41a")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "UNI-ROYAL 0402WGF750JTCE"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "ec624a3f-1ab0-4422-99dc-a7e0935f72c9")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(path "/117f645b-c260-5792-85fa-2b6810b604cd")
 		(sheetfile "Pmod_USB_HS_Single.kicad_sch")
 		(attr smd)
@@ -303,6 +325,17 @@
 				(font
 					(size 1.27 1.27)
 					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C436349"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "d36ec64a-4196-4eb6-b8df-d1281db2bab4")
+			(effects
+				(font
+					(size 1.27 1.27)
 				)
 			)
 		)
@@ -465,6 +498,28 @@
 				)
 			)
 		)
+		(property "LCSC" "C52923"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "6f68e568-c17c-446d-9bda-049ccb558cb9")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "Samsung CL05A105KA5NQNC"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "366bce7d-8dc3-4782-9552-ce1f60818ca1")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(path "/3502acaf-cc82-53d8-8d89-8587609ec760")
 		(sheetfile "Pmod_USB_HS_Single.kicad_sch")
 		(attr smd)
@@ -615,6 +670,17 @@
 				(font
 					(size 1.27 1.27)
 					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C165948"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "c6266642-e781-46ce-a944-d20c535d9279")
+			(effects
+				(font
+					(size 1.27 1.27)
 				)
 			)
 		)
@@ -991,6 +1057,28 @@
 				)
 			)
 		)
+		(property "LCSC" "C57678"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "48f3043a-51ab-4063-a2e1-23d2ef84cf7a")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "UNI-ROYAL 0402WGF360JTCE"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "38cc44d1-4d38-4ada-a1d2-957126554130")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(path "/e5ab4f32-4b99-5e55-9ab5-a8465d793747")
 		(sheetfile "Pmod_USB_HS_Single.kicad_sch")
 		(attr smd)
@@ -1137,6 +1225,28 @@
 				(font
 					(size 1 1)
 					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C25741"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "87f153ad-584b-46af-8779-7708e7b2988f")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "UNI-ROYAL 0402WGF1003TCE"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "5affc1a1-4af2-4c9d-8180-329d5ccc1b3e")
+			(effects
+				(font
+					(size 1.27 1.27)
 				)
 			)
 		)
@@ -2343,6 +2453,28 @@
 				)
 			)
 		)
+		(property "LCSC" "C307331"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "8db92aa1-ab3b-4175-9a93-1f73fa9ee607")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "Samsung CL05B104KB54PNC"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "a60be130-1405-4a54-8dac-6b565788a86e")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(path "/6bc8443d-7e8c-5713-b41b-dc6670ee4565")
 		(sheetfile "Pmod_USB_HS_Single.kicad_sch")
 		(attr smd)
@@ -2489,6 +2621,28 @@
 				(font
 					(size 1 1)
 					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C25905"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "854a30ef-249f-4897-999c-a1d4054c0086")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "UNI-ROYAL 0402WGF5101TCE"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "6a3c6344-1d3e-4d65-b0a0-a160ab5563d2")
+			(effects
+				(font
+					(size 1.27 1.27)
 				)
 			)
 		)
@@ -2641,6 +2795,28 @@
 				)
 			)
 		)
+		(property "LCSC" "C19702"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "63feea22-74c9-4947-96e3-1da097f01e52")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "Samsung CL10A106KP8NNNC"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "62275cfa-d896-46f7-8fb1-db154ec803f7")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(path "/c690d91e-e044-5136-8454-6ab191e8ed4f")
 		(sheetfile "Pmod_USB_HS_Single.kicad_sch")
 		(attr smd)
@@ -2787,6 +2963,28 @@
 				(font
 					(size 1 1)
 					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C57678"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "1701b94e-61e6-48e0-a542-844ebd961c3c")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "UNI-ROYAL 0402WGF360JTCE"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "4fbc8cdc-d4d1-4eda-ba72-59349c593a61")
+			(effects
+				(font
+					(size 1.27 1.27)
 				)
 			)
 		)
@@ -2939,6 +3137,28 @@
 				)
 			)
 		)
+		(property "LCSC" "C25867"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "f520f2f7-fe43-4f79-8421-892de17b5cf9")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "UNI-ROYAL 0402WGF1501TCE"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "85ba068a-3068-4c30-a121-bbbb2bf3949d")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(path "/ea7b4de0-8b47-59a1-8556-4a35469a8292")
 		(sheetfile "Pmod_USB_HS_Single.kicad_sch")
 		(attr smd)
@@ -3085,6 +3305,28 @@
 				(font
 					(size 1 1)
 					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C25905"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "58495fe5-a818-42eb-9480-5e6db124872e")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "UNI-ROYAL 0402WGF5101TCE"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "ad630f2e-20ad-4f35-b012-7265c19f4fde")
+			(effects
+				(font
+					(size 1.27 1.27)
 				)
 			)
 		)
@@ -3237,6 +3479,28 @@
 				)
 			)
 		)
+		(property "LCSC" "C25076"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "714541ec-a6c8-4542-aa66-f43fcc0ef201")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "UNI-ROYAL 0402WGF1000TCE"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "bb3d8dd5-1741-4a5b-921e-2f5e4bb94f0b")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(path "/7185e1a1-231a-5ac5-bb52-26e808b9dea3")
 		(sheetfile "Pmod_USB_HS_Single.kicad_sch")
 		(attr smd)
@@ -3383,6 +3647,28 @@
 				(font
 					(size 1 1)
 					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C25755"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "0f0663ea-cfe6-4327-a13a-69a1b8671640")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "UNI-ROYAL 0402WGF1503TCE"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "be42ef32-9a77-4073-bca8-1fc7c7aecc57")
+			(effects
+				(font
+					(size 1.27 1.27)
 				)
 			)
 		)
@@ -3535,6 +3821,28 @@
 				)
 			)
 		)
+		(property "LCSC" "C25076"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "6ac0e253-004a-4f67-8978-cd3d70d40cd3")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "UNI-ROYAL 0402WGF1000TCE"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "971dcb53-c768-4017-bc3a-54f8eb5bfc2f")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(path "/50c6f4d4-fcaa-59a7-8ab7-659f87741192")
 		(sheetfile "Pmod_USB_HS_Single.kicad_sch")
 		(attr smd)
@@ -3684,6 +3992,28 @@
 				)
 			)
 		)
+		(property "LCSC" "C52923"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "b5e1a430-5f33-4c2d-9fe5-b67cf403889a")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "Samsung CL05A105KA5NQNC"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "af90638a-1a35-4b13-8db9-00947f554127")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
 		(path "/8cb01f12-8ce6-5001-b8e0-3a62fa15a5a6")
 		(sheetfile "Pmod_USB_HS_Single.kicad_sch")
 		(attr smd)
@@ -3830,6 +4160,28 @@
 				(font
 					(size 1 1)
 					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C25871"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "a4b02919-bd95-4b69-873a-081430b2b5ed")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "MPN" "UNI-ROYAL 0402WGF1801TCE"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "739fda33-e9a5-4064-81e7-003f09f9af91")
+			(effects
+				(font
+					(size 1.27 1.27)
 				)
 			)
 		)
@@ -3985,6 +4337,17 @@
 				(font
 					(size 1.27 1.27)
 					(thickness 0.15)
+				)
+			)
+		)
+		(property "LCSC" "C436349"
+			(at 0 0 0)
+			(layer "F.SilkS")
+			(hide yes)
+			(uuid "9b68536e-aa5e-4e6d-a450-d904dba4d659")
+			(effects
+				(font
+					(size 1.27 1.27)
 				)
 			)
 		)
@@ -5612,39 +5975,6 @@
 		(net "+3V3")
 		(layer "F.Cu")
 		(hatch none 0.1)
-		(priority 30000)
-		(attr
-			(teardrop
-				(type padvia)
-			)
-		)
-		(connect_pads yes
-			(clearance 0)
-		)
-		(min_thickness 0.0254)
-		(fill yes
-			(island_removal_mode 1)
-		)
-		(polygon
-			(pts
-				(xy 119.376148 101.79) (xy 119.376148 101.39) (xy 118.157117 100.884463) (xy 117.775148 101.59)
-				(xy 118.157117 102.295537)
-			)
-		)
-		(filled_polygon
-			(layer "F.Cu")
-			(pts
-				(xy 118.166863 100.888505) (xy 118.179494 100.893743) (xy 119.368931 101.387007) (xy 119.375259 101.393341)
-				(xy 119.376148 101.397814) (xy 119.376148 101.782185) (xy 119.372721 101.790458) (xy 119.36893 101.792993)
-				(xy 118.166863 102.291494) (xy 118.157908 102.291497) (xy 118.152092 102.286256) (xy 117.778162 101.595568)
-				(xy 117.777238 101.586663) (xy 117.778161 101.584434) (xy 118.152093 100.893741) (xy 118.159044 100.888099)
-			)
-		)
-	)
-	(zone
-		(net "+3V3")
-		(layer "F.Cu")
-		(hatch none 0.1)
 		(priority 30002)
 		(attr
 			(teardrop
@@ -5671,6 +6001,39 @@
 				(xy 117.982993 103.17893) (xy 117.976658 103.185259) (xy 117.972185 103.186148) (xy 117.587815 103.186148)
 				(xy 117.579542 103.182721) (xy 117.577007 103.17893) (xy 117.078505 101.976863) (xy 117.078502 101.967908)
 				(xy 117.083741 101.962093) (xy 117.774431 101.588162) (xy 117.783337 101.587238)
+			)
+		)
+	)
+	(zone
+		(net "+3V3")
+		(layer "F.Cu")
+		(hatch none 0.1)
+		(priority 30000)
+		(attr
+			(teardrop
+				(type padvia)
+			)
+		)
+		(connect_pads yes
+			(clearance 0)
+		)
+		(min_thickness 0.0254)
+		(fill yes
+			(island_removal_mode 1)
+		)
+		(polygon
+			(pts
+				(xy 119.376148 101.79) (xy 119.376148 101.39) (xy 118.157117 100.884463) (xy 117.775148 101.59)
+				(xy 118.157117 102.295537)
+			)
+		)
+		(filled_polygon
+			(layer "F.Cu")
+			(pts
+				(xy 118.166863 100.888505) (xy 118.179494 100.893743) (xy 119.368931 101.387007) (xy 119.375259 101.393341)
+				(xy 119.376148 101.397814) (xy 119.376148 101.782185) (xy 119.372721 101.790458) (xy 119.36893 101.792993)
+				(xy 118.166863 102.291494) (xy 118.157908 102.291497) (xy 118.152092 102.286256) (xy 117.778162 101.595568)
+				(xy 117.777238 101.586663) (xy 117.778161 101.584434) (xy 118.152093 100.893741) (xy 118.159044 100.888099)
 			)
 		)
 	)

@@ -62,6 +62,25 @@ def prop(name, val, x, y, hide=False, angle=0):
     return f'(property {q(name)} {q(val)} (at {x:.2f} {y:.2f} {angle}) (effects (font (size 1.27 1.27)){h}))'
 
 
+# LCSC / MPN per part (JLC basic parts where there is one; tools/lcsc_order.py buys equivalents
+# when LCSC itself is short). J1 (Pmod header) is hand soldered and has none.
+PARTS = {
+    'J2': ('C165948', 'HRO TYPE-C-31-M-12'),
+    'D1': ('C436349', 'TI TPD1E05U06DPYR'), 'D2': ('C436349', 'TI TPD1E05U06DPYR'),
+    'R6': ('C25076', 'UNI-ROYAL 0402WGF1000TCE'), 'R7': ('C25076', 'UNI-ROYAL 0402WGF1000TCE'),
+    'R2': ('C57678', 'UNI-ROYAL 0402WGF360JTCE'), 'R3': ('C57678', 'UNI-ROYAL 0402WGF360JTCE'),
+    'R1': ('C25867', 'UNI-ROYAL 0402WGF1501TCE'),
+    'R8': ('C25871', 'UNI-ROYAL 0402WGF1801TCE'),
+    'R9': ('C25133', 'UNI-ROYAL 0402WGF750JTCE'),
+    'R10': ('C25905', 'UNI-ROYAL 0402WGF5101TCE'), 'R11': ('C25905', 'UNI-ROYAL 0402WGF5101TCE'),
+    'R12': ('C25741', 'UNI-ROYAL 0402WGF1003TCE'),
+    'R13': ('C25755', 'UNI-ROYAL 0402WGF1503TCE'),
+    'C1': ('C52923', 'Samsung CL05A105KA5NQNC'), 'C5': ('C52923', 'Samsung CL05A105KA5NQNC'),
+    'C3': ('C19702', 'Samsung CL10A106KP8NNNC'),
+    'C4': ('C307331', 'Samsung CL05B104KB54PNC'),
+}
+
+
 def place(lib_id, ref, value, x, y, footprint='', rot=0, ref_xy=None, val_xy=None, desc='', extra=None):
     sym = lib[lib_id]
     pins = pin_table(sym)
@@ -71,7 +90,10 @@ def place(lib_id, ref, value, x, y, footprint='', rot=0, ref_xy=None, val_xy=Non
     props = [prop('Reference', ref, rx, ry, hide=power), prop('Value', value, vx, vy),
              prop('Footprint', footprint, x, y, hide=True), prop('Datasheet', '~', x, y, hide=True),
              prop('Description', desc, x, y, hide=True)]
-    for k, v in (extra or {}).items():
+    extra = dict(extra or {})
+    if ref in PARTS:
+        extra['LCSC'], extra['MPN'] = PARTS[ref]
+    for k, v in extra.items():
         props.append(prop(k, v, x, y, hide=True))
     pin_s = ' '.join(f'(pin {q(n)} (uuid {uid(ref, "pin", n)}))' for n in pins)
     txt = (f'(symbol (lib_id {q(lib_id)}) (at {x:.2f} {y:.2f} {rot}) (unit 1) (exclude_from_sim no) '
