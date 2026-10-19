@@ -1,13 +1,17 @@
 #!/bin/bash
-# Regenerate the schematic and the board, check them, and write the
+# Check the schematic and the board (REGEN=1: regenerate them first), and write the
 # fabrication outputs to fab/ (Gerbers + drill zip, BOM, placement,
 # schematic PDF, board images).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 N=Pmod_USB_HS_Single
 export TMPDIR=${TMPDIR:-/tmp}
-python3 tools/gen_sch.py
-python3 tools/gen_pcb.py 2>&1 | grep -v 'assert' || true
+# The board has been edited in KiCad since the scripted Rev. A layout, so the
+# generators run only on request (REGEN=1 overwrites the GUI edits).
+if [ "${REGEN:-0}" = 1 ]; then
+    python3 tools/gen_sch.py
+    python3 tools/gen_pcb.py 2>&1 | grep -v 'assert' || true
+fi
 mkdir -p fab/gerber
 # library-table warnings are environment dependent (headless kicad-cli without global tables)
 kicad-cli sch erc --severity-all -o fab/erc.rpt $N.kicad_sch >/dev/null
