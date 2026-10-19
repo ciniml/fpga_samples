@@ -31,6 +31,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PRJ = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 import sexp  # noqa: E402
+import silk as silk_back  # noqa: E402
 
 NAME = 'Pmod_USB_HS_Single'
 X0, Y0 = 100.0, 80.0          # board origin on the page
@@ -459,12 +460,7 @@ def build():
                 continue
             if ref in ('D1', 'D2') or (ref == 'J2' and pcbnew.ToMM(g.GetBoundingBox().GetTop()) - Y0 < 1.5):
                 fp.Remove(g)
-    bl = pcbnew.B_SilkS
-    lines = ['Pmod USB HS Single Rev.A', 'Single LVDS, D+ cmp only',
-             '1 DX+ 2 D+ 3 TRM+ 4 PU', '7 DX- 8 VREF 9 TRM- 10 VBUS',
-             'usb_phy_gowin_sl CMP1=1']
-    for i, s in enumerate(lines):
-        silk(s, W / 2, 10.0 + i * 1.18, layer=bl, size=0.8, thick=0.12)
+    silk_back.apply(board, silk_back.load_logo(PRJ))   # logo, name / Rev / date / author, pinout
 
     filler = pcbnew.ZONE_FILLER(board)
     filler.Fill(board.Zones())
