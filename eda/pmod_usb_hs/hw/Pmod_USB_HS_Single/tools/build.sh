@@ -29,7 +29,7 @@ kicad-cli pcb export gerbers --layers F.Cu,B.Cu,F.Paste,F.Silkscreen,B.Silkscree
 kicad-cli pcb export drill --format excellon --excellon-separate-th -o fab/gerber/ $N.kicad_pcb >/dev/null
 (cd fab/gerber && rm -f ../${N}_gerber.zip && zip -q ../${N}_gerber.zip *)
 kicad-cli pcb export pos --side front --format csv --units mm -o fab/${N}_pos.csv $N.kicad_pcb >/dev/null
-kicad-cli sch export bom --fields 'Reference,Value,Footprint,${QUANTITY},MPN,Description' \
+kicad-cli sch export bom --fields 'Reference,Value,Footprint,${QUANTITY},LCSC,MPN,Description' \
     --group-by Value,Footprint --exclude-dnp -o fab/${N}_bom.csv $N.kicad_sch >/dev/null
 kicad-cli sch export pdf -o fab/${N}_schematic.pdf $N.kicad_sch >/dev/null
 kicad-cli pcb render --side top --width 1600 --height 1200 --perspective --rotate "-35,0,20" --zoom 1.1 \

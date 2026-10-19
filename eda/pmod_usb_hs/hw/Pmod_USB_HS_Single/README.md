@@ -81,33 +81,38 @@ D- 側の比較器を省き、FPGA ピン 7 本 + VBUS 検出 1 本に収めた�
 | ファイル | 内容 |
 |---|---|
 | `fab/Pmod_USB_HS_Single_gerber.zip` | ガーバー (F/B Cu、Mask、Silk、F.Paste、Edge) とドリル (PTH/NPTH 別) |
-| `fab/Pmod_USB_HS_Single_bom.csv` | 部品表 |
+| `fab/Pmod_USB_HS_Single_bom.csv` | 部品表 (LCSC 番号、MPN 付き) |
 | `fab/Pmod_USB_HS_Single_pos.csv` | 実装位置 (表面のみ) |
 | `fab/Pmod_USB_HS_Single_schematic.pdf` | 回路図 |
 | `fab/*.png` | 3D レンダリング |
 | `fab/erc.rpt`, `fab/drc.rpt` | 検査結果 (ライブラリ表の警告はヘッドレス環境に由来) |
+| `fab/lcsc/Pmod_USB_HS_Single_lcsc_5pcs.csv` | LCSC 部品購入用 (5 枚分、J1 含む、2026-10-20 時点で約 $5.84)。`tools/lcsc_order.py N` で N 枚分を作り直す (LCSC に問い合わせて最小発注数・単価・在庫を反映、要ネットワーク、`build.sh` には含まない) |
 
 回路図 (`tools/gen_sch.py`) と基板 (`tools/gen_pcb.py`、配置・配線・ベタを座標で記述) は最初スクリプトから生成した。
 その後、基板は KiCad で手を入れている (F.Cu の +3V3 ベタ、配線の調整) ので、GUI 側を正とする。
 `build.sh` は既定では再生成しない。`REGEN=1 tools/build.sh` で再生成すると GUI での修正は消える。
+部品の LCSC 番号と MPN は `tools/gen_sch.py` の `PARTS` が正。変えたら `tools/gen_sch.py` → `tools/update_fields.py`
+(配線を残したまま基板側の部品の欄だけ更新) → `tools/build.sh`。
 裏面シルク (ロゴ、基板名 / 版 / 日付 / 作者、ピン表) は `tools/silk.py` が持つ。単体で実行すると、基板の裏面シルクだけをその場で入れ直す (銅箔は触らない)。
 
 ## 部品
 
-| Ref | 部品 | 備考 |
-|---|---|---|
-| J1 | 2x6 2.54 mm 直角ピンヘッダ | |
-| J2 | HRO TYPE-C-31-M-12 | 16 ピン (USB 2.0)。外形 7.3 mm、前端は基板端から約 0.65 mm 出る (要実物確認) |
-| D1, D2 | TI TPD1E05U06DPYR | X1SON-2 (0.6 × 1.0 mm)。手はんだは難しい |
-| R1 | 1.5 kΩ 1% 0402 | |
-| R2, R3 | 36 Ω 1% 0402 | |
-| R6, R7 | 100 Ω 1% 0402 | |
-| R8 / R9 | 1.8 kΩ / 75 Ω 1% 0402 | |
-| R10, R11 | 5.1 kΩ 1% 0402 | |
-| R12 / R13 | 100 kΩ / 150 kΩ 1% 0402 | |
-| C1, C5 | 1 µF 10 V X5R 0402 | |
-| C3 | 10 µF 10 V X5R 0603 | |
-| C4 | 100 nF 16 V X7R 0402 | |
+LCSC 番号は 2026-10-20 時点。JLC の Basic 部品があるものはそれを選んだ (JLC と LCSC の在庫は別)。
+
+| Ref | 部品 | LCSC | 備考 |
+|---|---|---|---|
+| J1 | 2x6 2.54 mm 直角ピンヘッダ | (C41417354) | 手はんだ。回路図には LCSC 番号なし。購入一覧では左の候補を使う (ピン長・本体寸法をフットプリントと要照合) |
+| J2 | HRO TYPE-C-31-M-12 | C165948 | 16 ピン (USB 2.0)。外形 7.3 mm、前端は基板端から約 0.65 mm 出る (要実物確認) |
+| D1, D2 | TI TPD1E05U06DPYR | C436349 | X1SON-2 (0.6 × 1.0 mm)。手はんだは難しい。同名の互換品 (TECH PUBLIC C907835、Leiditech C2972479) はクランプ電圧などが違うので使わない |
+| R1 | 1.5 kΩ 1% 0402 UNI-ROYAL 0402WGF1501TCE | C25867 | |
+| R2, R3 | 36 Ω 1% 0402 UNI-ROYAL 0402WGF360JTCE | C57678 | |
+| R6, R7 | 100 Ω 1% 0402 UNI-ROYAL 0402WGF1000TCE | C25076 | |
+| R8 / R9 | 1.8 kΩ / 75 Ω 1% 0402 UNI-ROYAL | C25871 / C25133 | |
+| R10, R11 | 5.1 kΩ 1% 0402 UNI-ROYAL 0402WGF5101TCE | C25905 | |
+| R12 / R13 | 100 kΩ / 150 kΩ 1% 0402 UNI-ROYAL | C25741 / C25755 | |
+| C1, C5 | 1 µF X5R 0402 Samsung CL05A105KA5NQNC | C52923 | LCSC 在庫 0 のため、購入一覧では YAGEO CC0402KRX5R7BB105 (C325464、16 V) に置き換わる |
+| C3 | 10 µF 10 V X5R 0603 Samsung CL10A106KP8NNNC | C19702 | |
+| C4 | 100 nF X7R 0402 Samsung CL05B104KB54PNC | C307331 | |
 
 ## 未確定事項
 
