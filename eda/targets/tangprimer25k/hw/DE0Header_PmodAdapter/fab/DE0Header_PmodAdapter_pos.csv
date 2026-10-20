@@ -1,0 +1,15 @@
+Ref,Val,Package,PosX,PosY,Rot,Side
+"J1","2x20 female 2.54 (to Dock J3)","PinSocket_2x20_P2.54mm_Vertical",21.590000,3.000000,-90.000000,bottom
+"C1","10u","C_0805_2012Metric",3.000000,3.500000,90.000000,top
+"C2","22u","C_0805_2012Metric",13.600000,10.000000,0.000000,top
+"C3","100n","C_0402_1005Metric",16.510000,29.400000,180.000000,top
+"C4","100n","C_0402_1005Metric",39.370000,29.400000,180.000000,top
+"C5","100n","C_0402_1005Metric",62.230000,29.400000,180.000000,top
+"C6","100n","C_0402_1005Metric",85.089999,29.400000,180.000000,top
+"J2","PMOD A (pmod3)","PinSocket_2x06_P2.54mm_Horizontal",17.780000,31.970000,-90.000000,top
+"J3","PMOD B (pmod4)","PinSocket_2x06_P2.54mm_Horizontal",40.640000,31.970000,-90.000000,top
+"J4","PMOD C (pmod5)","PinSocket_2x06_P2.54mm_Horizontal",63.500000,31.970000,-90.000000,top
+"J5","PMOD D (pmod6)","PinSocket_2x06_P2.54mm_Horizontal",86.360000,31.970000,-90.000000,top
+"J6","EXT1 2x2","PinHeader_2x02_P2.54mm_Vertical",44.450000,34.510000,0.000000,top
+"J7","EXT2 2x3","PinHeader_2x03_P2.54mm_Vertical",67.310000,9.000000,90.000000,top
+"U1","AMS1117-3.3","SOT-223-3_TabPin2",9.500000,5.000000,0.000000,top

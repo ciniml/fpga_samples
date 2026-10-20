@@ -1,0 +1,12 @@
+Comment,Designator,Footprint,LCSC Part #
+10u,C1,C_0805_2012Metric,C15850
+22u,C2,C_0805_2012Metric,C45783
+100n,"C3,C4,C5,C6",C_0402_1005Metric,C1525
+2x20 female 2.54 (to Dock J3),J1,PinSocket_2x20_P2.54mm_Vertical,C5124634
+PMOD A (pmod3),J2,PinSocket_2x06_P2.54mm_Horizontal,C22373932
+PMOD B (pmod4),J3,PinSocket_2x06_P2.54mm_Horizontal,C22373932
+PMOD C (pmod5),J4,PinSocket_2x06_P2.54mm_Horizontal,C22373932
+PMOD D (pmod6),J5,PinSocket_2x06_P2.54mm_Horizontal,C22373932
+EXT1 2x2,J6,PinHeader_2x02_P2.54mm_Vertical,C66690
+EXT2 2x3,J7,PinHeader_2x03_P2.54mm_Vertical,C65114
+AMS1117-3.3,U1,SOT-223-3_TabPin2,C6186

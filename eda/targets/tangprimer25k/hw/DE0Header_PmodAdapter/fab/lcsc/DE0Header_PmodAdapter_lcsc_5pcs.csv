@@ -1,0 +1,9 @@
+LCSC Part Number,Quantity,Manufacture Part Number,Manufacturer,Designator,Qty per board,Needed (5 boards + spares),LCSC min. order,Unit price (USD),Ext. price (USD),LCSC stock,Note
+C15850,20,CL21A106KAYNNNE,Samsung Electro-Mechanics,C1,1,5,20,0.0882,1.76,3093360,
+C45783,20,CL21A226MAQNNNE,Samsung Electro-Mechanics,C2,1,5,20,0.1959,3.92,107780,
+C60474,100,CC0402KRX7R7BB104,YAGEO,"C3,C4,C5,C6",4,20,100,0.0052,0.52,11173700,"C1525 (CL05B104KO5NNNC) out of stock at LCSC (0), equivalent ordered"
+C5124634,6,2.54-2*20P,BOOMELE(Boom Precision Elec),J1,1,6,5,0.3317,1.99,8595,
+C22373932,21,HC-PM254-8.5H-2x6PW,Hong Cheng,"J2,J3,J4,J5",4,21,5,0.2014,4.23,11330,
+C66690,20,2.54-2*2P,BOOMELE(Boom Precision Elec),J6,1,5,20,0.0324,0.65,16680,
+C65114,10,2.54-2*3P,BOOMELE(Boom Precision Elec),J7,1,5,10,0.0450,0.45,52050,
+C6186,5,AMS1117-3.3,Advanced Monolithic Systems,U1,1,5,5,0.2106,1.05,585715,
