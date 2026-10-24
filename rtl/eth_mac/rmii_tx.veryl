@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+//
+// RmiiTx: RMII (100 Mb/s) transmit adapter for EthTxMac. Takes a byte
+// every 4 reference clocks and shifts it out LSB dibit first. TXD / TX_EN
+// come straight from flip-flops.
+module RmiiTx (
+    i_clk  : input  clock   , // 50 MHz reference clock
+    i_rst  : input  logic   ,
+    o_ce   : output logic   , // to EthTxMac.i_ce
+    i_ben  : input  logic   ,
+    i_bdata: input  logic<8>,
+    o_txd  : output logic<2>,
+    o_txen : output logic   ,
+) {
+    var dibit : logic<2>;
+    var sh    : logic<8>;
+    var en_b  : logic   ;
+    var txd_q : logic<2>;
+    var txen_q: logic   ;
+
+    assign o_ce   = dibit == 2'd3;
+    assign o_txd  = txd_q;
+    assign o_txen = txen_q;
+
+    always_ff {
+        if i_rst {
+            dibit  = 2'd0;
+            sh     = 8'b0;
+            en_b   = 1'b0;
+            txd_q  = 2'b0;
+            txen_q = 1'b0;
+        } else {
+            dibit  = dibit + 1;
+            txd_q  = if en_b ? sh[1:0] : 2'b00;
+            txen_q = en_b;
+            sh     = sh >> 2;
+            if dibit == 2'd3 {
+                sh   = i_bdata;
+                en_b = i_ben;
+            }
+        }
+    }
+}

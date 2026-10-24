@@ -1,0 +1,265 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+//
+// EthernetHub75Core: Ethernet / UDP video in, HUB75 out. Board and PHY
+// independent; the board top adds the PHY adapter (RmiiRx / RmiiTx, ...),
+// clocks and resets.
+//
+//   PHY adapter ─ EthRxMac ─(PktFifo, rx clk → sys)─ EthService ─ UdpVideoWriter
+//               ─ EthTxMac ─(PktFifo, sys → tx clk)─┘   ↑ ack     │ lane / addr / RGB
+//                                                       │         ▼
+//                                     Hub75Lanes (frame buffer: sys write, display read)
+//
+// Four clock domains: PHY receive ('p), PHY transmit ('t), system ('s:
+// service and frame buffer writes) and display ('d: the HUB75 engine).
+// They may be the same clock.
+module EthernetHub75Core #(
+    param MAC_ADDR      : bit<48> = 48'h11_22_33_44_55_66,
+    param IP_ADDR       : bit<32> = 32'hC0_A8_0A_02      ,
+    param VIDEO_PORT    : bit<16> = 16'd10004            ,
+    param LUT_PORT      : bit<16> = 16'd10005            ,
+    param WIDTH         : u32     = 128                  , // = chain length
+    param HEIGHT        : u32     = 128                  , // = SCAN_ROWS × lanes
+    param SCAN_ROWS     : u32     = 32                   ,
+    param COMPONENT_BITS: u32     = 6                    ,
+    param CLOCK_DIVIDER : u32     = 0                    ,
+    param CLK_LOW_EXTRA : u32     = 1                    ,
+    param BASE_OE_CYCLES: u32     = 16                   ,
+    param CHAIN_REVERSE : bit     = 0                    ,
+    param RX_DEPTH_LOG2 : u32     = 13                   ,
+    param TX_DEPTH_LOG2 : u32     = 11                   ,
+    const NUM_LANES     : u32     = HEIGHT / SCAN_ROWS   ,
+) (
+    // ---- system ----
+    i_clk: input 's clock,
+    i_rst: input 's logic, // synchronous, active high
+
+    // ---- PHY receive (from the adapter) ----
+    i_rx_clk   : input 'p clock   ,
+    i_rx_rst   : input 'p logic   ,
+    i_rx_bvalid: input 'p logic   ,
+    i_rx_bdata : input 'p logic<8>,
+    i_rx_end   : input 'p logic   ,
+    i_rx_err   : input 'p logic   ,
+
+    // ---- PHY transmit (to the adapter) ----
+    i_tx_clk  : input  't clock   ,
+    i_tx_rst  : input  't logic   ,
+    i_tx_ce   : input  't logic   ,
+    o_tx_ben  : output 't logic   ,
+    o_tx_bdata: output 't logic<8>,
+
+    // ---- display ----
+    i_dclk : input  'd clock           ,
+    i_drst : input  'd logic           ,
+    o_row  : output 'd logic<5>        ,
+    o_r    : output 'd logic<NUM_LANES>,
+    o_g    : output 'd logic<NUM_LANES>,
+    o_b    : output 'd logic<NUM_LANES>,
+    o_oe   : output 'd logic           ,
+    o_lat  : output 'd logic           ,
+    o_hclk : output 'd logic           ,
+    o_frame: output 'd logic           , // panel frame boundary pulse
+
+    // ---- activity pulses (system domain) ----
+    o_ev_video: output 's logic,
+    o_ev_net  : output 's logic, // ARP or ICMP answered
+    o_ev_drop : output 's logic, // bad FCS
+    o_ev_flip : output 's logic, // a new frame is on the panel
+) {
+    const LANE_BITS: u32 = if NUM_LANES >: 1 ? $clog2(NUM_LANES) : 1;
+    const ADDR_BITS: u32 = $clog2(SCAN_ROWS) + $clog2(WIDTH);
+    const PX_BITS  : u32 = 3 * COMPONENT_BITS;
+    // the RX filter takes the address byte 0 in [7:0]
+    const MAC_FILT: bit<48> = {
+        MAC_ADDR[7:0], MAC_ADDR[15:8], MAC_ADDR[23:16], MAC_ADDR[31:24], MAC_ADDR[39:32], MAC_ADDR[47:40]
+    };
+
+    // ---- MAC ----
+    var rrec_valid: 's logic    ;
+    var rlen      : 's logic<11>;
+    var rflag     : 's logic    ;
+    var rremain   : 's logic<11>;
+    var rdata     : 's logic<32>;
+    var rpop      : 's logic    ;
+    var rpop_cnt  : 's logic<3> ;
+    var rrelease  : 's logic    ;
+
+    inst rx_mac: eth_mac::EthRxMac #(
+        DEPTH_LOG2: RX_DEPTH_LOG2,
+    ) (
+        i_rx_clk    : i_rx_clk   ,
+        i_rx_rst    : i_rx_rst   ,
+        i_bvalid    : i_rx_bvalid,
+        i_bdata     : i_rx_bdata ,
+        i_end       : i_rx_end   ,
+        i_err       : i_rx_err   ,
+        o_rx_ok     : _          ,
+        o_rx_bad    : _          ,
+        i_mac       : MAC_FILT   ,
+        i_filt_en   : 1'b1       ,
+        i_clk       : i_clk      ,
+        i_rst       : i_rst      ,
+        o_rrec_valid: rrec_valid ,
+        o_rlen      : rlen       ,
+        o_rflag     : rflag      ,
+        o_rremain   : rremain    ,
+        o_rdata     : rdata      ,
+        i_rpop      : rpop       ,
+        i_rpop_n    : 3'd1       ,
+        o_rpop_cnt  : rpop_cnt   ,
+        i_rrelease  : rrelease   ,
+    );
+
+    var wvalid   : 's logic                   ;
+    var wdata    : 's logic<8>                ;
+    var wcommit  : 's logic                   ;
+    var wlen     : 's logic<11>               ;
+    var wspace   : 's logic<TX_DEPTH_LOG2 + 1>;
+    var wrec_full: 's logic                   ;
+
+    inst tx_mac: eth_mac::EthTxMac #(
+        DEPTH_LOG2: TX_DEPTH_LOG2,
+    ) (
+        i_clk      : i_clk     ,
+        i_rst      : i_rst     ,
+        i_wvalid   : wvalid    ,
+        i_wdata    : wdata     ,
+        i_wcommit  : wcommit   ,
+        i_wlen     : wlen      ,
+        i_wabort   : 1'b0      ,
+        o_wspace   : wspace    ,
+        o_wrec_full: wrec_full ,
+        i_tx_clk   : i_tx_clk  ,
+        i_tx_rst   : i_tx_rst  ,
+        i_ce       : i_tx_ce   ,
+        o_ben      : o_tx_ben  ,
+        o_bdata    : o_tx_bdata,
+        o_tx_ok    : _         ,
+    );
+
+    // ---- service ----
+    var vid_start : 's logic    ;
+    var vid_offset: 's logic<16>;
+    var vid_valid : 's logic    ;
+    var vid_data  : 's logic<8> ;
+    var lut_start : 's logic    ;
+    var lut_valid : 's logic    ;
+    var lut_data  : 's logic<8> ;
+    var ack_req   : 's logic    ;
+    var ev_arp    : 's logic    ;
+    var ev_icmp   : 's logic    ;
+
+    inst service: EthService #(
+        MAC_ADDR  : MAC_ADDR         ,
+        IP_ADDR   : IP_ADDR          ,
+        VIDEO_PORT: VIDEO_PORT       ,
+        LUT_PORT  : LUT_PORT         ,
+        WSPACE_W  : TX_DEPTH_LOG2 + 1,
+    ) (
+        i_clk       : i_clk     ,
+        i_rst       : i_rst     ,
+        i_rrec_valid: rrec_valid,
+        i_rlen      : rlen      ,
+        i_rflag     : rflag     ,
+        i_rremain   : rremain   ,
+        i_rdata     : rdata     ,
+        o_rpop      : rpop      ,
+        o_rrelease  : rrelease  ,
+        o_wvalid    : wvalid    ,
+        o_wdata     : wdata     ,
+        o_wcommit   : wcommit   ,
+        o_wlen      : wlen      ,
+        i_wspace    : wspace    ,
+        i_wrec_full : wrec_full ,
+        o_vid_start : vid_start ,
+        o_vid_offset: vid_offset,
+        o_vid_valid : vid_valid ,
+        o_vid_data  : vid_data  ,
+        o_lut_start : lut_start ,
+        o_lut_valid : lut_valid ,
+        o_lut_data  : lut_data  ,
+        i_ack_req   : ack_req   ,
+        o_ev_arp    : ev_arp    ,
+        o_ev_icmp   : ev_icmp   ,
+        o_ev_video  : o_ev_video,
+        o_ev_drop   : o_ev_drop ,
+    );
+
+    // ---- frame buffer writer ----
+    var fb_we    : 's logic           ;
+    var fb_lane  : 's logic<LANE_BITS>;
+    var fb_addr  : 's logic<ADDR_BITS>;
+    var fb_rgb   : 's logic<PX_BITS>  ;
+    var flip_req : 's logic           ;
+    var flip_busy: 's logic           ;
+    var busy_d   : 's logic           ;
+
+    inst writer: UdpVideoWriter #(
+        WIDTH         : WIDTH         ,
+        HEIGHT        : HEIGHT        ,
+        SCAN_ROWS     : SCAN_ROWS     ,
+        COMPONENT_BITS: COMPONENT_BITS,
+        CHAIN_REVERSE : CHAIN_REVERSE ,
+    ) (
+        i_clk      : i_clk     ,
+        i_rst      : i_rst     ,
+        i_start    : vid_start ,
+        i_offset   : vid_offset,
+        i_valid    : vid_valid ,
+        i_data     : vid_data  ,
+        i_lut_start: lut_start ,
+        i_lut_valid: lut_valid ,
+        i_lut_data : lut_data  ,
+        o_we       : fb_we     ,
+        o_lane     : fb_lane   ,
+        o_addr     : fb_addr   ,
+        o_rgb      : fb_rgb    ,
+        o_flip_req : flip_req  ,
+        i_flip_busy: flip_busy ,
+    );
+
+    // the flip is done when busy falls: ack the sender
+    always_ff (i_clk) {
+        if i_rst {
+            busy_d = 1'b0;
+        } else {
+            busy_d = flip_busy;
+        }
+    }
+    assign ack_req   = busy_d && !flip_busy;
+    assign o_ev_flip = ack_req;
+    assign o_ev_net  = ev_arp || ev_icmp;
+
+    // ---- HUB75 ----
+    inst panel: hub75::Hub75Lanes #(
+        SCAN_ROWS     : SCAN_ROWS     ,
+        CHAIN_LEN     : WIDTH         ,
+        NUM_LANES     : NUM_LANES     ,
+        CLOCK_DIVIDER : CLOCK_DIVIDER ,
+        CLK_LOW_EXTRA : CLK_LOW_EXTRA ,
+        COMPONENT_BITS: COMPONENT_BITS,
+        BASE_OE_CYCLES: BASE_OE_CYCLES,
+    ) (
+        i_wclk     : i_clk    ,
+        i_wrst     : i_rst    ,
+        i_we       : fb_we    ,
+        i_wlane    : fb_lane  ,
+        i_waddr    : fb_addr  ,
+        i_wdata    : fb_rgb   ,
+        i_flip_req : flip_req ,
+        o_flip_busy: flip_busy,
+        i_clk      : i_dclk   ,
+        i_rst      : i_drst   ,
+        o_frame    : o_frame  ,
+        o_row      : o_row    ,
+        o_r        : o_r      ,
+        o_g        : o_g      ,
+        o_b        : o_b      ,
+        o_oe       : o_oe     ,
+        o_lat      : o_lat    ,
+        o_clk      : o_hclk   ,
+    );
+
+    let _unused: 's logic = |rpop_cnt;
+}

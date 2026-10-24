@@ -1,0 +1,27 @@
+// Copied unchanged from riscv-veryl/src/crc32.veryl (hardware-proven on Tang Primer 20K).
+//
+// CRC-32 (IEEE 802.3 FCS): reflected polynomial 0xEDB88320, initial
+// value and final XOR 0xFFFFFFFF, bytes LSB first. `crc32_byte` folds
+// one byte into the running (non-inverted) register; a frame's FCS is
+// `~crc` transmitted LSB first, and a receiver that folds the FCS bytes
+// in as well ends with the constant `CRC32_RESIDUE`.
+package Crc32Pkg {
+    const CRC32_INIT   : logic<32> = 32'hFFFF_FFFF;
+    const CRC32_RESIDUE: logic<32> = 32'hDEBB_20E3;
+
+    function crc32_byte (
+        crc : input logic<32>,
+        data: input logic<8> ,
+    ) -> logic<32> {
+        var c: logic<32>;
+        c = crc ^ {24'b0, data};
+        for _i in 0..8 {
+            if c[0] {
+                c = (c >> 1) ^ 32'hEDB8_8320;
+            } else {
+                c = c >> 1;
+            }
+        }
+        return c;
+    }
+}

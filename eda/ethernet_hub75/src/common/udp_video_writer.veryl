@@ -1,0 +1,186 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+//
+// UdpVideoWriter: turns the video byte stream of EthService into frame
+// buffer writes for Hub75Lanes.
+//
+// The frame is WIDTH × HEIGHT RGB565 pixels, little endian, row major,
+// addressed by byte offset (the protocol of util/udpvideosend). Writing
+// the frame's last byte requests a bank flip; until the display has
+// switched (i_flip_busy) incoming bytes are dropped, and the sender
+// waits for the ack anyway.
+//
+// Pixel (x, y) goes to lane y / SCAN_ROWS, address {y % SCAN_ROWS, x}
+// (x mirrored when CHAIN_REVERSE). Colour: R5 / G6 / B5 are looked up in
+// three tables of COMPONENT_BITS-wide entries (gamma / white balance).
+// The tables start as the identity (bit replication) and are reloaded
+// from the LUT stream: byte 0 = channel mask (bit 0 R, 1 G, 2 B), then
+// 8-bit values from entry 0 (R / B use the first 32, G 64), of which the
+// top COMPONENT_BITS bits are kept.
+module UdpVideoWriter #(
+    param WIDTH         : u32 = 128                                      , // power of two, = Hub75Lanes CHAIN_LEN
+    param HEIGHT        : u32 = 128                                      , // power of two, = SCAN_ROWS × NUM_LANES
+    param SCAN_ROWS     : u32 = 32                                       ,
+    param COMPONENT_BITS: u32 = 6                                        ,
+    param CHAIN_REVERSE : bit = 0                                        ,
+    const X_BITS        : u32 = $clog2(WIDTH)                            ,
+    const Y_BITS        : u32 = $clog2(HEIGHT)                           ,
+    const ROW_BITS      : u32 = $clog2(SCAN_ROWS)                        ,
+    const NUM_LANES     : u32 = HEIGHT / SCAN_ROWS                       ,
+    const LANE_BITS     : u32 = if NUM_LANES >: 1 ? $clog2(NUM_LANES) : 1,
+    const PX_BITS       : u32 = 3 * COMPONENT_BITS                       ,
+) (
+    i_clk: input clock,
+    i_rst: input logic,
+
+    i_start : input logic    ,
+    i_offset: input logic<16>,
+    i_valid : input logic    ,
+    i_data  : input logic<8> ,
+
+    i_lut_start: input logic   ,
+    i_lut_valid: input logic   ,
+    i_lut_data : input logic<8>,
+
+    o_we  : output logic                   ,
+    o_lane: output logic<LANE_BITS>        ,
+    o_addr: output logic<ROW_BITS + X_BITS>,
+    o_rgb : output logic<PX_BITS>          ,
+
+    o_flip_req : output logic,
+    i_flip_busy: input  logic,
+) {
+    const FRAME_BYTES: u32 = WIDTH * HEIGHT * 2;
+    const PIDX_BITS  : u32 = X_BITS + Y_BITS;
+
+    // ---- byte assembly ----
+    var pos     : logic<17>       ;
+    var lo      : logic<8>        ;
+    var s1_valid: logic           ;
+    var s1_px   : logic<16>       ;
+    var s1_pidx : logic<PIDX_BITS>;
+    var flip_q  : logic           ;
+
+    assign o_flip_req = flip_q;
+
+    always_ff {
+        if i_rst {
+            pos      = 17'd0;
+            lo       = 8'd0;
+            s1_valid = 1'b0;
+            s1_px    = 16'd0;
+            s1_pidx  = 0 as PIDX_BITS;
+            flip_q   = 1'b0;
+        } else {
+            s1_valid = 1'b0;
+            flip_q   = 1'b0;
+            if i_start {
+                pos = {1'b0, i_offset};
+            } else if i_valid {
+                if !i_flip_busy && pos <: FRAME_BYTES {
+                    if !pos[0] {
+                        lo = i_data;
+                    } else {
+                        s1_valid = 1'b1;
+                        s1_px    = {i_data, lo};
+                        s1_pidx  = pos[PIDX_BITS:1];
+                    }
+                    if pos == FRAME_BYTES - 1 {
+                        flip_q = 1'b1;
+                    }
+                }
+                pos = pos + 17'd1;
+            }
+        }
+    }
+
+    // ---- colour tables ----
+    var lut_r: logic<COMPONENT_BITS> [32];
+    var lut_g: logic<COMPONENT_BITS> [64];
+    var lut_b: logic<COMPONENT_BITS> [32];
+
+    var init_cnt : logic<7>; // identity load after reset, done when bit 6 is set
+    var lut_mask : logic<3>;
+    var lut_idx  : logic<7>;
+    var lut_first: logic   ;
+
+    let init_busy: logic    = !init_cnt[6];
+    let init_i   : logic<6> = init_cnt[5:0];
+    let init_r8  : logic<8> = {init_i[4:0], init_i[4:2]};
+    let init_g8  : logic<8> = {init_i[5:0], init_i[5:4]};
+    let lut_store: logic    = i_lut_valid && !lut_first && !lut_idx[6];
+    let wr_r     : logic    = if init_busy ? !init_i[5] : lut_store && lut_mask[0] && !lut_idx[5];
+    let wr_g     : logic    = if init_busy ? 1'b1 : lut_store && lut_mask[1];
+    let wr_b     : logic    = if init_busy ? !init_i[5] : lut_store && lut_mask[2] && !lut_idx[5];
+    let wr_idx   : logic<6> = if init_busy ? init_i : lut_idx[5:0];
+    let wr_val_r : logic<8> = if init_busy ? init_r8 : i_lut_data;
+    let wr_val_g : logic<8> = if init_busy ? init_g8 : i_lut_data;
+
+    always_ff {
+        if wr_r {
+            lut_r[wr_idx[4:0]] = wr_val_r[7:8 - COMPONENT_BITS];
+        }
+        if wr_g {
+            lut_g[wr_idx] = wr_val_g[7:8 - COMPONENT_BITS];
+        }
+        if wr_b {
+            lut_b[wr_idx[4:0]] = wr_val_r[7:8 - COMPONENT_BITS];
+        }
+    }
+
+    always_ff {
+        if i_rst {
+            init_cnt  = 7'd0;
+            lut_mask  = 3'b000;
+            lut_idx   = 7'd0;
+            lut_first = 1'b0;
+        } else {
+            if init_busy {
+                init_cnt = init_cnt + 7'd1;
+            }
+            if i_lut_start {
+                lut_first = 1'b1;
+                lut_idx   = 7'd0;
+            } else if i_lut_valid {
+                if lut_first {
+                    lut_mask  = i_lut_data[2:0];
+                    lut_first = 1'b0;
+                } else if !lut_idx[6] {
+                    lut_idx = lut_idx + 7'd1;
+                }
+            }
+        }
+    }
+
+    // ---- frame buffer write ----
+    let s1_x   : logic<X_BITS> = s1_pidx[X_BITS - 1:0];
+    let s1_y   : logic<Y_BITS> = s1_pidx[PIDX_BITS - 1:X_BITS];
+    let s1_cx  : logic<X_BITS> = if CHAIN_REVERSE ? ~s1_x : s1_x;
+    let s1_lane: logic<Y_BITS> = s1_y >> ROW_BITS;
+
+    var we_q  : logic                   ;
+    var lane_q: logic<LANE_BITS>        ;
+    var addr_q: logic<ROW_BITS + X_BITS>;
+    var rgb_q : logic<PX_BITS>          ;
+
+    assign o_we   = we_q;
+    assign o_lane = lane_q;
+    assign o_addr = addr_q;
+    assign o_rgb  = rgb_q;
+
+    always_ff {
+        if i_rst {
+            we_q   = 1'b0;
+            lane_q = 0 as LANE_BITS;
+            addr_q = 0 as ROW_BITS + X_BITS;
+            rgb_q  = 0 as PX_BITS;
+        } else {
+            we_q = s1_valid;
+            if s1_valid {
+                lane_q = s1_lane[LANE_BITS - 1:0];
+                addr_q = {s1_y[ROW_BITS - 1:0], s1_cx};
+                rgb_q  = {lut_r[s1_px[15:11]], lut_g[s1_px[10:5]], lut_b[s1_px[4:0]]};
+            }
+        }
+    }
+}

@@ -1,0 +1,407 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+//
+// EthService: the network side of ethernet_hub75, in the system clock
+// domain between the RX / TX packet FIFOs of the MAC.
+//
+//   - ARP: answers requests for IP_ADDR.
+//   - ICMP: answers echo requests (ping) to IP_ADDR, any size that fits
+//     the TX FIFO.
+//   - UDP VIDEO_PORT: payload = 2-byte big-endian byte offset + data
+//     bytes, streamed to UdpVideoWriter (the protocol of the Chisel
+//     EthernetVideoSystem / util/udpvideosend). The sender's MAC / IP /
+//     port are remembered; `i_ack_req` sends it a 4-byte 0xdeadbeef.
+//   - UDP LUT_PORT: payload streamed to the colour table loader.
+//
+// Every frame is store-and-forward checked by the MAC (FCS ok, >= 60
+// bytes), so the first 42 bytes (Ethernet + IPv4 without options + UDP /
+// ICMP / ARP header) are always present. They are read into `hdr`, then
+// a reply is built in place in `hdr` and sent, followed (ICMP) by the
+// rest of the request copied from the RX FIFO.
+//
+// MAC_ADDR is written in the usual order (first byte on the wire in bits
+// 47:40). The default 11:22:33:44:55:66 is the one of the Chisel design;
+// note that its first byte has the group (multicast) bit set.
+module EthService #(
+    param MAC_ADDR  : bit<48> = 48'h11_22_33_44_55_66,
+    param IP_ADDR   : bit<32> = 32'hC0_A8_0A_02      , // 192.168.10.2
+    param VIDEO_PORT: bit<16> = 16'd10004            ,
+    param LUT_PORT  : bit<16> = 16'd10005            ,
+    param WSPACE_W  : u32     = 12                   , // width of i_wspace (TX FIFO DEPTH_LOG2 + 1)
+) (
+    i_clk: input clock,
+    i_rst: input logic,
+
+    // RX packet FIFO (read side, one byte per pop)
+    i_rrec_valid: input  logic    ,
+    i_rlen      : input  logic<11>,
+    i_rflag     : input  logic    ,
+    i_rremain   : input  logic<11>,
+    i_rdata     : input  logic<32>,
+    o_rpop      : output logic    ,
+    o_rrelease  : output logic    ,
+
+    // TX packet FIFO (write side)
+    o_wvalid   : output logic          ,
+    o_wdata    : output logic<8>       ,
+    o_wcommit  : output logic          ,
+    o_wlen     : output logic<11>      ,
+    i_wspace   : input  logic<WSPACE_W>,
+    i_wrec_full: input  logic          ,
+
+    // video stream: o_vid_start (with the packet's byte offset) before the data bytes
+    o_vid_start : output logic    ,
+    o_vid_offset: output logic<16>,
+    o_vid_valid : output logic    ,
+    o_vid_data  : output logic<8> ,
+
+    // colour table stream: o_lut_start before the payload bytes
+    o_lut_start: output logic   ,
+    o_lut_valid: output logic   ,
+    o_lut_data : output logic<8>,
+
+    i_ack_req: input logic, // send 0xdeadbeef to the last video sender
+
+    // activity pulses
+    o_ev_arp  : output logic,
+    o_ev_icmp : output logic,
+    o_ev_video: output logic,
+    o_ev_drop : output logic,
+) {
+    enum State {
+        IDLE,
+        HDR,
+        DECIDE,
+        EMIT,
+        COPY,
+        COMMIT,
+        VIDEO,
+        LUT,
+        RELEASE,
+    }
+    enum Kind {
+        ARP,
+        ICMP,
+        ACK,
+    }
+
+    var state   : State         ;
+    var kind    : Kind          ;
+    var hdr     : logic<8>  [46];
+    var idx     : logic<6>      ;
+    var emit_end: logic<6>      ; // last hdr index to send
+    var cnt     : logic<11>     ; // bytes left to copy / stream
+    var total   : logic<11>     ; // reply frame length
+
+    var ack_pend : logic    ;
+    var vid_known: logic    ;
+    var vid_mac  : logic<48>;
+    var vid_ip   : logic<32>;
+    var vid_port : logic<16>;
+    var ack_csum : logic<16>;
+
+    var wvalid   : logic    ;
+    var wdata    : logic<8> ;
+    var wcommit  : logic    ;
+    var vid_start: logic    ;
+    var vid_off  : logic<16>;
+    var vid_valid: logic    ;
+    var lut_start: logic    ;
+    var lut_valid: logic    ;
+    var sdata    : logic<8> ;
+    var ev_arp   : logic    ;
+    var ev_icmp  : logic    ;
+    var ev_video : logic    ;
+    var ev_drop  : logic    ;
+
+    // current RX byte
+    let rx_pos : logic<11> = i_rlen - i_rremain;
+    let rx_byte: logic<8>  = case rx_pos[1:0] {
+        2'd0   : i_rdata[7:0],
+        2'd1   : i_rdata[15:8],
+        2'd2   : i_rdata[23:16],
+        default: i_rdata[31:24],
+    };
+
+    // ---- header fields (valid in DECIDE) ----
+    let h_dst      : logic<48> = {hdr[0], hdr[1], hdr[2], hdr[3], hdr[4], hdr[5]};
+    let h_etype    : logic<16> = {hdr[12], hdr[13]};
+    let h_dst_ok   : logic     = h_dst == MAC_ADDR;
+    let h_bcast    : logic     = h_dst == 48'hFFFF_FFFF_FFFF;
+    let arp_req    : logic     = h_etype == 16'h0806 && (h_dst_ok || h_bcast)
+        && {hdr[14], hdr[15], hdr[16], hdr[17], hdr[18], hdr[19]} == 48'h0001_0800_0604 && {hdr[20], hdr[21]}
+        == 16'h0001 && {hdr[38], hdr[39], hdr[40], hdr[41]} == IP_ADDR;
+    let ip_ok      : logic     = h_etype == 16'h0800 && h_dst_ok && hdr[14] == 8'h45 && ({hdr[20], hdr[21]} & 16'h3FFF)
+        == 16'h0000 // not a fragment
+         && {hdr[30], hdr[31], hdr[32], hdr[33]} == IP_ADDR;
+    let ip_total   : logic<16> = {hdr[16], hdr[17]};
+    let frame_total: logic<17> = {1'b0, ip_total} + 17'd14;
+    let icmp_echo  : logic     = ip_ok && hdr[23] == 8'd1 && hdr[34] == 8'd8 && frame_total >= 17'd42 && frame_total
+        <= {6'b0, i_rlen} && frame_total <: {5'b0, i_wspace} && !i_wrec_full;
+    let udp_dport  : logic<16> = {hdr[36], hdr[37]};
+    let udp_len    : logic<16> = {hdr[38], hdr[39]};
+    let udp_ok     : logic     = ip_ok && hdr[23] == 8'd17 && udp_len >= 16'd9 && ({1'b0, udp_len} + 17'd34)
+        <= {6'b0, i_rlen};
+    let tx_room    : logic     = i_wspace >= 64 && !i_wrec_full;
+    let icmp_csum_s: logic<17> = {1'b0, hdr[36], hdr[37]} + 17'h0_0800; // type 8 -> 0
+    let icmp_csum  : logic<16> = icmp_csum_s[15:0] + {15'b0, icmp_csum_s[16]};
+
+    // IPv4 header checksum of the ack: 4500 0020 0000 4000 4011 + addresses
+    let ack_sum0: logic<20> = 20'h0_4500 + 20'h0_0020 + 20'h0_4000 + 20'h0_4011 + {4'b0, IP_ADDR[31:16]}
+        + {4'b0, IP_ADDR[15:0]} + {4'b0, vid_ip[31:16]} + {4'b0, vid_ip[15:0]};
+    let ack_sum1: logic<17> = {1'b0, ack_sum0[15:0]} + {13'b0, ack_sum0[19:16]};
+    let ack_sum2: logic<16> = ack_sum1[15:0] + {15'b0, ack_sum1[16]};
+
+    assign o_rpop       = state == State::HDR || state == State::COPY || state == State::VIDEO || state == State::LUT;
+    assign o_rrelease   = state == State::RELEASE;
+    assign o_wvalid     = wvalid;
+    assign o_wdata      = wdata;
+    assign o_wcommit    = wcommit;
+    assign o_wlen       = total;
+    assign o_vid_start  = vid_start;
+    assign o_vid_offset = vid_off;
+    assign o_vid_valid  = vid_valid;
+    assign o_vid_data   = sdata;
+    assign o_lut_start  = lut_start;
+    assign o_lut_valid  = lut_valid;
+    assign o_lut_data   = sdata;
+    assign o_ev_arp     = ev_arp;
+    assign o_ev_icmp    = ev_icmp;
+    assign o_ev_video   = ev_video;
+    assign o_ev_drop    = ev_drop;
+
+    // header array: no reset (contents are only used after being written)
+    always_ff {
+        case state {
+            State::IDLE: {
+                // ack frame (used only when IDLE goes to EMIT with kind ACK)
+                for i in 0..6 {
+                    hdr[i]     = vid_mac[(5 - i) step 8];
+                    hdr[6 + i] = MAC_ADDR[(5 - i) step 8];
+                }
+                hdr[12] = 8'h08;
+                hdr[13] = 8'h00;
+                hdr[14] = 8'h45;
+                hdr[15] = 8'h00;
+                hdr[16] = 8'h00;
+                hdr[17] = 8'd32; // 20 + 8 + 4
+                hdr[18] = 8'h00;
+                hdr[19] = 8'h00;
+                hdr[20] = 8'h40; // DF
+                hdr[21] = 8'h00;
+                hdr[22] = 8'd64; // TTL
+                hdr[23] = 8'd17;
+                hdr[24] = ack_csum[15:8];
+                hdr[25] = ack_csum[7:0];
+                for i in 0..4 {
+                    hdr[26 + i] = IP_ADDR[(3 - i) step 8];
+                    hdr[30 + i] = vid_ip[(3 - i) step 8];
+                }
+                hdr[34] = VIDEO_PORT[15:8];
+                hdr[35] = VIDEO_PORT[7:0];
+                hdr[36] = vid_port[15:8];
+                hdr[37] = vid_port[7:0];
+                hdr[38] = 8'h00;
+                hdr[39] = 8'd12;
+                hdr[40] = 8'h00; // no UDP checksum
+                hdr[41] = 8'h00;
+                hdr[42] = 8'hDE;
+                hdr[43] = 8'hAD;
+                hdr[44] = 8'hBE;
+                hdr[45] = 8'hEF;
+            }
+            State::HDR: {
+                hdr[idx] = rx_byte;
+            }
+            State::DECIDE: {
+                if arp_req {
+                    for i in 0..6 {
+                        hdr[i]      = hdr[22 + i];
+                        hdr[6 + i]  = MAC_ADDR[(5 - i) step 8];
+                        hdr[22 + i] = MAC_ADDR[(5 - i) step 8];
+                        hdr[32 + i] = hdr[22 + i];
+                    }
+                    hdr[20] = 8'h00;
+                    hdr[21] = 8'h02; // reply
+                    for i in 0..4 {
+                        hdr[28 + i] = IP_ADDR[(3 - i) step 8];
+                        hdr[38 + i] = hdr[28 + i];
+                    }
+                } else {
+                    // ICMP echo reply (unused otherwise)
+                    for i in 0..6 {
+                        hdr[i]     = hdr[6 + i];
+                        hdr[6 + i] = MAC_ADDR[(5 - i) step 8];
+                    }
+                    for i in 0..4 {
+                        hdr[26 + i] = hdr[30 + i];
+                        hdr[30 + i] = hdr[26 + i];
+                    }
+                    hdr[34] = 8'd0;
+                    hdr[36] = icmp_csum[15:8];
+                    hdr[37] = icmp_csum[7:0];
+                }
+            }
+            default: {}
+        }
+    }
+
+    always_ff {
+        if i_rst {
+            state     = State::IDLE;
+            kind      = Kind::ARP;
+            idx       = 6'd0;
+            emit_end  = 6'd0;
+            cnt       = 11'd0;
+            total     = 11'd0;
+            ack_pend  = 1'b0;
+            vid_known = 1'b0;
+            vid_mac   = 48'b0;
+            vid_ip    = 32'b0;
+            vid_port  = 16'b0;
+            ack_csum  = 16'b0;
+            wvalid    = 1'b0;
+            wdata     = 8'b0;
+            wcommit   = 1'b0;
+            vid_start = 1'b0;
+            vid_off   = 16'b0;
+            vid_valid = 1'b0;
+            lut_start = 1'b0;
+            lut_valid = 1'b0;
+            sdata     = 8'b0;
+            ev_arp    = 1'b0;
+            ev_icmp   = 1'b0;
+            ev_video  = 1'b0;
+            ev_drop   = 1'b0;
+        } else {
+            wvalid    = 1'b0;
+            wcommit   = 1'b0;
+            vid_start = 1'b0;
+            vid_valid = 1'b0;
+            lut_start = 1'b0;
+            lut_valid = 1'b0;
+            ev_arp    = 1'b0;
+            ev_icmp   = 1'b0;
+            ev_video  = 1'b0;
+            ev_drop   = 1'b0;
+            ack_csum  = ~ack_sum2;
+            if i_ack_req && vid_known {
+                ack_pend = 1'b1;
+            }
+
+            case state {
+                State::IDLE: {
+                    idx = 6'd0;
+                    if ack_pend && tx_room {
+                        // hdr is being loaded with the ack frame on this edge
+                        ack_pend = 1'b0;
+                        kind     = Kind::ACK;
+                        emit_end = 6'd45;
+                        total    = 11'd46;
+                        state    = State::EMIT;
+                    } else if i_rrec_valid {
+                        if !i_rflag || i_rlen <: 11'd42 {
+                            ev_drop = 1'b1;
+                            state   = State::RELEASE;
+                        } else {
+                            state = State::HDR;
+                        }
+                    }
+                }
+                State::HDR: {
+                    idx = idx + 1;
+                    if idx == 6'd41 {
+                        state = State::DECIDE;
+                    }
+                }
+                State::DECIDE: {
+                    idx = 6'd0;
+                    if arp_req {
+                        if tx_room {
+                            kind     = Kind::ARP;
+                            emit_end = 6'd41;
+                            total    = 11'd42;
+                            ev_arp   = 1'b1;
+                            state    = State::EMIT;
+                        } else {
+                            state = State::RELEASE;
+                        }
+                    } else if icmp_echo {
+                        kind     = Kind::ICMP;
+                        emit_end = 6'd41;
+                        total    = frame_total[10:0];
+                        cnt      = frame_total[10:0] - 11'd42;
+                        ev_icmp  = 1'b1;
+                        state    = State::EMIT;
+                    } else if udp_ok && udp_dport == VIDEO_PORT && udp_len >= 16'd10 {
+                        vid_known = 1'b1;
+                        vid_mac   = {hdr[6], hdr[7], hdr[8], hdr[9], hdr[10], hdr[11]};
+                        vid_ip    = {hdr[26], hdr[27], hdr[28], hdr[29]};
+                        vid_port  = {hdr[34], hdr[35]};
+                        cnt       = udp_len[10:0] - 11'd8;
+                        ev_video  = 1'b1;
+                        state     = State::VIDEO;
+                    } else if udp_ok && udp_dport == LUT_PORT {
+                        cnt       = udp_len[10:0] - 11'd8;
+                        lut_start = 1'b1;
+                        state     = State::LUT;
+                    } else {
+                        state = State::RELEASE;
+                    }
+                }
+                State::EMIT: {
+                    wvalid = 1'b1;
+                    wdata  = hdr[idx];
+                    idx    = idx + 1;
+                    if idx == emit_end {
+                        state = if kind == Kind::ICMP && cnt != 11'd0 ? State::COPY : State::COMMIT;
+                    }
+                }
+                State::COPY: {
+                    wvalid = 1'b1;
+                    wdata  = rx_byte;
+                    cnt    = cnt - 1;
+                    if cnt == 11'd1 {
+                        state = State::COMMIT;
+                    }
+                }
+                State::COMMIT: {
+                    wcommit = 1'b1;
+                    state   = if kind == Kind::ACK ? State::IDLE : State::RELEASE;
+                }
+                State::VIDEO: {
+                    // the first two payload bytes are the offset
+                    sdata = rx_byte;
+                    if idx == 6'd0 {
+                        vid_off[15:8] = rx_byte;
+                        idx           = 6'd1;
+                    } else if idx == 6'd1 {
+                        vid_off[7:0] = rx_byte;
+                        vid_start    = 1'b1;
+                        idx          = 6'd2;
+                    } else {
+                        vid_valid = 1'b1;
+                    }
+                    cnt = cnt - 1;
+                    if cnt == 11'd1 {
+                        state = State::RELEASE;
+                    }
+                }
+                State::LUT: {
+                    sdata     = rx_byte;
+                    lut_valid = 1'b1;
+                    cnt       = cnt - 1;
+                    if cnt == 11'd1 {
+                        state = State::RELEASE;
+                    }
+                }
+                State::RELEASE: {
+                    state = State::IDLE;
+                }
+                default: {
+                    state = State::IDLE;
+                }
+            }
+        }
+    }
+}

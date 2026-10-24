@@ -1,0 +1,298 @@
+// Copied unchanged from riscv-veryl/src/pkt_fifo.veryl (hardware-proven on Tang Primer 20K).
+//
+// PktFifo: dual-clock, store-and-forward packet FIFO of bytes.
+//
+// The writer pushes one byte per cycle into a *tentative* region and
+// then either `commit`s it as one frame (with a length and a flag) or
+// `abort`s it (the tentative bytes vanish). Only committed frames are
+// visible to the reader, which sees them one at a time through a frame
+// record `{len, flag}` and reads the bytes with 1..4-byte pops.
+//
+// Frame starts are rounded up to 4-byte boundaries at commit, so the
+// storage is four byte-lane RAMs (row = pointer[MSB:2], lane =
+// pointer[1:0]) and a 4-byte pop is always a single-row access. Rows
+// are inferred as dual-clock BSRAM (write in the writer's clock, a
+// combinational read of a registered row index in the reader's clock,
+// the `Memory` style). Pointers cross the domains as gray codes through
+// 2-FF synchronisers; the space reported to the writer is therefore
+// conservative (it lags the reader), never optimistic.
+//
+// Frame records travel through a small dual-clock FIFO of their own
+// (registers), `REC_LOG2` deep. The writer must not commit when
+// `o_wrec_full` is set.
+//
+// Read side protocol: while `o_rrec_valid`, `o_rlen`/`o_rflag` describe
+// the head frame and `o_rremain` the bytes of it not yet popped.
+// `i_rpop` with `i_rpop_n` (1..4) consumes min(n, remain) bytes: the
+// data of the row at the current pointer is on `o_rdata` (byte 0 of the
+// row in [7:0]) before the pop, and `o_rpop_cnt` says how many bytes the
+// pop actually consumed. `i_rrelease` drops whatever remains of the
+// head frame and advances to the next record.
+module PktFifo #(
+    param DEPTH_LOG2: u32 = 11, // bytes of storage = 2^DEPTH_LOG2 (2 KiB)
+    param REC_LOG2  : u32 = 3 , // frame records = 2^REC_LOG2
+) (
+    // ---- write side ----
+    i_wclk     : input  'w clock                ,
+    i_wrst     : input  'w logic                , // synchronous, active high
+    i_wvalid   : input  'w logic                , // push i_wdata (ignored when no space)
+    i_wdata    : input  'w logic<8>             ,
+    i_wcommit  : input  'w logic                , // commit the tentative bytes as a frame
+    i_wlen     : input  'w logic<11>            , // its length (informational, stored in the record)
+    i_wflag    : input  'w logic                , // its flag (stored in the record)
+    i_wabort   : input  'w logic                , // discard the tentative bytes
+    o_wspace   : output 'w logic<DEPTH_LOG2 + 1>, // bytes that can still be pushed
+    o_wrec_full: output 'w logic                ,
+    o_wcount   : output 'w logic<DEPTH_LOG2>    , // tentative bytes pushed since the last commit/abort
+
+    // ---- read side ----
+    i_rclk      : input  'r clock    ,
+    i_rrst      : input  'r logic    , // synchronous, active high
+    o_rrec_valid: output 'r logic    ,
+    o_rlen      : output 'r logic<11>,
+    o_rflag     : output 'r logic    ,
+    o_rremain   : output 'r logic<11>,
+    o_rdata     : output 'r logic<32>, // the row at the read pointer
+    i_rpop      : input  'r logic    ,
+    i_rpop_n    : input  'r logic<3> , // 1..4
+    o_rpop_cnt  : output 'r logic<3> , // bytes consumed by a pop this cycle
+    i_rrelease  : input  'r logic    ,
+) {
+    const ROWS    : u32 = 1 << (DEPTH_LOG2 - 2);
+    const ROW_W   : u32 = DEPTH_LOG2 - 2; // row index bits
+    const RPTR_W  : u32 = ROW_W + 1; // row pointer with wrap bit
+    const RECS    : u32 = 1 << REC_LOG2;
+    const RECPTR_W: u32 = REC_LOG2 + 1;
+
+    // ---------------------------------------------------------------
+    // Gray code helpers
+    // ---------------------------------------------------------------
+    function to_gray_row (
+        b: input logic<RPTR_W>,
+    ) -> logic<RPTR_W> {
+        return b ^ (b >> 1);
+    }
+    function from_gray_row (
+        g: input logic<RPTR_W>,
+    ) -> logic<RPTR_W> {
+        var b: logic<RPTR_W>;
+        b = g;
+        for i in 1..RPTR_W {
+            b = b ^ (g >> i);
+        }
+        return b;
+    }
+    function to_gray_rec (
+        b: input logic<RECPTR_W>,
+    ) -> logic<RECPTR_W> {
+        return b ^ (b >> 1);
+    }
+    function from_gray_rec (
+        g: input logic<RECPTR_W>,
+    ) -> logic<RECPTR_W> {
+        var b: logic<RECPTR_W>;
+        b = g;
+        for i in 1..RECPTR_W {
+            b = b ^ (g >> i);
+        }
+        return b;
+    }
+
+    // ---------------------------------------------------------------
+    // Storage
+    // ---------------------------------------------------------------
+    var lane0: logic<8> [ROWS];
+    var lane1: logic<8> [ROWS];
+    var lane2: logic<8> [ROWS];
+    var lane3: logic<8> [ROWS];
+
+    var rec_len : logic<11>     [RECS];
+    var rec_flag: logic         [RECS];
+    var rec_rows: logic<RPTR_W> [RECS]; // rows the frame occupies (its start is row aligned)
+
+    // Read-domain registers (declared here: the write domain samples the
+    // reader's gray pointers)
+    var rrow     : 'r logic<RPTR_W>  ; // row pointer (published)
+    var rrow_g   : 'r logic<RPTR_W>  ;
+    var wrow_g_r1: 'r logic<RPTR_W>  ;
+    var wrow_g_r2: 'r logic<RPTR_W>  ;
+    var rrec     : 'r logic<RECPTR_W>;
+    var rrec_g   : 'r logic<RECPTR_W>;
+    var wrec_g_r1: 'r logic<RECPTR_W>;
+    var wrec_g_r2: 'r logic<RECPTR_W>;
+    var consumed : 'r logic<11>      ; // bytes of the head frame already popped
+    var rlane    : 'r logic<2>       ; // byte lane of the next unread byte (row-relative)
+
+    // ---------------------------------------------------------------
+    // Write domain
+    // ---------------------------------------------------------------
+    var wptr     : 'w logic<DEPTH_LOG2 + 1>; // tentative byte pointer (with wrap bit)
+    var wrow_c   : 'w logic<RPTR_W>        ; // committed row pointer (published)
+    var wrow_c_g : 'w logic<RPTR_W>        ; // ... as gray
+    var rrow_g_w1: 'w logic<RPTR_W>        ; // reader's row pointer, synchronised
+    var rrow_g_w2: 'w logic<RPTR_W>        ;
+    var wrec     : 'w logic<RECPTR_W>      ; // record write pointer
+    var wrec_g   : 'w logic<RECPTR_W>      ;
+    var rrec_g_w1: 'w logic<RECPTR_W>      ;
+    var rrec_g_w2: 'w logic<RECPTR_W>      ;
+
+    let rrow_w: 'w logic<RPTR_W>   = from_gray_row(rrow_g_w2);
+    let rrec_w: 'w logic<RECPTR_W> = from_gray_rec(rrec_g_w2);
+    // bytes in use = tentative pointer - reader's row pointer (in bytes)
+    let used_w   : 'w logic<DEPTH_LOG2 + 1> = wptr - {rrow_w, 2'b00};
+    let depth_b  : 'w logic<DEPTH_LOG2 + 1> = {1'b1, 1'b0 repeat DEPTH_LOG2};
+    let space_w  : 'w logic<DEPTH_LOG2 + 1> = depth_b - used_w;
+    let wrec_full: 'w logic                 = (wrec[RECPTR_W - 1] != rrec_w[RECPTR_W - 1])
+        && (wrec[REC_LOG2 - 1:0] == rrec_w[REC_LOG2 - 1:0]);
+    let wcount_f : 'w logic<DEPTH_LOG2 + 1> = wptr - {wrow_c, 2'b00};
+    let wcount   : 'w logic<DEPTH_LOG2>     = wcount_f[DEPTH_LOG2 - 1:0];
+    let w_accept : 'w logic                 = i_wvalid && (space_w != 0);
+    // commit: round the tentative pointer up to the next row
+    let wptr_round: 'w logic<DEPTH_LOG2 + 1> = wptr + 3;
+    let wrow_next : 'w logic<RPTR_W>         = wptr_round[DEPTH_LOG2:2];
+
+    assign o_wspace    = space_w;
+    assign o_wrec_full = wrec_full;
+    assign o_wcount    = wcount;
+
+    let wlane: 'w logic<2>     = wptr[1:0];
+    let wrow : 'w logic<ROW_W> = wptr[ROW_W + 1:2];
+
+    always_ff (i_wclk) {
+        if w_accept && wlane == 2'd0 {
+            lane0[wrow] = i_wdata;
+        }
+    }
+    always_ff (i_wclk) {
+        if w_accept && wlane == 2'd1 {
+            lane1[wrow] = i_wdata;
+        }
+    }
+    always_ff (i_wclk) {
+        if w_accept && wlane == 2'd2 {
+            lane2[wrow] = i_wdata;
+        }
+    }
+    always_ff (i_wclk) {
+        if w_accept && wlane == 2'd3 {
+            lane3[wrow] = i_wdata;
+        }
+    }
+    always_ff (i_wclk) {
+        if i_wcommit && !wrec_full {
+            rec_len[wrec[REC_LOG2 - 1:0]]  = i_wlen;
+            rec_flag[wrec[REC_LOG2 - 1:0]] = i_wflag;
+            rec_rows[wrec[REC_LOG2 - 1:0]] = wrow_next - wrow_c;
+        }
+    }
+
+    unsafe (cdc) {
+        always_ff (i_wclk) {
+            if i_wrst {
+                wptr      = '0;
+                wrow_c    = '0;
+                wrow_c_g  = '0;
+                wrec      = '0;
+                wrec_g    = '0;
+                rrow_g_w1 = '0;
+                rrow_g_w2 = '0;
+                rrec_g_w1 = '0;
+                rrec_g_w2 = '0;
+            } else {
+                rrow_g_w1 = rrow_g;
+                rrow_g_w2 = rrow_g_w1;
+                rrec_g_w1 = rrec_g;
+                rrec_g_w2 = rrec_g_w1;
+                if i_wabort {
+                    wptr = {wrow_c, 2'b00};
+                } else if i_wcommit && !wrec_full {
+                    wptr     = {wrow_next, 2'b00};
+                    wrow_c   = wrow_next;
+                    wrow_c_g = to_gray_row(wrow_next);
+                    wrec     = wrec + 1;
+                    wrec_g   = to_gray_rec(wrec + 1);
+                } else if w_accept {
+                    wptr = wptr + 1;
+                }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Read domain
+    // ---------------------------------------------------------------
+
+    let wrec_r   : 'r logic<RECPTR_W> = from_gray_rec(wrec_g_r2);
+    let rec_valid: 'r logic           = wrec_r != rrec;
+    var head_len : 'r logic<11>      ;
+    var head_flag: 'r logic          ;
+    var head_rows: 'r logic<RPTR_W>  ;
+    let remain   : 'r logic<11>       = head_len - consumed;
+    let pop_n    : 'r logic<3>        = if i_rpop_n >: 3'd4 ? 3'd4 : i_rpop_n;
+    let pop_cnt  : 'r logic<3>        = if !rec_valid || !i_rpop ?
+        3'd0
+    : if remain <: {8'b0, pop_n} ?
+        remain[2:0]
+    :
+        pop_n
+    ;
+    // remaining bytes are always read from lane 0 up (frame starts are row aligned),
+    // so a pop of k bytes advances the lane by k and the row when it wraps.
+    let lane_sum: 'r logic<3>     = {1'b0, rlane} + pop_cnt;
+    let row_idx : 'r logic<ROW_W> = rrow[ROW_W - 1:0];
+    // the row after the head frame = frame start row + head_rows; the frame
+    // start row is the current row minus the rows already consumed
+    var frame_row: 'r logic<RPTR_W>;
+
+    assign o_rrec_valid = rec_valid;
+    assign o_rlen       = head_len;
+    assign o_rflag      = head_flag;
+    assign o_rremain    = if rec_valid ? remain : 11'd0;
+    assign o_rpop_cnt   = pop_cnt;
+
+    unsafe (cdc) {
+        assign o_rdata   = {lane3[row_idx], lane2[row_idx], lane1[row_idx], lane0[row_idx]};
+        assign head_len  = rec_len[rrec[REC_LOG2 - 1:0]];
+        assign head_flag = rec_flag[rrec[REC_LOG2 - 1:0]];
+        assign head_rows = rec_rows[rrec[REC_LOG2 - 1:0]];
+
+        always_ff (i_rclk) {
+            if i_rrst {
+                rrow      = '0;
+                rrow_g    = '0;
+                wrow_g_r1 = '0;
+                wrow_g_r2 = '0;
+                rrec      = '0;
+                rrec_g    = '0;
+                wrec_g_r1 = '0;
+                wrec_g_r2 = '0;
+                consumed  = '0;
+                rlane     = '0;
+                frame_row = '0;
+            } else {
+                wrow_g_r1 = wrow_c_g;
+                wrow_g_r2 = wrow_g_r1;
+                wrec_g_r1 = wrec_g;
+                wrec_g_r2 = wrec_g_r1;
+                if rec_valid && i_rrelease {
+                    rrow      = frame_row + head_rows;
+                    rrow_g    = to_gray_row(frame_row + head_rows);
+                    frame_row = frame_row + head_rows;
+                    rrec      = rrec + 1;
+                    rrec_g    = to_gray_rec(rrec + 1);
+                    consumed  = '0;
+                    rlane     = '0;
+                } else if pop_cnt != 3'd0 {
+                    consumed = consumed + {8'b0, pop_cnt};
+                    rlane    = lane_sum[1:0];
+                    if lane_sum[2] {
+                        rrow   = rrow + 1;
+                        rrow_g = to_gray_row(rrow + 1);
+                    }
+                }
+            }
+        }
+    }
+
+    let _unused: logic = |wrow_g_r2; // reader does not need the writer's row (records gate visibility)
+}
