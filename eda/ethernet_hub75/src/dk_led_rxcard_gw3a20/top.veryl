@@ -1,0 +1,393 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+//
+// DK_LED-RXCARD_GW3A-LV20UG324S_V2.1 (Arora III GW3A-20, LED receiving
+// card) top of ethernet_hub75. Pins: DBUG1298.
+//
+//   RTL8211E U43 ("PHY1", RGMII, 10/100/1000 Mb/s); RXC on H4 (GCLKT_15).
+//   The PHY2 port (U42) is not used.
+//   HUB75: J4 and J6 of the first connector group (J4..J11 share CLK /
+//   LAT / OE / A..E), each a chain of two 64x64 panels = 128x64;
+//   lanes 0..3 = J4 R1/R2, J6 R1/R2 → 128x128. The second group (J12..J19)
+//   is kept blank (OE high).
+//   Clocks from the 50 MHz oscillator (B16) through PLLB (VCO 1000 MHz):
+//     125 MHz system / RGMII TX, 125 MHz + 90° (TXC if TXC_SHIFTED),
+//     50 MHz display (HUB75 CLK = 50 / 3 = 16.7 MHz).
+//
+// HUB75_IMPL (0: soft, 1: GMT) comes from the package ethernet_hub75_cfg
+// that the build writes (project.tcl), so that both versions build from
+// one top.
+//
+// LEDs (active low): LED1 heartbeat (panel frames) once the PLL is locked,
+// LED2 network activity (video / ARP / ICMP); LED2 blinks fast when no
+// RTL8211E answered on MDIO.
+module DkLedRxcardTop #(
+    param HUB75_IMPL    : u32 = $sv::ethernet_hub75_cfg::HUB75_IMPL,
+    param CHAIN_REVERSE : bit = 0                                  ,
+    param COMPONENT_BITS: u32 = 6                                  ,
+    param CLOCK_DIVIDER : u32 = 0                                  ,
+    param CLK_LOW_EXTRA : u32 = 1                                  ,
+    param RX_DELAY      : u32 = 0                                  , // IODELAY steps (12.5 ps) on RXD / RX_CTL
+    param TXC_SHIFTED   : bit = 0                                  , // 1: TXC from the 90° clock (PHY TX delay off)
+    param PHY_RST_LOG2  : u32 = 21                                 , // PHY reset 2^N system clocks (17 ms)
+    param PHY_WAIT_LOG2 : u32 = 24                                 , // MDIO set-up after 2^N clocks (134 ms)
+) (
+    clk50: input 'osc clock, // B16
+    key_n: input 's   logic, // J6, low when pressed: reset
+
+    led: output 's logic<2>, // F13, F12 (LED2, LED1)
+
+    phy_rst_n   : output 's  logic       , // F3, both PHYs
+    phy_mdc     : output 's  logic       , // K5
+    phy_mdio    : inout      tri logic   , // K6
+    rgmii_txc   : output 's  logic       ,
+    rgmii_tx_ctl: output 's  logic       ,
+    rgmii_txd   : output 's  logic    <4>,
+    rgmii_rxc   : input  'rx clock       ,
+    rgmii_rx_ctl: input  'rx logic       ,
+    rgmii_rxd   : input  'rx logic    <4>,
+
+    hub75_j4  : output 'd logic<6>, // R1 G1 B1 R2 G2 B2
+    hub75_j6  : output 'd logic<6>,
+    hub75a_row: output 'd logic<5>, // A..E
+    hub75a_clk: output 'd logic   ,
+    hub75a_lat: output 'd logic   ,
+    hub75a_oe : output 'd logic   ,
+    hub75b_oe : output 'd logic   , // second group, blanked
+) {
+    // ---- clocks and resets ----
+    var sys_clk : 's clock;
+    var clk90   : 's clock;
+    var disp_clk: 'd clock;
+    var pll_lock:    logic;
+
+    unsafe (cdc) {
+        inst u_pll: $sv::pllb_hub75 (
+            clkout0: sys_clk ,
+            clkout1: clk90   ,
+            clkout2: disp_clk,
+            lock   : pll_lock,
+            clkin  : clk50   ,
+        );
+    }
+
+    var lock_s1: 's logic                  ;
+    var lock_s2: 's logic                  ;
+    var key_s1 : 's logic                  ;
+    var key_s2 : 's logic                  ;
+    var rst_cnt: 's logic<5>               ;
+    var sys_rst: 's logic                  ;
+    var phy_cnt: 's logic<PHY_RST_LOG2 + 1>;
+
+    unsafe (cdc) {
+        always_ff (sys_clk) {
+            lock_s1 = pll_lock;
+            lock_s2 = lock_s1;
+            key_s1  = key_n;
+            key_s2  = key_s1;
+            if !lock_s2 || !key_s2 {
+                rst_cnt = 5'd0;
+                sys_rst = 1'b1;
+            } else if !rst_cnt[4] {
+                rst_cnt = rst_cnt + 5'd1;
+                sys_rst = 1'b1;
+            } else {
+                sys_rst = 1'b0;
+            }
+        }
+    }
+
+    always_ff (sys_clk) {
+        if sys_rst {
+            phy_cnt = 0 as PHY_RST_LOG2 + 1;
+        } else if !phy_cnt[PHY_RST_LOG2] {
+            phy_cnt = phy_cnt + 1;
+        }
+    }
+    assign phy_rst_n = phy_cnt[PHY_RST_LOG2];
+
+    var drst1: 'd logic;
+    var drst : 'd logic;
+    unsafe (cdc) {
+        always_ff (disp_clk) {
+            drst1 = sys_rst;
+            drst  = drst1;
+        }
+    }
+
+    // RXC may be stopped while the PHY is in reset or has no link; the
+    // receive side starts from its power-up state and resynchronises on
+    // the next frame anyway.
+    var rrst1: 'rx logic;
+    var rrst : 'rx logic;
+    unsafe (cdc) {
+        always_ff (rgmii_rxc) {
+            rrst1 = sys_rst;
+            rrst  = rrst1;
+        }
+    }
+
+    // ---- PHY management: RGMII delays ----
+    var mdc     : 's logic   ;
+    var mdo     : 's logic   ;
+    var mdoe    : 's logic   ;
+    var mdi     : 's logic   ;
+    var phy_done: 's logic   ;
+    var phy_cnt2: 's logic<2>;
+
+    inst u_phy_init: Rtl8211eInit #(
+        WAIT_LOG2: PHY_WAIT_LOG2,
+    ) (
+        i_clk  : sys_clk ,
+        i_rst  : sys_rst ,
+        o_done : phy_done,
+        o_count: phy_cnt2,
+        o_mdc  : mdc     ,
+        o_mdo  : mdo     ,
+        o_mdoe : mdoe    ,
+        i_mdi  : mdi     ,
+    );
+
+    assign phy_mdc  = mdc;
+    assign phy_mdio = if mdoe ? mdo : 1'bz;
+    unsafe (cdc) {
+        always_ff (sys_clk) {
+            mdi = phy_mdio;
+        }
+    }
+
+    // ---- link speed ----
+    var speed : 's  logic<2>;
+    var gbe_r1: 'rx logic   ;
+    var gbe_r : 'rx logic   ;
+
+    inst u_speed: eth_mac::RgmiiSpeedMeter (
+        i_rxc  : rgmii_rxc,
+        i_clk  : sys_clk  ,
+        i_rst  : sys_rst  ,
+        o_speed: speed    ,
+    );
+
+    unsafe (cdc) {
+        always_ff (rgmii_rxc) {
+            gbe_r1 = speed == 2'd2;
+            gbe_r  = gbe_r1;
+        }
+    }
+
+    // ---- RGMII receive: IODELAY → IDDR ----
+    let rx_pins: 'rx logic<5> = {rgmii_rx_ctl, rgmii_rxd};
+    var rx_dly : 'rx logic<5>;
+    var rx_rise: 'rx logic<5>;
+    var rx_fall: 'rx logic<5>;
+
+    for i in 0..5 :g_rx {
+        unsafe (cdc) {
+            inst u_dly: $sv::IODELAY #(
+                C_STATIC_DLY: RX_DELAY,
+                DYN_DLY_EN  : "FALSE" ,
+                ADAPT_EN    : "FALSE" ,
+            ) (
+                DI     : rx_pins[i],
+                SDTAP  : 1'b0      ,
+                VALUE  : 1'b0      ,
+                DLYSTEP: 8'd0      ,
+                DO     : rx_dly[i] ,
+                DF     : _         ,
+            );
+            inst u_iddr: $sv::IDDR (
+                D  : rx_dly[i] ,
+                CLK: rgmii_rxc ,
+                Q0 : rx_rise[i],
+                Q1 : rx_fall[i],
+            );
+        }
+    }
+
+    var rx_bvalid: 'rx logic   ;
+    var rx_bdata : 'rx logic<8>;
+    var rx_end   : 'rx logic   ;
+    var rx_err   : 'rx logic   ;
+
+    inst u_rgmii_rx: eth_mac::RgmiiRx (
+        i_clk   : rgmii_rxc,
+        i_rst   : rrst     ,
+        i_gbe   : gbe_r    ,
+        i_rise  : rx_rise  ,
+        i_fall  : rx_fall  ,
+        o_bvalid: rx_bvalid,
+        o_bdata : rx_bdata ,
+        o_end   : rx_end   ,
+        o_err   : rx_err   ,
+    );
+
+    // ---- RGMII transmit: ODDR ----
+    var tx_ce   : 's logic   ;
+    var tx_ben  : 's logic   ;
+    var tx_bdata: 's logic<8>;
+    var tx_d0   : 's logic<5>;
+    var tx_d1   : 's logic<5>;
+    var tx_c0   : 's logic   ;
+    var tx_c1   : 's logic   ;
+    var tx_pins : 's logic<5>;
+
+    inst u_rgmii_tx: eth_mac::RgmiiTx (
+        i_clk  : sys_clk ,
+        i_rst  : sys_rst ,
+        i_speed: speed   ,
+        o_ce   : tx_ce   ,
+        i_ben  : tx_ben  ,
+        i_bdata: tx_bdata,
+        o_d0   : tx_d0   ,
+        o_d1   : tx_d1   ,
+        o_c0   : tx_c0   ,
+        o_c1   : tx_c1   ,
+    );
+
+    for i in 0..5 :g_tx {
+        inst u_oddr: $sv::ODDR (
+            D0 : tx_d0[i]  ,
+            D1 : tx_d1[i]  ,
+            TX : 1'b0      ,
+            CLK: sys_clk   ,
+            Q0 : tx_pins[i],
+            Q1 : _         ,
+        );
+    }
+    assign rgmii_tx_ctl = tx_pins[4];
+    assign rgmii_txd    = tx_pins[3:0];
+
+    if TXC_SHIFTED :g_txc90 {
+        // TXC pattern re-timed into the 90° clock (6 ns later at the
+        // earliest edge); constant at 1000 Mb/s
+        var c0_90: logic;
+        var c1_90: logic;
+        unsafe (cdc) {
+            always_ff (clk90) {
+                c0_90 = tx_c0;
+                c1_90 = tx_c1;
+            }
+            inst u_oddr_txc: $sv::ODDR (
+                D0 : c0_90    ,
+                D1 : c1_90    ,
+                TX : 1'b0     ,
+                CLK: clk90    ,
+                Q0 : rgmii_txc,
+                Q1 : _        ,
+            );
+        }
+    } else :g_txc0 {
+        inst u_oddr_txc: $sv::ODDR (
+            D0 : tx_c0    ,
+            D1 : tx_c1    ,
+            TX : 1'b0     ,
+            CLK: sys_clk  ,
+            Q0 : rgmii_txc,
+            Q1 : _        ,
+        );
+    }
+
+    // ---- core ----
+    var row     : 'd logic<5>;
+    var r       : 'd logic<4>;
+    var g       : 'd logic<4>;
+    var b       : 'd logic<4>;
+    var oe      : 'd logic   ;
+    var lat     : 'd logic   ;
+    var hclk    : 'd logic   ;
+    var frame   : 'd logic   ;
+    var ev_video: 's logic   ;
+    var ev_net  : 's logic   ;
+    var ev_drop : 's logic   ;
+    var ev_flip : 's logic   ;
+
+    unsafe (cdc) {
+        inst u_core: EthernetHub75Core #(
+            WIDTH         : 128           ,
+            HEIGHT        : 128           ,
+            SCAN_ROWS     : 32            ,
+            COMPONENT_BITS: COMPONENT_BITS,
+            CLOCK_DIVIDER : CLOCK_DIVIDER ,
+            CLK_LOW_EXTRA : CLK_LOW_EXTRA ,
+            CHAIN_REVERSE : CHAIN_REVERSE ,
+            HUB75_IMPL    : HUB75_IMPL    ,
+        ) (
+            i_clk      : sys_clk  ,
+            i_rst      : sys_rst  ,
+            i_rx_clk   : rgmii_rxc,
+            i_rx_rst   : rrst     ,
+            i_rx_bvalid: rx_bvalid,
+            i_rx_bdata : rx_bdata ,
+            i_rx_end   : rx_end   ,
+            i_rx_err   : rx_err   ,
+            i_tx_clk   : sys_clk  ,
+            i_tx_rst   : sys_rst  ,
+            i_tx_ce    : tx_ce    ,
+            o_tx_ben   : tx_ben   ,
+            o_tx_bdata : tx_bdata ,
+            i_dclk     : disp_clk ,
+            i_drst     : drst     ,
+            o_row      : row      ,
+            o_r        : r        ,
+            o_g        : g        ,
+            o_b        : b        ,
+            o_oe       : oe       ,
+            o_lat      : lat      ,
+            o_hclk     : hclk     ,
+            o_frame    : frame    ,
+            o_ev_video : ev_video ,
+            o_ev_net   : ev_net   ,
+            o_ev_drop  : ev_drop  ,
+            o_ev_flip  : ev_flip  ,
+        );
+    }
+
+    assign hub75_j4   = {b[1], g[1], r[1], b[0], g[0], r[0]};
+    assign hub75_j6   = {b[3], g[3], r[3], b[2], g[2], r[2]};
+    assign hub75a_row = row;
+    assign hub75a_clk = hclk;
+    assign hub75a_lat = lat;
+    assign hub75a_oe  = oe;
+    assign hub75b_oe  = 1'b1;
+
+    // ---- LEDs ----
+    var frame_cnt: 'd logic<8> ;
+    var hb_s1    : 's logic    ;
+    var hb_s2    : 's logic    ;
+    var act      : 's logic<24>; // ~134 ms stretch
+    var blink    : 's logic<23>;
+
+    always_ff (disp_clk) {
+        if drst {
+            frame_cnt = 8'd0;
+        } else if frame {
+            frame_cnt = frame_cnt + 8'd1;
+        }
+    }
+
+    unsafe (cdc) {
+        always_ff (sys_clk) {
+            hb_s1 = frame_cnt[7];
+            hb_s2 = hb_s1;
+        }
+    }
+
+    always_ff (sys_clk) {
+        if sys_rst {
+            act   = 24'd0;
+            blink = 23'd0;
+        } else {
+            blink = blink + 23'd1;
+            if ev_video || ev_net || ev_flip {
+                act = '1;
+            } else if act != 24'd0 {
+                act = act - 24'd1;
+            }
+        }
+    }
+
+    let no_phy: 's logic = phy_done && phy_cnt2 == 2'd0;
+    assign led = ~{(act != 24'd0) || (no_phy && blink[22]), lock_s2 && hb_s2};
+
+    let _unused: 's logic = ev_drop;
+}

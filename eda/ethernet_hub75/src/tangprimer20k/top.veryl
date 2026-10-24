@@ -21,7 +21,6 @@ module TangPrimer20kTop #(
 ) (
     clk27: input 'osc clock, // 27 MHz (H11)
 
-
     led: output 's logic<6>,
 
     rmii_txclk : input  'p clock   , // 50 MHz reference (RX and TX)

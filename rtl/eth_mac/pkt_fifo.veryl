@@ -1,4 +1,9 @@
-// Copied unchanged from riscv-veryl/src/pkt_fifo.veryl (hardware-proven on Tang Primer 20K).
+// From riscv-veryl/src/pkt_fifo.veryl (hardware-proven on Tang Primer 20K).
+// Changed here: the writer's copy of the read pointers is converted from
+// gray in its own register stage, and so is the reader's copy of the
+// record pointer (125 MHz on GW3A): free space / record-full show a read,
+// and a committed frame becomes visible, one clock later; the reader's
+// bytes-remaining count is a register instead of head_len - consumed.
 //
 // PktFifo: dual-clock, store-and-forward packet FIFO of bytes.
 //
@@ -120,6 +125,7 @@ module PktFifo #(
     var rrec_g   : 'r logic<RECPTR_W>;
     var wrec_g_r1: 'r logic<RECPTR_W>;
     var wrec_g_r2: 'r logic<RECPTR_W>;
+    var wrec_r   : 'r logic<RECPTR_W>; // ... converted to binary
     var consumed : 'r logic<11>      ; // bytes of the head frame already popped
     var rlane    : 'r logic<2>       ; // byte lane of the next unread byte (row-relative)
 
@@ -135,9 +141,8 @@ module PktFifo #(
     var wrec_g   : 'w logic<RECPTR_W>      ;
     var rrec_g_w1: 'w logic<RECPTR_W>      ;
     var rrec_g_w2: 'w logic<RECPTR_W>      ;
-
-    let rrow_w: 'w logic<RPTR_W>   = from_gray_row(rrow_g_w2);
-    let rrec_w: 'w logic<RECPTR_W> = from_gray_rec(rrec_g_w2);
+    var rrow_w   : 'w logic<RPTR_W>        ; // ... converted to binary
+    var rrec_w   : 'w logic<RECPTR_W>      ;
     // bytes in use = tentative pointer - reader's row pointer (in bytes)
     let used_w   : 'w logic<DEPTH_LOG2 + 1> = wptr - {rrow_w, 2'b00};
     let depth_b  : 'w logic<DEPTH_LOG2 + 1> = {1'b1, 1'b0 repeat DEPTH_LOG2};
@@ -198,11 +203,15 @@ module PktFifo #(
                 rrow_g_w2 = '0;
                 rrec_g_w1 = '0;
                 rrec_g_w2 = '0;
+                rrow_w    = '0;
+                rrec_w    = '0;
             } else {
                 rrow_g_w1 = rrow_g;
                 rrow_g_w2 = rrow_g_w1;
                 rrec_g_w1 = rrec_g;
                 rrec_g_w2 = rrec_g_w1;
+                rrow_w    = from_gray_row(rrow_g_w2);
+                rrec_w    = from_gray_rec(rrec_g_w2);
                 if i_wabort {
                     wptr = {wrow_c, 2'b00};
                 } else if i_wcommit && !wrec_full {
@@ -222,12 +231,11 @@ module PktFifo #(
     // Read domain
     // ---------------------------------------------------------------
 
-    let wrec_r   : 'r logic<RECPTR_W> = from_gray_rec(wrec_g_r2);
     let rec_valid: 'r logic           = wrec_r != rrec;
     var head_len : 'r logic<11>      ;
     var head_flag: 'r logic          ;
     var head_rows: 'r logic<RPTR_W>  ;
-    let remain   : 'r logic<11>       = head_len - consumed;
+    var remain   : 'r logic<11>      ; // = head_len - consumed while rec_valid
     let pop_n    : 'r logic<3>        = if i_rpop_n >: 3'd4 ? 3'd4 : i_rpop_n;
     let pop_cnt  : 'r logic<3>        = if !rec_valid || !i_rpop ?
         3'd0
@@ -266,6 +274,8 @@ module PktFifo #(
                 rrec_g    = '0;
                 wrec_g_r1 = '0;
                 wrec_g_r2 = '0;
+                wrec_r    = '0;
+                remain    = '0;
                 consumed  = '0;
                 rlane     = '0;
                 frame_row = '0;
@@ -274,6 +284,7 @@ module PktFifo #(
                 wrow_g_r2 = wrow_g_r1;
                 wrec_g_r1 = wrec_g;
                 wrec_g_r2 = wrec_g_r1;
+                wrec_r    = from_gray_rec(wrec_g_r2);
                 if rec_valid && i_rrelease {
                     rrow      = frame_row + head_rows;
                     rrow_g    = to_gray_row(frame_row + head_rows);
@@ -281,14 +292,19 @@ module PktFifo #(
                     rrec      = rrec + 1;
                     rrec_g    = to_gray_rec(rrec + 1);
                     consumed  = '0;
+                    remain    = rec_len[rrec[REC_LOG2 - 1:0] + 1];
                     rlane     = '0;
                 } else if pop_cnt != 3'd0 {
                     consumed = consumed + {8'b0, pop_cnt};
+                    remain   = remain - {8'b0, pop_cnt};
                     rlane    = lane_sum[1:0];
                     if lane_sum[2] {
                         rrow   = rrow + 1;
                         rrow_g = to_gray_row(rrow + 1);
                     }
+                } else {
+                    // also picks up a record that has just become visible
+                    remain = head_len - consumed;
                 }
             }
         }

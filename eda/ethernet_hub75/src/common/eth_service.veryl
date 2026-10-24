@@ -19,6 +19,10 @@
 // a reply is built in place in `hdr` and sent, followed (ICMP) by the
 // rest of the request copied from the RX FIFO.
 //
+// The header checks are registered in CLASSIFY and acted on in DECIDE,
+// and the TX FIFO room seen in IDLE is a registered flag that stays clear
+// for two clocks after a commit (125 MHz on GW3A).
+//
 // MAC_ADDR is written in the usual order (first byte on the wire in bits
 // 47:40). The default 11:22:33:44:55:66 is the one of the Chisel design;
 // note that its first byte has the group (multicast) bit set.
@@ -71,6 +75,7 @@ module EthService #(
     enum State {
         IDLE,
         HDR,
+        CLASSIFY,
         DECIDE,
         EMIT,
         COPY,
@@ -93,6 +98,16 @@ module EthService #(
     var cnt     : logic<11>     ; // bytes left to copy / stream
     var total   : logic<11>     ; // reply frame length
 
+    // registered in CLASSIFY
+    var d_arp   : logic    ;
+    var d_icmp  : logic    ;
+    var d_video : logic    ;
+    var d_lut   : logic    ;
+    var d_room  : logic    ;
+    var d_total : logic<11>; // ICMP reply frame length
+    var d_udplen: logic<11>;
+    var room_q  : logic    ; // tx_room a clock ago, cleared around commits
+
     var ack_pend : logic    ;
     var vid_known: logic    ;
     var vid_mac  : logic<48>;
@@ -114,9 +129,10 @@ module EthService #(
     var ev_video : logic    ;
     var ev_drop  : logic    ;
 
-    // current RX byte
-    let rx_pos : logic<11> = i_rlen - i_rremain;
-    let rx_byte: logic<8>  = case rx_pos[1:0] {
+    // current RX byte: frames start at lane 0 and are popped a byte at a
+    // time, so a 2-bit count of the pops since IDLE gives the lane
+    var rx_lane: logic<2>;
+    let rx_byte: logic<8> = case rx_lane {
         2'd0   : i_rdata[7:0],
         2'd1   : i_rdata[15:8],
         2'd2   : i_rdata[23:16],
@@ -149,8 +165,11 @@ module EthService #(
     // IPv4 header checksum of the ack: 4500 0020 0000 4000 4011 + addresses
     let ack_sum0: logic<20> = 20'h0_4500 + 20'h0_0020 + 20'h0_4000 + 20'h0_4011 + {4'b0, IP_ADDR[31:16]}
         + {4'b0, IP_ADDR[15:0]} + {4'b0, vid_ip[31:16]} + {4'b0, vid_ip[15:0]};
-    let ack_sum1: logic<17> = {1'b0, ack_sum0[15:0]} + {13'b0, ack_sum0[19:16]};
-    let ack_sum2: logic<16> = ack_sum1[15:0] + {15'b0, ack_sum1[16]};
+    // ack_sum0 is registered (vid_ip changes in DECIDE, the ack goes out
+    // much later)
+    var ack_sum0_q: logic<20>;
+    let ack_sum1  : logic<17> = {1'b0, ack_sum0_q[15:0]} + {13'b0, ack_sum0_q[19:16]};
+    let ack_sum2  : logic<16> = ack_sum1[15:0] + {15'b0, ack_sum1[16]};
 
     assign o_rpop       = state == State::HDR || state == State::COPY || state == State::VIDEO || state == State::LUT;
     assign o_rrelease   = state == State::RELEASE;
@@ -214,7 +233,7 @@ module EthService #(
                 hdr[idx] = rx_byte;
             }
             State::DECIDE: {
-                if arp_req {
+                if d_arp {
                     for i in 0..6 {
                         hdr[i]      = hdr[22 + i];
                         hdr[6 + i]  = MAC_ADDR[(5 - i) step 8];
@@ -248,43 +267,62 @@ module EthService #(
 
     always_ff {
         if i_rst {
-            state     = State::IDLE;
-            kind      = Kind::ARP;
-            idx       = 6'd0;
-            emit_end  = 6'd0;
-            cnt       = 11'd0;
-            total     = 11'd0;
-            ack_pend  = 1'b0;
-            vid_known = 1'b0;
-            vid_mac   = 48'b0;
-            vid_ip    = 32'b0;
-            vid_port  = 16'b0;
-            ack_csum  = 16'b0;
-            wvalid    = 1'b0;
-            wdata     = 8'b0;
-            wcommit   = 1'b0;
-            vid_start = 1'b0;
-            vid_off   = 16'b0;
-            vid_valid = 1'b0;
-            lut_start = 1'b0;
-            lut_valid = 1'b0;
-            sdata     = 8'b0;
-            ev_arp    = 1'b0;
-            ev_icmp   = 1'b0;
-            ev_video  = 1'b0;
-            ev_drop   = 1'b0;
+            state      = State::IDLE;
+            kind       = Kind::ARP;
+            idx        = 6'd0;
+            emit_end   = 6'd0;
+            cnt        = 11'd0;
+            total      = 11'd0;
+            d_arp      = 1'b0;
+            d_icmp     = 1'b0;
+            d_video    = 1'b0;
+            d_lut      = 1'b0;
+            d_room     = 1'b0;
+            d_total    = 11'd0;
+            d_udplen   = 11'd0;
+            room_q     = 1'b0;
+            ack_pend   = 1'b0;
+            vid_known  = 1'b0;
+            vid_mac    = 48'b0;
+            vid_ip     = 32'b0;
+            vid_port   = 16'b0;
+            ack_csum   = 16'b0;
+            ack_sum0_q = 20'b0;
+            rx_lane    = 2'd0;
+            wvalid     = 1'b0;
+            wdata      = 8'b0;
+            wcommit    = 1'b0;
+            vid_start  = 1'b0;
+            vid_off    = 16'b0;
+            vid_valid  = 1'b0;
+            lut_start  = 1'b0;
+            lut_valid  = 1'b0;
+            sdata      = 8'b0;
+            ev_arp     = 1'b0;
+            ev_icmp    = 1'b0;
+            ev_video   = 1'b0;
+            ev_drop    = 1'b0;
         } else {
-            wvalid    = 1'b0;
-            wcommit   = 1'b0;
-            vid_start = 1'b0;
-            vid_valid = 1'b0;
-            lut_start = 1'b0;
-            lut_valid = 1'b0;
-            ev_arp    = 1'b0;
-            ev_icmp   = 1'b0;
-            ev_video  = 1'b0;
-            ev_drop   = 1'b0;
-            ack_csum  = ~ack_sum2;
+            wvalid     = 1'b0;
+            wcommit    = 1'b0;
+            vid_start  = 1'b0;
+            vid_valid  = 1'b0;
+            lut_start  = 1'b0;
+            lut_valid  = 1'b0;
+            ev_arp     = 1'b0;
+            ev_icmp    = 1'b0;
+            ev_video   = 1'b0;
+            ev_drop    = 1'b0;
+            ack_sum0_q = ack_sum0;
+            if state == State::IDLE {
+                rx_lane = 2'd0;
+            } else if o_rpop {
+                rx_lane = rx_lane + 2'd1;
+            }
+            ack_csum = ~ack_sum2;
+            // a commit shows in wspace / wrec_full two clocks after
+            // COMMIT; tx_room is not trusted until then
+            room_q = tx_room && state != State::COMMIT && !wcommit;
             if i_ack_req && vid_known {
                 ack_pend = 1'b1;
             }
@@ -292,7 +330,7 @@ module EthService #(
             case state {
                 State::IDLE: {
                     idx = 6'd0;
-                    if ack_pend && tx_room {
+                    if ack_pend && room_q {
                         // hdr is being loaded with the ack frame on this edge
                         ack_pend = 1'b0;
                         kind     = Kind::ACK;
@@ -311,13 +349,23 @@ module EthService #(
                 State::HDR: {
                     idx = idx + 1;
                     if idx == 6'd41 {
-                        state = State::DECIDE;
+                        state = State::CLASSIFY;
                     }
+                }
+                State::CLASSIFY: {
+                    d_arp    = arp_req;
+                    d_icmp   = icmp_echo;
+                    d_video  = udp_ok && udp_dport == VIDEO_PORT && udp_len >= 16'd10;
+                    d_lut    = udp_ok && udp_dport == LUT_PORT;
+                    d_room   = tx_room;
+                    d_total  = frame_total[10:0];
+                    d_udplen = udp_len[10:0];
+                    state    = State::DECIDE;
                 }
                 State::DECIDE: {
                     idx = 6'd0;
-                    if arp_req {
-                        if tx_room {
+                    if d_arp {
+                        if d_room {
                             kind     = Kind::ARP;
                             emit_end = 6'd41;
                             total    = 11'd42;
@@ -326,23 +374,23 @@ module EthService #(
                         } else {
                             state = State::RELEASE;
                         }
-                    } else if icmp_echo {
+                    } else if d_icmp {
                         kind     = Kind::ICMP;
                         emit_end = 6'd41;
-                        total    = frame_total[10:0];
-                        cnt      = frame_total[10:0] - 11'd42;
+                        total    = d_total;
+                        cnt      = d_total - 11'd42;
                         ev_icmp  = 1'b1;
                         state    = State::EMIT;
-                    } else if udp_ok && udp_dport == VIDEO_PORT && udp_len >= 16'd10 {
+                    } else if d_video {
                         vid_known = 1'b1;
                         vid_mac   = {hdr[6], hdr[7], hdr[8], hdr[9], hdr[10], hdr[11]};
                         vid_ip    = {hdr[26], hdr[27], hdr[28], hdr[29]};
                         vid_port  = {hdr[34], hdr[35]};
-                        cnt       = udp_len[10:0] - 11'd8;
+                        cnt       = d_udplen - 11'd8;
                         ev_video  = 1'b1;
                         state     = State::VIDEO;
-                    } else if udp_ok && udp_dport == LUT_PORT {
-                        cnt       = udp_len[10:0] - 11'd8;
+                    } else if d_lut {
+                        cnt       = d_udplen - 11'd8;
                         lut_start = 1'b1;
                         state     = State::LUT;
                     } else {
@@ -404,4 +452,6 @@ module EthService #(
             }
         }
     }
+
+    let _unused: logic = |i_rremain; // the lane comes from rx_lane
 }

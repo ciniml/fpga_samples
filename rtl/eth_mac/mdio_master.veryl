@@ -1,0 +1,93 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+//
+// MdioMaster: IEEE 802.3 clause 22 management interface, one register
+// read or write per request.
+//
+// MDC = i_clk / (2 * HALF_PERIOD). MDIO is changed while MDC is low and
+// sampled at the MDC rising edge; on a read the line is released from the
+// turnaround on. 32-bit preamble, no preamble suppression.
+module MdioMaster #(
+    param HALF_PERIOD: u32 = 32, // 125 MHz / 64 = 1.95 MHz MDC
+) (
+    i_clk  : input  clock    ,
+    i_rst  : input  logic    ,
+    i_start: input  logic    , // pulse, ignored while busy
+    i_read : input  logic    ,
+    i_phy  : input  logic<5> ,
+    i_reg  : input  logic<5> ,
+    i_wdata: input  logic<16>,
+    o_busy : output logic    ,
+    o_rdata: output logic<16>,
+    o_mdc  : output logic    ,
+    o_mdo  : output logic    ,
+    o_mdoe : output logic    ,
+    i_mdi  : input  logic    ,
+) {
+    const DIV_BITS: u32 = $clog2(HALF_PERIOD);
+
+    var busy : logic          ;
+    var div  : logic<DIV_BITS>;
+    var mdc  : logic          ;
+    var bitn : logic<7>       ; // frame bit 0..63
+    var sh   : logic<64>      ;
+    var rd   : logic          ;
+    var rdata: logic<16>      ;
+    var mdoe : logic          ;
+
+    let tick: logic = div == (HALF_PERIOD - 1) as DIV_BITS;
+
+    assign o_busy  = busy;
+    assign o_rdata = rdata;
+    assign o_mdc   = mdc;
+    assign o_mdo   = sh[63];
+    assign o_mdoe  = mdoe;
+
+    always_ff {
+        if i_rst {
+            busy  = 1'b0;
+            div   = 0 as DIV_BITS;
+            mdc   = 1'b0;
+            bitn  = 7'd0;
+            sh    = '1;
+            rd    = 1'b0;
+            rdata = 16'd0;
+            mdoe  = 1'b0;
+        } else if !busy {
+            div  = 0 as DIV_BITS;
+            mdc  = 1'b0;
+            mdoe = 1'b0;
+            if i_start {
+                busy = 1'b1;
+                bitn = 7'd0;
+                rd   = i_read;
+                // preamble, start 01, op (read 10 / write 01), PHY, register,
+                // turnaround 10 (write), data
+                sh = {32'hffff_ffff, 2'b01, i_read, !i_read, i_phy, i_reg, 2'b10, i_wdata};
+                mdoe = 1'b1;
+            }
+        } else if tick {
+            div = 0 as DIV_BITS;
+            mdc = ~mdc;
+            if !mdc {
+                // rising edge: the PHY's data bit is valid
+                if rd && bitn >= 7'd48 && bitn <: 7'd64 {
+                    rdata = {rdata[14:0], i_mdi};
+                }
+            } else {
+                // falling edge: next bit
+                sh   = {sh[62:0], 1'b1};
+                bitn = bitn + 7'd1;
+                if rd && bitn == 7'd45 {
+                    mdoe = 1'b0; // turnaround and data come from the PHY
+                }
+                if bitn == 7'd64 {
+                    busy = 1'b0;
+                    mdoe = 1'b0;
+                }
+            }
+        } else {
+            div = div + (1 as DIV_BITS);
+        }
+    }
+}

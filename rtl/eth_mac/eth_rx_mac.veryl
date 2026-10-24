@@ -95,6 +95,7 @@ module EthRxMac #(
     var in_frm : 'p logic    ; // bytes seen since the last end
     var ok_q   : 'p logic    ;
     var bad_q  : 'p logic    ;
+    var room   : 'p logic    ; // registered: at least 2 bytes free a clock ago = 1 now
 
     // station address / filter enable, 2-flop synchronised
     var mac_p1  : 'p logic<48>;
@@ -181,7 +182,7 @@ module EthRxMac #(
                     len = len + 1;
                 } else if len == 11'd1522 { // 1518 + FCS
                     toolong = 1'b1;
-                } else if wspace == 0 {
+                } else if !room {
                     ovf = 1'b1;
                 } else {
                     wvalid = 1'b1;
@@ -189,6 +190,14 @@ module EthRxMac #(
                     len    = len + 1;
                 }
             }
+        }
+    }
+
+    always_ff (i_rx_clk) {
+        if i_rx_rst {
+            room = 1'b0;
+        } else {
+            room = wspace >: 1;
         }
     }
 

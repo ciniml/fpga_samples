@@ -10,6 +10,12 @@
 //                                                       │         ▼
 //                                     Hub75Lanes (frame buffer: sys write, display read)
 //
+// HUB75_IMPL selects the frame buffer / output stage:
+//   0: Hub75Lanes, pixels in the frame buffer, plane bit picked when
+//      shifting (soft logic only)
+//   1: GmtCornerTurn + Hub75Planes, pixels turned into bit-plane words by
+//      the GW3A GMT hard block (GW3A only)
+//
 // Four clock domains: PHY receive ('p), PHY transmit ('t), system ('s:
 // service and frame buffer writes) and display ('d: the HUB75 engine).
 // They may be the same clock.
@@ -26,6 +32,7 @@ module EthernetHub75Core #(
     param CLK_LOW_EXTRA : u32     = 1                    ,
     param BASE_OE_CYCLES: u32     = 16                   ,
     param CHAIN_REVERSE : bit     = 0                    ,
+    param HUB75_IMPL    : u32     = 0                    , // 0: soft (Hub75Lanes), 1: GMT (GW3A)
     param RX_DEPTH_LOG2 : u32     = 13                   ,
     param TX_DEPTH_LOG2 : u32     = 11                   ,
     const NUM_LANES     : u32     = HEIGHT / SCAN_ROWS   ,
@@ -192,7 +199,7 @@ module EthernetHub75Core #(
     var fb_addr  : 's logic<ADDR_BITS>;
     var fb_rgb   : 's logic<PX_BITS>  ;
     var flip_req : 's logic           ;
-    var flip_busy: 's logic           ;
+    var flip_busy: 's logic           ; // seen by the writer: drop bytes, ack when it falls
     var busy_d   : 's logic           ;
 
     inst writer: UdpVideoWriter #(
@@ -232,34 +239,106 @@ module EthernetHub75Core #(
     assign o_ev_net  = ev_arp || ev_icmp;
 
     // ---- HUB75 ----
-    inst panel: hub75::Hub75Lanes #(
-        SCAN_ROWS     : SCAN_ROWS     ,
-        CHAIN_LEN     : WIDTH         ,
-        NUM_LANES     : NUM_LANES     ,
-        CLOCK_DIVIDER : CLOCK_DIVIDER ,
-        CLK_LOW_EXTRA : CLK_LOW_EXTRA ,
-        COMPONENT_BITS: COMPONENT_BITS,
-        BASE_OE_CYCLES: BASE_OE_CYCLES,
-    ) (
-        i_wclk     : i_clk    ,
-        i_wrst     : i_rst    ,
-        i_we       : fb_we    ,
-        i_wlane    : fb_lane  ,
-        i_waddr    : fb_addr  ,
-        i_wdata    : fb_rgb   ,
-        i_flip_req : flip_req ,
-        o_flip_busy: flip_busy,
-        i_clk      : i_dclk   ,
-        i_rst      : i_drst   ,
-        o_frame    : o_frame  ,
-        o_row      : o_row    ,
-        o_r        : o_r      ,
-        o_g        : o_g      ,
-        o_b        : o_b      ,
-        o_oe       : o_oe     ,
-        o_lat      : o_lat    ,
-        o_clk      : o_hclk   ,
-    );
+    if HUB75_IMPL == 0 :g_soft {
+        inst panel: hub75::Hub75Lanes #(
+            SCAN_ROWS     : SCAN_ROWS     ,
+            CHAIN_LEN     : WIDTH         ,
+            NUM_LANES     : NUM_LANES     ,
+            CLOCK_DIVIDER : CLOCK_DIVIDER ,
+            CLK_LOW_EXTRA : CLK_LOW_EXTRA ,
+            COMPONENT_BITS: COMPONENT_BITS,
+            BASE_OE_CYCLES: BASE_OE_CYCLES,
+        ) (
+            i_wclk     : i_clk    ,
+            i_wrst     : i_rst    ,
+            i_we       : fb_we    ,
+            i_wlane    : fb_lane  ,
+            i_waddr    : fb_addr  ,
+            i_wdata    : fb_rgb   ,
+            i_flip_req : flip_req ,
+            o_flip_busy: flip_busy,
+            i_clk      : i_dclk   ,
+            i_rst      : i_drst   ,
+            o_frame    : o_frame  ,
+            o_row      : o_row    ,
+            o_r        : o_r      ,
+            o_g        : o_g      ,
+            o_b        : o_b      ,
+            o_oe       : o_oe     ,
+            o_lat      : o_lat    ,
+            o_clk      : o_hclk   ,
+        );
+    } else :g_gmt {
+        const XW_BITS   : u32 = $clog2(WIDTH) - 5;
+        const PLANE_BITS: u32 = if COMPONENT_BITS >: 1 ? $clog2(COMPONENT_BITS) : 1;
+
+        var ct_busy   : 's logic                             ;
+        var pw_we     : 's logic                             ;
+        var pw_lane   : 's logic<LANE_BITS>                  ;
+        var pw_colour : 's logic<2>                          ;
+        var pw_plane  : 's logic<PLANE_BITS>                 ;
+        var pw_addr   : 's logic<$clog2(SCAN_ROWS) + XW_BITS>;
+        var pw_data   : 's logic<32>                         ;
+        var pw_flip   : 's logic                             ;
+        var panel_busy: 's logic                             ;
+
+        inst turn: GmtCornerTurn #(
+            SCAN_ROWS     : SCAN_ROWS     ,
+            CHAIN_LEN     : WIDTH         ,
+            NUM_LANES     : NUM_LANES     ,
+            COMPONENT_BITS: COMPONENT_BITS,
+            CHAIN_REVERSE : CHAIN_REVERSE ,
+        ) (
+            i_clk     : i_clk    ,
+            i_rst     : i_rst    ,
+            i_we      : fb_we    ,
+            i_lane    : fb_lane  ,
+            i_addr    : fb_addr  ,
+            i_rgb     : fb_rgb   ,
+            i_flip_req: flip_req ,
+            o_busy    : ct_busy  ,
+            o_we      : pw_we    ,
+            o_lane    : pw_lane  ,
+            o_colour  : pw_colour,
+            o_plane   : pw_plane ,
+            o_addr    : pw_addr  ,
+            o_data    : pw_data  ,
+            o_flip_req: pw_flip  ,
+        );
+
+        inst panel: hub75::Hub75Planes #(
+            SCAN_ROWS     : SCAN_ROWS     ,
+            CHAIN_LEN     : WIDTH         ,
+            NUM_LANES     : NUM_LANES     ,
+            CLOCK_DIVIDER : CLOCK_DIVIDER ,
+            CLK_LOW_EXTRA : CLK_LOW_EXTRA ,
+            COMPONENT_BITS: COMPONENT_BITS,
+            BASE_OE_CYCLES: BASE_OE_CYCLES,
+        ) (
+            i_wclk     : i_clk     ,
+            i_wrst     : i_rst     ,
+            i_we       : pw_we     ,
+            i_wlane    : pw_lane   ,
+            i_wcolour  : pw_colour ,
+            i_wplane   : pw_plane  ,
+            i_waddr    : pw_addr   ,
+            i_wdata    : pw_data   ,
+            i_flip_req : pw_flip   ,
+            o_flip_busy: panel_busy,
+            i_clk      : i_dclk    ,
+            i_rst      : i_drst    ,
+            o_frame    : o_frame   ,
+            o_row      : o_row     ,
+            o_r        : o_r       ,
+            o_g        : o_g       ,
+            o_b        : o_b       ,
+            o_oe       : o_oe      ,
+            o_lat      : o_lat     ,
+            o_clk      : o_hclk    ,
+        );
+
+        assign flip_busy = ct_busy || panel_busy;
+    }
 
     let _unused: 's logic = |rpop_cnt;
 }

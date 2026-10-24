@@ -1,17 +1,26 @@
-# Simulation of the Tang Primer 20K top (Verilator, --timing).
-#   make        build and run (PASS / FAIL at the end)
-#   make VCD=1  also dump tb.vcd
+# Simulation of the board tops (Verilator, --timing).
+#   make                        Tang Primer 20K (PASS / FAIL at the end)
+#   make rxcard [IMPL=soft|gmt] DK_LED-RXCARD (GW3A), soft or GMT HUB75 stage
+#   make VCD=1                  also dump tb.vcd
 TOP_DIR := ..
 DEP     := $(TOP_DIR)/dependencies
 # packages first
 RTL := $(DEP)/eth_mac/crc32.sv \
        $(filter-out %/crc32.sv,$(wildcard $(DEP)/eth_mac/*.sv)) \
        $(DEP)/hub75/hub75_lanes.sv \
+       $(DEP)/hub75/hub75_planes.sv \
        $(TOP_DIR)/src/common/eth_service.sv \
        $(TOP_DIR)/src/common/udp_video_writer.sv \
-       $(TOP_DIR)/src/common/ethernet_hub75_core.sv \
-       $(TOP_DIR)/src/tangprimer20k/top.sv
-TB := rpll_hub75_sim.sv tb_tp20k.sv
+       $(TOP_DIR)/src/common/gmt_corner_turn.sv \
+       $(TOP_DIR)/src/common/ethernet_hub75_core.sv
+TB := gw3a_sim.sv rpll_hub75_sim.sv $(TOP_DIR)/src/tangprimer20k/top.sv tb_tp20k.sv
+
+IMPL ?= soft
+RXCARD_OBJ := obj_rxcard_$(IMPL)
+RXCARD_G   := $(if $(filter gmt,$(IMPL)),1,0)
+RXCARD_TB  := ethernet_hub75_cfg.sv gw3a_sim.sv \
+              $(TOP_DIR)/src/dk_led_rxcard_gw3a20/rtl8211e_init.sv \
+              $(TOP_DIR)/src/dk_led_rxcard_gw3a20/top.sv tb_rxcard.sv
 
 VERILATOR ?= verilator
 VFLAGS := --binary --timing -j 0 -O2 --top-module tb -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
@@ -23,7 +32,7 @@ VFLAGS += --trace
 RUN_ARGS += +vcd
 endif
 
-.PHONY: all run veryl clean
+.PHONY: all run rxcard veryl clean
 all: run
 
 veryl:
@@ -37,5 +46,13 @@ run: obj_dir/Vtb
 	obj_dir/Vtb $(RUN_ARGS) | tee run.log
 	grep -q '^PASS' run.log
 
+$(RXCARD_OBJ)/Vtb: veryl $(RXCARD_TB)
+	$(VERILATOR) $(VFLAGS) -GIMPL=$(RXCARD_G) --Mdir $(RXCARD_OBJ) $(RTL) $(RXCARD_TB) -o Vtb 2>&1 | tee build_rxcard_$(IMPL).log | grep -E "%Error|%Warning-(LATCH|COMBDLY|IMPLICIT)" || true
+	test -x $(RXCARD_OBJ)/Vtb
+
+rxcard: $(RXCARD_OBJ)/Vtb
+	$(RXCARD_OBJ)/Vtb $(RUN_ARGS) | tee run_rxcard_$(IMPL).log
+	grep -q '^PASS' run_rxcard_$(IMPL).log
+
 clean:
-	rm -rf obj_dir build.log run.log tb.vcd
+	rm -rf obj_dir obj_rxcard_* build*.log run*.log tb.vcd

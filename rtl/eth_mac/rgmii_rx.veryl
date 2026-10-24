@@ -1,0 +1,130 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+//
+// RgmiiRx: RGMII receive adapter for EthRxMac (10 / 100 / 1000 Mb/s).
+//
+// Works on the outputs of the input DDR registers (vendor primitives stay
+// in the board top): `i_rise` = {RX_CTL, RXD[3:0]} sampled at the RXC
+// rising edge, `i_fall` = the same pins at the following falling edge.
+//   1000 Mb/s: one byte per RXC, {fall[3:0], rise[3:0]}.
+//   10/100   : one nibble per RXC (the rising-edge sample), low nibble first.
+// RX_DV = rise[4], RX_ER = rise[4] ^ fall[4]. A frame with RX_ER, or one
+// that ends mid-byte, is reported with o_err.
+module RgmiiRx (
+    i_clk   : input  clock   , // RXC
+    i_rst   : input  logic   ,
+    i_gbe   : input  logic   , // 1: 1000 Mb/s, 0: 10/100 Mb/s (static while a frame is received)
+    i_rise  : input  logic<5>,
+    i_fall  : input  logic<5>,
+    o_bvalid: output logic   ,
+    o_bdata : output logic<8>,
+    o_end   : output logic   ,
+    o_err   : output logic   , // with o_end
+) {
+    enum RxState {
+        IDLE,
+        PREAMBLE,
+        DATA,
+        DROP, // wait for RX_DV to fall after a bad preamble
+    }
+    var state : RxState   ;
+    var rise_q: logic  <5>;
+    var fall_q: logic  <5>;
+    var half  : logic     ; // 10/100: low nibble held in lo
+    var lo    : logic  <4>;
+    var errq  : logic     ;
+    var bvalid: logic     ;
+    var bdata : logic  <8>;
+    var fend  : logic     ;
+    var ferr  : logic     ;
+
+    let dv  : logic    = rise_q[4];
+    let er  : logic    = rise_q[4] ^ fall_q[4];
+    let nib : logic<4> = rise_q[3:0];
+    let rbyte: logic<8> = {fall_q[3:0], rise_q[3:0]};
+    // start-of-frame delimiter / preamble in the current unit (byte or nibble)
+    let is_sfd: logic = if i_gbe ? rbyte == 8'hd5 : nib == 4'hd;
+    let is_pre: logic = if i_gbe ? rbyte == 8'h55 : nib == 4'h5;
+
+    assign o_bvalid = bvalid;
+    assign o_bdata  = bdata;
+    assign o_end    = fend;
+    assign o_err    = ferr;
+
+    always_ff {
+        rise_q = i_rise;
+        fall_q = i_fall;
+    }
+
+    always_ff {
+        if i_rst {
+            state  = RxState::IDLE;
+            half   = 1'b0;
+            lo     = 4'd0;
+            errq   = 1'b0;
+            bvalid = 1'b0;
+            bdata  = 8'd0;
+            fend   = 1'b0;
+            ferr   = 1'b0;
+        } else {
+            bvalid = 1'b0;
+            fend   = 1'b0;
+            ferr   = 1'b0;
+            case state {
+                RxState::IDLE: {
+                    if dv {
+                        errq = 1'b0;
+                        half = 1'b0;
+                        if is_pre {
+                            state = RxState::PREAMBLE;
+                        } else if is_sfd && i_gbe {
+                            // a PHY may shorten the preamble
+                            state = RxState::DATA;
+                        } else {
+                            state = RxState::DROP;
+                        }
+                    }
+                }
+                RxState::PREAMBLE: {
+                    if !dv {
+                        state = RxState::IDLE;
+                    } else if is_sfd {
+                        state = RxState::DATA;
+                    } else if !is_pre {
+                        state = RxState::DROP;
+                    }
+                }
+                RxState::DATA: {
+                    if !dv {
+                        fend  = 1'b1;
+                        ferr  = errq || half;
+                        state = RxState::IDLE;
+                    } else {
+                        if er {
+                            errq = 1'b1;
+                        }
+                        if i_gbe {
+                            bvalid = 1'b1;
+                            bdata  = rbyte;
+                        } else if !half {
+                            lo   = nib;
+                            half = 1'b1;
+                        } else {
+                            bvalid = 1'b1;
+                            bdata  = {nib, lo};
+                            half   = 1'b0;
+                        }
+                    }
+                }
+                RxState::DROP: {
+                    if !dv {
+                        state = RxState::IDLE;
+                    }
+                }
+                default: {
+                    state = RxState::IDLE;
+                }
+            }
+        }
+    }
+}
