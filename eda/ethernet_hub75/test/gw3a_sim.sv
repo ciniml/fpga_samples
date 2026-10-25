@@ -1,6 +1,6 @@
 // Simulation stand-ins for the GW3A primitives / IP used by the
 // DK_LED-RXCARD top (Gowin ships no model of GMT_DB):
-//   pllb_hub75  125 MHz, 125 MHz + 90°, 50 MHz, locked after 1 us
+//   pllb_hub75  125 MHz, 125 MHz + 270°, 50 MHz, locked after 1 us
 //   IDDR / ODDR behaviour of the GW3A prim_sim.v models (without GSR)
 //   IODELAY     zero delay
 //   GMT_DB      UG311: 2 × 32 × 32 bit buffers per component, rows written
@@ -14,7 +14,7 @@ module pllb_hub75 (output logic lock, output logic clkout0, output logic clkout1
     end
     initial begin
         clkout1 = 1'b0;
-        #2;
+        #6;
         forever #4 clkout1 = ~clkout1;
     end
     initial begin

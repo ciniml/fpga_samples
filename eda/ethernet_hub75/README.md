@@ -97,7 +97,7 @@ make TARGET=dk_led_rxcard_gw3a20                  # Arora III、ソフト版 (bu
 make TARGET=dk_led_rxcard_gw3a20 HUB75_IMPL=gmt   # Arora III、GMT 版 (build/dk_led_rxcard_gw3a20_gmt)
 make TARGET=dk_led_rxcard_gw3a20 [HUB75_IMPL=gmt] run   # Gowin programmer_cli で SRAM に書き込み
 make sim                 # テストベンチ (Verilator、Tang Primer 20K)
-make -C test rxcard IMPL=soft|gmt                 # テストベンチ (Arora III)
+make -C test rxcard IMPL=soft|gmt [TXS=1]         # テストベンチ (Arora III、TXS=1 は TXC_SHIFTED 版)
 ```
 
 gw_sh が PATH にないときは `make GW_SH="env LD_LIBRARY_PATH=$HOME/gowin/1.9.12.03/IDE/lib QT_QPA_PLATFORM=offscreen $HOME/gowin/1.9.12.03/IDE/bin/gw_sh"`
@@ -148,7 +148,7 @@ UG317 (クロック)、UG318 (GPIO)。いずれも `https://cdn.gowinsemi.com.cn
   (PHY ID 1 = 0x001C) が見つかったら拡張ページ 0xa4 レジスタ 0x1c の bit 13:11 を 111 (強制 + RX / TX 遅延オン) にして
   オートネゴシエーションをやり直す (`Rtl8211eInit`、Linux の realtek ドライバと同じレジスタ。ドライバの定義とコメントで
   bit 12 / 11 のどちらが RX かが食い違っているので、両方を同じにしている)。PHY が遅延を入れるので、TXC は TXD と同じ
-  ODDR から位相そろえで出し、受信は RXC で IDDR に直接取り込む。予備として PLL の 90° 出力 (`TXC_SHIFTED`) と
+  ODDR から位相そろえで出し、受信は RXC で IDDR に直接取り込む。予備として PLL の 270° 出力で TXD を遅らせる版 (`TXC_SHIFTED`) と
   受信データの IODELAY (`RX_DELAY`) をパラメータで用意してある
 - **速度:** 10/100/1000M に対応。RXC の周波数 (125 / 25 / 2.5 MHz) で速度を判定し、送信は 125 MHz のまま
   1000M = 毎クロック 1 バイト (DDR)、10/100M = 50 / 5 クロックごとに 1 ニブル (TXC はニブルの中央で立ち上がる)
@@ -225,7 +225,9 @@ RTL8211E 役の MDIO スレーブ (アドレス 1) と、RGMII の向こう側�
    映像はフレーム間 12 バイトの詰めた送り方 (ワイヤレート)
 3. RXC を 25 MHz にして速度判定が 100M に切り替わり、ARP と ICMP がニブル形式で通ること
 
-ソフト版・GMT 版とも PASS。GMT 版では最初、GMT 側の保留が解けてから `Hub75Planes` が busy を出すまでの 1 クロックに busy が
+`TXS=1` は `TXC_SHIFTED=1` のトップに対して、PHY 役が TX 遅延なし (TXC のエッジで TXD を取る) で同じ検査をする。
+
+ソフト版・GMT 版・TXS=1 (ソフト版) とも PASS。GMT 版では最初、GMT 側の保留が解けてから `Hub75Planes` が busy を出すまでの 1 クロックに busy が
 落ち、ack が 2 回出ていた (検査で見つかり修正済み)。
 
 ### 実機の確認手順 (Arora III)
@@ -242,5 +244,21 @@ RTL8211E 役の MDIO スレーブ (アドレス 1) と、RGMII の向こう側�
 6. テストパターン / 動画 / 向き / ガンマは Tang Primer 20K の 4〜7 と同じ。GbE では udpvideosend の fps が Tang Primer 20K より
    上がるはず (上限はパネルのフレーム境界での切り替え待ち)
 7. ソフト版と GMT 版で表示が同じであること
-8. ping が通らない場合の切り分け用に、`TXC_SHIFTED=1` (PHY の TX 遅延が効いていない場合) と `RX_DELAY` (受信の IODELAY、
-   1 段 12.5 ps) のビルドを用意できるので、`ethtool -S` のエラーカウンタと合わせて結果を教えてほしい
+8. ping が通らない場合は、RGMII のタイミングを変えたビルドを順に試す (make 変数、既定以外の値はビルドディレクトリ名に付く)。
+   各ビルドで ping と `ethtool -S <if>` の受信エラー (rx_crc_errors など)、`ip -s link` の RX/TX カウンタを見てほしい
+
+   | 変数 | 値 | 意味 |
+   |---|---|---|
+   | `PHY_DLY` | `on` (既定) | PHY の RX / TX 遅延を MDIO で強制オン (拡張ページ 0xa4 レジスタ 0x1c bit 13:11 = 111) |
+   | | `strap` | 強制を外し、ボードのストラップ抵抗の設定に任せる (bit 13 = 0) |
+   | | `off` | RX / TX 遅延を強制オフ (FPGA 側の受信はこれに対応していないので切り分け用) |
+   | | 4 桁の 16 進 | bit 13:11 を直接指定。`3000` / `2800` はどちらか片方の遅延だけオン (どちらが RX かはドライバの記述が食い違う) |
+   | `TXC_SHIFTED` | `1` | TXD / TX_CTL を PLL の 270° 出力の ODDR から出し、TXC がデータより 2 ns 遅れる形にする (GW3A のファブリックには立ち下がりの FF がないので TXC 側は動かさない)。PHY の TX 遅延がオフのときに使う |
+   | `RX_DELAY` | 0〜255 | 受信の RXD / RX_CTL に IODELAY (1 段 12.5 ps) を入れる。PHY の RX 遅延がオンで微調整したいとき |
+
+   試す順番の目安:
+   1. `make TARGET=dk_led_rxcard_gw3a20 PHY_DLY=strap run` (MDIO の書き込み自体が悪さをしている場合)
+   2. `make TARGET=dk_led_rxcard_gw3a20 PHY_DLY=3000 TXC_SHIFTED=1 run`
+   3. `make TARGET=dk_led_rxcard_gw3a20 PHY_DLY=2800 TXC_SHIFTED=1 run`
+      (2 と 3 は「RX 遅延だけ PHY、TX は FPGA 側でずらす」の 2 通りの解釈)
+   4. ping の応答はあるが取りこぼす / 受信エラーが出る場合は `RX_DELAY=40` (0.5 ns)、`RX_DELAY=80` (1 ns) を足す

@@ -6,7 +6,7 @@
 //Part Number: GW3A-LV20UG324SC1/I0
 //Device: GW3A-20A
 //Device Version: A
-//Created Time: Sun Oct 25 05:18:27 2026
+//Created Time: Mon Oct 26 02:37:56 2026
 
 module pllb_hub75 (lock, clkout0, clkout1, clkout2, clkin);
 
@@ -112,7 +112,7 @@ defparam PLLB_inst.CLK6_OUT_SEL = 1'b0;
 defparam PLLB_inst.DYN_DPA_EN = "FALSE";
 defparam PLLB_inst.CLKOUT0_PE_COARSE = 0;
 defparam PLLB_inst.CLKOUT0_PE_FINE = 0;
-defparam PLLB_inst.CLKOUT1_PE_COARSE = 2;
+defparam PLLB_inst.CLKOUT1_PE_COARSE = 6;
 defparam PLLB_inst.CLKOUT1_PE_FINE = 0;
 defparam PLLB_inst.CLKOUT2_PE_COARSE = 0;
 defparam PLLB_inst.CLKOUT2_PE_FINE = 0;

@@ -32,6 +32,10 @@ module tb;
     localparam int VIDEO_PORT = 10004, LUT_PORT = 10005;
 
     parameter int IMPL = 0;
+    // 1: the top's TXC_SHIFTED build (TXD 2 ns before TXC); the PHY model
+    // then samples at the TXC edges instead of 2 ns after (its TX delay)
+    parameter bit TXS = 0;
+    localparam realtime TX_SAMPLE = TXS ? 0.5 : 2.0;
 
     logic clk50 = 0;
     always #10 clk50 = ~clk50;
@@ -51,7 +55,7 @@ module tb;
     wire  [4:0] row_pins;
     wire  [5:0] j4, j6;
 
-    DkLedRxcardTop #(.HUB75_IMPL(IMPL), .PHY_RST_LOG2(8), .PHY_WAIT_LOG2(8)) dut (
+    DkLedRxcardTop #(.HUB75_IMPL(IMPL), .TXC_SHIFTED(TXS), .PHY_RST_LOG2(8), .PHY_WAIT_LOG2(8)) dut (
         .clk50(clk50), .key_n(1'b1), .led(led),
         .phy_rst_n(rstn), .phy_mdc(mdc), .phy_mdio(mdio),
         .rgmii_txc(txc), .rgmii_tx_ctl(tx_ctl), .rgmii_txd(txd),
@@ -198,7 +202,7 @@ module tb;
     logic [3:0] tx_rise_d;
     logic       tx_rise_ctl = 0, tx_active = 0;
     always @(posedge txc) begin
-        #2;
+        #(TX_SAMPLE);
         tx_rise_d   = txd;
         tx_rise_ctl = tx_ctl;
         if (!gbe) begin
@@ -214,7 +218,7 @@ module tb;
         end
     end
     always @(negedge txc) begin
-        #2;
+        #(TX_SAMPLE);
         if (gbe) begin
             if (tx_rise_ctl) begin
                 tx_active = 1;

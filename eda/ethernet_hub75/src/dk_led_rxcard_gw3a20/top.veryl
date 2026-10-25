@@ -11,10 +11,11 @@
 //   lanes 0..3 = J4 R1/R2, J6 R1/R2 → 128x128. The second group (J12..J19)
 //   is kept blank (OE high).
 //   Clocks from the 50 MHz oscillator (B16) through PLLB (VCO 1000 MHz):
-//     125 MHz system / RGMII TX, 125 MHz + 90° (TXC if TXC_SHIFTED),
+//     125 MHz system / RGMII TX, 125 MHz + 270° (TXD if TXC_SHIFTED),
 //     50 MHz display (HUB75 CLK = 50 / 3 = 16.7 MHz).
 //
-// HUB75_IMPL (0: soft, 1: GMT) comes from the package ethernet_hub75_cfg
+// HUB75_IMPL (0: soft, 1: GMT) and the RGMII delay options (PHY_DELAY_BITS,
+// TXC_SHIFTED, RX_DELAY) come from the package ethernet_hub75_cfg
 // that the build writes (project.tcl), so that both versions build from
 // one top.
 //
@@ -22,15 +23,16 @@
 // LED2 network activity (video / ARP / ICMP); LED2 blinks fast when no
 // RTL8211E answered on MDIO.
 module DkLedRxcardTop #(
-    param HUB75_IMPL    : u32 = $sv::ethernet_hub75_cfg::HUB75_IMPL,
-    param CHAIN_REVERSE : bit = 0                                  ,
-    param COMPONENT_BITS: u32 = 6                                  ,
-    param CLOCK_DIVIDER : u32 = 0                                  ,
-    param CLK_LOW_EXTRA : u32 = 1                                  ,
-    param RX_DELAY      : u32 = 0                                  , // IODELAY steps (12.5 ps) on RXD / RX_CTL
-    param TXC_SHIFTED   : bit = 0                                  , // 1: TXC from the 90° clock (PHY TX delay off)
-    param PHY_RST_LOG2  : u32 = 21                                 , // PHY reset 2^N system clocks (17 ms)
-    param PHY_WAIT_LOG2 : u32 = 24                                 , // MDIO set-up after 2^N clocks (134 ms)
+    param HUB75_IMPL    : u32     = $sv::ethernet_hub75_cfg::HUB75_IMPL    ,
+    param CHAIN_REVERSE : bit     = 0                                      ,
+    param COMPONENT_BITS: u32     = 6                                      ,
+    param CLOCK_DIVIDER : u32     = 0                                      ,
+    param CLK_LOW_EXTRA : u32     = 1                                      ,
+    param RX_DELAY      : u32     = $sv::ethernet_hub75_cfg::RX_DELAY      , // IODELAY steps (12.5 ps) on RXD / RX_CTL
+    param TXC_SHIFTED   : bit     = $sv::ethernet_hub75_cfg::TXC_SHIFTED   , // 1: TXD 6 ns late = TXC 2 ns after TXD (PHY TX delay off)
+    param PHY_DELAY_BITS: bit<16> = $sv::ethernet_hub75_cfg::PHY_DELAY_BITS, // RTL8211E ext 0xa4 reg 0x1c bits 13:11
+    param PHY_RST_LOG2  : u32     = 21                                     , // PHY reset 2^N system clocks (17 ms)
+    param PHY_WAIT_LOG2 : u32     = 24                                     , // MDIO set-up after 2^N clocks (134 ms)
 ) (
     clk50: input 'osc clock, // B16
     key_n: input 's   logic, // J6, low when pressed: reset
@@ -57,14 +59,14 @@ module DkLedRxcardTop #(
 ) {
     // ---- clocks and resets ----
     var sys_clk : 's clock;
-    var clk90   : 's clock;
+    var clk270  : 's clock;
     var disp_clk: 'd clock;
     var pll_lock:    logic;
 
     unsafe (cdc) {
         inst u_pll: $sv::pllb_hub75 (
             clkout0: sys_clk ,
-            clkout1: clk90   ,
+            clkout1: clk270  ,
             clkout2: disp_clk,
             lock   : pll_lock,
             clkin  : clk50   ,
@@ -136,7 +138,8 @@ module DkLedRxcardTop #(
     var phy_cnt2: 's logic<2>;
 
     inst u_phy_init: Rtl8211eInit #(
-        WAIT_LOG2: PHY_WAIT_LOG2,
+        WAIT_LOG2 : PHY_WAIT_LOG2 ,
+        DELAY_BITS: PHY_DELAY_BITS,
     ) (
         i_clk  : sys_clk ,
         i_rst  : sys_rst ,
@@ -244,12 +247,22 @@ module DkLedRxcardTop #(
         o_c1   : tx_c1   ,
     );
 
+    // TXD / TX_CTL leave from sys_clk, or with TXC_SHIFTED from the 270°
+    // clock (6 ns later, i.e. TXC 2 ns after the data, for a PHY with its
+    // TX delay off; GW3A has no falling-edge flip-flop to shift TXC
+    // itself). The ODDR inputs then cross sys_clk → clk270 with 6 ns.
+    var tx_oclk: 's clock;
+    if TXC_SHIFTED :g_tx270 {
+        assign tx_oclk = clk270;
+    } else :g_tx0 {
+        assign tx_oclk = sys_clk;
+    }
     for i in 0..5 :g_tx {
         inst u_oddr: $sv::ODDR (
             D0 : tx_d0[i]  ,
             D1 : tx_d1[i]  ,
             TX : 1'b0      ,
-            CLK: sys_clk   ,
+            CLK: tx_oclk   ,
             Q0 : tx_pins[i],
             Q1 : _         ,
         );
@@ -257,35 +270,14 @@ module DkLedRxcardTop #(
     assign rgmii_tx_ctl = tx_pins[4];
     assign rgmii_txd    = tx_pins[3:0];
 
-    if TXC_SHIFTED :g_txc90 {
-        // TXC pattern re-timed into the 90° clock (6 ns later at the
-        // earliest edge); constant at 1000 Mb/s
-        var c0_90: logic;
-        var c1_90: logic;
-        unsafe (cdc) {
-            always_ff (clk90) {
-                c0_90 = tx_c0;
-                c1_90 = tx_c1;
-            }
-            inst u_oddr_txc: $sv::ODDR (
-                D0 : c0_90    ,
-                D1 : c1_90    ,
-                TX : 1'b0     ,
-                CLK: clk90    ,
-                Q0 : rgmii_txc,
-                Q1 : _        ,
-            );
-        }
-    } else :g_txc0 {
-        inst u_oddr_txc: $sv::ODDR (
-            D0 : tx_c0    ,
-            D1 : tx_c1    ,
-            TX : 1'b0     ,
-            CLK: sys_clk  ,
-            Q0 : rgmii_txc,
-            Q1 : _        ,
-        );
-    }
+    inst u_oddr_txc: $sv::ODDR (
+        D0 : tx_c0    ,
+        D1 : tx_c1    ,
+        TX : 1'b0     ,
+        CLK: sys_clk  ,
+        Q0 : rgmii_txc,
+        Q1 : _        ,
+    );
 
     // ---- core ----
     var row     : 'd logic<5>;

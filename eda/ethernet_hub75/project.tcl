@@ -9,6 +9,9 @@ set PROJECT_NAME  [lindex $argv 5]
 set FILELIST      [lindex $argv 6]
 set TOP_MODULE    [lindex $argv 7]
 set HUB75_IMPL    [lindex $argv 8]
+set PHY_DELAY     [lindex $argv 9]
+set TXC_SHIFTED   [lindex $argv 10]
+set RX_DELAY      [lindex $argv 11]
 
 set_option -output_base_name ${PROJECT_NAME}
 set_device -name $DEVICE_FAMILY $DEVICE_PART
@@ -34,9 +37,15 @@ if {${TARGET} == "tangprimer20k"} {
     set_option -use_ready_as_gpio 1
 }
 
-# Build configuration for the top (HUB75_IMPL: 0 soft, 1 GMT)
+# Build configuration for the top (HUB75_IMPL: 0 soft, 1 GMT; the RGMII
+# delay options are used by the DK_LED-RXCARD top only)
 set fp [open ethernet_hub75_cfg.sv w]
-puts $fp "package ethernet_hub75_cfg;\n    localparam int unsigned HUB75_IMPL = ${HUB75_IMPL};\nendpackage"
+puts $fp "package ethernet_hub75_cfg;"
+puts $fp "    localparam int unsigned HUB75_IMPL = ${HUB75_IMPL};"
+puts $fp "    localparam int unsigned RX_DELAY = ${RX_DELAY};"
+puts $fp "    localparam bit TXC_SHIFTED = 1'b${TXC_SHIFTED};"
+puts $fp "    localparam bit \[15:0\] PHY_DELAY_BITS = 16'h${PHY_DELAY};"
+puts $fp "endpackage"
 close $fp
 add_file -type verilog [file normalize ethernet_hub75_cfg.sv]
 
@@ -64,6 +73,18 @@ foreach f [glob -nocomplain ${SRC_DIR}/ip/*.v] {
 }
 
 add_file -type cst [file normalize ${SRC_DIR}/pins.cst]
-add_file -type sdc [file normalize ${SRC_DIR}/timing.sdc]
+if {${TXC_SHIFTED} == 1 && [file exists ${SRC_DIR}/timing_txc_shifted.sdc]} {
+    # one file: Gowin does not see the clocks of another SDC file
+    set fp [open timing.sdc w]
+    foreach f [list ${SRC_DIR}/timing.sdc ${SRC_DIR}/timing_txc_shifted.sdc] {
+        set fi [open $f r]
+        puts $fp [read $fi]
+        close $fi
+    }
+    close $fp
+    add_file -type sdc [file normalize timing.sdc]
+} else {
+    add_file -type sdc [file normalize ${SRC_DIR}/timing.sdc]
+}
 
 run all
