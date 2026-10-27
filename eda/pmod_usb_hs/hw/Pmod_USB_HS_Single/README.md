@@ -83,10 +83,11 @@ D- 側の比較器を省き、FPGA ピン 7 本 + VBUS 検出 1 本に収めた�
 | `fab/Pmod_USB_HS_Single_gerber.zip` | ガーバー (F/B Cu、Mask、Silk、F.Paste、Edge) とドリル (PTH/NPTH 別) |
 | `fab/Pmod_USB_HS_Single_bom.csv` | 部品表 (LCSC 番号、MPN 付き) |
 | `fab/Pmod_USB_HS_Single_pos.csv` | 実装位置 (表面のみ) |
+| `fab/jlc/Pmod_USB_HS_Single_jlc_bom.csv`, `_jlc_cpl.csv` | JLC 実装用の BOM / CPL (`tools/jlc_files.py`、LCSC 番号のない J1 は除く) |
 | `fab/Pmod_USB_HS_Single_schematic.pdf` | 回路図 |
 | `fab/*.png` | 3D レンダリング |
 | `fab/erc.rpt`, `fab/drc.rpt` | 検査結果 (ライブラリ表の警告はヘッドレス環境に由来) |
-| `fab/lcsc/Pmod_USB_HS_Single_lcsc_5pcs.csv` | LCSC 部品購入用 (5 枚分、J1 含む、2026-10-20 時点で約 $5.84)。`tools/lcsc_order.py N` で N 枚分を作り直す (LCSC に問い合わせて最小発注数・単価・在庫を反映、要ネットワーク、`build.sh` には含まない) |
+| `fab/lcsc/Pmod_USB_HS_Single_lcsc_5pcs.csv` | LCSC 部品購入用 (5 枚分、J1 含む、2026-10-28 時点で約 $5.03)。`tools/lcsc_order.py N` で N 枚分を作り直す (LCSC に問い合わせて最小発注数・単価・在庫を反映、要ネットワーク、`build.sh` には含まない) |
 
 回路図 (`tools/gen_sch.py`) と基板 (`tools/gen_pcb.py`、配置・配線・ベタを座標で記述) は最初スクリプトから生成した。
 その後、基板は KiCad で手を入れている (F.Cu の +3V3 ベタ、配線の調整) ので、GUI 側を正とする。
@@ -94,6 +95,8 @@ D- 側の比較器を省き、FPGA ピン 7 本 + VBUS 検出 1 本に収めた�
 部品の LCSC 番号と MPN は `tools/gen_sch.py` の `PARTS` が正。変えたら `tools/gen_sch.py` → `tools/update_fields.py`
 (配線を残したまま基板側の部品の欄だけ更新) → `tools/build.sh`。
 裏面シルク (ロゴ、基板名 / 版 / 日付 / 作者、ピン表) は `tools/silk.py` が持つ。単体で実行すると、基板の裏面シルクだけをその場で入れ直す (銅箔は触らない)。
+表面のリファレンス文字は circuitpnr (`cpnr labels`) で置き、`cpnr label-check` で重なり・パッド干渉・取り違えがないことを確かめた
+(`gen_pcb.py` は非表示で作るので、`REGEN=1` のあとは置き直しが要る)。
 
 ## 部品
 
@@ -110,9 +113,9 @@ LCSC 番号は 2026-10-20 時点。JLC の Basic 部品があるものはそれ�
 | R8 / R9 | 1.8 kΩ / 75 Ω 1% 0402 UNI-ROYAL | C25871 / C25133 | |
 | R10, R11 | 5.1 kΩ 1% 0402 UNI-ROYAL 0402WGF5101TCE | C25905 | |
 | R12 / R13 | 100 kΩ / 150 kΩ 1% 0402 UNI-ROYAL | C25741 / C25755 | |
-| C1, C5 | 1 µF X5R 0402 Samsung CL05A105KA5NQNC | C52923 | LCSC 在庫 0 のため、購入一覧では YAGEO CC0402KRX5R7BB105 (C325464、16 V) に置き換わる |
+| C1, C5 | 1 µF X5R 0402 Samsung CL05A105KA5NQNC | C52923 | LCSC で在庫切れのときは、購入一覧で YAGEO CC0402KRX5R7BB105 (C325464、16 V) などに置き換わる |
 | C3 | 10 µF 10 V X5R 0603 Samsung CL10A106KP8NNNC | C19702 | |
-| C4 | 100 nF X7R 0402 Samsung CL05B104KB54PNC | C307331 | |
+| C4 | 100 nF X7R 0402 Samsung CL05B104KB54PNC | C307331 | 2026-10-28 は LCSC 在庫 0 で、購入一覧では Samsung CL05B104KO5NNNC (C1525、16 V) に置き換わる (JLC 在庫はある) |
 
 ## 未確定事項
 

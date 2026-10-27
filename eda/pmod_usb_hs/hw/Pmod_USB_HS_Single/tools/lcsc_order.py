@@ -36,6 +36,7 @@ EXTRA = [  # (designators, per board, LCSC, note)
 # equivalents to buy from LCSC when the schematic's part is out of stock there
 ALT = {
     'C52923': ['C325464', 'C106254'],  # 1 uF X5R 0402: YAGEO CC0402KRX5R7BB105 (16 V), CC0402KRX5R6BB105 (10 V)
+    'C307331': ['C1525', 'C60474'],    # 100 nF X7R 0402: Samsung CL05B104KO5NNNC, YAGEO CC0402KRX7R7BB104 (16 V)
 }
 # spares on top of N x per-board (small passives are covered by the minimum order anyway)
 SPARE = {'J2': 1, 'J1': 1}
