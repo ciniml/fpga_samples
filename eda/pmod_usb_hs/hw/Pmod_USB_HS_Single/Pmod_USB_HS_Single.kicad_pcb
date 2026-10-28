@@ -105,7 +105,7 @@
 				)
 			)
 		)
-		(property "Value" "75"
+		(property "Value" "200"
 			(at 0 1.17 0)
 			(layer "F.Fab")
 			(uuid "632c5239-1ade-4fdb-8521-3be82d3ef27f")
@@ -127,7 +127,7 @@
 				)
 			)
 		)
-		(property "Description" "75R 1% 0402 (VREF)"
+		(property "Description" "200R 1% 0402 (VREF)"
 			(at 0 0 0)
 			(layer "F.Fab")
 			(hide yes)
@@ -150,7 +150,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C25133"
+		(property "LCSC" "C25087"
 			(at 0 0 0)
 			(layer "F.SilkS")
 			(hide yes)
@@ -162,7 +162,7 @@
 				)
 			)
 		)
-		(property "MPN" "UNI-ROYAL 0402WGF750JTCE"
+		(property "MPN" "UNI-ROYAL 0402WGF2000TCE"
 			(at 0 0 0)
 			(layer "F.SilkS")
 			(hide yes)
@@ -1013,7 +1013,7 @@
 				)
 			)
 		)
-		(property "Value" "36"
+		(property "Value" "33"
 			(at 0 1.17 270)
 			(layer "F.Fab")
 			(uuid "f211bb7a-6b9e-481b-88f6-0b7dd09125dc")
@@ -1035,7 +1035,7 @@
 				)
 			)
 		)
-		(property "Description" "36R 1% 0402 (HS termination, D+)"
+		(property "Description" "33R 1% 0402 (HS termination, D+)"
 			(at 0 0 270)
 			(layer "F.Fab")
 			(hide yes)
@@ -1058,7 +1058,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C57678"
+		(property "LCSC" "C25105"
 			(at 0 0 0)
 			(layer "F.SilkS")
 			(hide yes)
@@ -1070,7 +1070,7 @@
 				)
 			)
 		)
-		(property "MPN" "UNI-ROYAL 0402WGF360JTCE"
+		(property "MPN" "UNI-ROYAL 0402WGF330JTCE"
 			(at 0 0 0)
 			(layer "F.SilkS")
 			(hide yes)
@@ -2926,7 +2926,7 @@
 				)
 			)
 		)
-		(property "Value" "36"
+		(property "Value" "33"
 			(at 0 1.17 270)
 			(layer "F.Fab")
 			(uuid "82fec6c3-cc28-41f2-8ec0-2a837964960a")
@@ -2948,7 +2948,7 @@
 				)
 			)
 		)
-		(property "Description" "36R 1% 0402 (HS termination, D-)"
+		(property "Description" "33R 1% 0402 (HS termination, D-)"
 			(at 0 0 270)
 			(layer "F.Fab")
 			(hide yes)
@@ -2971,7 +2971,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C57678"
+		(property "LCSC" "C25105"
 			(at 0 0 0)
 			(layer "F.SilkS")
 			(hide yes)
@@ -2983,7 +2983,7 @@
 				)
 			)
 		)
-		(property "MPN" "UNI-ROYAL 0402WGF360JTCE"
+		(property "MPN" "UNI-ROYAL 0402WGF330JTCE"
 			(at 0 0 0)
 			(layer "F.SilkS")
 			(hide yes)
@@ -4130,7 +4130,7 @@
 				)
 			)
 		)
-		(property "Value" "1.8k"
+		(property "Value" "4.7k"
 			(at 0 1.17 180)
 			(layer "F.Fab")
 			(uuid "7c2a1425-880f-4d44-b2b4-5c1bfa5cfd0f")
@@ -4152,7 +4152,7 @@
 				)
 			)
 		)
-		(property "Description" "1.8k 1% 0402 (VREF ~130 mV)"
+		(property "Description" "4.7k 1% 0402 (VREF ~135 mV)"
 			(at 0 0 180)
 			(layer "F.Fab")
 			(hide yes)
@@ -4175,7 +4175,7 @@
 				)
 			)
 		)
-		(property "LCSC" "C25871"
+		(property "LCSC" "C25900"
 			(at 0 0 0)
 			(layer "F.SilkS")
 			(hide yes)
@@ -4187,7 +4187,7 @@
 				)
 			)
 		)
-		(property "MPN" "UNI-ROYAL 0402WGF1801TCE"
+		(property "MPN" "UNI-ROYAL 0402WGF4701TCE"
 			(at 0 0 0)
 			(layer "F.SilkS")
 			(hide yes)
@@ -5989,6 +5989,39 @@
 		(net "+3V3")
 		(layer "F.Cu")
 		(hatch none 0.1)
+		(priority 30000)
+		(attr
+			(teardrop
+				(type padvia)
+			)
+		)
+		(connect_pads yes
+			(clearance 0)
+		)
+		(min_thickness 0.0254)
+		(fill yes
+			(island_removal_mode 1)
+		)
+		(polygon
+			(pts
+				(xy 119.376148 101.79) (xy 119.376148 101.39) (xy 118.157117 100.884463) (xy 117.775148 101.59)
+				(xy 118.157117 102.295537)
+			)
+		)
+		(filled_polygon
+			(layer "F.Cu")
+			(pts
+				(xy 118.166863 100.888505) (xy 118.179494 100.893743) (xy 119.368931 101.387007) (xy 119.375259 101.393341)
+				(xy 119.376148 101.397814) (xy 119.376148 101.782185) (xy 119.372721 101.790458) (xy 119.36893 101.792993)
+				(xy 118.166863 102.291494) (xy 118.157908 102.291497) (xy 118.152092 102.286256) (xy 117.778162 101.595568)
+				(xy 117.777238 101.586663) (xy 117.778161 101.584434) (xy 118.152093 100.893741) (xy 118.159044 100.888099)
+			)
+		)
+	)
+	(zone
+		(net "+3V3")
+		(layer "F.Cu")
+		(hatch none 0.1)
 		(priority 30001)
 		(attr
 			(teardrop
@@ -6954,39 +6987,6 @@
 				(xy 100.312388 81.572879) (xy 100.312937 81.571981) (xy 100.313236 81.571262) (xy 100.313349 81.571309)
 				(xy 100.33654 81.533459) (xy 101.52992 80.340079) (xy 101.554972 80.321878) (xy 101.576739 80.310788)
 				(xy 101.62168 80.3) (xy 121.233311 80.3)
-			)
-		)
-	)
-	(zone
-		(net "+3V3")
-		(layer "F.Cu")
-		(hatch none 0.1)
-		(priority 30000)
-		(attr
-			(teardrop
-				(type padvia)
-			)
-		)
-		(connect_pads yes
-			(clearance 0)
-		)
-		(min_thickness 0.0254)
-		(fill yes
-			(island_removal_mode 1)
-		)
-		(polygon
-			(pts
-				(xy 119.376148 101.79) (xy 119.376148 101.39) (xy 118.157117 100.884463) (xy 117.775148 101.59)
-				(xy 118.157117 102.295537)
-			)
-		)
-		(filled_polygon
-			(layer "F.Cu")
-			(pts
-				(xy 118.166863 100.888505) (xy 118.179494 100.893743) (xy 119.368931 101.387007) (xy 119.375259 101.393341)
-				(xy 119.376148 101.397814) (xy 119.376148 101.782185) (xy 119.372721 101.790458) (xy 119.36893 101.792993)
-				(xy 118.166863 102.291494) (xy 118.157908 102.291497) (xy 118.152092 102.286256) (xy 117.778162 101.595568)
-				(xy 117.777238 101.586663) (xy 117.778161 101.584434) (xy 118.152093 100.893741) (xy 118.159044 100.888099)
 			)
 		)
 	)
