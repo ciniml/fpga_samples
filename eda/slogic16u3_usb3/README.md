@@ -25,7 +25,7 @@ make ... REF=1                    # 切り分け用: Gowin のリファレンス
 make ... PLACE_OPT=3 PNR_EXTRA="serdesRetiming=1" TAG=sr   # PnR オプション (下記「タイミング」)
 make ... TRACE=1 [TRACE_INVERT=1] # EasyCDR トレース送信 (UART ピン、下記。受信側では未確認)
 make ... TAP=1                    # PHY 境界の観測 (phy_tap.v、下記「USB 3.0 PHY IP の境界の観測」)
-make ... OWNPHY=1 [TAP=1]         # 自作 PHY (usb3_softphy.v + rtl/usb3 usb3_phy_*) で Gowin の PHY ソフト IP を置き換え (下記)
+make ... OWNPHY=1 PLACE_OPT=4 PNR_EXTRA="serdesRetiming=1" TAG=sr  # 自作 PHY (usb3_softphy.v + rtl/usb3 usb3_phy_*) で Gowin の PHY ソフト IP を置き換え (下記)
 ~/repos/rust-dap/fpga-config/target/release/gowin-prog --cable dap sram build/slogic16u3_usb3_ln0/impl/pnr/slogic16u3_usb3.fs
 python3 host/usb3_status.py [-w]        # ER1: LTSSM 状態 / 遷移履歴、カウンタ、受信のデコードエラー
 python3 host/usb3_trace.py              # ER2: U0 の PIPE 送受信 1024 語 (デスクランブルしてパケット表示)
@@ -191,6 +191,8 @@ pclk 125 MHz をすべて満たした (IP 版は -0.1 ns 前後)。リンク確�
 TAP なし (`OWNPHY=1`) は配置次第で pclk が 107〜124 MHz にぶれる (遅いのは rtl/usb3 の LTSSM / デバイス部)。
 `PLACE_OPT=4` が 124.1 MHz (4 端点、TNS -0.18 ns) で、実機で列挙、PRBS 379.5 MB/s 誤り 0、ループバック 1 GiB 一致、
 Hot Reset (usbreset) 20 回すべて再列挙してループバック一致。place 3 (+ serdesRetiming / replicate_resources) は 115〜119 MHz。
+**`PLACE_OPT=4 PNR_EXTRA="serdesRetiming=1"` で 125.15 MHz (違反なし)** — これを使う。実機で同じ試験 (PRBS 379.9 MB/s 誤り 0、
+1 GiB 一致、Hot Reset 20/20) を通った。
 
 ハブのポートを disable → enable して 5 回再接続 (Rx.Detect からやり直し): 5 回とも 5000M で再列挙し、その後のループバック
 3 KiB × 50 が一致。その間にリセットのカウンタが 150、復号エラーが約 4.7 万増えた (ポート無効中の雑音と、有効化時の
