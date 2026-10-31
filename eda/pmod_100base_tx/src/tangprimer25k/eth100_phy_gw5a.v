@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
 // GW5A wrapper of the transformerless 100BASE-TX PHY (rtl/eth100_phy):
 // clocks, comparator deserializers and pads.
 //

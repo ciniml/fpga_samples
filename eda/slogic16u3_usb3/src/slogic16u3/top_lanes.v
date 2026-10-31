@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
 // USB 3.0 bring-up on the Sipeed SLogic16U3 (GW5AT-15), step 1: which SerDes lane is wired to the
 // USB-C connector (through the VL162 Type-C 2:1 mux).
 //

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 """Dump the U0 packet trace of the SLogic16U3 USB 3.0 device (top.v, JTAG ER2).
 
 1024 pclk words of the PIPE receive and transmit streams around the first data packet header

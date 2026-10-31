@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 """Generate the project-local footprints into lib/pmod_100base_tx.pretty.
 
 * Pmod_Peripheral_2x06_P2.54mm_Horizontal

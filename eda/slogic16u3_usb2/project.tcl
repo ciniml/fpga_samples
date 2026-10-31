@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 set SRC_DIR       [lindex $argv 0]
 set RTL_DIR       [lindex $argv 1]
 set TARGET        [lindex $argv 2]

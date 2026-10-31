@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
 // Bare GTR12_QUADB (SerDes Q0 of the GW5AT-15) with the port ties of a GowinModGen Customized PHY
 // (Q0 lane 0) and no lane logic: only the reference-clock detectors, CMU status and the clocks the
 // quad puts out to the fabric are brought out (SLogic16U3 reference-clock probe). No CSR writes, so

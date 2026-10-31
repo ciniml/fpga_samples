@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 PROJECT_NAME := eth100_direct
 
 TARGET ?= tangprimer25k

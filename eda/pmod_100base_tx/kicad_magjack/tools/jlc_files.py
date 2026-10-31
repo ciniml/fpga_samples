@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 """JLCPCB assembly files from the KiCad exports in out/:
 out/<N>_bom_full.csv (kicad-cli sch export bom, with the LCSC field) and
 out/<N>_pos.csv (kicad-cli pcb export pos) ->

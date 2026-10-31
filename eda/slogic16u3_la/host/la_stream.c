@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
 /* SLogic16U3 logic analyzer (eda/slogic16u3_la): capture over USB 3.0 with libusb asynchronous
  * transfers, the stream format of rtl/la/la_pkg.veryl, and the test mode check.
  *

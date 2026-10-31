@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
 /* EP1 IN throughput / integrity test of the SLogic16U3 USB 3.0 device with libusb asynchronous
  * transfers: keeps QUEUE bulk IN transfers of SIZE bytes in flight, so the host controller always has
  * a request scheduled, and checks every byte against PRBS15 (same source and bit order as usb3_prbs.py).

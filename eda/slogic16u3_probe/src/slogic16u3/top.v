@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
 // SLogic16U3 pin probe: a "soft boundary scan" through the Gowin user JTAG
 // instruction ER1 (0x42). Every listed pin is read (level + activity flag) and the
 // drivable ones can be set to Hi-Z / 0 / 1 / blink from the host

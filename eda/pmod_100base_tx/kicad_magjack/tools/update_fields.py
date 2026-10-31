@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 """Push Value / MPN / Manufacturer / LCSC / Description from design.py into the
 existing .kicad_pcb without regenerating it (gen_pcb.py would drop the
 Freerouting tracks). Footprints and nets are not touched."""

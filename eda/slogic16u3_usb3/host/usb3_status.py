@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 """Status of the SLogic16U3 USB 3.0 device (top.v) over JTAG ER1 (read-only, 384 bits).
 
     usb3_status.py            one snapshot (with the last 16 LTSSM states)

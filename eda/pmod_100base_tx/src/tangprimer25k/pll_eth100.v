@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2025.
 // 100BASE-TX direct PHY sampling clock: 50 MHz x 20 = VCO 1000 MHz,
 // clkout0 = VCO / 4 = 250 MHz (IDES4 FCLK, 500 MS/s DDR).
 // (Same PLLA setup as eda/easycdr_bert pll_tx_500m, no dynamic phase shift.)

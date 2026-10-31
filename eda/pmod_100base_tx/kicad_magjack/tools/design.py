@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 """Single source of truth for the Pmod 100BASE-TX MagJack (integrated magnetics) variant.
 
 Circuit = eda/pmod_100base_tx/README.md section 3 / 4 / 7.

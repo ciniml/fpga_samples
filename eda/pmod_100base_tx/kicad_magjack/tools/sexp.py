@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 """Minimal KiCad s-expression reader/writer used by the generator scripts."""
 import re
 

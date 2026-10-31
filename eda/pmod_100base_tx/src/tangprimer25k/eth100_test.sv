@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
 // Bring-up logic for the transformerless 100BASE-TX PHY (pclk 125 MHz domain).
 //
 //  - TX: a 60-byte broadcast test frame (+ FCS) once per second (or on 'p'):

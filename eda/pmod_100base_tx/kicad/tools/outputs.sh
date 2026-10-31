@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 # ERC/DRC reports + schematic PDF, PCB PDF, BOM CSV, layout PNG/SVG, 3D renders into out/
 cd "$(dirname "$0")/.."
 N=$(basename *.kicad_pro .kicad_pro)

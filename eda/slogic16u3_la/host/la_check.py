@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 """Check a real-input capture (la_stream -o PREFIX, 8 channels per group) of the Tang Primer 25K pattern
 source (eda/la_pattern_gen): group A = an 8-bit counter, group B = the same counter in Gray code.
 

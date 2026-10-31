@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
 // SLogic16U3 logic analyzer: PHY pclk 125 MHz, sample clock sclk 100 MHz (fclk 400 MHz / 4, fclk from a
 // PLL on pclk; the two meet only through LaCore's asynchronous FIFOs and synchronisers), ref_clk ~125 MHz
 // (internal oscillator PLL), osc ~52 MHz (JTAG status). The USB 3.0 PHY IP also runs logic on the lane's

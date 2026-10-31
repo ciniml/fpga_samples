@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 """Status of the SLogic16U3 logic analyzer bitstream (src/slogic16u3/top.v) over JTAG ER1 (152 bits):
 the clocks (pclk 125 MHz, sample clock 100 MHz), the USB 3.0 link and the stream words sent.
 

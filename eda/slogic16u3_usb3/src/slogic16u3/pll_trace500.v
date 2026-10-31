@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2025.
 // SLogic16U3 USB 3.0, TRACE=1: EasyCDR trace link serial clock from the PHY's pclk (125 MHz, from the
 // 125 MHz oscillator on Q0 REFCLK0): VCO = 125 / 2 x 16 = 1000 MHz, / 2 = 500 MHz (OSER10 FCLK, 1 Gb/s;
 // the parallel 100 MHz comes from a CLKDIV /5 of it).

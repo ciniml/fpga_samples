@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
 // USB 2.0 device bring-up on the Sipeed SLogic16U3 (GW5AT-15), full speed first.
 //
 //   D14 high -> 125 MHz oscillator on SerDes Q0 REFCLK0 -> Customized PHY (Q0 lane 0, GUI-generated,

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 """Status of the REF=1 cross-check build (top_ref.v: Gowin's reference USB 3.0 controller) over JTAG ER1.
 
     usb3_ref_status.py [-w]

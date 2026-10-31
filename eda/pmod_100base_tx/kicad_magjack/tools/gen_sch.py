@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 """Generate lib/pmod_100base_tx.kicad_sym and <NAME>.kicad_sch from design.py (MagJack variant).
 
 Every pin gets a short wire stub ending in a net label (or a power symbol for GND/+3V3),

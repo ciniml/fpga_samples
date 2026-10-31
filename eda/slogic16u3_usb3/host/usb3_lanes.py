@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 """SLogic16U3 USB 3.0 lane probe: per-lane SerDes status over JTAG ER1 (read-only, 256 bits).
 
     usb3_lanes.py            one snapshot

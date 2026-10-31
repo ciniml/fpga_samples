@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
 // Tang Primer 25K + Pmod 100BASE-TX direct (transformerless) PHY bring-up top.
 // Board / circuit: ../README.md, PHY core: rtl/eth100_phy, wrapper: eth100_phy_gw5a.v,
 // test logic + UART protocol: eth100_test.sv.

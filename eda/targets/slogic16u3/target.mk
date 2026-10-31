@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 # Sipeed SLogic16U3 logic analyser (GW5AT-LV15MG132C1/I0), JTAG through an FT2232-compatible probe
 DEVICE_FAMILY := GW5AT-15A
 DEVICE_PART := GW5AT-LV15MG132C1/I0

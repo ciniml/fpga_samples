@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 """Generate pmod_100base_tx_magjack.kicad_pcb (MagJack HR911105A variant).
 
 Board coordinates relative to the top-left corner (X right, Y down, mm).

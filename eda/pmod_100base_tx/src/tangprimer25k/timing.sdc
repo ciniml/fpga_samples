@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
 // 50 MHz crystal -> pll_eth100 250 MHz (IDES4 FCLK) -> CLKDIV /2 = pclk 125 MHz (all logic)
 create_clock -name clk_in -period 20 -waveform {0 10} [get_ports {clk_in}]
 create_clock -name fclk -period 4 -waveform {0 2} [get_nets {u_phy/fclk}]
