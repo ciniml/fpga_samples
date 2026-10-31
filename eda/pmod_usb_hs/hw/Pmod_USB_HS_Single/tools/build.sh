@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 # Check the schematic and the board (REGEN=1: regenerate them first), and write the
 # fabrication outputs to fab/ (Gerbers + drill zip, BOM, placement, JLC BOM/CPL,
 # schematic PDF, board images).
