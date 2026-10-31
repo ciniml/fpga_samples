@@ -61,7 +61,13 @@ module top (
     wire pclk /* synthesis syn_keep=1 */;
     wire [31:0] rx_data, tx_data; wire [3:0] rx_k, tx_k; wire rx_valid, rx_elecidle, phy_status, power_present;
     wire [2:0] rx_status; wire [1:0] power_down; wire tx_elecidle, tx_detectrx, rx_polarity, rx_termination;
+`ifdef PHYTAP
+    wire [222:0] tap; wire [5:0] tap_clk;   // TAP=1: boundary of the PHY soft IP (see the tap below)
+`endif
     SerDes_Top u_serdes (
+`ifdef PHYTAP
+        .TAP_o(tap), .TAP_clk_o(tap_clk),
+`endif
         .USB3_0_PHY_Top_pclk(pclk),
         .USB3_0_PHY_Top_PipeRxData(rx_data),
         .USB3_0_PHY_Top_PipeRxDataK(rx_k),
@@ -238,6 +244,7 @@ module top (
     // [43:24] pclk / 16 edges per 2^22 osc, [351:44] pclk snapshot, [383:352] uptime (2^16 osc),
     // [399:384] COM count, [415:400] decode errors, [431:416] disparity errors (pclk, sampled as is)
     wire [431:0] cap = {cnt_disp, cnt_dec, cnt_com, up, snap, pf, pads_s, phy_resetn, ref_lock, 16'h5B31};
+`ifndef PHYTAP
     // ---------------------------------------------------------------- packet trace (ER2)
     // 1024 pclk words of {RxStatus, RxValid, RxDataK, RxData, TxDataK, TxData} in a ring that runs
     // until a trigger, then 'post' more words and frozen; the write pointer is then the oldest entry.
@@ -321,8 +328,66 @@ module top (
     // [38:28] index shown, [159:39] entry, [167:160] header log write pointer / count (128 = full),
     // [169:168] trigger mode, [170] header log wrapped (ring mode: oldest = pointer), [171] header log frozen
     wire [191:0] cap2 = {20'd0, hfrz, hwrap, tmode_p, hwp, tq, tq_idx, twp, tfull, ttrig, 16'h5B33};
+    localparam integer L2 = 192;
+`else
+    // ---------------------------------------------------------------- PHY boundary tap (TAP=1, ER2)
+    // phy_tap.v: DRP / status event log and transmit data window at the boundary between the USB 3.0
+    // PHY soft IP and the GTR12 quad (SerDes_Top TAP_o, added by project.tcl), host/usb3_phytap.py.
+    // TAP_o: [99:0] the IP's DRP channel {rddata, rdvld, ready, strb, wrdata, addr, rden, wren},
+    //   [142:100] {stat_o_h[12:0], stat_o[12:0], rxfifo_aempty, tx_vld, rx_vld, pcs_rx_rst, pcs_tx_rst,
+    //   ln0_rstn, cmu_ok, rxdet_result, pma_rx_lock, rxelecidle_o_h, rxelecidle_o, astat[5:0]},
+    //   [182:143] txdata[39:0], [222:183] rxdata[39:0]
+    // TAP_clk_o: {cm_life, pcs_rx_o_fabric, pcs_tx_o_fabric, lane0_fabric_rx, lane0_fabric_tx (txdata), drp}
+    reg phy_status_t = 1'b0;           // PhyStatus is a one-pclk pulse: log it as a toggle
+    always @(posedge pclk) if (phy_status) phy_status_t <= ~phy_status_t;
+    wire [63:0] tap_st = {4'd0,
+        tap[142:130],                                            // [59:47] stat_o_h
+        tap[129:117],                                            // [46:34] stat_o
+        tap[116], tap[115], tap[114],                            // [33:31] rxfifo_aempty, tx_vld, rx_vld
+        tap[113], tap[112], tap[111], tap[110], tap[109], tap[108], // [30:25] pcs_rx_rst, pcs_tx_rst, ln0_rstn, cmu_ok, rxdet_result, pma_rx_lock
+        tap[107], tap[106],                                      // [24:23] rxelecidle_o_h, rxelecidle_o
+        tap[105:100],                                            // [22:17] astat
+        ltssm_state,                                             // [16:12]
+        rx_valid, rx_status,                                     // [11:8]
+        phy_status_t, rx_elecidle, rx_polarity, rx_termination, tx_detectrx, tx_elecidle, power_down}; // [7:0]
+    // ER2 write (31 bits): [30] = 1: re-arm the log with mask [15:0], start condition [21] (enable) /
+    // [20:16] (LTSSM state); [29] = 1: re-arm the window with trigger [26:24] and post count [9:0];
+    // otherwise [11:0] = entry to show ([11] = 1: window)
+    wire        w2; wire [30:0] w2_data;
+    reg  [11:0] tidx = 12'd0;
+    always @(posedge osc) if (w2 && !w2_data[30] && !w2_data[29]) tidx <= w2_data[11:0];
+    wire [103:0] lq; wire [43:0] wq;
+    wire [10:0] l_wp; wire [15:0] l_drop, l_mask;
+    wire [9:0]  w_wp; wire w_trig, w_full, l_gate; wire [2:0] w_mode;
+    phy_tap_log u_tap_log (.dclk(tap_clk[0]),
+        .wren(tap[0]), .rden(tap[1]), .addr(tap[25:2]), .wdata(tap[57:26]), .strb(tap[65:58]),
+        .ready(tap[66]), .rdvld(tap[67]), .rdata(tap[99:68]), .st(tap_st),
+        .osc(osc), .i_arm(w2 && w2_data[30]), .i_mask(w2_data[15:0]), .i_start_en(w2_data[21]),
+        .i_start_state(w2_data[20:16]), .i_ridx(tidx[9:0]),
+        .o_rq(lq), .o_gate(l_gate), .o_wp(l_wp), .o_drop(l_drop), .o_mask(l_mask));
+    phy_tap_win u_tap_win (.tclk(tap_clk[1]), .txd(tap[182:143]), .tx_vld(tap[115]),
+        .pd(power_down), .tx_elecidle(tx_elecidle), .tx_detectrx(tx_detectrx),
+        .osc(osc), .i_arm(w2 && w2_data[29] && !w2_data[30]), .i_trig(w2_data[26:24]), .i_post(w2_data[9:0]),
+        .i_ridx(tidx[9:0]), .o_rq(wq), .o_wp(w_wp), .o_trig(w_trig), .o_full(w_full), .o_mode(w_mode));
+    wire [15:0] f_cnt [0:5];
+    genvar fi;
+    generate for (fi = 0; fi < 6; fi = fi + 1) begin : g_freq
+        phy_tap_freq u_f (.clk(tap_clk[fi]), .osc(osc), .o_cnt(f_cnt[fi]));
+    end endgenerate
+    reg  [103:0] tq = 104'd0;
+    reg  [11:0]  tq_idx = 12'd0;
+    always @(posedge osc) begin tq <= tidx[11] ? {60'd0, wq} : lq; tq_idx <= tidx; end
+    // ER2 (288 bits): [15:0] magic 0x5B3A, [26:16] log write pointer (1024 = full), [38:27] index shown,
+    // [142:39] entry, [152:143] window write pointer, [153] window triggered, [154] window full,
+    // [156:155] window trigger mode [1:0], [172:157] log mask, [188:173] log events dropped,
+    // [189] window trigger mode [2], [190] log gate open, [191] 0,
+    // [287:192] clock counts (clk / 64 per 2^20 osc) of TAP_clk_o[0..5], 16 bits each
+    wire [287:0] cap2 = {f_cnt[5], f_cnt[4], f_cnt[3], f_cnt[2], f_cnt[1], f_cnt[0],
+                         1'b0, l_gate, w_mode[2], l_drop, l_mask, w_mode[1:0], w_full, w_trig, w_wp, tq, tq_idx, l_wp, 16'h5B3A};
+    localparam integer L2 = 288;
+`endif
 
-    jtag_status #(.L(432), .L2(192)) u_jtag (.tck_pad_i(tck_pad_i), .tms_pad_i(tms_pad_i), .tdi_pad_i(tdi_pad_i),
+    jtag_status #(.L(432), .L2(L2)) u_jtag (.tck_pad_i(tck_pad_i), .tms_pad_i(tms_pad_i), .tdi_pad_i(tdi_pad_i),
         .tdo_pad_o(tdo_pad_o), .osc(osc), .cap(cap), .cap2(cap2), .o_w2(w2), .o_w2_data(w2_data));
 
     assign led_r = in_u0;

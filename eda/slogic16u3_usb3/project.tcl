@@ -61,6 +61,11 @@ if {$TRACE} {
     }
     add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/encoder_8b10b.sv]
 }
+# TAP=1 (usb3_ln0 device build): observe the boundary between the USB 3.0 PHY soft IP and the GTR12 quad
+# (phy_tap.v, host/usb3_phytap.py). The IP's serdes.v is copied with its internal nets brought out on two
+# extra ports of SerDes_Top (TAP_o, TAP_clk_o); the packet trace on ER2 is replaced by the tap.
+set TAP [expr {!$LANES && !$REF && [info exists ::env(TAP)] && $::env(TAP) eq "1"}]
+if {$TAP} { append defs "`define PHYTAP\n" }
 set fh [open defines_gen.v w]; puts -nonewline $fh $defs; close $fh
 add_file -type verilog [file normalize defines_gen.v]
 
@@ -94,7 +99,27 @@ if {$LANES} {
     }
 }
 add_file -type verilog [file normalize ${SRC_DIR}/jtag_status.v]
-add_file -type verilog ${IPDIR}/serdes.v
+if {$TAP} {
+    set fh [open ${IPDIR}/serdes.v r]; set sv [read $fh]; close $fh
+    set d "upar_arbiter_wrap_SerDes_Top_inst_drp"
+    set tapsig [join [list \
+        q0_fabric_ln0_rxdata_o\[39:0\] q0_fabric_ln0_txdata_i\[39:0\] \
+        q0_fabric_ln0_stat_o_h q0_fabric_ln0_stat_o q0_lane0_rx_if_fifo_aempty q0_fabric_ln0_tx_vld_in \
+        q0_fabric_ln0_rx_vld_out q0_lane0_pcs_rx_rst q0_lane0_pcs_tx_rst q0_fabric_ln0_rstn_i q0_fabric_cmu_ok_o \
+        q0_fabric_ln0_rxdet_result q0_fabric_ln0_pma_rx_lock_o q0_fabric_ln0_rxelecidle_o_h q0_fabric_ln0_rxelecidle_o \
+        q0_fabric_ln0_astat_o \
+        ${d}_rddata_o\[31:0\] ${d}_rdvld_o\[0\] ${d}_ready_o\[0\] ${d}_strb_i\[7:0\] ${d}_wrdata_i\[31:0\] \
+        ${d}_addr_i\[23:0\] ${d}_rden_i\[0\] ${d}_wren_i\[0\]] ", "]
+    set tapclk [join [list q0_fabric_cm_life_clk_o q0_lane0_pcs_rx_o_fabric_clk q0_lane0_pcs_tx_o_fabric_clk \
+        q0_lane0_fabric_rx_clk q0_lane0_fabric_tx_clk ${d}_clk_o\[0\]] ", "]
+    if {[regsub {module SerDes_Top \(} $sv "module SerDes_Top (TAP_o, TAP_clk_o, " sv] != 1} { error "TAP: SerDes_Top header not found" }
+    if {[regsub {\nendmodule //SerDes_Top} $sv "\noutput \[222:0\] TAP_o;\noutput \[5:0\] TAP_clk_o;\nassign TAP_o = {$tapsig};\nassign TAP_clk_o = {$tapclk};\nendmodule //SerDes_Top" sv] != 1} { error "TAP: SerDes_Top end not found" }
+    set fh [open serdes_tap.v w]; puts -nonewline $fh $sv; close $fh
+    add_file -type verilog [file normalize serdes_tap.v]
+    add_file -type verilog [file normalize ${SRC_DIR}/phy_tap.v]
+} else {
+    add_file -type verilog ${IPDIR}/serdes.v
+}
 foreach f [glob -nocomplain ${IPDIR}/*/*.v] { if {![string match *_tmp.v $f]} { add_file -type verilog $f } }
 set GW_JTAG_V [file normalize [file join [file dirname [info nameofexecutable]] .. data ipcores gw_jtag.v]]
 add_file -type verilog $GW_JTAG_V
@@ -106,10 +131,16 @@ if {$TRACE} {
 set fh [open pins_gen.cst w]; puts -nonewline $fh $cst; close $fh
 add_file -type cst [file normalize pins_gen.cst]
 set SDC [file normalize ${SRC_DIR}/[expr {$LANES ? "timing_lanes.sdc" : ($REF ? "timing_ref.sdc" : "timing.sdc")}]]
-if {$TRACE} {
-    # one file: the trace clock groups refer to pclk of timing.sdc (SDC files are read separately)
+if {$TRACE || $TAP} {
+    # one file: the trace / tap clock groups refer to pclk of timing.sdc (SDC files are read separately)
     set fh [open $SDC r]; set sdc [read $fh]; close $fh
-    set fh [open ${SRC_DIR}/timing_trace.sdc r]; append sdc [read $fh]; close $fh
+    if {$TRACE} { set fh [open ${SRC_DIR}/timing_trace.sdc r]; append sdc [read $fh]; close $fh }
+    if {$TAP} {
+        # the clock nets now leave SerDes_Top on TAP_clk_o: synthesis names them after the top-level wire
+        set sdc [string map [list {u_serdes/q0_lane0_fabric_rx_clk} {tap_clk[2]} \
+            {u_serdes/upar_arbiter_wrap_SerDes_Top_inst_drp_clk_o[0]} {tap_clk[0]}] $sdc]
+        set fh [open ${SRC_DIR}/timing_tap.sdc r]; append sdc [read $fh]; close $fh
+    }
     set fh [open timing_gen.sdc w]; puts -nonewline $fh $sdc; close $fh
     set SDC [file normalize timing_gen.sdc]
 }

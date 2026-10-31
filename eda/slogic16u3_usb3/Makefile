@@ -20,8 +20,11 @@ TAG ?=
 TRACE ?=
 TRACE_INVERT ?=
 export TRACE TRACE_INVERT
+# TAP=1: observe the boundary between the USB 3.0 PHY soft IP and the GTR12 quad (phy_tap.v, ER2)
+TAP ?=
+export TAP
 export PLACE_OPT ROUTE_OPT PNR_EXTRA
-BUILD_SUFFIX := _$(SERDES_IP)$(if $(filter 1,$(REF)),_ref)$(if $(PLACE_OPT),_p$(PLACE_OPT))$(if $(ROUTE_OPT),_r$(ROUTE_OPT))$(if $(filter 1,$(TRACE)),_trace)$(if $(TAG),_$(TAG))
+BUILD_SUFFIX := _$(SERDES_IP)$(if $(filter 1,$(REF)),_ref)$(if $(PLACE_OPT),_p$(PLACE_OPT))$(if $(ROUTE_OPT),_r$(ROUTE_OPT))$(if $(filter 1,$(TRACE)),_trace)$(if $(filter 1,$(TAP)),_tap)$(if $(TAG),_$(TAG))
 
 USB3_VERYL_SV := $(addprefix ../../rtl/usb3/,usb3_pkg.sv usb3_crc_pkg.sv usb3_scrambler.sv usb3_rx_fifo.sv usb3_rx_parser.sv usb3_tx_framer.sv usb3_ltssm.sv usb3_link.sv usb3_top.sv usb3_descriptor_rom.sv usb3_device.sv)
 

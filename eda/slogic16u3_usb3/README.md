@@ -24,6 +24,7 @@ make ... SERDES_IP=serdes_4ln     # レーン特定用 (top_lanes.v、Customized
 make ... REF=1                    # 切り分け用: Gowin のリファレンスコントローラを同じ PHY で (top_ref.v)
 make ... PLACE_OPT=3 PNR_EXTRA="serdesRetiming=1" TAG=sr   # PnR オプション (下記「タイミング」)
 make ... TRACE=1 [TRACE_INVERT=1] # EasyCDR トレース送信 (UART ピン、下記。受信側では未確認)
+make ... TAP=1                    # PHY 境界の観測 (phy_tap.v、下記「USB 3.0 PHY IP の境界の観測」)
 ~/repos/rust-dap/fpga-config/target/release/gowin-prog --cable dap sram build/slogic16u3_usb3_ln0/impl/pnr/slogic16u3_usb3.fs
 python3 host/usb3_status.py [-w]        # ER1: LTSSM 状態 / 遷移履歴、カウンタ、受信のデコードエラー
 python3 host/usb3_trace.py              # ER2: U0 の PIPE 送受信 1024 語 (デスクランブルしてパケット表示)
@@ -31,6 +32,7 @@ python3 host/usb3_trace.py --hdr        # ER2: 送受信ヘッダパケットの
 python3 host/usb3_lanes.py [-w]         # SERDES_IP=serdes_4ln: レーンごとの signal_detect など
 python3 host/usb3_ref_status.py [-w]    # REF=1: PIPE 統計
 python3 host/usb3_prbs.py [-s 10]       # EP1 IN を PRBS15 送出に切り替えて帯域とバイト誤りを測る (ベンダ要求 0x02 で 0x0001)
+python3 host/usb3_phytap.py status|arm-log|log|arm-win|win   # TAP=1: DRP / 状態ログと送信データの窓
 ```
 
 - `REF=1` は `eda/targets/tangconsole60k/doc/gowin_usb3_ref` (Gowin の GW5AT-60 用リファレンス、このリポジトリの
@@ -125,3 +127,38 @@ bMaxBurst は 15 が上限なので、これ以上はホスト側次第。
 
 デバッグ用に Usb3Device は `o_dbg_event` (EP1 IN の ACK 無視 / Retry / 応答喪失 / SeqNum 飛び) と
 `o_dbg_strobe` / `o_dbg_state` (EP1 IN の内部状態) を出す。
+
+## USB 3.0 PHY IP の境界の観測 (TAP=1)
+
+自作 PHY に向けて、Gowin の USB 3.0 PHY ソフト IP (`USB3_0_PHY_Top`、暗号化) と GTR12 quad の間の配線を観測する。
+IP の中身は見ない。`project.tcl` がビルド時に `serdes.v` の写しを作り、平文の内部配線を `SerDes_Top` の
+`TAP_o` / `TAP_clk_o` に出す。`phy_tap.v` が IP の DRP チャネルの読み書きと状態変化のログ (1024 件、LTSSM 状態で
+開始条件を付けられる)、quad に書く送信データの窓 (1024 語) を取り、ER2 で読む。
+
+静的設定 (CSR) について:
+- `IDE/bin/serdes_toml_to_csr.dist/serdes_toml_to_csr_15k.bin --comment -o <絶対パス.csr> <絶対パス.toml>` で
+  `usb3_ln0/serdes_tmp.toml` から `serdes.csr` がバイト一致で再生成でき、各書き込みにレジスタ群名が付く
+  (`usb3_phytap.py log --names` に渡す)。
+- USB 3.0 PHY の toml に USB 専用のキーは無い。Customized PHY と同じキーで、20 ビット・ギア 1:2・QPLL0・
+  quad の 8b10b / ワード整列 / CTC はすべてバイパス (`cfg_fpcs` 0x809068 = 0x1FF)。USB の機能はすべて IP と実行時の
+  DRP 操作による。
+- quad の制御ピン (`FABRIC_LN0_CTRL_I` / `PD_I` / `RATE_I`) は GND 固定、`FABRIC_LN0_RXDET_RESULT` は IP に
+  つながっていない。
+
+実機 (2026-11-01、ホストのポートを disable → enable して再接続) で分かったこと:
+- クロック (合成でのネット統合と実測): 送信データ = pclk = PCS TX クロック (124.9 MHz)、受信 FIFO の読み出し =
+  CDR 再生クロック (124.6 MHz、IP 内のエラスティックバッファで pclk へ)、DRP = quad の常時クロック (約 56 MHz)。
+- 起動後と U0 の間、IP は DRP を操作しない。
+- **LFPS 送信**: 送信データで全 1 × 4 語 / 全 0 × 4 語 (320 ビット = 64 ns、15.6 MHz) の方形波を作り、
+  ドライバの入り切りを DRP `0x8003a4` で行う (TxElecIdle の立ち下がりから約 0.41 µs で 7、立ち上がりで 1)。
+  TxElecIdle が下りると `tx_vld` を 34 語 (約 270 ns) 落としてから方形波を流す。電気的アイドル中のデータは 0x2AA。
+- **Rx.Detect**: TxDetectRx で `0x80033f` ← 0x03000000、quad の `rxdet_result` が約 1.8 µs 1 になる、
+  約 4.7 µs で `0x80033f` ← 0、`0x808b34` を読む (0x02000003) → RxStatus = 3 と PhyStatus。
+- **Rx.Detect 後 (P2)**: `0x808238` ← 0、`0x8082d8` ← 0 → 0x110。**P0 への移行**: `0x8003a4` ← 7、
+  `0x808238` ← 0x805、`0x8082d8` ← 0 → 0x110 (CSR の初期値は `0x808238` = 0xB00)。その約 57 µs 後に `0x004031` を読む。
+- 相手の LFPS は `rxelecidle_o` (1 = 信号あり) に出る。その約 0.4 µs 前に `astat` の bit5 が立つ。
+- P0 に入ってからも方形波が約 34 語続き、その後 8b10b 済みのシンボル (10 ビット × 4) になる。
+
+未観測: 受信側 (quad からの生 10 ビット、IP の整列・8b10b 復号・エラスティックバッファ)、`0x808b34` / `0x004031` の
+ビットの意味、P1 / P3 (U1〜U3)。Polling.RxEQ では rtl/usb3 の LTSSM が RxPolarity を頻繁に切り替えている
+(ログが埋まる。D21.5 判定の追い込み)。
