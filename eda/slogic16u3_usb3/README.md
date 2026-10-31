@@ -192,4 +192,8 @@ TAP なし (`OWNPHY=1`) は配置次第で pclk が 107〜124 MHz にぶれる (
 `PLACE_OPT=4` が 124.1 MHz (4 端点、TNS -0.18 ns) で、実機で列挙、PRBS 379.5 MB/s 誤り 0、ループバック 1 GiB 一致、
 Hot Reset (usbreset) 20 回すべて再列挙してループバック一致。place 3 (+ serdesRetiming / replicate_resources) は 115〜119 MHz。
 
-未確認: 再接続 (ポート disable → enable) の繰り返し、U1〜U3 (P1 / P3)、Warm Reset、SSC の大きいホスト。
+ハブのポートを disable → enable して 5 回再接続 (Rx.Detect からやり直し): 5 回とも 5000M で再列挙し、その後のループバック
+3 KiB × 50 が一致。その間にリセットのカウンタが 150、復号エラーが約 4.7 万増えた (ポート無効中の雑音と、有効化時の
+Warm Reset と見ているが、Gowin の PHY と比べてはいない)。
+
+未確認: U1〜U3 (P1 / P3)、SSC の大きいホスト、上の 2 つのカウンタの増え方が Gowin の PHY と同じか。
