@@ -17,6 +17,8 @@
 //      the GW3A GMT hard block (GW3A only)
 //   2: DdrFb + Hub75RowLanes: the frame buffer in external DRAM (the
 //      burst port of Ddr2Ctrl, 'm), row buffers in block RAM
+//   3: DdrFb + GmtCornerTurn + Hub75RowPlanes: as 2, the fetched rows
+//      turned into bit-plane words by the GW3A GMT (GW3A only)
 //
 // Four clock domains: PHY receive ('p), PHY transmit ('t), system ('s:
 // service and frame buffer writes) and display ('d: the HUB75 engine),
@@ -240,7 +242,7 @@ module EthernetHub75Core #(
     var flip_busy: 's logic           ; // seen by the writer: drop bytes, ack when it falls
     var busy_d   : 's logic           ;
 
-    if HUB75_IMPL != 2 :g_writer {
+    if HUB75_IMPL <: 2 :g_writer {
         inst writer: UdpVideoWriter #(
             WIDTH         : WIDTH         ,
             HEIGHT        : HEIGHT        ,
@@ -280,7 +282,7 @@ module EthernetHub75Core #(
     assign o_ev_net    = ev_arp || ev_icmp;
     assign o_ctrl_data = lut_data;
 
-    if HUB75_IMPL != 2 :g_no_dram {
+    if HUB75_IMPL <: 2 :g_no_dram {
         assign o_mreq_valid  = 1'b0;
         assign o_mreq_we     = 1'b0;
         assign o_mreq_addr   = 0;
@@ -452,35 +454,123 @@ module EthernetHub75Core #(
             i_bist_restart: i_bist_restart,
         );
 
-        inst panel: hub75::Hub75RowLanes #(
-            SCAN_ROWS     : SCAN_ROWS     ,
-            CHAIN_LEN     : LANE_WIDTH    ,
-            NUM_LANES     : NUM_LANES     ,
-            CLOCK_DIVIDER : CLOCK_DIVIDER ,
-            CLK_LOW_EXTRA : CLK_LOW_EXTRA ,
-            COMPONENT_BITS: COMPONENT_BITS,
-            BASE_OE_CYCLES: BASE_OE_CYCLES,
-        ) (
-            i_fclk      : i_mclk    ,
-            i_frst      : i_mrst    ,
-            i_we        : fill_we   ,
-            i_wlane     : fill_lane ,
-            i_waddr     : fill_addr ,
-            i_wdata     : fill_rgb  ,
-            o_fetch_req : fetch_req ,
-            o_fetch_row : fetch_row ,
-            i_fetch_done: fetch_done,
-            i_clk       : i_dclk    ,
-            i_rst       : i_drst    ,
-            o_frame     : o_frame   ,
-            o_row       : o_row     ,
-            o_r         : o_r       ,
-            o_g         : o_g       ,
-            o_b         : o_b       ,
-            o_oe        : o_oe      ,
-            o_lat       : o_lat     ,
-            o_clk       : o_hclk    ,
-        );
+        if HUB75_IMPL == 2 :g_rowpx {
+            inst panel: hub75::Hub75RowLanes #(
+                SCAN_ROWS     : SCAN_ROWS     ,
+                CHAIN_LEN     : LANE_WIDTH    ,
+                NUM_LANES     : NUM_LANES     ,
+                CLOCK_DIVIDER : CLOCK_DIVIDER ,
+                CLK_LOW_EXTRA : CLK_LOW_EXTRA ,
+                COMPONENT_BITS: COMPONENT_BITS,
+                BASE_OE_CYCLES: BASE_OE_CYCLES,
+            ) (
+                i_fclk      : i_mclk    ,
+                i_frst      : i_mrst    ,
+                i_we        : fill_we   ,
+                i_wlane     : fill_lane ,
+                i_waddr     : fill_addr ,
+                i_wdata     : fill_rgb  ,
+                o_fetch_req : fetch_req ,
+                o_fetch_row : fetch_row ,
+                i_fetch_done: fetch_done,
+                i_clk       : i_dclk    ,
+                i_rst       : i_drst    ,
+                o_frame     : o_frame   ,
+                o_row       : o_row     ,
+                o_r         : o_r       ,
+                o_g         : o_g       ,
+                o_b         : o_b       ,
+                o_oe        : o_oe      ,
+                o_lat       : o_lat     ,
+                o_clk       : o_hclk    ,
+            );
+        } else :g_rowgmt {
+            // the fetched pixels go through the GMT (buffer as the "scan
+            // row" of GmtCornerTurn) into bit-plane row buffers; the last
+            // group leaves the GMT ~20 clocks after the last pixel, so the
+            // done pulse is held back by 32 clocks
+            const XW_BITS   : u32 = LX_BITS - 5;
+            const PLANE_BITS: u32 = if COMPONENT_BITS >: 1 ? $clog2(COMPONENT_BITS) : 1;
+
+            var pw_we    : 'm logic             ;
+            var pw_lane  : 'm logic<LANE_BITS>  ;
+            var pw_colour: 'm logic<2>          ;
+            var pw_plane : 'm logic<PLANE_BITS> ;
+            var pw_addr  : 'm logic<1 + XW_BITS>;
+            var pw_data  : 'm logic<32>         ;
+            var done_cnt : 'm logic<6>          ;
+            var done_q   : 'm logic             ;
+
+            inst turn: GmtCornerTurn #(
+                SCAN_ROWS     : 2             ,
+                CHAIN_LEN     : LANE_WIDTH    ,
+                NUM_LANES     : NUM_LANES     ,
+                COMPONENT_BITS: COMPONENT_BITS,
+                CHAIN_REVERSE : CHAIN_REVERSE ,
+            ) (
+                i_clk     : i_mclk   ,
+                i_rst     : i_mrst   ,
+                i_we      : fill_we  ,
+                i_lane    : fill_lane,
+                i_addr    : fill_addr,
+                i_rgb     : fill_rgb ,
+                i_flip_req: 1'b0     ,
+                o_busy    : _        ,
+                o_we      : pw_we    ,
+                o_lane    : pw_lane  ,
+                o_colour  : pw_colour,
+                o_plane   : pw_plane ,
+                o_addr    : pw_addr  ,
+                o_data    : pw_data  ,
+                o_flip_req: _        ,
+            );
+
+            always_ff (i_mclk) {
+                if i_mrst {
+                    done_cnt = 6'd0;
+                    done_q   = 1'b0;
+                } else {
+                    done_q = done_cnt == 6'd1;
+                    if fetch_done {
+                        done_cnt = 6'd32;
+                    } else if done_cnt != 6'd0 {
+                        done_cnt = done_cnt - 6'd1;
+                    }
+                }
+            }
+
+            inst panel: hub75::Hub75RowPlanes #(
+                SCAN_ROWS     : SCAN_ROWS     ,
+                CHAIN_LEN     : LANE_WIDTH    ,
+                NUM_LANES     : NUM_LANES     ,
+                CLOCK_DIVIDER : CLOCK_DIVIDER ,
+                CLK_LOW_EXTRA : CLK_LOW_EXTRA ,
+                COMPONENT_BITS: COMPONENT_BITS,
+                BASE_OE_CYCLES: BASE_OE_CYCLES,
+            ) (
+                i_fclk      : i_mclk   ,
+                i_frst      : i_mrst   ,
+                i_we        : pw_we    ,
+                i_wlane     : pw_lane  ,
+                i_wcolour   : pw_colour,
+                i_wplane    : pw_plane ,
+                i_waddr     : pw_addr  ,
+                i_wdata     : pw_data  ,
+                o_fetch_req : fetch_req,
+                o_fetch_row : fetch_row,
+                i_fetch_done: done_q   ,
+                i_clk       : i_dclk   ,
+                i_rst       : i_drst   ,
+                o_frame     : o_frame  ,
+                o_row       : o_row    ,
+                o_r         : o_r      ,
+                o_g         : o_g      ,
+                o_b         : o_b      ,
+                o_oe        : o_oe     ,
+                o_lat       : o_lat    ,
+                o_clk       : o_hclk   ,
+            );
+        }
     }
 
     let _unused: 's logic = |rpop_cnt;

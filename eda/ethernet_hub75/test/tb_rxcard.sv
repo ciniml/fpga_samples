@@ -594,15 +594,15 @@ module tb;
         expect_eq("status dport", rx16(q, 36), 16'd40000);
         expect_eq("status udp len", rx16(q, 38), 16'd56);
         expect_eq("status magic", rxq[q][42], 8'hD2);
-        expect_eq("status flags", rxq[q][43] & 8'hBF, IMPL == 2 ? 8'h37 : 8'h01);
+        expect_eq("status flags", rxq[q][43] & 8'hBF, IMPL >= 2 ? 8'h37 : 8'h01);
         expect_eq("status memory test errors", rx16(q, 46), 16'd0);
         expect_eq("status speed", rxq[q][51], 8'd2);
         expect_eq("status overflow", rx16(q, 52), 16'd0);
         expect_eq("status flips", rx32(q, 54), flips);
         expect_eq("status pass errors", {rx16(q, 58), rx16(q, 60), rx16(q, 62)}, 0);
-        expect_eq("status runs", rx32(q, 82), IMPL == 2 ? runs + ($test$plusargs("ddr_marginal") ? 2 : 0) : 0);
+        expect_eq("status runs", rx32(q, 82), IMPL >= 2 ? runs + ($test$plusargs("ddr_marginal") ? 2 : 0) : 0);
         for (int i = 0; i < 48; i++) st[i] = rxq[q][42 + i];
-        if (IMPL == 2) expect_eq("read tuning done", rxq[q][42 + 44] >> 7, 1);
+        if (IMPL >= 2) expect_eq("read tuning done", rxq[q][42 + 44] >> 7, 1);
         $display("[%0t] status reply ok (RD_LAT %0d, RD_SEL %0d / %0d)", $time, rxq[q][44], rxq[q][45] & 15, rxq[q][45] >> 4);
     endtask
 
@@ -638,7 +638,7 @@ module tb;
                 $display("[%0t] bad FCS frame dropped", $time);
         end
 
-        if (IMPL == 2) begin
+        if (IMPL >= 2) begin
             wait (dut.t_done === 1'b1 && dut.fb_ready === 1'b1);
             expect_eq("ddr2 calibrated", dut.cal_ok, 1);
             expect_eq("ddr2 memory test errors", dut.bist_err, 0);
@@ -691,7 +691,7 @@ module tb;
         check_panel("frame 2 (colour table)");
 
         test_status(2);
-        if (IMPL == 2) begin
+        if (IMPL >= 2) begin
             // control: override with the calibrated values and run the
             // memory test again, then back to the calibration
             txf[42] = 8'h01;

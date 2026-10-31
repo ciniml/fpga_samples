@@ -80,7 +80,7 @@ foreach f [glob -nocomplain ${SRC_DIR}/ip/*.v] {
 # LVCMOS18 otherwise) to the one cst file
 set cst_files [list ${SRC_DIR}/pins.cst]
 if {[file exists ${SRC_DIR}/pins_ddr2.cst]} {
-    if {${HUB75_IMPL} == 2} {
+    if {${HUB75_IMPL} >= 2} {
         lappend cst_files ${SRC_DIR}/pins_ddr2.cst
     } else {
         lappend cst_files ${SRC_DIR}/pins_ddr2_idle.cst
@@ -105,7 +105,7 @@ set sdc_files [list ${SRC_DIR}/timing.sdc]
 if {${TXC_SHIFTED} == 1 && [file exists ${SRC_DIR}/timing_txc_shifted.sdc]} {
     lappend sdc_files ${SRC_DIR}/timing_txc_shifted.sdc
 }
-if {${HUB75_IMPL} == 2 && [file exists ${SRC_DIR}/timing_ddr.sdc]} {
+if {${HUB75_IMPL} >= 2 && [file exists ${SRC_DIR}/timing_ddr.sdc]} {
     lappend sdc_files ${SRC_DIR}/timing_ddr.sdc
 }
 if {[llength $sdc_files] > 1} {

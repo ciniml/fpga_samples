@@ -14,21 +14,21 @@
 //   4p + c (R1, upper half) and 4p + 2 + c (R2). The second group
 //   (J12..J19) is kept blank (OE high).
 //   DDR2 U46 (W9725G6KB, 16M x 16, banks 2 / 3 at 1.8 V; DM not wired):
-//   the frame buffer for HUB75_IMPL 2 (Ddr2Ctrl + Ddr2PhyGw3a), held idle
+//   the frame buffer for HUB75_IMPL 2 / 3 (Ddr2Ctrl + Ddr2PhyGw3a), held idle
 //   (CKE low) otherwise.
 //   Clocks from the 50 MHz oscillator (B16) through PLLB (VCO 1000 MHz):
 //     125 MHz system / RGMII TX, 125 MHz + 270° (TXD if TXC_SHIFTED),
 //     50 MHz display (HUB75 CLK = 50 / 3 = 16.7 MHz), 333.3 MHz DDR2 fclk
 //     (CK 166.7 MHz) and through CLKDIV / 4 the 83.3 MHz DDR2 pclk.
 //
-// HUB75_IMPL (0: soft, 1: GMT, 2: DDR2), PANEL_ROWS and the RGMII delay options
+// HUB75_IMPL (0: soft, 1: GMT, 2: DDR2, 3: DDR2 + GMT), PANEL_ROWS and the RGMII delay options
 // (PHY_DELAY_BITS, TXC_SHIFTED, RX_DELAY) come from the package
 // ethernet_hub75_cfg
 // that the build writes (project.tcl), so that both versions build from
 // one top.
 //
 // LEDs (active low): LED1 heartbeat (panel frames) once the PLL is locked
-// (HUB75_IMPL 2: once the DDR2 memory test has passed; fast blink when it
+// (HUB75_IMPL 2 / 3: once the DDR2 memory test has passed; fast blink when it
 // or the read calibration failed), LED2 network activity (video / ARP /
 // ICMP); LED2 blinks fast when no RTL8211E answered on MDIO.
 //
@@ -215,7 +215,7 @@ module DkLedRxcardTop #(
     var rd_lat    : 'm logic<4>            ;
     var mclk      : 'm clock               ;
 
-    if HUB75_IMPL == 2 :g_ddr {
+    if HUB75_IMPL >= 2 :g_ddr {
         inst u_div: $sv::CLKDIV #(
             DIV_MODE: "4",
         ) (
@@ -647,7 +647,7 @@ module DkLedRxcardTop #(
     unsafe (cdc) {
         always_ff (sys_clk) {
             status = {
-                8'hD2, 1'b0, ovr_en, HUB75_IMPL == 2, fb_ready, cal_fail, cal_ok, mem_init, lock_s2, 4'd0, rd_lat,
+                8'hD2, 1'b0, ovr_en, HUB75_IMPL >= 2, fb_ready, cal_fail, cal_ok, mem_init, lock_s2, 4'd0, rd_lat,
                 rd_sel_odd[3:0], rd_sel[3:0], bist_err, bist_first as 24, 6'd0, speed, ovf_cnt, flip_cnt, bist_pass,
                 ovr_sel_o, ovr_sel, 4'd0, ovr_lat, bist_mask, bist_runs, t_done, t_en, 6'd0, t_sel_o, t_sel, t_first
             };
@@ -817,7 +817,7 @@ module DkLedRxcardTop #(
             ddr_bad_s2 = ddr_bad_s1;
         }
     }
-    let hb_led: 's logic = if HUB75_IMPL != 2 ? lock_s2 && hb_s2 : if ddr_bad_s2 ? blink[20] : ddr_ok_s2 && hb_s2;
+    let hb_led: 's logic = if HUB75_IMPL <: 2 ? lock_s2 && hb_s2 : if ddr_bad_s2 ? blink[20] : ddr_ok_s2 && hb_s2;
 
     let no_phy: 's logic = phy_done && phy_cnt2 == 2'd0;
     assign led = ~{(act != 24'd0) || (no_phy && blink[22]), hb_led};
