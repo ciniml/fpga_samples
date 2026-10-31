@@ -117,9 +117,22 @@ module usb3_softphy (
         .o_wrdata(serdes_upar_wrdata_o), .o_strb(serdes_upar_strb_o),
         .i_ready(serdes_upar_ready_i), .i_rdvld(serdes_upar_rdvld_i), .i_rddata(serdes_upar_rddata_i));
 
-    assign PhyStatus = phy_status;
-    assign PipeRxDataValid = rv;
-    assign PipeRxData = rv ? rword[31:0] : 32'd0;
-    assign PipeRxDataK = rv ? rword[35:32] : 4'd0;
-    assign RxStatus = phy_status ? det_status : (rv ? rword[38:36] : 3'd0);
+    // registered outputs (the elastic buffer's read data otherwise runs on into the link layer's
+    // descrambler in the same clock)
+    reg        o_physt = 1'b0, o_rv = 1'b0;
+    reg [31:0] o_d = 32'd0;
+    reg [3:0]  o_k = 4'd0;
+    reg [2:0]  o_st = 3'd0;
+    always @(posedge pclk) begin
+        o_physt <= phy_status;
+        o_rv    <= rv;
+        o_d     <= rv ? rword[31:0] : 32'd0;
+        o_k     <= rv ? rword[35:32] : 4'd0;
+        o_st    <= phy_status ? det_status : (rv ? rword[38:36] : 3'd0);
+    end
+    assign PhyStatus = o_physt;
+    assign PipeRxDataValid = o_rv;
+    assign PipeRxData = o_d;
+    assign PipeRxDataK = o_k;
+    assign RxStatus = o_st;
 endmodule

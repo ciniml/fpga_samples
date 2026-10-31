@@ -62,7 +62,7 @@ module top (
     wire [31:0] rx_data, tx_data; wire [3:0] rx_k, tx_k; wire rx_valid, rx_elecidle, phy_status, power_present;
     wire [2:0] rx_status; wire [1:0] power_down; wire tx_elecidle, tx_detectrx, rx_polarity, rx_termination;
 `ifdef PHYTAP
-    wire [222:0] tap; wire [5:0] tap_clk;   // TAP=1: boundary of the PHY soft IP (see the tap below)
+    wire [322:0] tap; wire [5:0] tap_clk;   // TAP=1: boundary of the PHY soft IP (see the tap below)
 `endif
     SerDes_Top u_serdes (
 `ifdef PHYTAP
@@ -336,11 +336,19 @@ module top (
     // TAP_o: [99:0] the IP's DRP channel {rddata, rdvld, ready, strb, wrdata, addr, rden, wren},
     //   [142:100] {stat_o_h[12:0], stat_o[12:0], rxfifo_aempty, tx_vld, rx_vld, pcs_rx_rst, pcs_tx_rst,
     //   ln0_rstn, cmu_ok, rxdet_result, pma_rx_lock, rxelecidle_o_h, rxelecidle_o, astat[5:0]},
-    //   [182:143] txdata[39:0], [222:183] rxdata[39:0]
+    //   [182:143] txdata[39:0], [222:183] rxdata[39:0],
+    //   [322:223] the quad side of the upar arbiter {rddata, rdvld, ready, strb, wrdata, addr, rden, wren}
     // TAP_clk_o: {cm_life, pcs_rx_o_fabric, pcs_tx_o_fabric, lane0_fabric_rx, lane0_fabric_tx (txdata), drp}
     reg phy_status_t = 1'b0;           // PhyStatus is a one-pclk pulse: log it as a toggle
     always @(posedge pclk) if (phy_status) phy_status_t <= ~phy_status_t;
-    wire [63:0] tap_st = {4'd0,
+`ifdef PHYTAP_UPAR
+    wire [99:0] tap_drp = tap[322:223];
+    wire [3:0]  tap_ux = {tap[290], tap[289], tap[224], tap[223]};   // quad side {rdvld, ready, rden, wren}
+`else
+    wire [99:0] tap_drp = tap[99:0];
+    wire [3:0]  tap_ux = 4'd0;
+`endif
+    wire [63:0] tap_st = {tap_ux,                                // [63:60] (TAP_UPAR)
         tap[142:130],                                            // [59:47] stat_o_h
         tap[129:117],                                            // [46:34] stat_o
         tap[116], tap[115], tap[114],                            // [33:31] rxfifo_aempty, tx_vld, rx_vld
@@ -360,8 +368,8 @@ module top (
     wire [10:0] l_wp; wire [15:0] l_drop, l_mask;
     wire [9:0]  w_wp; wire w_trig, w_full, l_gate; wire [2:0] w_mode;
     phy_tap_log u_tap_log (.dclk(tap_clk[0]),
-        .wren(tap[0]), .rden(tap[1]), .addr(tap[25:2]), .wdata(tap[57:26]), .strb(tap[65:58]),
-        .ready(tap[66]), .rdvld(tap[67]), .rdata(tap[99:68]), .st(tap_st),
+        .wren(tap_drp[0]), .rden(tap_drp[1]), .addr(tap_drp[25:2]), .wdata(tap_drp[57:26]), .strb(tap_drp[65:58]),
+        .ready(tap_drp[66]), .rdvld(tap_drp[67]), .rdata(tap_drp[99:68]), .st(tap_st),
         .osc(osc), .i_arm(w2 && w2_data[30]), .i_mask(w2_data[15:0]), .i_start_en(w2_data[21]),
         .i_start_state(w2_data[20:16]), .i_ridx(tidx[9:0]),
         .o_rq(lq), .o_gate(l_gate), .o_wp(l_wp), .o_drop(l_drop), .o_mask(l_mask));

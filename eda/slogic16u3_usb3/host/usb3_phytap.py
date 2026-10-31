@@ -31,7 +31,8 @@ ST_FIELDS = [('pd', 0, 2), ('tx_ei', 2, 1), ('tx_det', 3, 1), ('rx_term', 4, 1),
              ('rx_ei', 6, 1), ('physt_t', 7, 1), ('rx_st', 8, 3), ('rx_v', 11, 1), ('ltssm', 12, 5),
              ('astat', 17, 6), ('ei_o', 23, 1), ('ei_o_h', 24, 1), ('rx_lock', 25, 1), ('rxdet', 26, 1),
              ('cmu_ok', 27, 1), ('rstn', 28, 1), ('pcs_tx_rst', 29, 1), ('pcs_rx_rst', 30, 1),
-             ('rx_vld', 31, 1), ('tx_vld', 32, 1), ('rx_aempty', 33, 1), ('stat', 34, 13), ('stat_h', 47, 13)]
+             ('rx_vld', 31, 1), ('tx_vld', 32, 1), ('rx_aempty', 33, 1), ('stat', 34, 13), ('stat_h', 47, 13),
+             ('u_wren', 60, 1), ('u_rden', 61, 1), ('u_ready', 62, 1), ('u_rdvld', 63, 1)]
 
 
 class Args:

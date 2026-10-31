@@ -66,9 +66,17 @@ if {$TRACE} {
 # extra ports of SerDes_Top (TAP_o, TAP_clk_o); the packet trace on ER2 is replaced by the tap.
 set TAP [expr {!$LANES && !$REF && [info exists ::env(TAP)] && $::env(TAP) eq "1"}]
 if {$TAP} { append defs "`define PHYTAP\n" }
+# TAP_UPAR=1 (with TAP=1): the log follows the quad side of the upar arbiter (GTR12_UPARA) instead of the
+# IP's DRP channel, and its control lines {rdvld, ready, rden, wren} are status bits [63:60]
+set TAP_UPAR [expr {$TAP && [info exists ::env(TAP_UPAR)] && $::env(TAP_UPAR) eq "1"}]
+if {$TAP_UPAR} { append defs "`define PHYTAP_UPAR\n" }
 # OWNPHY=1 (usb3_ln0 device build): our PHY (src/slogic16u3/usb3_softphy.v + rtl/usb3 usb3_phy_*) in place
 # of Gowin's USB 3.0 PHY soft IP; the quad, its CSR and the upar arbiter stay
 set OWNPHY [expr {!$LANES && !$REF && [info exists ::env(OWNPHY)] && $::env(OWNPHY) eq "1"}]
+# NOARB=1 (with OWNPHY=1): no upar arbiter either; our PHY's register port goes straight to GTR12_UPARA
+# (the arbiter's wrapper ties upar_rst / upar_bus_width to 0 and passes the clock through; its encrypted
+# core only merges up to four channels, and our PHY is the only one)
+set NOARB [expr {$OWNPHY && [info exists ::env(NOARB)] && $::env(NOARB) eq "1"}]
 set fh [open defines_gen.v w]; puts -nonewline $fh $defs; close $fh
 add_file -type verilog [file normalize defines_gen.v]
 
@@ -112,9 +120,22 @@ if {$OWNPHY} {
     }
     add_file -type verilog [file normalize ${SRC_DIR}/usb3_softphy.v]
 }
+if {$NOARB} {
+    set d "upar_arbiter_wrap_SerDes_Top_inst"
+    set direct [join [list \
+        "assign upar_rst = 1'b0;" "assign upar_bus_width_s = 1'b0;" \
+        "assign upar_wren_s = ${d}_drp_wren_i\[0\];" "assign upar_rden_s = ${d}_drp_rden_i\[0\];" \
+        "assign upar_addr_s = ${d}_drp_addr_i\[23:0\];" "assign upar_wrdata_s = ${d}_drp_wrdata_i\[31:0\];" \
+        "assign upar_strb_s = ${d}_drp_strb_i\[7:0\];" \
+        "assign ${d}_drp_clk_o\[0\] = q0_fabric_cm_life_clk_o;" "assign ${d}_drp_ready_o\[0\] = upar_ready_s;" \
+        "assign ${d}_drp_rdvld_o\[0\] = upar_rdvld_s;" "assign ${d}_drp_rddata_o\[31:0\] = upar_rddata_s;" \
+        "assign ${d}_drp_resp_o\[0\] = 1'b0;"] "\n"]
+    if {[regsub {\\~upar_arbiter_wrap\.SerDes_Top upar_arbiter_wrap_SerDes_Top_inst \(.*?\n\);\n} $sv "$direct\n" sv] != 1} { error "NOARB: arbiter instance not found" }
+}
 if {$TAP} {
     set d "upar_arbiter_wrap_SerDes_Top_inst_drp"
     set tapsig [join [list \
+        upar_rddata_s upar_rdvld_s upar_ready_s upar_strb_s upar_wrdata_s upar_addr_s upar_rden_s upar_wren_s \
         q0_fabric_ln0_rxdata_o\[39:0\] q0_fabric_ln0_txdata_i\[39:0\] \
         q0_fabric_ln0_stat_o_h q0_fabric_ln0_stat_o q0_lane0_rx_if_fifo_aempty q0_fabric_ln0_tx_vld_in \
         q0_fabric_ln0_rx_vld_out q0_lane0_pcs_rx_rst q0_lane0_pcs_tx_rst q0_fabric_ln0_rstn_i q0_fabric_cmu_ok_o \
@@ -125,7 +146,7 @@ if {$TAP} {
     set tapclk [join [list q0_fabric_cm_life_clk_o q0_lane0_pcs_rx_o_fabric_clk q0_lane0_pcs_tx_o_fabric_clk \
         q0_lane0_fabric_rx_clk q0_lane0_fabric_tx_clk ${d}_clk_o\[0\]] ", "]
     if {[regsub {module SerDes_Top \(} $sv "module SerDes_Top (TAP_o, TAP_clk_o, " sv] != 1} { error "TAP: SerDes_Top header not found" }
-    if {[regsub {\nendmodule //SerDes_Top} $sv "\noutput \[222:0\] TAP_o;\noutput \[5:0\] TAP_clk_o;\nassign TAP_o = {$tapsig};\nassign TAP_clk_o = {$tapclk};\nendmodule //SerDes_Top" sv] != 1} { error "TAP: SerDes_Top end not found" }
+    if {[regsub {\nendmodule //SerDes_Top} $sv "\noutput \[322:0\] TAP_o;\noutput \[5:0\] TAP_clk_o;\nassign TAP_o = {$tapsig};\nassign TAP_clk_o = {$tapclk};\nendmodule //SerDes_Top" sv] != 1} { error "TAP: SerDes_Top end not found" }
     add_file -type verilog [file normalize ${SRC_DIR}/phy_tap.v]
 }
 if {$TAP || $OWNPHY} {
@@ -137,6 +158,7 @@ if {$TAP || $OWNPHY} {
 foreach f [glob -nocomplain ${IPDIR}/*/*.v] {
     if {[string match *_tmp.v $f]} continue
     if {$OWNPHY && [string match */usb3_0_phy/* $f]} continue
+    if {$NOARB && [string match */upar_arbiter/* $f]} continue
     add_file -type verilog $f
 }
 set GW_JTAG_V [file normalize [file join [file dirname [info nameofexecutable]] .. data ipcores gw_jtag.v]]
@@ -149,10 +171,14 @@ if {$TRACE} {
 set fh [open pins_gen.cst w]; puts -nonewline $fh $cst; close $fh
 add_file -type cst [file normalize pins_gen.cst]
 set SDC [file normalize ${SRC_DIR}/[expr {$LANES ? "timing_lanes.sdc" : ($REF ? "timing_ref.sdc" : "timing.sdc")}]]
-if {$TRACE || $TAP} {
+if {$TRACE || $TAP || $NOARB} {
     # one file: the trace / tap clock groups refer to pclk of timing.sdc (SDC files are read separately)
     set fh [open $SDC r]; set sdc [read $fh]; close $fh
     if {$TRACE} { set fh [open ${SRC_DIR}/timing_trace.sdc r]; append sdc [read $fh]; close $fh }
+    if {$NOARB && !$TAP} {
+        # no arbiter: the register port runs straight in the quad's clock
+        set sdc [string map [list {u_serdes/upar_arbiter_wrap_SerDes_Top_inst_drp_clk_o[0]} {u_serdes/q0_fabric_cm_life_clk_o}] $sdc]
+    }
     if {$TAP} {
         # the clock nets now leave SerDes_Top on TAP_clk_o: synthesis names them after the top-level wire
         set sdc [string map [list {u_serdes/q0_lane0_fabric_rx_clk} {tap_clk[2]} \

@@ -17,7 +17,8 @@
 // It fills once and stops (1024 entries); further events are counted in o_drop.
 // Mask (ignore) bits: 0 reads, 1 writes, 2 PIPE control, 3 RxStatus / RxValid, 4 astat, 5 rxelecidle,
 //   6 stat_o, 7 stat_o_h, 8 rx/tx valid / rx fifo aempty, 9 LTSSM state, 10 keep identical reads,
-//   11 lock / reset group (pma_rx_lock, rxdet_result, cmu_ok, ln0 rstn, pcs tx / rx reset).
+//   11 lock / reset group (pma_rx_lock, rxdet_result, cmu_ok, ln0 rstn, pcs tx / rx reset),
+//   12 bits [63:60] (TAP_UPAR: the quad-side register port handshake).
 //
 // phy_tap_win (clock of the lane's transmit data): 1024 words of {pd[1:0], tx_elecidle, tx_vld, txdata[39:0]}
 //   as written into the quad, in a ring that runs from arming until a trigger and then 'post' more words.
@@ -60,7 +61,7 @@ module phy_tap_log (
     always @(posedge dclk) arm_s <= {arm_s[1:0], arm_t};
     wire       arm = arm_s[2] != arm_s[1];
 
-    wire [63:0] gmask = {4'hF,
+    wire [63:0] gmask = {{4{mask[12]}},
         {13{mask[7]}}, {13{mask[6]}}, {3{mask[8]}}, {6{mask[11]}}, {2{mask[5]}}, {6{mask[4]}},
         {5{mask[9]}}, {4{mask[3]}}, {8{mask[2]}}};
     reg [63:0] st_s1 = 64'd0, st_s2 = 64'd0, st_last = 64'd0;

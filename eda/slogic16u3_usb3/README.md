@@ -24,7 +24,8 @@ make ... SERDES_IP=serdes_4ln     # レーン特定用 (top_lanes.v、Customized
 make ... REF=1                    # 切り分け用: Gowin のリファレンスコントローラを同じ PHY で (top_ref.v)
 make ... PLACE_OPT=3 PNR_EXTRA="serdesRetiming=1" TAG=sr   # PnR オプション (下記「タイミング」)
 make ... TRACE=1 [TRACE_INVERT=1] # EasyCDR トレース送信 (UART ピン、下記。受信側では未確認)
-make ... TAP=1                    # PHY 境界の観測 (phy_tap.v、下記「USB 3.0 PHY IP の境界の観測」)
+make ... TAP=1 [TAP_UPAR=1]       # PHY 境界の観測 (TAP_UPAR: quad 側の DRP バス) (phy_tap.v、下記「USB 3.0 PHY IP の境界の観測」)
+make ... OWNPHY=1 NOARB=1 PLACE_OPT=3 PNR_EXTRA="serdesRetiming=1" TAG=sr  # 自作 PHY、upar アービタなし (Gowin の暗号化 IP なし)
 make ... OWNPHY=1 PLACE_OPT=4 PNR_EXTRA="serdesRetiming=1" TAG=sr  # 自作 PHY (usb3_softphy.v + rtl/usb3 usb3_phy_*) で Gowin の PHY ソフト IP を置き換え (下記)
 ~/repos/rust-dap/fpga-config/target/release/gowin-prog --cable dap sram build/slogic16u3_usb3_ln0/impl/pnr/slogic16u3_usb3.fs
 python3 host/usb3_status.py [-w]        # ER1: LTSSM 状態 / 遷移履歴、カウンタ、受信のデコードエラー
@@ -199,3 +200,21 @@ Hot Reset (usbreset) 20 回すべて再列挙してループバック一致。pl
 Warm Reset と見ているが、Gowin の PHY と比べてはいない)。
 
 未確認: U1〜U3 (P1 / P3)、SSC の大きいホスト、上の 2 つのカウンタの増え方が Gowin の PHY と同じか。
+
+### upar アービタの除去 (NOARB=1)
+
+`upar_arbiter` (最大 4 チャネルの DRP を quad の `GTR12_UPARA` 1 本にまとめる。中身は暗号化) も外せた。
+- ラッパの平文部分: `drp_clk_o` = `upar_clk_i` (quad の `q0_fabric_cm_life_clk_o`) の素通し、`upar_rst_o` /
+  `upar_bus_width_o` / `drp_resp_o` は 0 固定。
+- `TAP=1 TAP_UPAR=1` で quad 側のバスを見た (Gowin の PHY のまま): アドレス・データはチャネル 0 と同じ、手順も同じ
+  (書き込みは wren を ready まで保持し ready の次で落とす、応答まで約 5 クロック。読み出しは rden 保持 → ready → 次のクロックで
+  rdvld とデータ)。
+- `NOARB=1` は `serdes.v` の写しからアービタのインスタンスを除き、自作 PHY の DRP を `upar_*_s` に直結、`upar_rst` /
+  `upar_bus_width` を 0 にする。SDC の drp_clk は `q0_fabric_cm_life_clk_o` に付け替える。
+- 合成後のネットリストに暗号化ブロックは 0。Gowin のものは GTR12 (ハードマクロ) と CSR (GUI の toml から生成) だけ。
+- 自作 PHY の受信出力 (PipeRxData / K / Valid / RxStatus / PhyStatus) は 1 段レジスタを入れた (エラスティックバッファの
+  読み出しからリンク層のデスクランブラまでが 1 クロックに収まっていなかった)。
+- pclk は配置次第で 97〜126 MHz。`PLACE_OPT=3 PNR_EXTRA="serdesRetiming=1"` が 125.9 MHz (違反なし)。遅いのは rtl/usb3 の
+  パーサ / LTSSM / デバイス部 (いずれも -0.6 ns 前後)。
+- 実機: 列挙 5000M、PRBS 379.7 MB/s 誤り 0、ループバック 1 GiB 一致 (片方向 51.8 MB/s)、Hot Reset 20/20。
+  LUT 8,476 (57 %)、FF 4,898。
