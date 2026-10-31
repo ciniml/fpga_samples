@@ -31,7 +31,8 @@
 module tb;
     parameter int PROWS = 3;   // panel rows (DUT PANEL_ROWS)
     localparam int W = 128, H = 64 * PROWS, CHAIN = 64, LANES = 4 * PROWS, SCAN = 32;
-    localparam int BITS = 6, BASE_OE = 16, NPK = W * H * 2 / 1024;
+    parameter int BITS = 6;          // DUT COMPONENT_BITS
+    localparam int BASE_OE = 16 >> (BITS - 6), NPK = W * H * 2 / 1024;
     localparam logic [47:0] DUT_MAC  = 48'h11_22_33_44_55_66;
     localparam logic [31:0] DUT_IP   = 32'hC0A8_0A02;
     localparam logic [47:0] HOST_MAC = 48'h02_00_00_00_00_01;
@@ -64,7 +65,7 @@ module tb;
     tri   [15:0] ddr_dq;
     tri   [1:0]  ddr_dqs;
 
-    DkLedRxcardTop #(.HUB75_IMPL(IMPL), .PANEL_ROWS(PROWS), .TXC_SHIFTED(TXS), .PHY_RST_LOG2(8), .PHY_WAIT_LOG2(8),
+    DkLedRxcardTop #(.HUB75_IMPL(IMPL), .PANEL_ROWS(PROWS), .COMPONENT_BITS(BITS), .BASE_OE_CYCLES(BASE_OE), .TXC_SHIFTED(TXS), .PHY_RST_LOG2(8), .PHY_WAIT_LOG2(8),
                      .DDR_T_INIT_PS(20_000_000), .BIST_BURSTS(4096)) dut (
         .clk50(clk50), .key_n(1'b1), .led(led),
         .phy_rst_n(rstn), .phy_mdc(mdc), .phy_mdio(mdio),
@@ -446,14 +447,14 @@ module tb;
     logic [7:0]  lut_r8 [32], lut_g8 [64], lut_b8 [32];
     bit          lut_identity = 1;
 
-    function automatic logic [5:0] expect_c(input int ch, input logic [5:0] v);
-        if (lut_identity) begin
-            if (ch == 1) return v;                        // G6
-            return {v[4:0], v[4]};                        // R5 / B5
-        end
-        if (ch == 0) return lut_r8[v[4:0]][7:2];
-        if (ch == 1) return lut_g8[v][7:2];
-        return lut_b8[v[4:0]][7:2];
+    // the top BITS bits of the 8-bit table value (identity: bit replication)
+    function automatic logic [7:0] expect_c(input int ch, input logic [5:0] v);
+        logic [7:0] e8;
+        if (lut_identity) e8 = (ch == 1) ? {v[5:0], v[5:4]} : {v[4:0], v[4:2]};
+        else if (ch == 0) e8 = lut_r8[v[4:0]];
+        else if (ch == 1) e8 = lut_g8[v];
+        else e8 = lut_b8[v[4:0]];
+        return e8 >> (8 - BITS);
     endfunction
 
     task automatic send_video_frame();
@@ -495,9 +496,9 @@ module tb;
         for (int y = 0; y < H; y++)
             for (int x = 0; x < W; x++) begin
                 automatic logic [15:0] px = frame_px[y * W + x];
-                automatic logic [5:0] er = expect_c(0, {1'b0, px[15:11]});
-                automatic logic [5:0] eg = expect_c(1, px[10:5]);
-                automatic logic [5:0] eb = expect_c(2, {1'b0, px[4:0]});
+                automatic logic [7:0] er = expect_c(0, {1'b0, px[15:11]});
+                automatic logic [7:0] eg = expect_c(1, px[10:5]);
+                automatic logic [7:0] eb = expect_c(2, {1'b0, px[4:0]});
                 if (img_r[y][x] !== er || img_g[y][x] !== eg || img_b[y][x] !== eb) begin
                     if (bad < 8)
                         $display("[%0t] ERROR: %s pixel (%0d,%0d) = %02x %02x %02x, expected %02x %02x %02x", $time, what,

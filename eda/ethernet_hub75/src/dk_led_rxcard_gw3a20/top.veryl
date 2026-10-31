@@ -58,7 +58,8 @@ module DkLedRxcardTop #(
     param PANEL_ROWS    : u32     = $sv::ethernet_hub75_cfg::PANEL_ROWS    , // 64x64 panel rows (2 or 3), 2 panels each
     param CONN_ID       : bit     = $sv::ethernet_hub75_cfg::CONN_ID       , // 1: J4..J11 show fixed colours (wiring check)
     param CHAIN_REVERSE : bit     = 0                                      ,
-    param COMPONENT_BITS: u32     = 6                                      ,
+    param COMPONENT_BITS: u32     = $sv::ethernet_hub75_cfg::COMPONENT_BITS, // BCM planes per colour (6..8)
+    param BASE_OE_CYCLES: u32     = $sv::ethernet_hub75_cfg::BASE_OE_CYCLES, // OE unit (LSB plane 2x this)
     param CLOCK_DIVIDER : u32     = 0                                      ,
     param CLK_LOW_EXTRA : u32     = 1                                      ,
     param RX_DELAY      : u32     = $sv::ethernet_hub75_cfg::RX_DELAY      , // IODELAY steps (12.5 ps) on RXD / RX_CTL
@@ -572,6 +573,7 @@ module DkLedRxcardTop #(
             LANE_WIDTH    : 64             ,
             SCAN_ROWS     : 32             ,
             COMPONENT_BITS: COMPONENT_BITS ,
+            BASE_OE_CYCLES: BASE_OE_CYCLES ,
             CLOCK_DIVIDER : CLOCK_DIVIDER  ,
             CLK_LOW_EXTRA : CLK_LOW_EXTRA  ,
             CHAIN_REVERSE : CHAIN_REVERSE  ,

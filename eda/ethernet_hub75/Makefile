@@ -45,6 +45,20 @@ else ifeq ($(TARGET)$(HUB75_IMPL),dk_led_rxcard_gw3a20gmt)
 # BSRAMs = 144 > 120: the GMT build fits up to PANEL_ROWS=2
 $(error HUB75_IMPL=gmt does not fit 6 panels (BSRAM); use PANEL_ROWS=2)
 endif
+# DK_LED-RXCARD gradation: COLOR_BITS BCM planes per colour (6 default, 7 or
+# 8; build directory suffix _c<n>). The OE unit shrinks with it (16 >> (n - 6)
+# clocks) so that brightness and refresh stay about the same. The BSRAM
+# frame buffers (soft / gmt) hold 8 bits for 4 panels only.
+COLOR_BITS ?= 6
+BASE_OE := $(shell expr 16 / \( 1 \* $$(( 1 << ($(COLOR_BITS) - 6) )) \))
+ifneq ($(COLOR_BITS),6)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_c$(COLOR_BITS)
+ifeq ($(TARGET)$(PANEL_ROWS),dk_led_rxcard_gw3a203)
+ifneq ($(filter soft gmt,$(HUB75_IMPL)),)
+$(error COLOR_BITS=$(COLOR_BITS) with the BSRAM frame buffer (HUB75_IMPL=$(HUB75_IMPL)) fits PANEL_ROWS=2 only)
+endif
+endif
+endif
 # CONN_ID=1: wiring check, J4..J11 show one colour each (see top.veryl)
 CONN_ID ?= 0
 ifneq ($(CONN_ID),0)
@@ -80,7 +94,7 @@ VERYL_SRCS := Veryl.toml $(wildcard src/common/*.veryl) $(wildcard src/*/*.veryl
               $(wildcard $(RTL_DIR)/eth_mac/*.veryl) $(wildcard $(RTL_DIR)/hub75/*.veryl) \
               $(wildcard $(RTL_DIR)/ddr2/*.veryl)
 
-PROJECT_ADDITIONAL_ARGS := $(FILELIST) $(TOP_MODULE) $(HUB75_IMPL_NUM) $(PHY_DELAY_HEX) $(TXC_SHIFTED) $(RX_DELAY) $(PANEL_ROWS) $(CONN_ID)
+PROJECT_ADDITIONAL_ARGS := $(FILELIST) $(TOP_MODULE) $(HUB75_IMPL_NUM) $(PHY_DELAY_HEX) $(TXC_SHIFTED) $(RX_DELAY) $(PANEL_ROWS) $(CONN_ID) $(COLOR_BITS) $(BASE_OE)
 
 SRCS := project.tcl $(wildcard src/$(TARGET)/*.cst) $(wildcard src/$(TARGET)/*.sdc) $(wildcard src/$(TARGET)/ip/*.v) $(FILELIST)
 

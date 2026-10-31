@@ -105,7 +105,7 @@ module EthService #(
 
     var state   : State         ;
     var kind    : Kind          ;
-    var hdr     : logic<8>  [90];
+    var hdr     : logic<8>  [46];
     var idx     : logic<7>      ;
     var emit_end: logic<7>      ; // last hdr index to send
     var cnt     : logic<11>     ; // bytes left to copy / stream
@@ -141,6 +141,9 @@ module EthService #(
     var stat_port: logic<16>;
     var rsel     : logic    ; // 0: ACK, 1: status
     var rsel_age : logic<2> ;
+    var emit_stat: logic    ; // the frame being emitted is a status reply
+    // status payload byte idx - 42 (byte 0 = i_status[383:376])
+    let stat_byte: logic<8>  = i_status[(7'd89 - idx) * 8+:8];
     let rsel_want: logic     = !ack_pend && stat_pend;
     let tgt_mac  : logic<48> = if rsel ? stat_mac : vid_mac;
     let tgt_ip   : logic<32> = if rsel ? stat_ip : vid_ip;
@@ -262,16 +265,12 @@ module EthService #(
                 hdr[39] = ip_len[7:0] - 8'd20;
                 hdr[40] = 8'h00; // no UDP checksum
                 hdr[41] = 8'h00;
-                if rsel {
-                    for i in 0..48 {
-                        hdr[42 + i] = i_status[(47 - i) step 8];
-                    }
-                } else {
-                    hdr[42] = 8'hDE;
-                    hdr[43] = 8'hAD;
-                    hdr[44] = 8'hBE;
-                    hdr[45] = 8'hEF;
-                }
+                // ack payload (the status payload is sent from i_status
+                // directly, see EMIT)
+                hdr[42] = 8'hDE;
+                hdr[43] = 8'hAD;
+                hdr[44] = 8'hBE;
+                hdr[45] = 8'hEF;
             }
             State::HDR: {
                 hdr[idx] = rx_byte;
@@ -332,6 +331,7 @@ module EthService #(
             stat_port  = 16'b0;
             rsel       = 1'b0;
             rsel_age   = 2'd0;
+            emit_stat  = 1'b0;
             d_room     = 1'b0;
             d_total    = 11'd0;
             d_udplen   = 11'd0;
@@ -396,6 +396,7 @@ module EthService #(
                     if (ack_pend || stat_pend) && room_q && rsel == rsel_want && rsel_age == 2'd3 {
                         // hdr is being loaded with the ack / status frame
                         // on this edge
+                        emit_stat = rsel;
                         if rsel {
                             stat_pend = 1'b0;
                             emit_end  = 7'd89;
@@ -479,7 +480,7 @@ module EthService #(
                 }
                 State::EMIT: {
                     wvalid = 1'b1;
-                    wdata  = hdr[idx];
+                    wdata  = if emit_stat && idx >= 7'd42 ? stat_byte : hdr[idx[5:0]];
                     idx    = idx + 1;
                     if idx == emit_end {
                         state = if kind == Kind::ICMP && cnt != 11'd0 ? State::COPY : State::COMMIT;
