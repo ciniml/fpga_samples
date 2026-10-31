@@ -39,7 +39,7 @@ if {${TARGET} == "tangprimer20k"} {
     set_option -use_ready_as_gpio 1
 }
 
-# Build configuration for the top (HUB75_IMPL: 0 soft, 1 GMT; PANEL_ROWS
+# Build configuration for the top (HUB75_IMPL: 0 soft, 1 GMT, 2 DDR2; PANEL_ROWS
 # and the RGMII delay options are used by the DK_LED-RXCARD top only)
 set fp [open ethernet_hub75_cfg.sv w]
 puts $fp "package ethernet_hub75_cfg;"
@@ -76,11 +76,41 @@ foreach f [glob -nocomplain ${SRC_DIR}/ip/*.v] {
     add_file -type verilog [file normalize $f]
 }
 
-add_file -type cst [file normalize ${SRC_DIR}/pins.cst]
+# pins: DK_LED-RXCARD adds the DDR2 pins (SSTL18 for HUB75_IMPL 2, idle
+# LVCMOS18 otherwise) to the one cst file
+set cst_files [list ${SRC_DIR}/pins.cst]
+if {[file exists ${SRC_DIR}/pins_ddr2.cst]} {
+    if {${HUB75_IMPL} == 2} {
+        lappend cst_files ${SRC_DIR}/pins_ddr2.cst
+    } else {
+        lappend cst_files ${SRC_DIR}/pins_ddr2_idle.cst
+    }
+}
+if {[llength $cst_files] > 1} {
+    set fp [open pins.cst w]
+    foreach f $cst_files {
+        set fi [open $f r]
+        puts $fp [read $fi]
+        close $fi
+    }
+    close $fp
+    add_file -type cst [file normalize pins.cst]
+} else {
+    add_file -type cst [file normalize ${SRC_DIR}/pins.cst]
+}
+# Optional constraints (TXC_SHIFTED, the DDR2 clocks) go into one file
+# with timing.sdc: Gowin does not see the clocks of another SDC file, and
+# constraints on nets that are not in the design are errors.
+set sdc_files [list ${SRC_DIR}/timing.sdc]
 if {${TXC_SHIFTED} == 1 && [file exists ${SRC_DIR}/timing_txc_shifted.sdc]} {
-    # one file: Gowin does not see the clocks of another SDC file
+    lappend sdc_files ${SRC_DIR}/timing_txc_shifted.sdc
+}
+if {${HUB75_IMPL} == 2 && [file exists ${SRC_DIR}/timing_ddr.sdc]} {
+    lappend sdc_files ${SRC_DIR}/timing_ddr.sdc
+}
+if {[llength $sdc_files] > 1} {
     set fp [open timing.sdc w]
-    foreach f [list ${SRC_DIR}/timing.sdc ${SRC_DIR}/timing_txc_shifted.sdc] {
+    foreach f $sdc_files {
         set fi [open $f r]
         puts $fp [read $fi]
         close $fi

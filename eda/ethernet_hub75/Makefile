@@ -1,13 +1,21 @@
 PROJECT_NAME := ethernet_hub75
 
-# make TARGET=tangprimer20k (default) | dk_led_rxcard_gw3a20 [HUB75_IMPL=soft|gmt]
+# make TARGET=tangprimer20k (default) | dk_led_rxcard_gw3a20 [HUB75_IMPL=soft|gmt|ddr]
 TARGET ?= tangprimer20k
-# HUB75 output stage: soft (Hub75Lanes) or gmt (GW3A GMT hard block +
-# Hub75Planes, Arora III only). gmt builds go to build/<target>_gmt.
+# Frame buffer / HUB75 output stage: soft (Hub75Lanes, frame in BSRAM),
+# gmt (GW3A GMT hard block + Hub75Planes, Arora III only) or ddr (frame in
+# the DDR2 of the DK_LED-RXCARD, DdrFb + Hub75RowLanes). gmt / ddr builds
+# go to build/<target>_gmt / _ddr.
 HUB75_IMPL ?= soft
 ifeq ($(HUB75_IMPL),gmt)
 BUILD_SUFFIX := _gmt
 HUB75_IMPL_NUM := 1
+else ifeq ($(HUB75_IMPL),ddr)
+BUILD_SUFFIX := _ddr
+HUB75_IMPL_NUM := 2
+ifneq ($(TARGET),dk_led_rxcard_gw3a20)
+$(error HUB75_IMPL=ddr is for TARGET=dk_led_rxcard_gw3a20 only)
+endif
 else
 HUB75_IMPL_NUM := 0
 endif
@@ -58,15 +66,16 @@ TOP_MODULE_tangprimer20k := TangPrimer20kTop
 TOP_MODULE_dk_led_rxcard_gw3a20 := DkLedRxcardTop
 TOP_MODULE ?= $(TOP_MODULE_$(TARGET))
 
-# Veryl: this project + rtl/eth_mac + rtl/hub75 (path dependencies). The
+# Veryl: this project + rtl/eth_mac + rtl/hub75 + rtl/ddr2 (path dependencies). The
 # generated .sv are not tracked; `veryl build` writes them and the filelist.
 FILELIST := $(abspath $(PROJECT_NAME).f)
 VERYL_SRCS := Veryl.toml $(wildcard src/common/*.veryl) $(wildcard src/*/*.veryl) \
-              $(wildcard $(RTL_DIR)/eth_mac/*.veryl) $(wildcard $(RTL_DIR)/hub75/*.veryl)
+              $(wildcard $(RTL_DIR)/eth_mac/*.veryl) $(wildcard $(RTL_DIR)/hub75/*.veryl) \
+              $(wildcard $(RTL_DIR)/ddr2/*.veryl)
 
 PROJECT_ADDITIONAL_ARGS := $(FILELIST) $(TOP_MODULE) $(HUB75_IMPL_NUM) $(PHY_DELAY_HEX) $(TXC_SHIFTED) $(RX_DELAY) $(PANEL_ROWS) $(CONN_ID)
 
-SRCS := project.tcl src/$(TARGET)/pins.cst $(wildcard src/$(TARGET)/*.sdc) $(wildcard src/$(TARGET)/ip/*.v) $(FILELIST)
+SRCS := project.tcl $(wildcard src/$(TARGET)/*.cst) $(wildcard src/$(TARGET)/*.sdc) $(wildcard src/$(TARGET)/ip/*.v) $(FILELIST)
 
 include ../build_gowin.mk
 

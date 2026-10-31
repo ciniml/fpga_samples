@@ -48,7 +48,15 @@
 -clkout2_pe_coarse 0
 -clkout2_pe_fine 0
 -de2_en false
--en_clkout3 false
+-en_clkout3 true
+-clkout3_bypass false
+-odiv3_sel 3
+-clkout3_dt_dir 1
+-clkout3_dt_step 0
+-dyn_pe3_sel false
+-clkout3_pe_coarse 0
+-clkout3_pe_fine 0
+-de3_en false
 -en_clkout4 false
 -en_clkout5 false
 -en_clkout6 false

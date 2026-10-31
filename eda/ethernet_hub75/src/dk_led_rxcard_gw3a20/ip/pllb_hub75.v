@@ -6,17 +6,17 @@
 //Part Number: GW3A-LV20UG324SC1/I0
 //Device: GW3A-20A
 //Device Version: A
-//Created Time: Mon Oct 26 02:37:56 2026
+//Created Time: Sun Nov  1 00:53:21 2026
 
-module pllb_hub75 (lock, clkout0, clkout1, clkout2, clkin);
+module pllb_hub75 (lock, clkout0, clkout1, clkout2, clkout3, clkin);
 
 output lock;
 output clkout0;
 output clkout1;
 output clkout2;
+output clkout3;
 input clkin;
 
-wire clkout3;
 wire clkout4;
 wire clkout5;
 wire clkout6;
@@ -72,7 +72,7 @@ defparam PLLB_inst.FBDIV_SEL = 1;
 defparam PLLB_inst.ODIV0_SEL = 8;
 defparam PLLB_inst.ODIV1_SEL = 8;
 defparam PLLB_inst.ODIV2_SEL = 20;
-defparam PLLB_inst.ODIV3_SEL = 8;
+defparam PLLB_inst.ODIV3_SEL = 3;
 defparam PLLB_inst.ODIV4_SEL = 8;
 defparam PLLB_inst.ODIV5_SEL = 8;
 defparam PLLB_inst.ODIV6_SEL = 8;
@@ -82,7 +82,7 @@ defparam PLLB_inst.ODIV0_FRAC_SEL = 0;
 defparam PLLB_inst.CLKOUT0_EN = "TRUE";
 defparam PLLB_inst.CLKOUT1_EN = "TRUE";
 defparam PLLB_inst.CLKOUT2_EN = "TRUE";
-defparam PLLB_inst.CLKOUT3_EN = "FALSE";
+defparam PLLB_inst.CLKOUT3_EN = "TRUE";
 defparam PLLB_inst.CLKOUT4_EN = "FALSE";
 defparam PLLB_inst.CLKOUT5_EN = "FALSE";
 defparam PLLB_inst.CLKOUT6_EN = "FALSE";

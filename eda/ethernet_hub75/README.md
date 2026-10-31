@@ -7,7 +7,7 @@ PC から UDP で送った映像 (RGB565) を受けて HUB75 パネルに表示�
 | ボード | PHY | パネル | 状態 |
 |---|---|---|---|
 | Tang Primer 20K (Dock) | RTL8201F、RMII 100M | HUB75 ×2 系統 (各 64x64 ×2 枚のチェーン) = 128x128 | シミュレーション・配置配線 OK、実機未確認 |
-| DK_LED-RXCARD_GW3A-LV20UG324S_V2.1 (Arora III) | RTL8211E、RGMII 10/100/1000M | HUB75 J4〜J9 に 64x64 を 1 枚ずつ、横 2 × 縦 3 = 128x192 (`PANEL_ROWS=2` で上 4 枚 128x128) | ソフト版 6 枚 / 4 枚は実機で表示 OK (1000M)。GMT 版 (4 枚) はシミュレーション・配置配線 OK、実機未確認 |
+| DK_LED-RXCARD_GW3A-LV20UG324S_V2.1 (Arora III) | RTL8211E、RGMII 10/100/1000M | HUB75 J4〜J9 に 64x64 を 1 枚ずつ、横 2 × 縦 3 = 128x192 (`PANEL_ROWS=2` で上 4 枚 128x128) | ソフト版 6 枚 / 4 枚は実機で表示 OK (1000M)。GMT 版 (4 枚) と DDR2 フレームバッファ版 (6 枚 / 4 枚) はシミュレーション・配置配線 OK、実機未確認 |
 
 ```
 PC (udpvideosend) ── UDP 10004 ──► PHY ─ RmiiRx ─ EthRxMac ─(PktFifo: PHY clk → sys)─► EthService ─► UdpVideoWriter
@@ -29,14 +29,17 @@ PC (udpvideosend) ── UDP 10004 ──► PHY ─ RmiiRx ─ EthRxMac ─(Pkt
 | | `RgmiiSpeedMeter` `MdioMaster` | RXC の周波数からリンク速度を判定 (MDIO のポーリング不要) / clause 22 の MDIO |
 | `rtl/hub75` | `Hub75Lanes` | `Hub75` (dvi_hub75 と共通) の BCM 走査をそのまま使い、データ側を N レーン + デュアルクロックのフレームバッファにしたもの。`Hub75` 自体は変更していない |
 | | `Hub75Planes` | `Hub75Lanes` のフレームバッファをビットプレーン形式 (1 ワード = 1 色 1 プレーンの 32 画素分) にしたもの。GMT 版で使う |
+| | `Hub75RowLanes` | `Hub75Lanes` のフレームバッファを、レーンごとのピンポン行バッファ (2 × 64 画素) と「次の行をくれ」のハンドシェイクにしたもの。DDR2 版で使う |
+| `rtl/ddr2` | `Ddr2Ctrl` `Ddr2PhyGw3a` | DDR2 コントローラ (x16、BL8、開いた行 1 本、読出の自動キャリブレーション) と GW3A の IOLOGIC (OSER8 / IDES8) による PHY。`rtl/ddr2/README.md` |
 | `src/common` | `EthService` | ARP 応答、ICMP echo (TX FIFO に入る大きさまで)、UDP の振り分け。映像の送信元を覚えておき、表示切り替えのたびに ack を返す |
 | | `UdpVideoWriter` | オフセット付きのバイト列 → 画素 → 色テーブル → レーン / アドレス。フレームの最終バイトで表示切り替えを要求する |
 | | `GmtCornerTurn` | GW3A の GMT ハードブロック (`GMT_DB`) で 32 画素 × RGB666 を転置し、プレーンワードにして `Hub75Planes` に書く |
-| | `EthernetHub75Core` | 上をつないだボード非依存のコア。クロックは PHY 受信 / PHY 送信 / システム / 表示の 4 系統 (同じでもよい)。`HUB75_IMPL` で出力段を選ぶ (0 = `Hub75Lanes`、1 = `GmtCornerTurn` + `Hub75Planes`) |
+| | `DdrFb` `FbAfifo` | DDR2 版のフレームバッファ: UDP のバイト列を 16 B のワードにして DDR2 クロックへ渡し (async FIFO)、表示側の行要求に応じて DDR2 から行を読み、色テーブルを通して行バッファに書く。起動時のメモリテストとクリアもここ |
+| | `EthernetHub75Core` | 上をつないだボード非依存のコア。クロックは PHY 受信 / PHY 送信 / システム / 表示の 4 系統 (同じでもよい)、DDR2 版はそれに DRAM の系統。`HUB75_IMPL` で出力段を選ぶ (0 = `Hub75Lanes`、1 = `GmtCornerTurn` + `Hub75Planes`、2 = `DdrFb` + `Hub75RowLanes`) |
 | `src/tangprimer20k` | `TangPrimer20kTop` | PLL (27 → 49.5 MHz)、リセット、RMII アダプタ、ピン、LED |
-| `src/dk_led_rxcard_gw3a20` | `DkLedRxcardTop` `Rtl8211eInit` | PLLB (50 → 125 / 50 MHz)、RGMII (IDDR / ODDR / IODELAY)、PHY の RGMII 遅延設定 (MDIO)、ピン、LED |
+| `src/dk_led_rxcard_gw3a20` | `DkLedRxcardTop` `Rtl8211eInit` | PLLB (50 → 125 / 50 / 333.3 MHz)、RGMII (IDDR / ODDR / IODELAY)、PHY の RGMII 遅延設定 (MDIO)、DDR2 (コントローラ + PHY)、ステータス、ピン、LED |
 
-Veryl のプロジェクトはこのディレクトリ (`Veryl.toml`) で、`rtl/eth_mac` と `rtl/hub75` をパス依存で取り込む
+Veryl のプロジェクトはこのディレクトリ (`Veryl.toml`) で、`rtl/eth_mac`、`rtl/hub75`、`rtl/ddr2` をパス依存で取り込む
 (生成される SV のモジュール名は `eth_mac_EthRxMac` のように依存先の名前が前に付く)。
 
 ## プロトコル (Chisel 版と互換)
@@ -53,6 +56,9 @@ Veryl のプロジェクトはこのディレクトリ (`Veryl.toml`) で、`rtl
 - **色テーブル (追加):** UDP 宛先ポート 10005。ペイロード = チャネルマスク 1 バイト (bit0 R、bit1 G、bit2 B) + 8 bit 値
   (エントリ 0 から。R / B は RGB565 の 5 bit 値で引く 32 エントリ、G は 6 bit 値で引く 64 エントリ)。上位 `COMPONENT_BITS` bit を使う。
   リセット後は恒等 (ビット複製で 6 bit に伸ばす = Chisel 版と同じ見え方)。ホストからは `tools/send_lut.py gamma 2.2` など
+- **ステータス (追加):** UDP 宛先ポート 10006 に何か送ると、送信元へ 16 バイトの状態を返す (DDR2 の初期化・キャリブレーション結果、
+  メモリテストのエラー数、リンク速度、表示したフレーム数など。中身は `src/dk_led_rxcard_gw3a20/top.veryl` の冒頭)。
+  ホストからは `tools/fbstat.py`
 - **Chisel 版からの変更点:** 表示切り替えの 20 Hz 上限をなくした (パネルのフレーム境界で切り替え)。ポート 10000 (ループバック)、
   10001 (GPIO)、10002 / 10003 (音声) は持たない。色テーブルのポート 10005 を足した
 
@@ -234,6 +240,44 @@ LED 受信カードでは「画素ごとのデータ (階調値) → ビット�
   (`PktFifo` のポインタのグレイ→バイナリ変換、残りバイト数、`EthService` の判定、ack のチェックサム)。
   余裕はほぼない (システム 125.3〜125.4 MHz)。place option 1 / 3 では 1 ns 弱届かない
 
+### DDR2 フレームバッファ版 (`HUB75_IMPL=ddr`)
+
+フレームバッファをボードの DDR2 (U46 W9725G6KB、256 Mbit x16、バンク 2 / 3 の 1.8 V) に置く版。コントローラは Gowin の IP を使わず
+`rtl/ddr2` に新しく書いた (riscv-veryl の DDR3 コントローラと同じスロットベクタ方式の PHY 境界。詳細は `rtl/ddr2/README.md`)。
+
+```
+EthService ─ 映像バイト列 ─ DdrFb: 16 B ワード + フリップ印 ─ FbAfifo (sys 125 MHz → mclk 83.3 MHz) ─┐
+                                                                                                  ├─ Ddr2Ctrl ─ Ddr2PhyGw3a ─ DDR2
+   Hub75RowLanes ◄─ 行バッファ書き込み ◄─ 色テーブル ◄─ 1 px/clk 展開 ◄─ 読み出し FIFO ◄─ 行フェッチ ──┘   (OSER8 / IDES8、
+   (disp 50 MHz)      (レーン × 2 × 64 px)                                                                 fclk 333.3 MHz)
+```
+
+- **フレームバッファ:** RGB565 (受け取ったバイト列そのまま) の 2 面。面 b はバーストアドレス b × 4096 (64 KB) から。書き込みは
+  16 B ワード単位 (DM が FPGA に繋がっていないため)。udpvideosend は 1024 B ずつ送るので問題ない
+- **表示切り替え:** フレームの最終ワードにフリップの印を付けて同じ FIFO を通すので、書き込みとの順序が保たれる。表示側が次の
+  フレームの行 0 を要求したときに面を切り替え、ack を返す。切り替え待ちの間の映像を捨てるのも含め、ソフト版と同じ振る舞い
+- **行フェッチ:** 走査行 r の表示中に次の行を読む。レーンごとに 64 画素 = 8 バースト (DRAM の同じ行) をまとめて読み、BSRAM の
+  32 ワード FIFO に入れてから 1 画素 / クロックで色テーブルを通して行バッファへ。12 レーン分 768 画素で約 9.3 µs、1 行の表示時間
+  (約 64 µs) に十分収まる。DRAM の帯域は書き込み (最大 125 MB/s) + 読み出し (約 24 MB/s) に対しピーク 667 MB/s
+- **起動時:** DDR2 の初期化とキャリブレーションの後、32 MB 全体を 2 パス (アドレス由来のデータ / その反転・回転) 書いて読み比べ、
+  フレームバッファ 2 面を黒でクリアしてから表示を始める (約 0.2 s)。それまでパネルは黒
+- **LED1:** メモリテストが通ると約 1.4 Hz で点滅、メモリテストかキャリブレーションが失敗すると速い点滅
+- **クロック:** PLLB の clkout3 = 333.3 MHz (fclk、CK 166.7 MHz)、CLKDIV / 4 = 83.3 MHz (mclk、コントローラと `DdrFb`)
+
+結果 (6 枚 128x192、Ethernet 部込みの全体):
+
+| 構成 | LUT / ALU | レジスタ | BSRAM | Fmax システム / 表示 / mclk (MHz) | リフレッシュ |
+|---|---|---|---|---|---|
+| ソフト版 6 枚 (BSRAM、ステータスポート込み) | 3455 / 375 | 2103 | 120 / 120 | 125.1 / 77.7 / — | 489.2 Hz |
+| DDR2 版 6 枚 | 6459 / 640 | 4004 | 32 / 120 | 127.4 / 124.8 / 87.6 (mclk 83.3) | 489.0 Hz (シミュレーション) |
+
+BSRAM は行バッファ (12 レーン × 1)、読み出し FIFO と映像 FIFO (各 4)、MAC の FIFO。フレームバッファが BSRAM から出たので、
+パネルの大きさは BSRAM で決まらなくなった (行バッファは 1 レーン 1 個)。今の上限はプロトコルのオフセット 16 bit (64 KB、
+128x256 相当) と、1 行の表示時間内に行を読み切ること。LUT はコントローラ (読み出しの窓・書き込みの並べ替え) とフレームバッファの
+データ路 (128 bit) の分だけ増える。最初は DDR3 版と同じ 64 スロット (8 pclk) の履歴から任意の位置を選んでいたが、DDR2 では
+読み出しが固定遅延で返るので、粗い位置を RD_LAT (pclk 単位) に任せて窓を 3 pclk に縮め、コントローラの LUT を 4300 → 2200、
+レジスタを 2540 → 1250 に減らした (そのときの mclk の Fmax は 84.7 → 99.6 MHz。ステータスポートを足した最終版は 87.6 MHz)。
+
 ### シミュレーション (Arora III)
 
 `make -C test rxcard IMPL=soft|gmt` (`test/tb_rxcard.sv`): GW3A のプリミティブ (PLLB、IDDR / ODDR、IODELAY) と `GMT_DB` は
@@ -247,7 +291,11 @@ RTL8211E 役の MDIO スレーブ (アドレス 1) と、RGMII の向こう側�
 
 `TXS=1` は `TXC_SHIFTED=1` のトップに対して、PHY 役が TX 遅延なし (TXC のエッジで TXD を取る) で同じ検査をする。
 
-ソフト版・GMT 版 (それぞれ 6 枚 / 4 枚)・TXS=1 (ソフト版) とも PASS (6 枚は 128x192 = 24576 画素、48 パケット)。GMT 版では最初、GMT 側の保留が解けてから `Hub75Planes` が busy を出すまでの 1 クロックに busy が
+`IMPL=ddr` は DDR2 の PHY を `test/ddr2_phy_sim.sv` (`rtl/ddr2/test/ddr2_model.sv` をスロットベクタに直接つないだもの) に
+置き換え、電源投入の待ちを 20 µs、起動時のメモリテストを 4096 バーストに縮めて同じ検査をする。メモリテストとクリアの完了、
+キャリブレーション成功、最初のフレームまでパネルが黒であることも確かめる。どの構成でもステータスポート (10006) の返信を検査する。
+
+ソフト版・GMT 版 (それぞれ 6 枚 / 4 枚)・TXS=1 (ソフト版)・DDR2 版 (6 枚 / 4 枚) とも PASS (6 枚は 128x192 = 24576 画素、48 パケット)。GMT 版では最初、GMT 側の保留が解けてから `Hub75Planes` が busy を出すまでの 1 クロックに busy が
 落ち、ack が 2 回出ていた (検査で見つかり修正済み)。
 
 ### 実機の結果 (Arora III、2026-10-31)
@@ -285,7 +333,8 @@ RTL8211E 役の MDIO スレーブ (アドレス 1) と、RGMII の向こう側�
    (4 枚は 128x128 のまま)。静止画のテストは `tools/testcards.py [幅] [高さ] [秒] [周回]` (既定 128 192 8 秒)。各パネルの左右が逆なら `CHAIN_REVERSE`、パネルの位置が入れ替わっていればつなぎ先を知らせてほしい。
    GbE では udpvideosend の fps が Tang Primer 20K より上がるはず (上限はパネルのフレーム境界での切り替え待ち)
 7. 4 枚構成で、ソフト版と GMT 版の表示が同じであること
-8. ping が通らない場合は、RGMII のタイミングを変えたビルドを順に試す (make 変数、既定以外の値はビルドディレクトリ名に付く)。
+8. DDR2 版: 次の節
+9. ping が通らない場合は、RGMII のタイミングを変えたビルドを順に試す (make 変数、既定以外の値はビルドディレクトリ名に付く)。
    各ビルドで ping と `ethtool -S <if>` の受信エラー (rx_crc_errors など)、`ip -s link` の RX/TX カウンタを見てほしい
 
    | 変数 | 値 | 意味 |
@@ -303,3 +352,17 @@ RTL8211E 役の MDIO スレーブ (アドレス 1) と、RGMII の向こう側�
    3. `make TARGET=dk_led_rxcard_gw3a20 PHY_DLY=2800 TXC_SHIFTED=1 run`
       (2 と 3 は「RX 遅延だけ PHY、TX は FPGA 側でずらす」の 2 通りの解釈)
    4. ping の応答はあるが取りこぼす / 受信エラーが出る場合は `RX_DELAY=40` (0.5 ns)、`RX_DELAY=80` (1 ns) を足す
+
+### DDR2 版の実機確認手順
+
+1. パネルとケーブルはソフト版と同じ (6 枚)。`make TARGET=dk_led_rxcard_gw3a20 HUB75_IMPL=ddr run`
+   (4 枚は `PANEL_ROWS=2` も付ける)。ビルドは `build/dk_led_rxcard_gw3a20_ddr`
+2. 書き込み後 0.2 s ほどで LED1 が約 1.4 Hz の点滅になれば、DDR2 の初期化・キャリブレーション・32 MB のメモリテストが通っている。
+   速い点滅はメモリテストかキャリブレーションの失敗、消えたままは初期化が終わっていない
+3. `python3 tools/fbstat.py` で状態を読む (返ってこなければ ping から)。見てほしいのは `calibrated yes`、`RD_LAT / RD_SEL`
+   の値、`memory test errors 0`。この値を知らせてほしい (失敗していても、ビット化けの最初のアドレスが出る)
+4. パネルは起動直後は黒。`tools/testcards.py` と udpvideosend のテストパターン (`--width 128 --height 192`) がソフト版と同じに
+   見えること、udpvideosend が 489 fps 前後で回ること
+5. しばらく (数分) 動画かボールを流し続けて、表示の乱れ (ノイズ・ずれ) がないこと。その後もう一度 `fbstat.py` で
+   `video words lost` が 0 のままか見る
+

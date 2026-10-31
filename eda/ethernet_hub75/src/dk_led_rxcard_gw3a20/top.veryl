@@ -13,19 +13,35 @@
 //   wide, row major (UdpVideoWriter): panel (row p, column c) shows lanes
 //   4p + c (R1, upper half) and 4p + 2 + c (R2). The second group
 //   (J12..J19) is kept blank (OE high).
+//   DDR2 U46 (W9725G6KB, 16M x 16, banks 2 / 3 at 1.8 V; DM not wired):
+//   the frame buffer for HUB75_IMPL 2 (Ddr2Ctrl + Ddr2PhyGw3a), held idle
+//   (CKE low) otherwise.
 //   Clocks from the 50 MHz oscillator (B16) through PLLB (VCO 1000 MHz):
 //     125 MHz system / RGMII TX, 125 MHz + 270° (TXD if TXC_SHIFTED),
-//     50 MHz display (HUB75 CLK = 50 / 3 = 16.7 MHz).
+//     50 MHz display (HUB75 CLK = 50 / 3 = 16.7 MHz), 333.3 MHz DDR2 fclk
+//     (CK 166.7 MHz) and through CLKDIV / 4 the 83.3 MHz DDR2 pclk.
 //
-// HUB75_IMPL (0: soft, 1: GMT), PANEL_ROWS and the RGMII delay options
+// HUB75_IMPL (0: soft, 1: GMT, 2: DDR2), PANEL_ROWS and the RGMII delay options
 // (PHY_DELAY_BITS, TXC_SHIFTED, RX_DELAY) come from the package
 // ethernet_hub75_cfg
 // that the build writes (project.tcl), so that both versions build from
 // one top.
 //
-// LEDs (active low): LED1 heartbeat (panel frames) once the PLL is locked,
-// LED2 network activity (video / ARP / ICMP); LED2 blinks fast when no
-// RTL8211E answered on MDIO.
+// LEDs (active low): LED1 heartbeat (panel frames) once the PLL is locked
+// (HUB75_IMPL 2: once the DDR2 memory test has passed; fast blink when it
+// or the read calibration failed), LED2 network activity (video / ARP /
+// ICMP); LED2 blinks fast when no RTL8211E answered on MDIO.
+//
+// Status (UDP 10006, any datagram; 16 bytes):
+//   0     0xD2
+//   1     {0, 0, DDR2 build, frame buffer ready, calibration failed,
+//          calibrated, DDR2 initialised, PLL locked}
+//   2     RD_LAT          3  {RD_SEL_ODD, RD_SEL}
+//   4..5  memory test words wrong (big endian, saturating)
+//   6..8  burst address of the first one
+//   9     link speed (0 10M, 1 100M, 2 1000M)
+//   10..11 video words dropped (frame buffer FIFO full)
+//   12..15 frames shown (flips)
 module DkLedRxcardTop #(
     param HUB75_IMPL    : u32     = $sv::ethernet_hub75_cfg::HUB75_IMPL    ,
     param PANEL_ROWS    : u32     = $sv::ethernet_hub75_cfg::PANEL_ROWS    , // 64x64 panel rows (2 or 3), 2 panels each
@@ -39,6 +55,8 @@ module DkLedRxcardTop #(
     param PHY_DELAY_BITS: bit<16> = $sv::ethernet_hub75_cfg::PHY_DELAY_BITS, // RTL8211E ext 0xa4 reg 0x1c bits 13:11
     param PHY_RST_LOG2  : u32     = 21                                     , // PHY reset 2^N system clocks (17 ms)
     param PHY_WAIT_LOG2 : u32     = 24                                     , // MDIO set-up after 2^N clocks (134 ms)
+    param DDR_T_INIT_PS : u32     = 200_000_000                            , // DDR2 power-up wait (shortened in simulation)
+    param BIST_BURSTS   : u32     = 1 << 21                                , // DDR2 start-up memory test (bursts, 32 MB)
 ) (
     clk50: input 'osc clock, // B16
     key_n: input 's   logic, // J6, low when pressed: reset
@@ -68,11 +86,24 @@ module DkLedRxcardTop #(
     hub75a_lat: output 'd logic   ,
     hub75a_oe : output 'd logic   ,
     hub75b_oe : output 'd logic   , // second group, blanked
+
+    ddr_ck   : output 'm logic        , // H17 (CK# H18), SSTL18D
+    ddr_cke  : output 'm logic        , // F14
+    ddr_odt  : output 'm logic        , // L15
+    ddr_cs_n : output 'm logic        , // K12
+    ddr_ras_n: output 'm logic        , // G13
+    ddr_cas_n: output 'm logic        , // K13
+    ddr_we_n : output 'm logic        , // G14
+    ddr_ba   : output 'm logic    <2> ,
+    ddr_a    : output 'm logic    <13>,
+    ddr_dq   : inout     tri logic<16>,
+    ddr_dqs  : inout     tri logic<2> , // LDQS J13 (K14), UDQS D17 (D18), SSTL18D
 ) {
     // ---- clocks and resets ----
     var sys_clk : 's clock;
     var clk270  : 's clock;
     var disp_clk: 'd clock;
+    var fclk    : 'm clock;
     var pll_lock:    logic;
 
     unsafe (cdc) {
@@ -80,6 +111,7 @@ module DkLedRxcardTop #(
             clkout0: sys_clk ,
             clkout1: clk270  ,
             clkout2: disp_clk,
+            clkout3: fclk    ,
             lock   : pll_lock,
             clkin  : clk50   ,
         );
@@ -127,6 +159,153 @@ module DkLedRxcardTop #(
             drst1 = sys_rst;
             drst  = drst1;
         }
+    }
+
+    // ---- DDR2 ----
+    const MEM_ADDR_BITS: u32 = 21;
+
+    var mrst      : 'm logic               ;
+    var mem_init  : 'm logic               ;
+    var mreq_valid: 'm logic               ;
+    var mreq_ready: 'm logic               ;
+    var mreq_we   : 'm logic               ;
+    var mreq_addr : 'm logic<MEM_ADDR_BITS>;
+    var mreq_wdata: 'm logic<128>          ;
+    var mrd_valid : 'm logic               ;
+    var mrd_data  : 'm logic<128>          ;
+    var cal_ok    : 'm logic               ;
+    var cal_fail  : 'm logic               ;
+    var fb_ready  : 'm logic               ;
+    var bist_err  : 'm logic<16>           ;
+    var bist_first: 'm logic<MEM_ADDR_BITS>;
+    var rd_sel    : 'm logic<6>            ;
+    var rd_sel_odd: 'm logic<6>            ;
+    var rd_lat    : 'm logic<4>            ;
+    var mclk      : 'm clock               ;
+
+    if HUB75_IMPL == 2 :g_ddr {
+        inst u_div: $sv::CLKDIV #(
+            DIV_MODE: "4",
+        ) (
+            CLKOUT: mclk,
+            CALIB : 1'b0,
+            HCLKIN: fclk,
+            RESETN: 1'b1,
+        );
+
+        var mrst1: 'm logic;
+        unsafe (cdc) {
+            always_ff (mclk) {
+                mrst1 = sys_rst;
+                mrst  = mrst1;
+            }
+        }
+
+        var cke    : 'm logic     ;
+        var odt    : 'm logic     ;
+        var cs_n   : 'm logic     ;
+        var ras_n  : 'm logic     ;
+        var cas_n  : 'm logic     ;
+        var we_n   : 'm logic     ;
+        var ba     : 'm logic<2>  ;
+        var a      : 'm logic<13> ;
+        var dq_out : 'm logic<128>;
+        var dq_oe  : 'm logic<4>  ;
+        var dqs_out: 'm logic<16> ;
+        var dqs_oe : 'm logic<4>  ;
+        var dq_in  : 'm logic<128>;
+        var dqs_in : 'm logic<16> ;
+
+        inst u_ddr: ddr2::Ddr2Ctrl #(
+            PCLK_PS  : 12000        ,
+            CL       : 4            ,
+            T_INIT_PS: DDR_T_INIT_PS,
+        ) (
+            i_clk       : mclk      ,
+            i_rst       : mrst      ,
+            i_req_valid : mreq_valid,
+            o_req_ready : mreq_ready,
+            i_req_we    : mreq_we   ,
+            i_req_addr  : mreq_addr ,
+            i_req_wdata : mreq_wdata,
+            o_rd_valid  : mrd_valid ,
+            o_rd_data   : mrd_data  ,
+            o_init_done : mem_init  ,
+            o_cal_ok    : cal_ok    ,
+            o_cal_fail  : cal_fail  ,
+            o_rd_sel    : rd_sel    ,
+            o_rd_sel_odd: rd_sel_odd,
+            o_rd_lat    : rd_lat    ,
+            o_cke       : cke       ,
+            o_odt       : odt       ,
+            o_cs_n      : cs_n      ,
+            o_ras_n     : ras_n     ,
+            o_cas_n     : cas_n     ,
+            o_we_n      : we_n      ,
+            o_ba        : ba        ,
+            o_a         : a         ,
+            o_dq_out    : dq_out    ,
+            o_dq_oe     : dq_oe     ,
+            o_dqs_out   : dqs_out   ,
+            o_dqs_oe    : dqs_oe    ,
+            i_dq_in     : dq_in     ,
+            i_dqs_in    : dqs_in    ,
+        );
+
+        inst u_phy: ddr2::Ddr2PhyGw3a (
+            i_pclk     : mclk     ,
+            i_fclk     : fclk     ,
+            i_rst      : mrst     ,
+            i_cke      : cke      ,
+            i_odt      : odt      ,
+            i_cs_n     : cs_n     ,
+            i_ras_n    : ras_n    ,
+            i_cas_n    : cas_n    ,
+            i_we_n     : we_n     ,
+            i_ba       : ba       ,
+            i_a        : a        ,
+            i_dq_out   : dq_out   ,
+            i_dq_oe    : dq_oe    ,
+            i_dqs_out  : dqs_out  ,
+            i_dqs_oe   : dqs_oe   ,
+            o_dq_in    : dq_in    ,
+            o_dqs_in   : dqs_in   ,
+            o_ddr_ck   : ddr_ck   ,
+            o_ddr_cke  : ddr_cke  ,
+            o_ddr_odt  : ddr_odt  ,
+            o_ddr_cs_n : ddr_cs_n ,
+            o_ddr_ras_n: ddr_ras_n,
+            o_ddr_cas_n: ddr_cas_n,
+            o_ddr_we_n : ddr_we_n ,
+            o_ddr_ba   : ddr_ba   ,
+            o_ddr_a    : ddr_a    ,
+            io_ddr_dq  : ddr_dq   ,
+            io_ddr_dqs : ddr_dqs  ,
+        );
+    } else :g_no_ddr {
+        // DDR2 idle: CKE low, deselected, data lines not driven
+        assign mclk       = 1'b0;
+        assign mrst       = 1'b1;
+        assign mem_init   = 1'b0;
+        assign mreq_ready = 1'b0;
+        assign mrd_valid  = 1'b0;
+        assign mrd_data   = 128'd0;
+        assign cal_ok     = 1'b0;
+        assign cal_fail   = 1'b0;
+        assign rd_sel     = 6'd0;
+        assign rd_sel_odd = 6'd0;
+        assign rd_lat     = 4'd0;
+        assign ddr_ck     = 1'b0;
+        assign ddr_cke    = 1'b0;
+        assign ddr_odt    = 1'b0;
+        assign ddr_cs_n   = 1'b1;
+        assign ddr_ras_n  = 1'b1;
+        assign ddr_cas_n  = 1'b1;
+        assign ddr_we_n   = 1'b1;
+        assign ddr_ba     = 2'd0;
+        assign ddr_a      = 13'd0;
+        assign ddr_dq     = 16'bz;
+        assign ddr_dqs    = 2'bz;
     }
 
     // RXC may be stopped while the PHY is in reset or has no link; the
@@ -291,6 +470,11 @@ module DkLedRxcardTop #(
         Q1 : _        ,
     );
 
+    // ---- status (quasi-static values from the DRAM domain) ----
+    var overflow: 's logic     ;
+    var ovf_cnt : 's logic<16> ;
+    var flip_cnt: 's logic<32> ;
+    var status  : 's logic<128>;
     // ---- core ----
     const NUM_LANES: u32 = 4 * PANEL_ROWS;
 
@@ -318,35 +502,74 @@ module DkLedRxcardTop #(
             CLK_LOW_EXTRA : CLK_LOW_EXTRA  ,
             CHAIN_REVERSE : CHAIN_REVERSE  ,
             HUB75_IMPL    : HUB75_IMPL     ,
+            MEM_ADDR_BITS : MEM_ADDR_BITS  ,
+            BIST_BURSTS   : BIST_BURSTS    ,
         ) (
-            i_clk      : sys_clk  ,
-            i_rst      : sys_rst  ,
-            i_rx_clk   : rgmii_rxc,
-            i_rx_rst   : rrst     ,
-            i_rx_bvalid: rx_bvalid,
-            i_rx_bdata : rx_bdata ,
-            i_rx_end   : rx_end   ,
-            i_rx_err   : rx_err   ,
-            i_tx_clk   : sys_clk  ,
-            i_tx_rst   : sys_rst  ,
-            i_tx_ce    : tx_ce    ,
-            o_tx_ben   : tx_ben   ,
-            o_tx_bdata : tx_bdata ,
-            i_dclk     : disp_clk ,
-            i_drst     : drst     ,
-            o_row      : row      ,
-            o_r        : r        ,
-            o_g        : g        ,
-            o_b        : b        ,
-            o_oe       : oe       ,
-            o_lat      : lat      ,
-            o_hclk     : hclk     ,
-            o_frame    : frame    ,
-            o_ev_video : ev_video ,
-            o_ev_net   : ev_net   ,
-            o_ev_drop  : ev_drop  ,
-            o_ev_flip  : ev_flip  ,
+            i_clk        : sys_clk   ,
+            i_rst        : sys_rst   ,
+            i_rx_clk     : rgmii_rxc ,
+            i_rx_rst     : rrst      ,
+            i_rx_bvalid  : rx_bvalid ,
+            i_rx_bdata   : rx_bdata  ,
+            i_rx_end     : rx_end    ,
+            i_rx_err     : rx_err    ,
+            i_tx_clk     : sys_clk   ,
+            i_tx_rst     : sys_rst   ,
+            i_tx_ce      : tx_ce     ,
+            o_tx_ben     : tx_ben    ,
+            o_tx_bdata   : tx_bdata  ,
+            i_dclk       : disp_clk  ,
+            i_drst       : drst      ,
+            o_row        : row       ,
+            o_r          : r         ,
+            o_g          : g         ,
+            o_b          : b         ,
+            o_oe         : oe        ,
+            o_lat        : lat       ,
+            o_hclk       : hclk      ,
+            o_frame      : frame     ,
+            o_ev_video   : ev_video  ,
+            o_ev_net     : ev_net    ,
+            o_ev_drop    : ev_drop   ,
+            o_ev_flip    : ev_flip   ,
+            i_mclk       : mclk      ,
+            i_mrst       : mrst      ,
+            i_mem_init   : mem_init  ,
+            o_mreq_valid : mreq_valid,
+            i_mreq_ready : mreq_ready,
+            o_mreq_we    : mreq_we   ,
+            o_mreq_addr  : mreq_addr ,
+            o_mreq_wdata : mreq_wdata,
+            i_mrd_valid  : mrd_valid ,
+            i_mrd_data   : mrd_data  ,
+            o_fb_ready   : fb_ready  ,
+            o_bist_errors: bist_err  ,
+            o_bist_first : bist_first,
+            o_overflow   : overflow  ,
+            i_status     : status    ,
         );
+    }
+
+    always_ff (sys_clk) {
+        if sys_rst {
+            ovf_cnt  = 16'd0;
+            flip_cnt = 32'd0;
+        } else {
+            if overflow && ovf_cnt != 16'hffff {
+                ovf_cnt = ovf_cnt + 16'd1;
+            }
+            if ev_flip {
+                flip_cnt = flip_cnt + 32'd1;
+            }
+        }
+    }
+    unsafe (cdc) {
+        always_ff (sys_clk) {
+            status = {
+                8'hD2, 2'b00, HUB75_IMPL == 2, fb_ready, cal_fail, cal_ok, mem_init, lock_s2, 4'd0, rd_lat,
+                rd_sel_odd[3:0], rd_sel[3:0], bist_err, bist_first as 24, 6'd0, speed, ovf_cnt, flip_cnt
+            };
+        }
     }
 
     // connector k = J(4 + k): panel row k / 2, column k % 2. CONN_ID
@@ -418,8 +641,23 @@ module DkLedRxcardTop #(
         }
     }
 
+    // DDR2 state (quasi-static flags)
+    var ddr_ok_s1 : 's logic;
+    var ddr_ok_s2 : 's logic;
+    var ddr_bad_s1: 's logic;
+    var ddr_bad_s2: 's logic;
+    unsafe (cdc) {
+        always_ff (sys_clk) {
+            ddr_ok_s1  = fb_ready && bist_err == 16'd0 && cal_ok;
+            ddr_ok_s2  = ddr_ok_s1;
+            ddr_bad_s1 = (fb_ready && bist_err != 16'd0) || cal_fail;
+            ddr_bad_s2 = ddr_bad_s1;
+        }
+    }
+    let hb_led: 's logic = if HUB75_IMPL != 2 ? lock_s2 && hb_s2 : if ddr_bad_s2 ? blink[20] : ddr_ok_s2 && hb_s2;
+
     let no_phy: 's logic = phy_done && phy_cnt2 == 2'd0;
-    assign led = ~{(act != 24'd0) || (no_phy && blink[22]), lock_s2 && hb_s2};
+    assign led = ~{(act != 24'd0) || (no_phy && blink[22]), hb_led};
 
     let _unused: 's logic = ev_drop;
 }

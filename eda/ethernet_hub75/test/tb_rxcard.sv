@@ -1,5 +1,8 @@
-// Testbench of the DK_LED-RXCARD (GW3A) top of ethernet_hub75, for both
-// HUB75_IMPL (make rxcard IMPL=soft|gmt).
+// Testbench of the DK_LED-RXCARD (GW3A) top of ethernet_hub75, for all
+// HUB75_IMPL (make rxcard IMPL=soft|gmt|ddr). IMPL=ddr runs the DDR2
+// frame buffer against the slot-level DDR2 model (ddr2_phy_sim.sv, power-up
+// wait shortened, a 4096-burst start-up memory test) and waits for the
+// memory test and clear before the video tests.
 //
 // An RTL8211E stand-in: MDIO registers (the DUT must find the PHY and set
 // the RGMII delays) and the host side of the RGMII link at 1000 Mb/s
@@ -58,15 +61,20 @@ module tb;
     wire        hclk, lat, oe, oe_b;
     wire  [4:0] row_pins;
     wire  [5:0] j [6];   // J4..J9
+    tri   [15:0] ddr_dq;
+    tri   [1:0]  ddr_dqs;
 
-    DkLedRxcardTop #(.HUB75_IMPL(IMPL), .PANEL_ROWS(PROWS), .TXC_SHIFTED(TXS), .PHY_RST_LOG2(8), .PHY_WAIT_LOG2(8)) dut (
+    DkLedRxcardTop #(.HUB75_IMPL(IMPL), .PANEL_ROWS(PROWS), .TXC_SHIFTED(TXS), .PHY_RST_LOG2(8), .PHY_WAIT_LOG2(8),
+                     .DDR_T_INIT_PS(20_000_000), .BIST_BURSTS(4096)) dut (
         .clk50(clk50), .key_n(1'b1), .led(led),
         .phy_rst_n(rstn), .phy_mdc(mdc), .phy_mdio(mdio),
         .rgmii_txc(txc), .rgmii_tx_ctl(tx_ctl), .rgmii_txd(txd),
         .rgmii_rxc(rxc), .rgmii_rx_ctl(rx_ctl), .rgmii_rxd(rxd),
         .hub75_j4(j[0]), .hub75_j5(j[1]), .hub75_j6(j[2]), .hub75_j7(j[3]), .hub75_j8(j[4]),
         .hub75_j9(j[5]), .hub75_j10(), .hub75_j11(), .hub75a_row(row_pins), .hub75a_clk(hclk),
-        .hub75a_lat(lat), .hub75a_oe(oe), .hub75b_oe(oe_b)
+        .hub75a_lat(lat), .hub75a_oe(oe), .hub75b_oe(oe_b),
+        .ddr_ck(), .ddr_cke(), .ddr_odt(), .ddr_cs_n(), .ddr_ras_n(), .ddr_cas_n(), .ddr_we_n(),
+        .ddr_ba(), .ddr_a(), .ddr_dq(ddr_dq), .ddr_dqs(ddr_dqs)
     );
 
     int errors = 0;
@@ -566,6 +574,33 @@ module tb;
         $display("[%0t] ICMP echo reply (%0d B) ok", $time, plen);
     endtask
 
+    // status port: any datagram -> 16 bytes of status from port 10006
+    task automatic test_status(input int flips);
+        int q;
+        txf[42] = 8'h00;
+        build_udp(40000, 10006, 1);
+        send_frame();
+        wait_rx(200, q);
+        if (q < 0) begin
+            $display("[%0t] ERROR: no status reply", $time); errors++;
+            return;
+        end
+        expect_eq("status dst mac", rx48(q, 0), HOST_MAC);
+        expect_eq("status ip csum", rx_csum(q, 14, 20), 16'hFFFF);
+        expect_eq("status ip len", rx16(q, 16), 16'd44);
+        expect_eq("status dst ip", rx32(q, 30), HOST_IP);
+        expect_eq("status sport", rx16(q, 34), 16'd10006);
+        expect_eq("status dport", rx16(q, 36), 16'd40000);
+        expect_eq("status udp len", rx16(q, 38), 16'd24);
+        expect_eq("status magic", rxq[q][42], 8'hD2);
+        expect_eq("status flags", rxq[q][43], IMPL == 2 ? 8'h37 : 8'h01);
+        expect_eq("status memory test errors", rx16(q, 46), 16'd0);
+        expect_eq("status speed", rxq[q][51], 8'd2);
+        expect_eq("status overflow", rx16(q, 52), 16'd0);
+        expect_eq("status flips", rx32(q, 54), flips);
+        $display("[%0t] status reply ok (RD_LAT %0d, RD_SEL %0d / %0d)", $time, rxq[q][44], rxq[q][45] & 15, rxq[q][45] >> 4);
+    endtask
+
     initial begin
         int q;
         if ($test$plusargs("vcd")) begin
@@ -596,6 +631,19 @@ module tb;
                 $display("[%0t] ERROR: reply to a frame with a bad FCS", $time); errors++;
             end else
                 $display("[%0t] bad FCS frame dropped", $time);
+        end
+
+        if (IMPL == 2) begin
+            wait (dut.fb_ready === 1'b1);
+            expect_eq("ddr2 calibrated", dut.cal_ok, 1);
+            expect_eq("ddr2 memory test errors", dut.bist_err, 0);
+            $display("[%0t] DDR2: initialised, memory test passed, frame buffer cleared", $time);
+            wait_panel_frames(1);
+            begin
+                int lit = 0;
+                for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) if (img_r[y][x] || img_g[y][x] || img_b[y][x]) lit++;
+                expect_eq("black before the first frame (lit pixels)", lit, 0);
+            end
         end
 
         // frame 1: pseudo-random pixels, identity colour table
@@ -629,6 +677,7 @@ module tb;
         wait_panel_frames(2);
         check_panel("frame 2 (colour table)");
 
+        test_status(2);
         test_arp();
 
         // 100 Mb/s

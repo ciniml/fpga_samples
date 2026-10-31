@@ -15,15 +15,18 @@
 //      shifting (soft logic only)
 //   1: GmtCornerTurn + Hub75Planes, pixels turned into bit-plane words by
 //      the GW3A GMT hard block (GW3A only)
+//   2: DdrFb + Hub75RowLanes: the frame buffer in external DRAM (the
+//      burst port of Ddr2Ctrl, 'm), row buffers in block RAM
 //
 // Four clock domains: PHY receive ('p), PHY transmit ('t), system ('s:
-// service and frame buffer writes) and display ('d: the HUB75 engine).
-// They may be the same clock.
+// service and frame buffer writes) and display ('d: the HUB75 engine),
+// plus the DRAM domain ('m) for HUB75_IMPL 2. They may be the same clock.
 module EthernetHub75Core #(
     param MAC_ADDR      : bit<48> = 48'h11_22_33_44_55_66                    ,
     param IP_ADDR       : bit<32> = 32'hC0_A8_0A_02                          ,
     param VIDEO_PORT    : bit<16> = 16'd10004                                ,
     param LUT_PORT      : bit<16> = 16'd10005                                ,
+    param STAT_PORT     : bit<16> = 16'd10006                                , // status replies (i_status), 0: off
     param WIDTH         : u32     = 128                                      , // display width (power of two)
     param HEIGHT        : u32     = 128                                      , // display height (multiple of SCAN_ROWS)
     param LANE_WIDTH    : u32     = WIDTH                                    , // chain length of a lane (power of two)
@@ -33,7 +36,9 @@ module EthernetHub75Core #(
     param CLK_LOW_EXTRA : u32     = 1                                        ,
     param BASE_OE_CYCLES: u32     = 16                                       ,
     param CHAIN_REVERSE : bit     = 0                                        ,
-    param HUB75_IMPL    : u32     = 0                                        , // 0: soft (Hub75Lanes), 1: GMT (GW3A)
+    param HUB75_IMPL    : u32     = 0                                        , // 0: soft (Hub75Lanes), 1: GMT (GW3A), 2: DRAM (DdrFb)
+    param MEM_ADDR_BITS : u32     = 21                                       , // HUB75_IMPL 2: DRAM burst address width
+    param BIST_BURSTS   : u32     = 1 << 21                                  , // HUB75_IMPL 2: start-up memory test size
     param RX_DEPTH_LOG2 : u32     = 13                                       ,
     param TX_DEPTH_LOG2 : u32     = 11                                       ,
     const NUM_LANES     : u32     = HEIGHT / SCAN_ROWS * (WIDTH / LANE_WIDTH),
@@ -74,6 +79,25 @@ module EthernetHub75Core #(
     o_ev_net  : output 's logic, // ARP or ICMP answered
     o_ev_drop : output 's logic, // bad FCS
     o_ev_flip : output 's logic, // a new frame is on the panel
+
+    // ---- status replies on STAT_PORT ----
+    i_status: input 's logic<128> = 128'd0,
+
+    // ---- DRAM burst port (HUB75_IMPL 2 only) ----
+    i_mclk       : input  'm clock                = 1'b0  ,
+    i_mrst       : input  'm logic                = 1'b1  ,
+    i_mem_init   : input  'm logic                = 1'b0  , // controller initialised
+    o_mreq_valid : output 'm logic                        ,
+    i_mreq_ready : input  'm logic                = 1'b0  ,
+    o_mreq_we    : output 'm logic                        ,
+    o_mreq_addr  : output 'm logic<MEM_ADDR_BITS>         ,
+    o_mreq_wdata : output 'm logic<128>                   ,
+    i_mrd_valid  : input  'm logic                = 1'b0  ,
+    i_mrd_data   : input  'm logic<128>           = 128'd0,
+    o_fb_ready   : output 'm logic                        , // memory test and clear done
+    o_bist_errors: output 'm logic<16>                    ,
+    o_bist_first : output 'm logic<MEM_ADDR_BITS>         ,
+    o_overflow   : output 's logic                        , // pulse: a video word was dropped
 ) {
     const LANE_BITS: u32 = if NUM_LANES >: 1 ? $clog2(NUM_LANES) : 1;
     const ADDR_BITS: u32 = $clog2(SCAN_ROWS) + $clog2(LANE_WIDTH);
@@ -163,6 +187,7 @@ module EthernetHub75Core #(
         IP_ADDR   : IP_ADDR          ,
         VIDEO_PORT: VIDEO_PORT       ,
         LUT_PORT  : LUT_PORT         ,
+        STAT_PORT : STAT_PORT        ,
         WSPACE_W  : TX_DEPTH_LOG2 + 1,
     ) (
         i_clk       : i_clk     ,
@@ -188,13 +213,14 @@ module EthernetHub75Core #(
         o_lut_valid : lut_valid ,
         o_lut_data  : lut_data  ,
         i_ack_req   : ack_req   ,
+        i_status    : i_status  ,
         o_ev_arp    : ev_arp    ,
         o_ev_icmp   : ev_icmp   ,
         o_ev_video  : o_ev_video,
         o_ev_drop   : o_ev_drop ,
     );
 
-    // ---- frame buffer writer ----
+    // ---- frame buffer writer (HUB75_IMPL 0 / 1) ----
     var fb_we    : 's logic           ;
     var fb_lane  : 's logic<LANE_BITS>;
     var fb_addr  : 's logic<ADDR_BITS>;
@@ -203,30 +229,32 @@ module EthernetHub75Core #(
     var flip_busy: 's logic           ; // seen by the writer: drop bytes, ack when it falls
     var busy_d   : 's logic           ;
 
-    inst writer: UdpVideoWriter #(
-        WIDTH         : WIDTH         ,
-        HEIGHT        : HEIGHT        ,
-        LANE_WIDTH    : LANE_WIDTH    ,
-        SCAN_ROWS     : SCAN_ROWS     ,
-        COMPONENT_BITS: COMPONENT_BITS,
-        CHAIN_REVERSE : CHAIN_REVERSE ,
-    ) (
-        i_clk      : i_clk     ,
-        i_rst      : i_rst     ,
-        i_start    : vid_start ,
-        i_offset   : vid_offset,
-        i_valid    : vid_valid ,
-        i_data     : vid_data  ,
-        i_lut_start: lut_start ,
-        i_lut_valid: lut_valid ,
-        i_lut_data : lut_data  ,
-        o_we       : fb_we     ,
-        o_lane     : fb_lane   ,
-        o_addr     : fb_addr   ,
-        o_rgb      : fb_rgb    ,
-        o_flip_req : flip_req  ,
-        i_flip_busy: flip_busy ,
-    );
+    if HUB75_IMPL != 2 :g_writer {
+        inst writer: UdpVideoWriter #(
+            WIDTH         : WIDTH         ,
+            HEIGHT        : HEIGHT        ,
+            LANE_WIDTH    : LANE_WIDTH    ,
+            SCAN_ROWS     : SCAN_ROWS     ,
+            COMPONENT_BITS: COMPONENT_BITS,
+            CHAIN_REVERSE : CHAIN_REVERSE ,
+        ) (
+            i_clk      : i_clk     ,
+            i_rst      : i_rst     ,
+            i_start    : vid_start ,
+            i_offset   : vid_offset,
+            i_valid    : vid_valid ,
+            i_data     : vid_data  ,
+            i_lut_start: lut_start ,
+            i_lut_valid: lut_valid ,
+            i_lut_data : lut_data  ,
+            o_we       : fb_we     ,
+            o_lane     : fb_lane   ,
+            o_addr     : fb_addr   ,
+            o_rgb      : fb_rgb    ,
+            o_flip_req : flip_req  ,
+            i_flip_busy: flip_busy ,
+        );
+    }
 
     // the flip is done when busy falls: ack the sender
     always_ff (i_clk) {
@@ -239,6 +267,17 @@ module EthernetHub75Core #(
     assign ack_req   = busy_d && !flip_busy;
     assign o_ev_flip = ack_req;
     assign o_ev_net  = ev_arp || ev_icmp;
+
+    if HUB75_IMPL != 2 :g_no_dram {
+        assign o_mreq_valid  = 1'b0;
+        assign o_mreq_we     = 1'b0;
+        assign o_mreq_addr   = 0;
+        assign o_mreq_wdata  = 128'd0;
+        assign o_fb_ready    = 1'b0;
+        assign o_bist_errors = 16'd0;
+        assign o_bist_first  = 0;
+        assign o_overflow    = 1'b0;
+    }
 
     // ---- HUB75 ----
     if HUB75_IMPL == 0 :g_soft {
@@ -270,7 +309,7 @@ module EthernetHub75Core #(
             o_lat      : o_lat    ,
             o_clk      : o_hclk   ,
         );
-    } else :g_gmt {
+    } else if HUB75_IMPL == 1 :g_gmt {
         const XW_BITS   : u32 = $clog2(LANE_WIDTH) - 5;
         const PLANE_BITS: u32 = if COMPONENT_BITS >: 1 ? $clog2(COMPONENT_BITS) : 1;
 
@@ -340,6 +379,89 @@ module EthernetHub75Core #(
         );
 
         assign flip_busy = ct_busy || panel_busy;
+    } else :g_ddr {
+        const LX_BITS: u32 = $clog2(LANE_WIDTH);
+
+        var fetch_req : 'm logic             ;
+        var fetch_row : 'm logic<5>          ;
+        var fetch_done: 'm logic             ;
+        var fill_we   : 'm logic             ;
+        var fill_lane : 'm logic<LANE_BITS>  ;
+        var fill_addr : 'm logic<1 + LX_BITS>;
+        var fill_rgb  : 'm logic<PX_BITS>    ;
+
+        inst fb: DdrFb #(
+            WIDTH         : WIDTH         ,
+            HEIGHT        : HEIGHT        ,
+            LANE_WIDTH    : LANE_WIDTH    ,
+            SCAN_ROWS     : SCAN_ROWS     ,
+            COMPONENT_BITS: COMPONENT_BITS,
+            CHAIN_REVERSE : CHAIN_REVERSE ,
+            MEM_ADDR_BITS : MEM_ADDR_BITS ,
+            BIST_BURSTS   : BIST_BURSTS   ,
+        ) (
+            i_clk        : i_clk        ,
+            i_rst        : i_rst        ,
+            i_start      : vid_start    ,
+            i_offset     : vid_offset   ,
+            i_valid      : vid_valid    ,
+            i_data       : vid_data     ,
+            i_lut_start  : lut_start    ,
+            i_lut_valid  : lut_valid    ,
+            i_lut_data   : lut_data     ,
+            o_flip_busy  : flip_busy    ,
+            o_overflow   : o_overflow   ,
+            i_mclk       : i_mclk       ,
+            i_mrst       : i_mrst       ,
+            i_mem_init   : i_mem_init   ,
+            o_mreq_valid : o_mreq_valid ,
+            i_mreq_ready : i_mreq_ready ,
+            o_mreq_we    : o_mreq_we    ,
+            o_mreq_addr  : o_mreq_addr  ,
+            o_mreq_wdata : o_mreq_wdata ,
+            i_mrd_valid  : i_mrd_valid  ,
+            i_mrd_data   : i_mrd_data   ,
+            i_fetch_req  : fetch_req    ,
+            i_fetch_row  : fetch_row    ,
+            o_fetch_done : fetch_done   ,
+            o_fill_we    : fill_we      ,
+            o_fill_lane  : fill_lane    ,
+            o_fill_addr  : fill_addr    ,
+            o_fill_rgb   : fill_rgb     ,
+            o_ready      : o_fb_ready   ,
+            o_bist_errors: o_bist_errors,
+            o_bist_first : o_bist_first ,
+        );
+
+        inst panel: hub75::Hub75RowLanes #(
+            SCAN_ROWS     : SCAN_ROWS     ,
+            CHAIN_LEN     : LANE_WIDTH    ,
+            NUM_LANES     : NUM_LANES     ,
+            CLOCK_DIVIDER : CLOCK_DIVIDER ,
+            CLK_LOW_EXTRA : CLK_LOW_EXTRA ,
+            COMPONENT_BITS: COMPONENT_BITS,
+            BASE_OE_CYCLES: BASE_OE_CYCLES,
+        ) (
+            i_fclk      : i_mclk    ,
+            i_frst      : i_mrst    ,
+            i_we        : fill_we   ,
+            i_wlane     : fill_lane ,
+            i_waddr     : fill_addr ,
+            i_wdata     : fill_rgb  ,
+            o_fetch_req : fetch_req ,
+            o_fetch_row : fetch_row ,
+            i_fetch_done: fetch_done,
+            i_clk       : i_dclk    ,
+            i_rst       : i_drst    ,
+            o_frame     : o_frame   ,
+            o_row       : o_row     ,
+            o_r         : o_r       ,
+            o_g         : o_g       ,
+            o_b         : o_b       ,
+            o_oe        : o_oe      ,
+            o_lat       : o_lat     ,
+            o_clk       : o_hclk    ,
+        );
     }
 
     let _unused: 's logic = |rpop_cnt;

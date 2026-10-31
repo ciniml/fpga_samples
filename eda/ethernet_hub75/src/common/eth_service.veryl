@@ -12,6 +12,9 @@
 //     EthernetVideoSystem / util/udpvideosend). The sender's MAC / IP /
 //     port are remembered; `i_ack_req` sends it a 4-byte 0xdeadbeef.
 //   - UDP LUT_PORT: payload streamed to the colour table loader.
+//   - UDP STAT_PORT (0: off): any datagram is answered (to its sender's
+//     port, from STAT_PORT) with the 16 bytes of i_status, byte 0 first
+//     = i_status[127:120].
 //
 // Every frame is store-and-forward checked by the MAC (FCS ok, >= 60
 // bytes), so the first 42 bytes (Ethernet + IPv4 without options + UDP /
@@ -31,6 +34,7 @@ module EthService #(
     param IP_ADDR   : bit<32> = 32'hC0_A8_0A_02      , // 192.168.10.2
     param VIDEO_PORT: bit<16> = 16'd10004            ,
     param LUT_PORT  : bit<16> = 16'd10005            ,
+    param STAT_PORT : bit<16> = 16'd0                , // 0: no status replies
     param WSPACE_W  : u32     = 12                   , // width of i_wspace (TX FIFO DEPTH_LOG2 + 1)
 ) (
     i_clk: input clock,
@@ -64,7 +68,8 @@ module EthService #(
     o_lut_valid: output logic   ,
     o_lut_data : output logic<8>,
 
-    i_ack_req: input logic, // send 0xdeadbeef to the last video sender
+    i_ack_req: input logic              , // send 0xdeadbeef to the last video sender
+    i_status : input logic<128> = 128'd0, // status reply payload (quasi-static)
 
     // activity pulses
     o_ev_arp  : output logic,
@@ -92,7 +97,7 @@ module EthService #(
 
     var state   : State         ;
     var kind    : Kind          ;
-    var hdr     : logic<8>  [46];
+    var hdr     : logic<8>  [58];
     var idx     : logic<6>      ;
     var emit_end: logic<6>      ; // last hdr index to send
     var cnt     : logic<11>     ; // bytes left to copy / stream
@@ -103,6 +108,7 @@ module EthService #(
     var d_icmp  : logic    ;
     var d_video : logic    ;
     var d_lut   : logic    ;
+    var d_stat  : logic    ;
     var d_room  : logic    ;
     var d_total : logic<11>; // ICMP reply frame length
     var d_udplen: logic<11>;
@@ -114,6 +120,22 @@ module EthService #(
     var vid_ip   : logic<32>;
     var vid_port : logic<16>;
     var ack_csum : logic<16>;
+
+    // status replies: requester, and which reply the IDLE frame is built
+    // for (ACK or status); the checksum of the frame takes 3 clocks to
+    // follow a change of rsel, so a reply leaves only when rsel has been
+    // stable that long
+    var stat_pend: logic    ;
+    var stat_mac : logic<48>;
+    var stat_ip  : logic<32>;
+    var stat_port: logic<16>;
+    var rsel     : logic    ; // 0: ACK, 1: status
+    var rsel_age : logic<2> ;
+    let rsel_want: logic     = !ack_pend && stat_pend;
+    let tgt_mac  : logic<48> = if rsel ? stat_mac : vid_mac;
+    let tgt_ip   : logic<32> = if rsel ? stat_ip : vid_ip;
+    let tgt_port : logic<16> = if rsel ? stat_port : vid_port;
+    let ip_len   : logic<16> = if rsel ? 16'd44 : 16'd32; // 20 + 8 + 16 / 4
 
     var wvalid   : logic    ;
     var wdata    : logic<8> ;
@@ -162,11 +184,12 @@ module EthService #(
     let icmp_csum_s: logic<17> = {1'b0, hdr[36], hdr[37]} + 17'h0_0800; // type 8 -> 0
     let icmp_csum  : logic<16> = icmp_csum_s[15:0] + {15'b0, icmp_csum_s[16]};
 
-    // IPv4 header checksum of the ack: 4500 0020 0000 4000 4011 + addresses
-    let ack_sum0: logic<20> = 20'h0_4500 + 20'h0_0020 + 20'h0_4000 + 20'h0_4011 + {4'b0, IP_ADDR[31:16]}
-        + {4'b0, IP_ADDR[15:0]} + {4'b0, vid_ip[31:16]} + {4'b0, vid_ip[15:0]};
+    // IPv4 header checksum of the ack / status reply: 4500 len 0000 4000
+    // 4011 + addresses
+    let ack_sum0: logic<20> = 20'h0_4500 + {4'b0, ip_len} + 20'h0_4000 + 20'h0_4011 + {4'b0, IP_ADDR[31:16]}
+        + {4'b0, IP_ADDR[15:0]} + {4'b0, tgt_ip[31:16]} + {4'b0, tgt_ip[15:0]};
     // ack_sum0 is registered (vid_ip changes in DECIDE, the ack goes out
-    // much later)
+    // much later; see rsel for the status reply)
     var ack_sum0_q: logic<20>;
     let ack_sum1  : logic<17> = {1'b0, ack_sum0_q[15:0]} + {13'b0, ack_sum0_q[19:16]};
     let ack_sum2  : logic<16> = ack_sum1[15:0] + {15'b0, ack_sum1[16]};
@@ -193,9 +216,10 @@ module EthService #(
     always_ff {
         case state {
             State::IDLE: {
-                // ack frame (used only when IDLE goes to EMIT with kind ACK)
+                // ack / status frame (used only when IDLE goes to EMIT
+                // with kind ACK)
                 for i in 0..6 {
-                    hdr[i]     = vid_mac[(5 - i) step 8];
+                    hdr[i]     = tgt_mac[(5 - i) step 8];
                     hdr[6 + i] = MAC_ADDR[(5 - i) step 8];
                 }
                 hdr[12] = 8'h08;
@@ -203,7 +227,7 @@ module EthService #(
                 hdr[14] = 8'h45;
                 hdr[15] = 8'h00;
                 hdr[16] = 8'h00;
-                hdr[17] = 8'd32; // 20 + 8 + 4
+                hdr[17] = ip_len[7:0];
                 hdr[18] = 8'h00;
                 hdr[19] = 8'h00;
                 hdr[20] = 8'h40; // DF
@@ -214,20 +238,26 @@ module EthService #(
                 hdr[25] = ack_csum[7:0];
                 for i in 0..4 {
                     hdr[26 + i] = IP_ADDR[(3 - i) step 8];
-                    hdr[30 + i] = vid_ip[(3 - i) step 8];
+                    hdr[30 + i] = tgt_ip[(3 - i) step 8];
                 }
-                hdr[34] = VIDEO_PORT[15:8];
-                hdr[35] = VIDEO_PORT[7:0];
-                hdr[36] = vid_port[15:8];
-                hdr[37] = vid_port[7:0];
+                hdr[34] = if rsel ? STAT_PORT[15:8] : VIDEO_PORT[15:8];
+                hdr[35] = if rsel ? STAT_PORT[7:0] : VIDEO_PORT[7:0];
+                hdr[36] = tgt_port[15:8];
+                hdr[37] = tgt_port[7:0];
                 hdr[38] = 8'h00;
-                hdr[39] = 8'd12;
+                hdr[39] = ip_len[7:0] - 8'd20;
                 hdr[40] = 8'h00; // no UDP checksum
                 hdr[41] = 8'h00;
-                hdr[42] = 8'hDE;
-                hdr[43] = 8'hAD;
-                hdr[44] = 8'hBE;
-                hdr[45] = 8'hEF;
+                if rsel {
+                    for i in 0..16 {
+                        hdr[42 + i] = i_status[(15 - i) step 8];
+                    }
+                } else {
+                    hdr[42] = 8'hDE;
+                    hdr[43] = 8'hAD;
+                    hdr[44] = 8'hBE;
+                    hdr[45] = 8'hEF;
+                }
             }
             State::HDR: {
                 hdr[idx] = rx_byte;
@@ -277,6 +307,13 @@ module EthService #(
             d_icmp     = 1'b0;
             d_video    = 1'b0;
             d_lut      = 1'b0;
+            d_stat     = 1'b0;
+            stat_pend  = 1'b0;
+            stat_mac   = 48'b0;
+            stat_ip    = 32'b0;
+            stat_port  = 16'b0;
+            rsel       = 1'b0;
+            rsel_age   = 2'd0;
             d_room     = 1'b0;
             d_total    = 11'd0;
             d_udplen   = 11'd0;
@@ -326,17 +363,30 @@ module EthService #(
             if i_ack_req && vid_known {
                 ack_pend = 1'b1;
             }
+            if rsel != rsel_want {
+                rsel     = rsel_want;
+                rsel_age = 2'd0;
+            } else if rsel_age != 2'd3 {
+                rsel_age = rsel_age + 2'd1;
+            }
 
             case state {
                 State::IDLE: {
                     idx = 6'd0;
-                    if ack_pend && room_q {
-                        // hdr is being loaded with the ack frame on this edge
-                        ack_pend = 1'b0;
-                        kind     = Kind::ACK;
-                        emit_end = 6'd45;
-                        total    = 11'd46;
-                        state    = State::EMIT;
+                    if (ack_pend || stat_pend) && room_q && rsel == rsel_want && rsel_age == 2'd3 {
+                        // hdr is being loaded with the ack / status frame
+                        // on this edge
+                        if rsel {
+                            stat_pend = 1'b0;
+                            emit_end  = 6'd57;
+                            total     = 11'd58;
+                        } else {
+                            ack_pend = 1'b0;
+                            emit_end = 6'd45;
+                            total    = 11'd46;
+                        }
+                        kind  = Kind::ACK;
+                        state = State::EMIT;
                     } else if i_rrec_valid {
                         if !i_rflag || i_rlen <: 11'd42 {
                             ev_drop = 1'b1;
@@ -357,6 +407,7 @@ module EthService #(
                     d_icmp   = icmp_echo;
                     d_video  = udp_ok && udp_dport == VIDEO_PORT && udp_len >= 16'd10;
                     d_lut    = udp_ok && udp_dport == LUT_PORT;
+                    d_stat   = udp_ok && STAT_PORT != 16'd0 && udp_dport == STAT_PORT;
                     d_room   = tx_room;
                     d_total  = frame_total[10:0];
                     d_udplen = udp_len[10:0];
@@ -389,6 +440,12 @@ module EthService #(
                         cnt       = d_udplen - 11'd8;
                         ev_video  = 1'b1;
                         state     = State::VIDEO;
+                    } else if d_stat {
+                        stat_pend = 1'b1;
+                        stat_mac  = {hdr[6], hdr[7], hdr[8], hdr[9], hdr[10], hdr[11]};
+                        stat_ip   = {hdr[26], hdr[27], hdr[28], hdr[29]};
+                        stat_port = {hdr[34], hdr[35]};
+                        state     = State::RELEASE;
                     } else if d_lut {
                         cnt       = d_udplen - 11'd8;
                         lut_start = 1'b1;

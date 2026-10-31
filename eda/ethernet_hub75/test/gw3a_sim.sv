@@ -1,13 +1,14 @@
 // Simulation stand-ins for the GW3A primitives / IP used by the
 // DK_LED-RXCARD top (Gowin ships no model of GMT_DB):
-//   pllb_hub75  125 MHz, 125 MHz + 270°, 50 MHz, locked after 1 us
+//   pllb_hub75  125 MHz, 125 MHz + 270°, 50 MHz, 333.3 MHz, locked after 1 us
+//   CLKDIV      HCLKIN / DIV_MODE (2, 4, 8)
 //   IDDR / ODDR behaviour of the GW3A prim_sim.v models (without GSR)
 //   IODELAY     zero delay
 //   GMT_DB      UG311: 2 × 32 × 32 bit buffers per component, rows written
 //               by WADDR, columns read by RADDR one clock later
 `timescale 1ns/1ps
 module pllb_hub75 (output logic lock, output logic clkout0, output logic clkout1,
-                   output logic clkout2, input logic clkin);
+                   output logic clkout2, output logic clkout3, input logic clkin);
     initial begin
         clkout0 = 1'b0;
         forever #4 clkout0 = ~clkout0;
@@ -22,8 +23,26 @@ module pllb_hub75 (output logic lock, output logic clkout0, output logic clkout1
         forever #10 clkout2 = ~clkout2;
     end
     initial begin
+        clkout3 = 1'b0;
+        forever #1.5 clkout3 = ~clkout3;
+    end
+    initial begin
         lock = 1'b0;
         #1000 lock = 1'b1;
+    end
+endmodule
+
+module CLKDIV (output logic CLKOUT, input logic CALIB, input logic HCLKIN, input logic RESETN);
+    parameter DIV_MODE = "2";
+    localparam int N = (DIV_MODE == "8") ? 8 : (DIV_MODE == "4") ? 4 : 2;
+    int cnt = 0;
+    initial CLKOUT = 1'b0;
+    always @(posedge HCLKIN) begin
+        if (cnt == N / 2 - 1) begin
+            cnt    <= 0;
+            CLKOUT <= ~CLKOUT;
+        end else
+            cnt <= cnt + 1;
     end
 endmodule
 

@@ -11,3 +11,4 @@ sources             = ["src"]
 [dependencies]
 eth_mac = { path = "../../rtl/eth_mac" }
 hub75   = { path = "../../rtl/hub75" }
+ddr2    = { path = "../../rtl/ddr2" }
