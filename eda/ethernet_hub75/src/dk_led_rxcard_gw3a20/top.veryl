@@ -32,16 +32,27 @@
 // or the read calibration failed), LED2 network activity (video / ARP /
 // ICMP); LED2 blinks fast when no RTL8211E answered on MDIO.
 //
-// Status (UDP 10006, any datagram; 16 bytes):
-//   0     0xD2
-//   1     {0, 0, DDR2 build, frame buffer ready, calibration failed,
-//          calibrated, DDR2 initialised, PLL locked}
-//   2     RD_LAT          3  {RD_SEL_ODD, RD_SEL}
-//   4..5  memory test words wrong (big endian, saturating)
-//   6..8  burst address of the first one
-//   9     link speed (0 10M, 1 100M, 2 1000M)
+// Status (UDP 10006, any datagram; 48 bytes, multi-byte values big endian):
+//   0      0xD2
+//   1      {0, read capture override on, DDR2 build, frame buffer ready,
+//           calibration failed, calibrated, DDR2 initialised, PLL locked}
+//   2      RD_LAT (calibrated)      3  {RD_SEL_ODD, RD_SEL} (calibrated)
+//   4..5   memory test words wrong (saturating)
+//   6..8   burst address of the first one
+//   9      link speed (0 10M, 1 100M, 2 1000M)
 //   10..11 video words dropped (frame buffer FIFO full)
 //   12..15 frames shown (flips)
+//   16..21 words wrong per read pass R0, R1, R2 (R2 re-reads R1's data)
+//   22     {override RD_SEL_ODD, RD_SEL}   23  override RD_LAT
+//   24..39 OR of the wrong bits, beat 7 first (beat b = DQ15..0)
+//   40..43 memory test runs completed
+//   44     {read tuning done, tuning moved a slot, 0...}
+//   45     {RD_SEL_ODD, RD_SEL} after tuning
+//   46..47 words wrong in the first memory test (before tuning)
+// Control (UDP 10007), byte 0 = command:
+//   01 sel sel_odd lat  read capture override, then run the memory test
+//   02                  override off, run the memory test
+//   03                  run the memory test (it clears the frame buffer)
 module DkLedRxcardTop #(
     param HUB75_IMPL    : u32     = $sv::ethernet_hub75_cfg::HUB75_IMPL    ,
     param PANEL_ROWS    : u32     = $sv::ethernet_hub75_cfg::PANEL_ROWS    , // 64x64 panel rows (2 or 3), 2 panels each
@@ -178,6 +189,27 @@ module DkLedRxcardTop #(
     var fb_ready  : 'm logic               ;
     var bist_err  : 'm logic<16>           ;
     var bist_first: 'm logic<MEM_ADDR_BITS>;
+    var bist_pass : 'm logic<48>           ;
+    var bist_mask : 'm logic<128>          ;
+    var restart_m : 'm logic               ;
+    var ovr_en    : 's logic               ;
+    var ovr_sel   : 's logic<4>            ;
+    var ovr_sel_o : 's logic<4>            ;
+    var ovr_lat   : 's logic<4>            ;
+    var rst_tog   : 's logic               ;
+    var parity    : 'm logic<32>           ;
+    var t_en      : 'm logic               ;
+    var t_sel     : 'm logic<4>            ;
+    var t_sel_o   : 'm logic<4>            ;
+    var t_lat     : 'm logic<4>            ;
+    var t_restart : 'm logic               ;
+    var t_done    : 'm logic               ;
+    var t_first   : 'm logic<16>           ;
+    var m_ovr_en  : 'm logic               ;
+    var m_ovr_sel : 'm logic<4>            ;
+    var m_ovr_selo: 'm logic<4>            ;
+    var m_ovr_lat : 'm logic<4>            ;
+    var restart_c : 'm logic               ;
     var rd_sel    : 'm logic<6>            ;
     var rd_sel_odd: 'm logic<6>            ;
     var rd_lat    : 'm logic<4>            ;
@@ -221,36 +253,68 @@ module DkLedRxcardTop #(
             CL       : 4            ,
             T_INIT_PS: DDR_T_INIT_PS,
         ) (
-            i_clk       : mclk      ,
-            i_rst       : mrst      ,
-            i_req_valid : mreq_valid,
-            o_req_ready : mreq_ready,
-            i_req_we    : mreq_we   ,
-            i_req_addr  : mreq_addr ,
-            i_req_wdata : mreq_wdata,
-            o_rd_valid  : mrd_valid ,
-            o_rd_data   : mrd_data  ,
-            o_init_done : mem_init  ,
-            o_cal_ok    : cal_ok    ,
-            o_cal_fail  : cal_fail  ,
-            o_rd_sel    : rd_sel    ,
-            o_rd_sel_odd: rd_sel_odd,
-            o_rd_lat    : rd_lat    ,
-            o_cke       : cke       ,
-            o_odt       : odt       ,
-            o_cs_n      : cs_n      ,
-            o_ras_n     : ras_n     ,
-            o_cas_n     : cas_n     ,
-            o_we_n      : we_n      ,
-            o_ba        : ba        ,
-            o_a         : a         ,
-            o_dq_out    : dq_out    ,
-            o_dq_oe     : dq_oe     ,
-            o_dqs_out   : dqs_out   ,
-            o_dqs_oe    : dqs_oe    ,
-            i_dq_in     : dq_in     ,
-            i_dqs_in    : dqs_in    ,
+            i_clk        : mclk      ,
+            i_rst        : mrst      ,
+            i_req_valid  : mreq_valid,
+            o_req_ready  : mreq_ready,
+            i_req_we     : mreq_we   ,
+            i_req_addr   : mreq_addr ,
+            i_req_wdata  : mreq_wdata,
+            o_rd_valid   : mrd_valid ,
+            o_rd_data    : mrd_data  ,
+            o_init_done  : mem_init  ,
+            o_cal_ok     : cal_ok    ,
+            o_cal_fail   : cal_fail  ,
+            o_rd_sel     : rd_sel    ,
+            o_rd_sel_odd : rd_sel_odd,
+            o_rd_lat     : rd_lat    ,
+            i_ovr_en     : m_ovr_en  ,
+            i_ovr_sel    : m_ovr_sel ,
+            i_ovr_sel_odd: m_ovr_selo,
+            i_ovr_lat    : m_ovr_lat ,
+            o_cke        : cke       ,
+            o_odt        : odt       ,
+            o_cs_n       : cs_n      ,
+            o_ras_n      : ras_n     ,
+            o_cas_n      : cas_n     ,
+            o_we_n       : we_n      ,
+            o_ba         : ba        ,
+            o_a          : a         ,
+            o_dq_out     : dq_out    ,
+            o_dq_oe      : dq_oe     ,
+            o_dqs_out    : dqs_out   ,
+            o_dqs_oe     : dqs_oe    ,
+            i_dq_in      : dq_in     ,
+            i_dqs_in     : dqs_in    ,
         );
+
+        // read slot tuning after the start-up memory test; the host
+        // override (UDP 10007) wins
+        inst u_tune: DdrReadTune (
+            i_clk        : mclk           ,
+            i_rst        : mrst           ,
+            i_ready      : fb_ready       ,
+            i_err_even   : parity[31:16]  ,
+            i_err_odd    : parity[15:0]   ,
+            i_cal_ok     : cal_ok         ,
+            i_cal_sel    : rd_sel[3:0]    ,
+            i_cal_sel_odd: rd_sel_odd[3:0],
+            i_cal_lat    : rd_lat         ,
+            o_ovr_en     : t_en           ,
+            o_ovr_sel    : t_sel          ,
+            o_ovr_sel_odd: t_sel_o        ,
+            o_ovr_lat    : t_lat          ,
+            o_restart    : t_restart      ,
+            o_done       : t_done         ,
+            o_first_err  : t_first        ,
+        );
+        unsafe (cdc) {
+            assign m_ovr_en   = ovr_en || t_en;
+            assign m_ovr_sel  = if ovr_en ? ovr_sel : t_sel;
+            assign m_ovr_selo = if ovr_en ? ovr_sel_o : t_sel_o;
+            assign m_ovr_lat  = if ovr_en ? ovr_lat : t_lat;
+        }
+        assign restart_c  = restart_m || t_restart;
 
         inst u_phy: ddr2::Ddr2PhyGw3a (
             i_pclk     : mclk     ,
@@ -295,6 +359,12 @@ module DkLedRxcardTop #(
         assign rd_sel     = 6'd0;
         assign rd_sel_odd = 6'd0;
         assign rd_lat     = 4'd0;
+        assign t_done     = 1'b0;
+        assign t_en       = 1'b0;
+        assign t_sel      = 4'd0;
+        assign t_sel_o    = 4'd0;
+        assign t_first    = 16'd0;
+        assign restart_c  = 1'b0;
         assign ddr_ck     = 1'b0;
         assign ddr_cke    = 1'b0;
         assign ddr_odt    = 1'b0;
@@ -471,10 +541,14 @@ module DkLedRxcardTop #(
     );
 
     // ---- status (quasi-static values from the DRAM domain) ----
-    var overflow: 's logic     ;
-    var ovf_cnt : 's logic<16> ;
-    var flip_cnt: 's logic<32> ;
-    var status  : 's logic<128>;
+    var overflow  : 's logic     ;
+    var ovf_cnt   : 's logic<16> ;
+    var flip_cnt  : 's logic<32> ;
+    var status    : 's logic<384>;
+    var bist_runs : 's logic<32> ;
+    var ctrl_start: 's logic     ;
+    var ctrl_valid: 's logic     ;
+    var ctrl_data : 's logic<8>  ;
     // ---- core ----
     const NUM_LANES: u32 = 4 * PANEL_ROWS;
 
@@ -505,48 +579,55 @@ module DkLedRxcardTop #(
             MEM_ADDR_BITS : MEM_ADDR_BITS  ,
             BIST_BURSTS   : BIST_BURSTS    ,
         ) (
-            i_clk        : sys_clk   ,
-            i_rst        : sys_rst   ,
-            i_rx_clk     : rgmii_rxc ,
-            i_rx_rst     : rrst      ,
-            i_rx_bvalid  : rx_bvalid ,
-            i_rx_bdata   : rx_bdata  ,
-            i_rx_end     : rx_end    ,
-            i_rx_err     : rx_err    ,
-            i_tx_clk     : sys_clk   ,
-            i_tx_rst     : sys_rst   ,
-            i_tx_ce      : tx_ce     ,
-            o_tx_ben     : tx_ben    ,
-            o_tx_bdata   : tx_bdata  ,
-            i_dclk       : disp_clk  ,
-            i_drst       : drst      ,
-            o_row        : row       ,
-            o_r          : r         ,
-            o_g          : g         ,
-            o_b          : b         ,
-            o_oe         : oe        ,
-            o_lat        : lat       ,
-            o_hclk       : hclk      ,
-            o_frame      : frame     ,
-            o_ev_video   : ev_video  ,
-            o_ev_net     : ev_net    ,
-            o_ev_drop    : ev_drop   ,
-            o_ev_flip    : ev_flip   ,
-            i_mclk       : mclk      ,
-            i_mrst       : mrst      ,
-            i_mem_init   : mem_init  ,
-            o_mreq_valid : mreq_valid,
-            i_mreq_ready : mreq_ready,
-            o_mreq_we    : mreq_we   ,
-            o_mreq_addr  : mreq_addr ,
-            o_mreq_wdata : mreq_wdata,
-            i_mrd_valid  : mrd_valid ,
-            i_mrd_data   : mrd_data  ,
-            o_fb_ready   : fb_ready  ,
-            o_bist_errors: bist_err  ,
-            o_bist_first : bist_first,
-            o_overflow   : overflow  ,
-            i_status     : status    ,
+            i_clk         : sys_clk   ,
+            i_rst         : sys_rst   ,
+            i_rx_clk      : rgmii_rxc ,
+            i_rx_rst      : rrst      ,
+            i_rx_bvalid   : rx_bvalid ,
+            i_rx_bdata    : rx_bdata  ,
+            i_rx_end      : rx_end    ,
+            i_rx_err      : rx_err    ,
+            i_tx_clk      : sys_clk   ,
+            i_tx_rst      : sys_rst   ,
+            i_tx_ce       : tx_ce     ,
+            o_tx_ben      : tx_ben    ,
+            o_tx_bdata    : tx_bdata  ,
+            i_dclk        : disp_clk  ,
+            i_drst        : drst      ,
+            o_row         : row       ,
+            o_r           : r         ,
+            o_g           : g         ,
+            o_b           : b         ,
+            o_oe          : oe        ,
+            o_lat         : lat       ,
+            o_hclk        : hclk      ,
+            o_frame       : frame     ,
+            o_ev_video    : ev_video  ,
+            o_ev_net      : ev_net    ,
+            o_ev_drop     : ev_drop   ,
+            o_ev_flip     : ev_flip   ,
+            i_mclk        : mclk      ,
+            i_mrst        : mrst      ,
+            i_mem_init    : mem_init  ,
+            o_mreq_valid  : mreq_valid,
+            i_mreq_ready  : mreq_ready,
+            o_mreq_we     : mreq_we   ,
+            o_mreq_addr   : mreq_addr ,
+            o_mreq_wdata  : mreq_wdata,
+            i_mrd_valid   : mrd_valid ,
+            i_mrd_data    : mrd_data  ,
+            o_fb_ready    : fb_ready  ,
+            o_bist_errors : bist_err  ,
+            o_bist_first  : bist_first,
+            o_overflow    : overflow  ,
+            i_status      : status    ,
+            o_bist_pass   : bist_pass ,
+            o_bist_mask   : bist_mask ,
+            i_bist_restart: restart_c ,
+            o_bist_parity : parity    ,
+            o_ctrl_start  : ctrl_start,
+            o_ctrl_valid  : ctrl_valid,
+            o_ctrl_data   : ctrl_data ,
         );
     }
 
@@ -566,11 +647,93 @@ module DkLedRxcardTop #(
     unsafe (cdc) {
         always_ff (sys_clk) {
             status = {
-                8'hD2, 2'b00, HUB75_IMPL == 2, fb_ready, cal_fail, cal_ok, mem_init, lock_s2, 4'd0, rd_lat,
-                rd_sel_odd[3:0], rd_sel[3:0], bist_err, bist_first as 24, 6'd0, speed, ovf_cnt, flip_cnt
+                8'hD2, 1'b0, ovr_en, HUB75_IMPL == 2, fb_ready, cal_fail, cal_ok, mem_init, lock_s2, 4'd0, rd_lat,
+                rd_sel_odd[3:0], rd_sel[3:0], bist_err, bist_first as 24, 6'd0, speed, ovf_cnt, flip_cnt, bist_pass,
+                ovr_sel_o, ovr_sel, 4'd0, ovr_lat, bist_mask, bist_runs, t_done, t_en, 6'd0, t_sel_o, t_sel, t_first
             };
         }
     }
+
+    // ---- control (UDP 10007) ----
+    var c_idx : 's logic<2>;
+    var c_cmd : 's logic<8>;
+    var c_sel : 's logic<8>;
+    var c_selo: 's logic<8>;
+    var rdy_s1: 's logic   ;
+    var rdy_s2: 's logic   ;
+    var rdy_s3: 's logic   ;
+    always_ff (sys_clk) {
+        if sys_rst {
+            c_idx     = 2'd0;
+            c_cmd     = 8'd0;
+            c_sel     = 8'd0;
+            c_selo    = 8'd0;
+            ovr_en    = 1'b0;
+            ovr_sel   = 4'd0;
+            ovr_sel_o = 4'd0;
+            ovr_lat   = 4'd0;
+            rst_tog   = 1'b0;
+            bist_runs = 32'd0;
+        } else {
+            if ctrl_start {
+                c_idx = 2'd0;
+            } else if ctrl_valid {
+                if c_idx != 2'd3 {
+                    c_idx = c_idx + 2'd1;
+                }
+                case c_idx {
+                    2'd0: {
+                        c_cmd = ctrl_data;
+                        if ctrl_data == 8'h02 {
+                            ovr_en  = 1'b0;
+                            rst_tog = ~rst_tog;
+                        }
+                        if ctrl_data == 8'h03 {
+                            rst_tog = ~rst_tog;
+                        }
+                    }
+                    2'd1: {
+                        c_sel = ctrl_data;
+                    }
+                    2'd2: {
+                        c_selo = ctrl_data;
+                    }
+                    default: {
+                        if c_cmd == 8'h01 {
+                            ovr_en    = 1'b1;
+                            ovr_sel   = c_sel[3:0];
+                            ovr_sel_o = c_selo[3:0];
+                            ovr_lat   = ctrl_data[3:0];
+                            rst_tog   = ~rst_tog;
+                            c_cmd     = 8'h00;
+                        }
+                    }
+                }
+            }
+            if rdy_s2 && !rdy_s3 {
+                bist_runs = bist_runs + 32'd1;
+            }
+        }
+    }
+    unsafe (cdc) {
+        always_ff (sys_clk) {
+            rdy_s1 = fb_ready;
+            rdy_s2 = rdy_s1;
+            rdy_s3 = rdy_s2;
+        }
+    }
+    // restart toggle -> one mclk pulse (the override values are stable by then)
+    var rt_m1: 'm logic;
+    var rt_m2: 'm logic;
+    var rt_m3: 'm logic;
+    unsafe (cdc) {
+        always_ff (mclk) {
+            rt_m1 = rst_tog;
+            rt_m2 = rt_m1;
+            rt_m3 = rt_m2;
+        }
+    }
+    assign restart_m = rt_m2 != rt_m3;
 
     // connector k = J(4 + k): panel row k / 2, column k % 2. CONN_ID
     // replaces the data of J4..J11 by a colour per connector ({B, G, R}

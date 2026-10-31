@@ -4,6 +4,7 @@
 #               stage or the DDR2 frame buffer (slot-level DDR2 model)
 #               [TXS=1]         with TXC_SHIFTED (PHY model without TX delay)
 #               [PROWS=2]       4 panels (128x128) instead of 6 (128x192)
+#               [MARG=1]        IMPL=ddr: marginal first read samples (read tuning)
 #   make VCD=1                  also dump tb.vcd
 TOP_DIR := ..
 DEP     := $(TOP_DIR)/dependencies
@@ -18,6 +19,7 @@ RTL := $(DEP)/eth_mac/crc32.sv \
        $(TOP_DIR)/src/common/gmt_corner_turn.sv \
        $(TOP_DIR)/src/common/fb_afifo.sv \
        $(TOP_DIR)/src/common/ddr_fb.sv \
+       $(TOP_DIR)/src/common/ddr_read_tune.sv \
        $(TOP_DIR)/src/common/ethernet_hub75_core.sv
 TB := gw3a_sim.sv rpll_hub75_sim.sv $(TOP_DIR)/src/tangprimer20k/top.sv tb_tp20k.sv
 
@@ -40,6 +42,11 @@ RUN_ARGS :=
 ifeq ($(VCD),1)
 VFLAGS += --trace
 RUN_ARGS += +vcd
+endif
+# MARG=1 (IMPL=ddr): the DDR2 model makes the first sample of each read beat
+# wrong now and then, so that the start-up read tuning has to move
+ifeq ($(MARG),1)
+RUN_ARGS += +ddr_marginal
 endif
 
 .PHONY: all run rxcard veryl clean

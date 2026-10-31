@@ -110,6 +110,12 @@ pub module Ddr2Ctrl #(
     o_rd_sel    : output logic<6>,
     o_rd_sel_odd: output logic<6>,
     o_rd_lat    : output logic<4>,
+    // read capture override (diagnostics: sweeping the read eye on the
+    // board; quasi-static, the calibration result is used when off)
+    i_ovr_en     : input logic    = 1'b0,
+    i_ovr_sel    : input logic<4> = 4'd0,
+    i_ovr_sel_odd: input logic<4> = 4'd0,
+    i_ovr_lat    : input logic<4> = 4'd0,
 
     // ---- PHY (slot vectors) ----
     o_cke    : output logic           ,
@@ -392,17 +398,30 @@ pub module Ddr2Ctrl #(
         if cal_eval {
             sel_used     = scan_sel;
             sel_odd_used = scan_sel;
+        } else if i_ovr_en {
+            sel_used     = i_ovr_sel;
+            sel_odd_used = i_ovr_sel_odd;
         } else {
             sel_used     = cal_sel;
             sel_odd_used = cal_sel_odd;
         }
     }
+    let lat_used: logic<4> = if i_ovr_en ? i_ovr_lat : cal_lat;
 
-    var scan_valid_q: logic;
+    var scan_valid_q : logic;
+    var scan_valid_q2: logic;
+
+    // the selected slots are registered (quasi-static outside the scan)
+    var sel_r    : logic<4>;
+    var sel_odd_r: logic<4>;
+    always_ff {
+        sel_r     = sel_used;
+        sel_odd_r = sel_odd_used;
+    }
 
     // The calibration freezes the window from the cycle a read with RD_LAT
     // would take its beats.
-    let hist_hold: logic = cal_eval || scan_valid_q || (cal_rd_pend && cal_cnt == cal_lat);
+    let hist_hold: logic = cal_eval || scan_valid_q || scan_valid_q2 || (cal_rd_pend && cal_cnt == cal_lat);
 
     // Sample window: the last 3 pclk (24 slots) per DQ bit, index = slot,
     // 0 oldest (index 8k + s = slot s of the pclk 2 - k cycles before the
@@ -432,25 +451,29 @@ pub module Ddr2Ctrl #(
             for b in 0..8 {
                 var idx: logic<5>;
                 if b[0] {
-                    idx            = {1'b0, sel_odd_used} + (b[4:0] - 1) * 2;
+                    idx            = {1'b0, sel_odd_r} + (b[4:0] - 1) * 2;
                     rd_beats[b][i] = hist_dq[i][idx];
                 } else {
-                    idx            = {1'b0, sel_used} + b[4:0] * 2;
+                    idx            = {1'b0, sel_r} + b[4:0] * 2;
                     rd_beats[b][i] = hist_dq[i][idx];
                 }
             }
         }
     }
 
-    // calibration scan: candidate -> extracted beats (registered) -> compare
+    // calibration scan: candidate -> sel_r -> extracted beats (registered)
+    // -> compare
     var rd_beats_q  : logic<16> [8];
     var scan_sel_q  : logic<4>     ;
+    var scan_sel_q2 : logic<4>     ;
     var scan_match  : logic        ;
     var scan_match_o: logic        ;
     always_ff {
-        rd_beats_q   = rd_beats;
-        scan_sel_q   = scan_sel;
-        scan_valid_q = cal_eval;
+        rd_beats_q    = rd_beats;
+        scan_sel_q    = scan_sel;
+        scan_sel_q2   = scan_sel_q;
+        scan_valid_q  = cal_eval;
+        scan_valid_q2 = scan_valid_q;
     }
     always_comb {
         scan_match   = 1'b1;
@@ -484,7 +507,7 @@ pub module Ddr2Ctrl #(
             rd_pipe  = 15'd0;
             rd_valid = 1'b0;
         } else {
-            rd_valid = rd_hist[cal_lat - 4'd1];
+            rd_valid = rd_hist[lat_used - 4'd1];
             rd_pipe  = {rd_pipe[13:0], rd_issue};
         }
         for b in 0..8 {
@@ -584,22 +607,22 @@ pub module Ddr2Ctrl #(
                     scan_sel = scan_sel + 4'd1;
                 }
             }
-            if scan_valid_q {
+            if scan_valid_q2 {
                 if scan_match {
                     if !scan_found {
-                        scan_first = scan_sel_q;
+                        scan_first = scan_sel_q2;
                     }
                     scan_found = 1'b1;
-                    scan_last  = scan_sel_q;
+                    scan_last  = scan_sel_q2;
                 }
                 if scan_match_o {
                     if !scan_found_o {
-                        scan_first_o = scan_sel_q;
+                        scan_first_o = scan_sel_q2;
                     }
                     scan_found_o = 1'b1;
-                    scan_last_o  = scan_sel_q;
+                    scan_last_o  = scan_sel_q2;
                 }
-                if scan_sel_q == SCAN_LAST {
+                if scan_sel_q2 == SCAN_LAST {
                     scan_done = 1'b1;
                 }
             }

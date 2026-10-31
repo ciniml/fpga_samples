@@ -32,7 +32,10 @@
 //
 // Start-up ('m): after the controller's init, a memory test writes and
 // reads back BIST_BURSTS bursts twice (address-derived data, then its
-// complement rotated), then both frame banks are cleared to black. Until
+// complement rotated; the second pattern is read twice, so that read
+// errors, which change between the reads, can be told from write errors),
+// then both frame banks are cleared to black. i_bist_restart runs it again
+// (between row fetches; diagnostics). Until
 // then row requests are answered with black without reading. The video
 // FIFO is not drained meanwhile (packets arriving then are dropped).
 module DdrFb #(
@@ -86,9 +89,13 @@ module DdrFb #(
     o_fill_rgb  : output 'm logic<PX_BITS>    ,
 
     // ---- status ('m) ----
-    o_ready      : output 'm logic               , // memory test and clear done, frame buffer running
-    o_bist_errors: output 'm logic<16>           , // words that read back wrong (saturating)
-    o_bist_first : output 'm logic<MEM_ADDR_BITS>, // burst address of the first one
+    o_ready       : output 'm logic                      , // memory test and clear done, frame buffer running
+    o_bist_errors : output 'm logic<16>                  , // words that read back wrong (saturating)
+    o_bist_first  : output 'm logic<MEM_ADDR_BITS>       , // burst address of the first one
+    o_bist_pass   : output 'm logic<48>                  , // words wrong per read pass {R0, R1, R2}
+    o_bist_mask   : output 'm logic<128>                 , // OR of the wrong bits (beat b = bits 16b +: 16)
+    o_bist_parity : output 'm logic<32>                  , // words with wrong even / odd beats {even, odd} (saturating)
+    i_bist_restart: input  'm logic                = 1'b0, // pulse: run the memory test (and clear) again
 ) {
     const FRAME_BYTES : u32 = WIDTH * HEIGHT * 2;
     const FRAME_BURSTS: u32 = FRAME_BYTES / 16;
@@ -268,19 +275,28 @@ module DdrFb #(
         R0,
         W1,
         R1,
+        R2,
         CLEAR,
         RUN,
     }
-    var mode     : 'm Mode                    ;
-    var bcnt     : 'm logic<MEM_ADDR_BITS + 1>; // bursts issued in this pass
-    var rcnt     : 'm logic<MEM_ADDR_BITS + 1>; // reads returned in this pass
-    var errors   : 'm logic<16>               ;
-    var first    : 'm logic<MEM_ADDR_BITS>    ;
-    var flip_pend: 'm logic                   ;
+    var mode        : 'm Mode                        ;
+    var bcnt        : 'm logic<MEM_ADDR_BITS + 1>    ; // bursts issued in this pass
+    var rcnt        : 'm logic<MEM_ADDR_BITS + 1>    ; // reads returned in this pass
+    var errors      : 'm logic<16>                   ;
+    var first       : 'm logic<MEM_ADDR_BITS>        ;
+    var flip_pend   : 'm logic                       ;
+    var perr        : 'm logic<16>                [3]; // per read pass
+    var emask       : 'm logic<128>                  ;
+    var err_even    : 'm logic<16>                   ;
+    var err_odd     : 'm logic<16>                   ;
+    var restart_pend: 'm logic                       ;
 
     assign o_ready       = mode == Mode::RUN;
     assign o_bist_errors = errors;
     assign o_bist_first  = first;
+    assign o_bist_pass   = {perr[0], perr[1], perr[2]};
+    assign o_bist_mask   = emask;
+    assign o_bist_parity = {err_even, err_odd};
 
     // memory test data: beat b = address bits mixed with b (pass 0), the
     // complement rotated by b + 1 (pass 1): every address and data bit
@@ -304,10 +320,42 @@ module DdrFb #(
         return v;
     }
 
-    let pass      : 'm logic                    = mode == Mode::W1 || mode == Mode::R1;
+    let pass      : 'm logic                    = mode == Mode::W1 || mode == Mode::R1 || mode == Mode::R2;
     let bist_last : 'm logic<MEM_ADDR_BITS + 1> = (BIST_BURSTS - 1) as MEM_ADDR_BITS + 1;
     let clear_last: 'm logic<MEM_ADDR_BITS + 1> = ((2 << FB_SHIFT) - 1) as MEM_ADDR_BITS + 1;
     let rd_expect : 'm logic<128>               = bist_pattern(rcnt[MEM_ADDR_BITS - 1:0], pass);
+
+    // which beats of a read are wrong (beat b = bits 16b +: 16)
+    // memory test compare, pipelined: read data / expected value
+    // registered, then their difference, then the counters (125 MHz-class
+    // paths at mclk otherwise)
+    var c1_valid: 'm logic               ;
+    var c1_data : 'm logic<128>          ;
+    var c1_exp  : 'm logic<128>          ;
+    var c1_pass : 'm logic<2>            ; // read pass 0..2
+    var c1_addr : 'm logic<MEM_ADDR_BITS>;
+    var c2_bad  : 'm logic               ;
+    var c2_diff : 'm logic<128>          ;
+    var c2_pass : 'm logic<2>            ;
+    var c2_addr : 'm logic<MEM_ADDR_BITS>;
+    var c2_even : 'm logic               ;
+    var c2_odd  : 'm logic               ;
+    let c1_diff : 'm logic<128>           = c1_data ^ c1_exp;
+    var c1_even : 'm logic               ;
+    var c1_odd  : 'm logic               ;
+    always_comb {
+        c1_even = 1'b0;
+        c1_odd  = 1'b0;
+        for b in 0..8 {
+            if c1_diff[16 * b+:16] != 16'd0 {
+                if b[0] {
+                    c1_odd = 1'b1;
+                } else {
+                    c1_even = 1'b1;
+                }
+            }
+        }
+    }
 
     // ---- row fetch state ----
     var fetching : 'm logic           ; // a row is being fetched
@@ -352,7 +400,7 @@ module DdrFb #(
                 req_addr  = bcnt[MEM_ADDR_BITS - 1:0];
                 req_wdata = bist_pattern(bcnt[MEM_ADDR_BITS - 1:0], pass);
             }
-            Mode::R0, Mode::R1: {
+            Mode::R0, Mode::R1, Mode::R2: {
                 req_valid = bcnt <: bist_last + 1;
                 req_addr  = bcnt[MEM_ADDR_BITS - 1:0];
             }
@@ -439,38 +487,47 @@ module DdrFb #(
 
     always_ff (i_mclk) {
         if i_mrst {
-            mode      = Mode::INIT;
-            bcnt      = 0;
-            rcnt      = 0;
-            errors    = 16'd0;
-            first     = 0;
-            flip_pend = 1'b0;
-            ack_tog   = 1'b0;
-            fetching  = 1'b0;
-            f_row     = 5'd0;
-            zero_fill = 1'b0;
-            iss_lane  = 0;
-            iss_k     = 0;
-            iss_more  = 1'b0;
-            rq_wptr   = 6'd0;
-            rq_rptr   = 6'd0;
-            rq_issued = 6'd0;
-            up_lane   = 0;
-            up_x      = 0;
-            up_load   = 1'b0;
-            up_have   = 1'b0;
-            up_more   = 1'b0;
-            cur       = 128'd0;
-            p1_valid  = 1'b0;
-            p1_px     = 16'd0;
-            p1_lane   = 0;
-            p1_x      = 0;
-            p1_last   = 1'b0;
-            fill_we   = 1'b0;
-            fill_ln   = 0;
-            fill_ad   = 0;
-            fill_rgb  = 0;
-            done_q    = 1'b0;
+            mode         = Mode::INIT;
+            bcnt         = 0;
+            rcnt         = 0;
+            errors       = 16'd0;
+            first        = 0;
+            perr[0]      = 16'd0;
+            perr[1]      = 16'd0;
+            perr[2]      = 16'd0;
+            emask        = 128'd0;
+            err_even     = 16'd0;
+            err_odd      = 16'd0;
+            c1_valid     = 1'b0;
+            c2_bad       = 1'b0;
+            restart_pend = 1'b0;
+            flip_pend    = 1'b0;
+            ack_tog      = 1'b0;
+            fetching     = 1'b0;
+            f_row        = 5'd0;
+            zero_fill    = 1'b0;
+            iss_lane     = 0;
+            iss_k        = 0;
+            iss_more     = 1'b0;
+            rq_wptr      = 6'd0;
+            rq_rptr      = 6'd0;
+            rq_issued    = 6'd0;
+            up_lane      = 0;
+            up_x         = 0;
+            up_load      = 1'b0;
+            up_have      = 1'b0;
+            up_more      = 1'b0;
+            cur          = 128'd0;
+            p1_valid     = 1'b0;
+            p1_px        = 16'd0;
+            p1_lane      = 0;
+            p1_x         = 0;
+            p1_last      = 1'b0;
+            fill_we      = 1'b0;
+            fill_ln      = 0;
+            fill_ad      = 0;
+            fill_rgb     = 0;
+            done_q       = 1'b0;
         } else {
             // ---- start-up: memory test, clear ----
             case mode {
@@ -492,23 +549,19 @@ module DdrFb #(
                         }
                     }
                 }
-                Mode::R0, Mode::R1: {
+                Mode::R0, Mode::R1, Mode::R2: {
                     if req_go {
                         bcnt = bcnt + 1;
                     }
                     if i_mrd_valid {
-                        if i_mrd_data != rd_expect {
-                            if errors == 16'd0 {
-                                first = rcnt[MEM_ADDR_BITS - 1:0];
-                            }
-                            if errors != 16'hffff {
-                                errors = errors + 16'd1;
-                            }
-                        }
                         if rcnt == bist_last {
                             bcnt = 0;
                             rcnt = 0;
-                            mode = if mode == Mode::R0 ? Mode::W1 : Mode::CLEAR;
+                            mode = case mode {
+                                Mode::R0: Mode::W1,
+                                Mode::R1: Mode::R2,
+                                default : Mode::CLEAR,
+                            };
                         } else {
                             rcnt = rcnt + 1;
                         }
@@ -527,8 +580,63 @@ module DdrFb #(
                     if f_valid && f_ready && f_flip {
                         flip_pend = 1'b1;
                     }
+                    // memory test again: between row fetches (no reads in
+                    // flight)
+                    if restart_pend && !fetching && !i_fetch_req && BIST_BURSTS != 0 {
+                        restart_pend = 1'b0;
+                        bcnt         = 0;
+                        rcnt         = 0;
+                        errors       = 16'd0;
+                        first        = 0;
+                        perr[0]      = 16'd0;
+                        perr[1]      = 16'd0;
+                        perr[2]      = 16'd0;
+                        emask        = 128'd0;
+                        err_even     = 16'd0;
+                        err_odd      = 16'd0;
+                        mode         = Mode::W0;
+                    }
                 }
                 default: {}
+            }
+
+            // ---- memory test compare (see c1 / c2) ----
+            c1_valid = i_mrd_valid && (mode == Mode::R0 || mode == Mode::R1 || mode == Mode::R2);
+            c1_data  = i_mrd_data;
+            c1_exp   = rd_expect;
+            c1_pass  = case mode {
+                Mode::R0: 2'd0,
+                Mode::R1: 2'd1,
+                default : 2'd2,
+            };
+            c1_addr = rcnt[MEM_ADDR_BITS - 1:0];
+            c2_bad  = c1_valid && c1_diff != 128'd0;
+            c2_diff = c1_diff;
+            c2_pass = c1_pass;
+            c2_addr = c1_addr;
+            c2_even = c1_even;
+            c2_odd  = c1_odd;
+            if c2_bad {
+                if errors == 16'd0 {
+                    first = c2_addr;
+                }
+                if errors != 16'hffff {
+                    errors = errors + 16'd1;
+                }
+                if perr[c2_pass] != 16'hffff {
+                    perr[c2_pass] = perr[c2_pass] + 16'd1;
+                }
+                emask = emask | c2_diff;
+                if c2_even && err_even != 16'hffff {
+                    err_even = err_even + 16'd1;
+                }
+                if c2_odd && err_odd != 16'hffff {
+                    err_odd = err_odd + 16'd1;
+                }
+            }
+
+            if i_bist_restart {
+                restart_pend = 1'b1;
             }
 
             // ---- row fetch: start ----

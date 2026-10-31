@@ -1,0 +1,132 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+//
+// DdrReadTune: picks between the two samples of a DDR2 read beat after
+// the start-up memory test (Ddr2Ctrl read capture override + DdrFb
+// restart), DRAM domain.
+//
+// The PHY samples each beat (half a CK) twice; the calibration finds the
+// run of matching slots with one pattern and takes its first slot, which
+// may be the sample next to the data transition: on the DK_LED-RXCARD the
+// first slot failed a few hundred times in the 32 MB test (data dependent,
+// odd beats) and the second one never. So, if the first memory test has
+// errors, it is run again with both slots one later, and for the even and
+// the odd beats separately the slot with fewer wrong words is kept. On a
+// tie (typically none in either run) a parity follows the other one: both
+// are sampled on the same fclk edges, so if the first slot is next to the
+// transition for one it is for the other too (on the board the odd beats
+// showed it in the first test, the even beats only in long runs: 13 wrong
+// words in 20 x 32 MB at the first slot, none at the second). A third run
+// with the result checks it and clears the frame buffer.
+// Nothing changes when the first test is clean (or the calibration
+// failed).
+module DdrReadTune (
+    i_clk: input clock,
+    i_rst: input logic,
+
+    i_ready      : input logic    , // frame buffer running (memory test done)
+    i_err_even   : input logic<16>, // words with wrong even / odd beats in the last test
+    i_err_odd    : input logic<16>,
+    i_cal_ok     : input logic    ,
+    i_cal_sel    : input logic<4> ,
+    i_cal_sel_odd: input logic<4> ,
+    i_cal_lat    : input logic<4> ,
+
+    o_ovr_en     : output logic    ,
+    o_ovr_sel    : output logic<4> ,
+    o_ovr_sel_odd: output logic<4> ,
+    o_ovr_lat    : output logic<4> ,
+    o_restart    : output logic    , // pulse: run the memory test again
+    o_done       : output logic    ,
+    o_first_err  : output logic<16>, // wrong words (even + odd, saturating) of the first test
+) {
+    enum State {
+        FIRST,
+        WAIT_FALL,
+        WAIT_RISE,
+        EVAL,
+        DONE,
+    }
+    var state  : State    ;
+    var next_ev: logic    ; // WAIT_RISE goes to EVAL (else DONE)
+    var e_even : logic<16>;
+    var e_odd  : logic<16>;
+    var ovr_en : logic    ;
+    var sel    : logic<4> ;
+    var sel_odd: logic<4> ;
+    var lat    : logic<4> ;
+    var restart: logic    ;
+    var first  : logic<16>;
+
+    let sum0   : logic<17> = {1'b0, i_err_even} + {1'b0, i_err_odd};
+    let fewer_e: logic     = i_err_even <: e_even;
+    let fewer_o: logic     = i_err_odd <: e_odd;
+    let mv_even: logic     = fewer_e || (i_err_even == e_even && fewer_o);
+    let mv_odd : logic     = fewer_o || (i_err_odd == e_odd && fewer_e);
+
+    assign o_ovr_en      = ovr_en;
+    assign o_ovr_sel     = sel;
+    assign o_ovr_sel_odd = sel_odd;
+    assign o_ovr_lat     = lat;
+    assign o_restart     = restart;
+    assign o_done        = state == State::DONE;
+    assign o_first_err   = first;
+
+    always_ff {
+        if i_rst {
+            state   = State::FIRST;
+            next_ev = 1'b0;
+            e_even  = 16'd0;
+            e_odd   = 16'd0;
+            ovr_en  = 1'b0;
+            sel     = 4'd0;
+            sel_odd = 4'd0;
+            lat     = 4'd0;
+            restart = 1'b0;
+            first   = 16'd0;
+        } else {
+            restart = 1'b0;
+            case state {
+                State::FIRST: {
+                    if i_ready {
+                        e_even = i_err_even;
+                        e_odd  = i_err_odd;
+                        first  = if sum0[16] ? 16'hffff : sum0[15:0];
+                        lat    = i_cal_lat;
+                        if !i_cal_ok || sum0 == 17'd0 || i_cal_sel == 4'd9 || i_cal_sel_odd == 4'd9 {
+                            state = State::DONE;
+                        } else {
+                            ovr_en  = 1'b1;
+                            sel     = i_cal_sel + 4'd1;
+                            sel_odd = i_cal_sel_odd + 4'd1;
+                            restart = 1'b1;
+                            next_ev = 1'b1;
+                            state   = State::WAIT_FALL;
+                        }
+                    }
+                }
+                State::WAIT_FALL: {
+                    if !i_ready {
+                        state = State::WAIT_RISE;
+                    }
+                }
+                State::WAIT_RISE: {
+                    if i_ready {
+                        state = if next_ev ? State::EVAL : State::DONE;
+                    }
+                }
+                State::EVAL: {
+                    // the later slot where it had fewer wrong words, or on a
+                    // tie where the other parity moved
+                    sel     = if mv_even ? i_cal_sel + 4'd1 : i_cal_sel;
+                    sel_odd = if mv_odd ? i_cal_sel_odd + 4'd1 : i_cal_sel_odd;
+                    ovr_en  = mv_even || mv_odd;
+                    restart = 1'b1;
+                    next_ev = 1'b0;
+                    state   = State::WAIT_FALL;
+                }
+                default: {}
+            }
+        }
+    }
+}

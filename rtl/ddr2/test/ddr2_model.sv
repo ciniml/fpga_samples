@@ -25,6 +25,10 @@
 // plus rd_delay_slots; undriven slots read as pseudo-random garbage, and
 // the input path sees the controller's own drive (like an IOBUF).
 //
+// +ddr_marginal: the first slot of every read beat is wrong now and then
+// (bit 0 flipped, about 1 in 64 beats), like a sample next to the data
+// transition on the board; the second slot is always right.
+//
 // Storage: bytes, device byte address = {row, bank, col, 1'b0}.
 module ddr2_model #(
     parameter int ROW_BITS  = 13,
@@ -134,6 +138,8 @@ module ddr2_model #(
     logic [1:0]  p_dqs;
     logic        p_dqs_oe;
     logic [31:0] lfsr;
+    logic [31:0] lfsr2;
+    bit          marginal;
 
     function automatic longint byte_addr(input logic [ROW_BITS-1:0] row, input logic [BANK_BITS-1:0] bank, input logic [COL_BITS-1:0] col);
         return ((longint'(row) << (BANK_BITS + COL_BITS)) | (longint'(bank) << COL_BITS) | longint'(col)) << 1;
@@ -167,6 +173,8 @@ module ddr2_model #(
     initial begin
         errors = 0;
         lfsr = 32'hACE1_2357;
+        lfsr2 = 32'h1234_5679;
+        marginal = $test$plusargs("ddr_marginal");
         cycle = 0; dq_in = 0; dqs_in = 0;
         for (longint i = 0; i < BYTES; i++) mem[i] = 8'hA5 ^ i[7:0];
         reset_state();
@@ -395,6 +403,10 @@ module ddr2_model #(
                             drive_dq = 1;
                             ad = byte_addr(rd_q[i].row, rd_q[i].bank, rd_q[i].col + k[COL_BITS-1:0]);
                             v = {mem[ad + 1], mem[ad]};
+                            if (marginal && (rel % 2) == 0) begin
+                                lfsr2 = {lfsr2[30:0], lfsr2[31] ^ lfsr2[21] ^ lfsr2[1] ^ lfsr2[0]};
+                                if (lfsr2[5:0] == 6'd0) v[0] = ~v[0];
+                            end
                         end
                         if (rel >= 18) rd_q[i].valid = 0;
                     end

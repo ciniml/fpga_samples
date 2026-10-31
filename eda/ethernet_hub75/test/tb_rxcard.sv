@@ -574,8 +574,9 @@ module tb;
         $display("[%0t] ICMP echo reply (%0d B) ok", $time, plen);
     endtask
 
-    // status port: any datagram -> 16 bytes of status from port 10006
-    task automatic test_status(input int flips);
+    // status port: any datagram -> 48 bytes of status from port 10006
+    byte unsigned st [48];
+    task automatic test_status(input int flips, input int runs = 1);
         int q;
         txf[42] = 8'h00;
         build_udp(40000, 10006, 1);
@@ -587,17 +588,21 @@ module tb;
         end
         expect_eq("status dst mac", rx48(q, 0), HOST_MAC);
         expect_eq("status ip csum", rx_csum(q, 14, 20), 16'hFFFF);
-        expect_eq("status ip len", rx16(q, 16), 16'd44);
+        expect_eq("status ip len", rx16(q, 16), 16'd76);
         expect_eq("status dst ip", rx32(q, 30), HOST_IP);
         expect_eq("status sport", rx16(q, 34), 16'd10006);
         expect_eq("status dport", rx16(q, 36), 16'd40000);
-        expect_eq("status udp len", rx16(q, 38), 16'd24);
+        expect_eq("status udp len", rx16(q, 38), 16'd56);
         expect_eq("status magic", rxq[q][42], 8'hD2);
-        expect_eq("status flags", rxq[q][43], IMPL == 2 ? 8'h37 : 8'h01);
+        expect_eq("status flags", rxq[q][43] & 8'hBF, IMPL == 2 ? 8'h37 : 8'h01);
         expect_eq("status memory test errors", rx16(q, 46), 16'd0);
         expect_eq("status speed", rxq[q][51], 8'd2);
         expect_eq("status overflow", rx16(q, 52), 16'd0);
         expect_eq("status flips", rx32(q, 54), flips);
+        expect_eq("status pass errors", {rx16(q, 58), rx16(q, 60), rx16(q, 62)}, 0);
+        expect_eq("status runs", rx32(q, 82), IMPL == 2 ? runs + ($test$plusargs("ddr_marginal") ? 2 : 0) : 0);
+        for (int i = 0; i < 48; i++) st[i] = rxq[q][42 + i];
+        if (IMPL == 2) expect_eq("read tuning done", rxq[q][42 + 44] >> 7, 1);
         $display("[%0t] status reply ok (RD_LAT %0d, RD_SEL %0d / %0d)", $time, rxq[q][44], rxq[q][45] & 15, rxq[q][45] >> 4);
     endtask
 
@@ -634,9 +639,17 @@ module tb;
         end
 
         if (IMPL == 2) begin
-            wait (dut.fb_ready === 1'b1);
+            wait (dut.t_done === 1'b1 && dut.fb_ready === 1'b1);
             expect_eq("ddr2 calibrated", dut.cal_ok, 1);
             expect_eq("ddr2 memory test errors", dut.bist_err, 0);
+            if ($test$plusargs("ddr_marginal")) begin
+                // the read tuning must have moved to the second slots
+                expect_eq("tuning moved", dut.t_en, 1);
+                if (dut.t_first == 0) begin
+                    $display("[%0t] ERROR: no errors in the first memory test with +ddr_marginal", $time); errors++;
+                end
+                $display("[%0t] read tuning: first test %0d wrong words, slots %0d / %0d", $time, dut.t_first, dut.t_sel, dut.t_sel_o);
+            end
             $display("[%0t] DDR2: initialised, memory test passed, frame buffer cleared", $time);
             wait_panel_frames(1);
             begin
@@ -678,6 +691,34 @@ module tb;
         check_panel("frame 2 (colour table)");
 
         test_status(2);
+        if (IMPL == 2) begin
+            // control: override with the calibrated values and run the
+            // memory test again, then back to the calibration
+            txf[42] = 8'h01;
+            // the values in use: tuned if the tuning moved a slot
+            txf[43] = (st[44] >> 6 & 1) ? st[45] & 15 : st[3] & 15;
+            txf[44] = (st[44] >> 6 & 1) ? st[45] >> 4 : st[3] >> 4;
+            txf[45] = st[2];
+            build_udp(40000, 10007, 4);
+            send_frame();
+            #100us;
+            wait (dut.fb_ready === 1'b1);
+            #10us;
+            test_status(2, 2);
+            expect_eq("override flag", st[1] >> 6 & 1, 1);
+            expect_eq("override sel", st[22], (st[44] >> 6 & 1) ? st[45] : st[3]);
+            if (!$test$plusargs("ddr_marginal")) begin
+                // (with +ddr_marginal the calibrated slots are the bad ones)
+                txf[42] = 8'h02;
+                build_udp(40000, 10007, 1);
+                send_frame();
+                #100us;
+                wait (dut.fb_ready === 1'b1);
+                #10us;
+                test_status(2, 3);
+                expect_eq("override off", st[1] >> 6 & 1, 0);
+            end
+        end
         test_arp();
 
         // 100 Mb/s
