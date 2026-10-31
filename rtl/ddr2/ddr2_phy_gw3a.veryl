@@ -1,0 +1,199 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+//
+// Ddr2PhyGw3a: DDR2 PHY for Gowin GW3A (Arora III) from the public IOLOGIC
+// primitives (OSER8 / IDES8 / IOBUF), after Ddr3PhyGw2a of riscv-veryl.
+// Turns the slot vectors of Ddr2Ctrl into pins:
+//
+//   fclk = 2 x CK (one slot per fclk edge), pclk = fclk / 4 = CK / 2.
+//   pclk must come from a CLKDIV (DIV_MODE "4") fed by fclk so that the
+//   two are phase aligned, as OSER8 / IDES8 require.
+//
+//   OSER8  serialises D0..D7 (D0 first) on both fclk edges; TX0..TX3 are
+//          the tristate controls (1 = off), one per two slots, on Q1.
+//   IDES8  samples the pin at every fclk edge; Q0 is the oldest sample.
+//   CK and DQS are differential (SSTL18D in the .cst on the true pin, the
+//   complement follows), so they use the ordinary OSER8 / IOBUF too. CKE
+//   and ODT are slow and leave through plain registers.
+//
+// Slot s of every controller vector maps to D[s] / Q[s]. CK is the
+// constant pattern {0,0,1,1,0,0,1,1}: rising edges at slots 2 and 6, half a
+// CK after the command changes (slot 0). The capture position of the read
+// data (IDES8 latency, flight time) is the controller's calibration.
+//
+// Gowin synthesis only; the test bench uses test/ddr2_phy_sim.sv (same
+// ports, slot-level model behind them).
+pub module Ddr2PhyGw3a #(
+    param ROW_BITS : u32 = 13,
+    param BANK_BITS: u32 = 2 ,
+) (
+    i_pclk: input '_ clock,
+    i_fclk: input '_ clock,
+    i_rst : input    logic, // active high, pclk domain
+
+    // from / to Ddr2Ctrl (pclk domain)
+    i_cke    : input  logic           ,
+    i_odt    : input  logic           ,
+    i_cs_n   : input  logic           ,
+    i_ras_n  : input  logic           ,
+    i_cas_n  : input  logic           ,
+    i_we_n   : input  logic           ,
+    i_ba     : input  logic<BANK_BITS>,
+    i_a      : input  logic<ROW_BITS> ,
+    i_dq_out : input  logic<128>      ,
+    i_dq_oe  : input  logic<4>        ,
+    i_dqs_out: input  logic<16>       ,
+    i_dqs_oe : input  logic<4>        ,
+    o_dq_in  : output logic<128>      ,
+    o_dqs_in : output logic<16>       ,
+
+    // DDR2 pins
+    o_ddr_ck   : output logic               , // true pin of the pair (SSTL18D)
+    o_ddr_cke  : output logic               ,
+    o_ddr_odt  : output logic               ,
+    o_ddr_cs_n : output logic               ,
+    o_ddr_ras_n: output logic               ,
+    o_ddr_cas_n: output logic               ,
+    o_ddr_we_n : output logic               ,
+    o_ddr_ba   : output logic    <BANK_BITS>,
+    o_ddr_a    : output logic    <ROW_BITS> ,
+    io_ddr_dq  : inout  tri logic<16>       ,
+    io_ddr_dqs : inout  tri logic<2>        , // true pins of the pairs (SSTL18D)
+) {
+    always_ff (i_pclk) {
+        o_ddr_cke = i_cke;
+        o_ddr_odt = i_odt;
+    }
+
+    // ---- output-only pins: 8 slots each ----
+    // command / address: one command per pclk in CK 0, DESELECT in CK 1
+    const N_OUT    : u32              = 5 + BANK_BITS + ROW_BITS; // ck, cs, ras, cas, we, ba, a
+    var   out_slots: logic<8> [N_OUT];
+    var   out_pins : logic    [N_OUT];
+    always_comb {
+        out_slots[0] = 8'b1100_1100; // CK
+        out_slots[1] = {4'b1111, i_cs_n repeat 4};
+        out_slots[2] = {i_ras_n repeat 8};
+        out_slots[3] = {i_cas_n repeat 8};
+        out_slots[4] = {i_we_n repeat 8};
+        for i in 0..BANK_BITS {
+            out_slots[5 + i] = {i_ba[i] repeat 8};
+        }
+        for i in 0..ROW_BITS {
+            out_slots[5 + BANK_BITS + i] = {i_a[i] repeat 8};
+        }
+    }
+    for i in 0..N_OUT :g_out {
+        inst u_oser: $sv::OSER8 (
+            Q0   : out_pins[i]    ,
+            Q1   : _              ,
+            D0   : out_slots[i][0],
+            D1   : out_slots[i][1],
+            D2   : out_slots[i][2],
+            D3   : out_slots[i][3],
+            D4   : out_slots[i][4],
+            D5   : out_slots[i][5],
+            D6   : out_slots[i][6],
+            D7   : out_slots[i][7],
+            TX0  : 1'b0           ,
+            TX1  : 1'b0           ,
+            TX2  : 1'b0           ,
+            TX3  : 1'b0           ,
+            PCLK : i_pclk         ,
+            FCLK : i_fclk         ,
+            RESET: i_rst          ,
+        );
+    }
+    assign o_ddr_ck    = out_pins[0];
+    assign o_ddr_cs_n  = out_pins[1];
+    assign o_ddr_ras_n = out_pins[2];
+    assign o_ddr_cas_n = out_pins[3];
+    assign o_ddr_we_n  = out_pins[4];
+    for i in 0..BANK_BITS :g_ba {
+        assign o_ddr_ba[i] = out_pins[5 + i];
+    }
+    for i in 0..ROW_BITS :g_a {
+        assign o_ddr_a[i] = out_pins[5 + BANK_BITS + i];
+    }
+
+    // ---- DQ / DQS: OSER8 -> IOBUF -> IDES8 ----
+    // pin p: 0..15 DQ, 16..17 DQS (L, U)
+    var io_slots: logic<8> [18];
+    var io_q    : logic<8> [18];
+    var io_tx   : logic<4> [18];
+    always_comb {
+        for i in 0..16 {
+            for s in 0..8 {
+                io_slots[i][s]      = i_dq_out[16 * s + i];
+                o_dq_in[16 * s + i] = io_q[i][s];
+            }
+            io_tx[i] = ~i_dq_oe;
+        }
+        for i in 0..2 {
+            for s in 0..8 {
+                io_slots[16 + i][s] = i_dqs_out[2 * s + i];
+                o_dqs_in[2 * s + i] = io_q[16 + i][s];
+            }
+            io_tx[16 + i] = ~i_dqs_oe;
+        }
+    }
+
+    var io_o  : logic<18>;
+    var io_oen: logic<18>;
+    var io_i  : logic<18>;
+    for i in 0..18 :g_io {
+        inst u_oser: $sv::OSER8 (
+            Q0   : io_o[i]       ,
+            Q1   : io_oen[i]     ,
+            D0   : io_slots[i][0],
+            D1   : io_slots[i][1],
+            D2   : io_slots[i][2],
+            D3   : io_slots[i][3],
+            D4   : io_slots[i][4],
+            D5   : io_slots[i][5],
+            D6   : io_slots[i][6],
+            D7   : io_slots[i][7],
+            TX0  : io_tx[i][0]   ,
+            TX1  : io_tx[i][1]   ,
+            TX2  : io_tx[i][2]   ,
+            TX3  : io_tx[i][3]   ,
+            PCLK : i_pclk        ,
+            FCLK : i_fclk        ,
+            RESET: i_rst         ,
+        );
+        inst u_ides: $sv::IDES8 (
+            Q0   : io_q[i][0],
+            Q1   : io_q[i][1],
+            Q2   : io_q[i][2],
+            Q3   : io_q[i][3],
+            Q4   : io_q[i][4],
+            Q5   : io_q[i][5],
+            Q6   : io_q[i][6],
+            Q7   : io_q[i][7],
+            D    : io_i[i]   ,
+            CALIB: 1'b0      ,
+            PCLK : i_pclk    ,
+            FCLK : i_fclk    ,
+            RESET: i_rst     ,
+        );
+    }
+    for i in 0..16 :g_dq {
+        inst u_iobuf: $sv::IOBUF (
+            O  : io_i[i]     ,
+            IO : io_ddr_dq[i],
+            I  : io_o[i]     ,
+            OEN: io_oen[i]   ,
+        );
+    }
+    for i in 0..2 :g_dqs {
+        inst u_iobuf: $sv::IOBUF (
+            O  : io_i[16 + i]  ,
+            IO : io_ddr_dqs[i] ,
+            I  : io_o[16 + i]  ,
+            OEN: io_oen[16 + i],
+        );
+    }
+}
