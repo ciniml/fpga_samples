@@ -126,22 +126,48 @@ pub module Hub75RowLanes #(
     }
 
     // ---------------------------------------------------------------
-    // Row buffers: one dual-clock memory per lane, {buffer, chain_x}.
+    // Row buffers, {buffer, chain_x}. When two pixels fit a block RAM word
+    // (2 × PX_BITS <= 36: 6-bit gradation), lanes 2m and 2m + 1 share one
+    // memory written 18 bits wide at {buffer, chain_x, lane bit 0} and read
+    // 36 bits wide (Gowin infers the mixed-width block RAM), which halves
+    // the block RAMs; otherwise one memory per lane.
     // ---------------------------------------------------------------
+    const PAIR: bit = 2 * PX_BITS <= 36;
+
     var address  : 'd logic<X_BITS>             ; // registered read address
     var read_buf : 'd logic                     ;
     var lane_dout: 'd logic<PX_BITS> [NUM_LANES];
 
-    for i in 0..NUM_LANES :g_lane {
-        #[sv("ram_style=\"block\"")]
-        var mem: logic<PX_BITS> [DEPTH];
-        always_ff (i_fclk) {
-            if i_we && i_wlane == i {
-                mem[i_waddr] = i_wdata;
+    if PAIR :g_pair {
+        for m in 0..(NUM_LANES + 1) / 2 :g_mem {
+            #[sv("ram_style=\"block\"")]
+            var mem: logic<PX_BITS> [2 * DEPTH];
+            always_ff (i_fclk) {
+                if i_we && (i_wlane >> 1) == m {
+                    mem[{i_waddr, i_wlane[0]}] = i_wdata;
+                }
+            }
+            unsafe (cdc) {
+                assign lane_dout[2 * m] = mem[{read_buf, address, 1'b0}];
+            }
+            if 2 * m + 1 <: NUM_LANES :g_hi {
+                unsafe (cdc) {
+                    assign lane_dout[2 * m + 1] = mem[{read_buf, address, 1'b1}];
+                }
             }
         }
-        unsafe (cdc) {
-            assign lane_dout[i] = mem[{read_buf, address}];
+    } else :g_single {
+        for i in 0..NUM_LANES :g_lane {
+            #[sv("ram_style=\"block\"")]
+            var mem: logic<PX_BITS> [DEPTH];
+            always_ff (i_fclk) {
+                if i_we && i_wlane == i {
+                    mem[i_waddr] = i_wdata;
+                }
+            }
+            unsafe (cdc) {
+                assign lane_dout[i] = mem[{read_buf, address}];
+            }
         }
     }
 
