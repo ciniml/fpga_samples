@@ -20,22 +20,23 @@
 // service and frame buffer writes) and display ('d: the HUB75 engine).
 // They may be the same clock.
 module EthernetHub75Core #(
-    param MAC_ADDR      : bit<48> = 48'h11_22_33_44_55_66,
-    param IP_ADDR       : bit<32> = 32'hC0_A8_0A_02      ,
-    param VIDEO_PORT    : bit<16> = 16'd10004            ,
-    param LUT_PORT      : bit<16> = 16'd10005            ,
-    param WIDTH         : u32     = 128                  , // = chain length
-    param HEIGHT        : u32     = 128                  , // = SCAN_ROWS × lanes
-    param SCAN_ROWS     : u32     = 32                   ,
-    param COMPONENT_BITS: u32     = 6                    ,
-    param CLOCK_DIVIDER : u32     = 0                    ,
-    param CLK_LOW_EXTRA : u32     = 1                    ,
-    param BASE_OE_CYCLES: u32     = 16                   ,
-    param CHAIN_REVERSE : bit     = 0                    ,
-    param HUB75_IMPL    : u32     = 0                    , // 0: soft (Hub75Lanes), 1: GMT (GW3A)
-    param RX_DEPTH_LOG2 : u32     = 13                   ,
-    param TX_DEPTH_LOG2 : u32     = 11                   ,
-    const NUM_LANES     : u32     = HEIGHT / SCAN_ROWS   ,
+    param MAC_ADDR      : bit<48> = 48'h11_22_33_44_55_66                    ,
+    param IP_ADDR       : bit<32> = 32'hC0_A8_0A_02                          ,
+    param VIDEO_PORT    : bit<16> = 16'd10004                                ,
+    param LUT_PORT      : bit<16> = 16'd10005                                ,
+    param WIDTH         : u32     = 128                                      , // display width (power of two)
+    param HEIGHT        : u32     = 128                                      , // display height (multiple of SCAN_ROWS)
+    param LANE_WIDTH    : u32     = WIDTH                                    , // chain length of a lane (power of two)
+    param SCAN_ROWS     : u32     = 32                                       ,
+    param COMPONENT_BITS: u32     = 6                                        ,
+    param CLOCK_DIVIDER : u32     = 0                                        ,
+    param CLK_LOW_EXTRA : u32     = 1                                        ,
+    param BASE_OE_CYCLES: u32     = 16                                       ,
+    param CHAIN_REVERSE : bit     = 0                                        ,
+    param HUB75_IMPL    : u32     = 0                                        , // 0: soft (Hub75Lanes), 1: GMT (GW3A)
+    param RX_DEPTH_LOG2 : u32     = 13                                       ,
+    param TX_DEPTH_LOG2 : u32     = 11                                       ,
+    const NUM_LANES     : u32     = HEIGHT / SCAN_ROWS * (WIDTH / LANE_WIDTH),
 ) (
     // ---- system ----
     i_clk: input 's clock,
@@ -75,7 +76,7 @@ module EthernetHub75Core #(
     o_ev_flip : output 's logic, // a new frame is on the panel
 ) {
     const LANE_BITS: u32 = if NUM_LANES >: 1 ? $clog2(NUM_LANES) : 1;
-    const ADDR_BITS: u32 = $clog2(SCAN_ROWS) + $clog2(WIDTH);
+    const ADDR_BITS: u32 = $clog2(SCAN_ROWS) + $clog2(LANE_WIDTH);
     const PX_BITS  : u32 = 3 * COMPONENT_BITS;
     // the RX filter takes the address byte 0 in [7:0]
     const MAC_FILT: bit<48> = {
@@ -205,6 +206,7 @@ module EthernetHub75Core #(
     inst writer: UdpVideoWriter #(
         WIDTH         : WIDTH         ,
         HEIGHT        : HEIGHT        ,
+        LANE_WIDTH    : LANE_WIDTH    ,
         SCAN_ROWS     : SCAN_ROWS     ,
         COMPONENT_BITS: COMPONENT_BITS,
         CHAIN_REVERSE : CHAIN_REVERSE ,
@@ -242,7 +244,7 @@ module EthernetHub75Core #(
     if HUB75_IMPL == 0 :g_soft {
         inst panel: hub75::Hub75Lanes #(
             SCAN_ROWS     : SCAN_ROWS     ,
-            CHAIN_LEN     : WIDTH         ,
+            CHAIN_LEN     : LANE_WIDTH    ,
             NUM_LANES     : NUM_LANES     ,
             CLOCK_DIVIDER : CLOCK_DIVIDER ,
             CLK_LOW_EXTRA : CLK_LOW_EXTRA ,
@@ -269,7 +271,7 @@ module EthernetHub75Core #(
             o_clk      : o_hclk   ,
         );
     } else :g_gmt {
-        const XW_BITS   : u32 = $clog2(WIDTH) - 5;
+        const XW_BITS   : u32 = $clog2(LANE_WIDTH) - 5;
         const PLANE_BITS: u32 = if COMPONENT_BITS >: 1 ? $clog2(COMPONENT_BITS) : 1;
 
         var ct_busy   : 's logic                             ;
@@ -284,7 +286,7 @@ module EthernetHub75Core #(
 
         inst turn: GmtCornerTurn #(
             SCAN_ROWS     : SCAN_ROWS     ,
-            CHAIN_LEN     : WIDTH         ,
+            CHAIN_LEN     : LANE_WIDTH    ,
             NUM_LANES     : NUM_LANES     ,
             COMPONENT_BITS: COMPONENT_BITS,
             CHAIN_REVERSE : CHAIN_REVERSE ,
@@ -308,7 +310,7 @@ module EthernetHub75Core #(
 
         inst panel: hub75::Hub75Planes #(
             SCAN_ROWS     : SCAN_ROWS     ,
-            CHAIN_LEN     : WIDTH         ,
+            CHAIN_LEN     : LANE_WIDTH    ,
             NUM_LANES     : NUM_LANES     ,
             CLOCK_DIVIDER : CLOCK_DIVIDER ,
             CLK_LOW_EXTRA : CLK_LOW_EXTRA ,

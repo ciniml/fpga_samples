@@ -2,6 +2,7 @@
 #   make                        Tang Primer 20K (PASS / FAIL at the end)
 #   make rxcard [IMPL=soft|gmt] DK_LED-RXCARD (GW3A), soft or GMT HUB75 stage
 #               [TXS=1]         with TXC_SHIFTED (PHY model without TX delay)
+#               [PROWS=2]       4 panels (128x128) instead of 6 (128x192)
 #   make VCD=1                  also dump tb.vcd
 TOP_DIR := ..
 DEP     := $(TOP_DIR)/dependencies
@@ -18,7 +19,8 @@ TB := gw3a_sim.sv rpll_hub75_sim.sv $(TOP_DIR)/src/tangprimer20k/top.sv tb_tp20k
 
 IMPL ?= soft
 TXS ?= 0
-RXCARD_OBJ := obj_rxcard_$(IMPL)$(if $(filter 1,$(TXS)),_txs)
+PROWS ?= 3
+RXCARD_OBJ := obj_rxcard_$(IMPL)$(if $(filter 1,$(TXS)),_txs)$(if $(filter 2,$(PROWS)),_4p)
 RXCARD_G   := $(if $(filter gmt,$(IMPL)),1,0)
 RXCARD_TB  := ethernet_hub75_cfg.sv gw3a_sim.sv \
               $(TOP_DIR)/src/dk_led_rxcard_gw3a20/rtl8211e_init.sv \
@@ -49,7 +51,7 @@ run: obj_dir/Vtb
 	grep -q '^PASS' run.log
 
 $(RXCARD_OBJ)/Vtb: veryl $(RXCARD_TB)
-	$(VERILATOR) $(VFLAGS) -GIMPL=$(RXCARD_G) -GTXS=$(TXS) --Mdir $(RXCARD_OBJ) $(RTL) $(RXCARD_TB) -o Vtb 2>&1 | tee build_rxcard_$(IMPL).log | grep -E "%Error|%Warning-(LATCH|COMBDLY|IMPLICIT)" || true
+	$(VERILATOR) $(VFLAGS) -GIMPL=$(RXCARD_G) -GTXS=$(TXS) -GPROWS=$(PROWS) --Mdir $(RXCARD_OBJ) $(RTL) $(RXCARD_TB) -o Vtb 2>&1 | tee build_rxcard_$(IMPL).log | grep -E "%Error|%Warning-(LATCH|COMBDLY|IMPLICIT)" || true
 	test -x $(RXCARD_OBJ)/Vtb
 
 rxcard: $(RXCARD_OBJ)/Vtb

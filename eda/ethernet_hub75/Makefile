@@ -20,6 +20,16 @@ endif
 #               the data, for a PHY with its TX delay off)
 #   RX_DELAY    IODELAY steps (12.5 ps) on RXD / RX_CTL, 0..255
 # Non-default values are appended to the build directory name.
+# DK_LED-RXCARD panels: PANEL_ROWS rows of two 64x64 panels on J4..J9
+# (3: 128x192, default; 2: 128x128 on J4..J7, build directory suffix _4p)
+PANEL_ROWS ?= 3
+ifneq ($(PANEL_ROWS),3)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_$(shell expr $(PANEL_ROWS) \* 2)p
+else ifeq ($(TARGET)$(HUB75_IMPL),dk_led_rxcard_gw3a20gmt)
+# 12 lanes × 3 colours of 768-word plane memories, each rounded up to 4
+# BSRAMs = 144 > 120: the GMT build fits up to PANEL_ROWS=2
+$(error HUB75_IMPL=gmt does not fit 6 panels (BSRAM); use PANEL_ROWS=2)
+endif
 PHY_DLY ?= on
 TXC_SHIFTED ?= 0
 RX_DELAY ?= 0
@@ -49,7 +59,7 @@ FILELIST := $(abspath $(PROJECT_NAME).f)
 VERYL_SRCS := Veryl.toml $(wildcard src/common/*.veryl) $(wildcard src/*/*.veryl) \
               $(wildcard $(RTL_DIR)/eth_mac/*.veryl) $(wildcard $(RTL_DIR)/hub75/*.veryl)
 
-PROJECT_ADDITIONAL_ARGS := $(FILELIST) $(TOP_MODULE) $(HUB75_IMPL_NUM) $(PHY_DELAY_HEX) $(TXC_SHIFTED) $(RX_DELAY)
+PROJECT_ADDITIONAL_ARGS := $(FILELIST) $(TOP_MODULE) $(HUB75_IMPL_NUM) $(PHY_DELAY_HEX) $(TXC_SHIFTED) $(RX_DELAY) $(PANEL_ROWS)
 
 SRCS := project.tcl src/$(TARGET)/pins.cst $(wildcard src/$(TARGET)/*.sdc) $(wildcard src/$(TARGET)/ip/*.v) $(FILELIST)
 

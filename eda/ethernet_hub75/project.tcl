@@ -12,6 +12,7 @@ set HUB75_IMPL    [lindex $argv 8]
 set PHY_DELAY     [lindex $argv 9]
 set TXC_SHIFTED   [lindex $argv 10]
 set RX_DELAY      [lindex $argv 11]
+set PANEL_ROWS    [lindex $argv 12]
 
 set_option -output_base_name ${PROJECT_NAME}
 set_device -name $DEVICE_FAMILY $DEVICE_PART
@@ -37,12 +38,13 @@ if {${TARGET} == "tangprimer20k"} {
     set_option -use_ready_as_gpio 1
 }
 
-# Build configuration for the top (HUB75_IMPL: 0 soft, 1 GMT; the RGMII
-# delay options are used by the DK_LED-RXCARD top only)
+# Build configuration for the top (HUB75_IMPL: 0 soft, 1 GMT; PANEL_ROWS
+# and the RGMII delay options are used by the DK_LED-RXCARD top only)
 set fp [open ethernet_hub75_cfg.sv w]
 puts $fp "package ethernet_hub75_cfg;"
 puts $fp "    localparam int unsigned HUB75_IMPL = ${HUB75_IMPL};"
 puts $fp "    localparam int unsigned RX_DELAY = ${RX_DELAY};"
+puts $fp "    localparam int unsigned PANEL_ROWS = ${PANEL_ROWS};"
 puts $fp "    localparam bit TXC_SHIFTED = 1'b${TXC_SHIFTED};"
 puts $fp "    localparam bit \[15:0\] PHY_DELAY_BITS = 16'h${PHY_DELAY};"
 puts $fp "endpackage"

@@ -7,7 +7,7 @@ PC から UDP で送った映像 (RGB565) を受けて HUB75 パネルに表示�
 | ボード | PHY | パネル | 状態 |
 |---|---|---|---|
 | Tang Primer 20K (Dock) | RTL8201F、RMII 100M | HUB75 ×2 系統 (各 64x64 ×2 枚のチェーン) = 128x128 | シミュレーション・配置配線 OK、実機未確認 |
-| DK_LED-RXCARD_GW3A-LV20UG324S_V2.1 (Arora III) | RTL8211E、RGMII 10/100/1000M | HUB75 J4 + J6 (各 64x64 ×2 枚のチェーン) = 128x128 | ソフト版 / GMT 版ともシミュレーション・配置配線 OK、実機未確認 |
+| DK_LED-RXCARD_GW3A-LV20UG324S_V2.1 (Arora III) | RTL8211E、RGMII 10/100/1000M | HUB75 J4〜J9 に 64x64 を 1 枚ずつ、横 2 × 縦 3 = 128x192 (`PANEL_ROWS=2` で上 4 枚 128x128) | ソフト版 (6 枚 / 4 枚)、GMT 版 (4 枚) がシミュレーション・配置配線 OK、実機未確認 |
 
 ```
 PC (udpvideosend) ── UDP 10004 ──► PHY ─ RmiiRx ─ EthRxMac ─(PktFifo: PHY clk → sys)─► EthService ─► UdpVideoWriter
@@ -93,11 +93,12 @@ BSRAM はほぼ埋まっている。パネルを大きくするなら、BCM の�
 cd eda/ethernet_hub75
 make                     # TARGET=tangprimer20k (既定)。veryl build → Gowin の合成 / 配置配線
 make run                 # openFPGALoader で SRAM に書き込み (make deploy でフラッシュ)
-make TARGET=dk_led_rxcard_gw3a20                  # Arora III、ソフト版 (build/dk_led_rxcard_gw3a20)
-make TARGET=dk_led_rxcard_gw3a20 HUB75_IMPL=gmt   # Arora III、GMT 版 (build/dk_led_rxcard_gw3a20_gmt)
-make TARGET=dk_led_rxcard_gw3a20 [HUB75_IMPL=gmt] run   # Gowin programmer_cli で SRAM に書き込み
+make TARGET=dk_led_rxcard_gw3a20                  # Arora III、ソフト版 6 枚 128x192 (build/dk_led_rxcard_gw3a20)
+make TARGET=dk_led_rxcard_gw3a20 PANEL_ROWS=2     # Arora III、ソフト版 上 4 枚 128x128 (build/dk_led_rxcard_gw3a20_4p)
+make TARGET=dk_led_rxcard_gw3a20 HUB75_IMPL=gmt PANEL_ROWS=2   # Arora III、GMT 版 4 枚 (build/dk_led_rxcard_gw3a20_gmt_4p)
+make TARGET=dk_led_rxcard_gw3a20 [...] run        # Gowin programmer_cli で SRAM に書き込み (変数はビルドと同じに)
 make sim                 # テストベンチ (Verilator、Tang Primer 20K)
-make -C test rxcard IMPL=soft|gmt [TXS=1]         # テストベンチ (Arora III、TXS=1 は TXC_SHIFTED 版)
+make -C test rxcard IMPL=soft|gmt [PROWS=2] [TXS=1]   # テストベンチ (Arora III、PROWS=2 は 4 枚、TXS=1 は TXC_SHIFTED 版)
 ```
 
 gw_sh が PATH にないときは `make GW_SH="env LD_LIBRARY_PATH=$HOME/gowin/1.9.12.03/IDE/lib QT_QPA_PLATFORM=offscreen $HOME/gowin/1.9.12.03/IDE/bin/gw_sh"`
@@ -152,9 +153,11 @@ UG317 (クロック)、UG318 (GPIO)。いずれも `https://cdn.gowinsemi.com.cn
   受信データの IODELAY (`RX_DELAY`) をパラメータで用意してある
 - **速度:** 10/100/1000M に対応。RXC の周波数 (125 / 25 / 2.5 MHz) で速度を判定し、送信は 125 MHz のまま
   1000M = 毎クロック 1 バイト (DDR)、10/100M = 50 / 5 クロックごとに 1 ニブル (TXC はニブルの中央で立ち上がる)
-- **パネル:** 1 組目の HUB75 (J4〜J11 は CLK / LAT / OE / A–E を共有) のうち J4 と J6 を使い、それぞれ 64x64 を 2 枚チェーン
-  (128x64)。レーン 0–3 = J4 の R1 / R2、J6 の R1 / R2 (表示の行 0–31 / 32–63 / 64–95 / 96–127)。2 組目 (J12〜J19) は OE を
-  High にして消灯。HUB75 は 74HC245 経由
+- **パネル:** 1 組目の HUB75 (J4〜J11 は CLK / LAT / OE / A–E を共有) の J4〜J9 に 64x64 を 1 枚ずつ (チェーンなし)。
+  左上から行ごとに、上段 J4 (左) / J5 (右)、中段 J6 / J7、下段 J8 / J9 で、表示は 128x192 (`PANEL_ROWS=3`、既定)。
+  `PANEL_ROWS=2` は上 4 枚 (J4〜J7) で 128x128 にし、J8 / J9 は 0 (黒) を出す。レーンは幅 64 × 32 行で、表示を行優先に
+  切ったもの (レーン 2k = 左、2k + 1 = 右、行 32k〜32k+31)。パネル (段 p、列 c) の R1 / R2 はレーン 4p + c / 4p + 2 + c。
+  2 組目 (J12〜J19) は OE を High にして消灯。HUB75 は 74HC245 経由。ピンは DBUG1298 の表 3-6〜3-12
 - **クロック:** 50 MHz (B16) → PLLB (VCO 1000 MHz) → システム / RGMII 送信 125 MHz、表示 50 MHz
   (HUB75 CLK = 50 / 3 = 16.7 MHz、dvi_hub75 の実機で通った値)
 - **LED (Active Low):** LED1 = PLL ロック中、パネルのフレームごとに点滅 (約 1.4 Hz)。LED2 = 映像 / ARP / ICMP の受信で点灯、
@@ -183,7 +186,8 @@ LED 受信カードでは「画素ごとのデータ (階調値) → ビット�
 | 表示 (シフトアウト) | 画素ワードからプレーンのビットを選ぶ (レーン × 3 本の 6:1) | ワードから x % 32 のビットを選ぶ (レーン × 3 本の 32:1) |
 | 走査・BCM・タイミング | 共通 (`Hub75` と同じエンジン) | 共通 |
 
-結果 (Gowin 1.9.12.03、GW3A-LV20UG324SC1/I0、place option 2。どちらも Ethernet 部込みの全体):
+結果 (Gowin 1.9.12.03、GW3A-LV20UG324SC1/I0、place option 2。どちらも Ethernet 部込みの全体)。以下の表は J4 / J6 に 2 枚チェーンを
+2 本つないだ最初の構成 (レーン 4 本 × 幅 128) のもの。今のパネル構成 (レーン幅 64) の結果はその下:
 
 | 項目 | ソフト版 | GMT 版 |
 |---|---|---|
@@ -197,6 +201,21 @@ LED 受信カードでは「画素ごとのデータ (階調値) → ビット�
 | 階調 | 6 bit BCM (RGB666、色テーブル経由) | 同じ |
 | 最大シフトクロック | 表示 Fmax / 2 = 42 MHz (`CLK_LOW_EXTRA=0`)、既定は / 3 = 16.7 MHz | 同じ (表示 Fmax / 2 = 44 MHz) |
 | 最大パネル (ダブルバッファ、6 bit) | 128x128 (BSRAM で決まる。256x128 には 144 個必要) | 128x128 (256x128 には 192 個必要) |
+
+今のパネル構成 (64x64 を 1 枚ずつ、レーン幅 64):
+
+| 構成 | LUT / ALU | レジスタ | BSRAM | Fmax システム / 表示 (MHz) | リフレッシュ |
+|---|---|---|---|---|---|
+| ソフト版 6 枚 128x192 (12 レーン) | 3186 / 327 | 1839 | 120 / 120 (100%) | 126.8 / 77.0 | 489.2 Hz |
+| ソフト版 4 枚 128x128 (8 レーン) | 2942 / 327 | 1777 | 84 / 120 | 128.0 / 93.1 | 489.2 Hz |
+| GMT 版 4 枚 128x128 (8 レーン) | 3635 / 331 | 1991 | 108 / 120 | 125.7 / 89.1 | 489.2 Hz |
+| GMT 版 6 枚 | — | — | 入らない (下記) | — | — |
+
+チェーンが 128 → 64 に短くなったので、リフレッシュは 359.5 → 489.2 Hz に上がる (行ごとの固定の待ちがあるので 2 倍にはならない)。
+ソフト版 6 枚は BSRAM をすべて使っていて余裕がない。GMT 版はプレーンのメモリ (レーン × 色ごとに 6 プレーン × 128 ワード = 768 ワード)
+が 1024 ワード = BSRAM 4 個に切り上げられるので、6 枚では 12 × 3 × 4 = 144 個必要になり入らない (合成がメモリを LUT に回して
+リソース超過になる。make はこの組み合わせをエラーにしている)。プレーンを 2 枚ずつ 256 ワードのメモリに分ければ 3 個ずつ = 108 個
+(FIFO と合わせて 120 個) にできる見込み
 
 - **このデザインでは GMT 版のほうが重い。** フレームバッファを内蔵 BSRAM に置き、レーンごとに別のメモリを持つ構成では、
   ソフト版は書き込みが画素単位のまま済み、表示側のプレーン選択も 6:1 のセレクタで済むので、転置そのものが要らない。
@@ -227,13 +246,15 @@ RTL8211E 役の MDIO スレーブ (アドレス 1) と、RGMII の向こう側�
 
 `TXS=1` は `TXC_SHIFTED=1` のトップに対して、PHY 役が TX 遅延なし (TXC のエッジで TXD を取る) で同じ検査をする。
 
-ソフト版・GMT 版・TXS=1 (ソフト版) とも PASS。GMT 版では最初、GMT 側の保留が解けてから `Hub75Planes` が busy を出すまでの 1 クロックに busy が
+ソフト版・GMT 版 (それぞれ 6 枚 / 4 枚)・TXS=1 (ソフト版) とも PASS (6 枚は 128x192 = 24576 画素、48 パケット)。GMT 版では最初、GMT 側の保留が解けてから `Hub75Planes` が busy を出すまでの 1 クロックに busy が
 落ち、ack が 2 回出ていた (検査で見つかり修正済み)。
 
 ### 実機の確認手順 (Arora III)
 
-1. パネル: 1 組目の J4 と J6 に、それぞれ 64x64 を 2 枚チェーンでつなぐ (Tang Primer 20K と同じ 128x128 の並び)
-2. ボードの Type-C (J20) を PC に。`make TARGET=dk_led_rxcard_gw3a20 run` (GMT 版は `HUB75_IMPL=gmt` を足す) で SRAM に書き込む。
+1. パネル: 64x64 を J4〜J9 に 1 枚ずつ、上段 J4 (左) / J5 (右)、中段 J6 / J7、下段 J8 / J9。4 枚だけなら J4〜J7 で
+   `PANEL_ROWS=2` のビルドを使う
+2. ボードの Type-C (J20) を PC に。`make TARGET=dk_led_rxcard_gw3a20 run` (4 枚は `PANEL_ROWS=2`、GMT 版は 4 枚のみで
+   `HUB75_IMPL=gmt PANEL_ROWS=2`) で SRAM に書き込む。
    `programmer_cli` が FT232 を掴めないときは `ftdi_sio` を外す (make run が自動で外す)。ケーブルの指定が要るときは
    `PROGRAMMER_CABLE=...` (`make scan-cables` で確認)
 3. LED1 が約 1.4 Hz で点滅すること (PLL ロックとパネル走査)。パネルは起動直後は黒 (フレームバッファの初期値)
@@ -241,9 +262,11 @@ RTL8211E 役の MDIO スレーブ (アドレス 1) と、RGMII の向こう側�
 5. PC の有線 LAN を 192.168.10.1/24 にして、どちらかの RJ45 とつなぐ。リンク LED が点かない / ping が通らなければ反対側の
    RJ45 に差し替える (U43 がどちらか資料にない)。`ping 192.168.10.2` が返り、`ip neigh` に 11:22:33:44:55:66 が載ること。
    `ethtool <if>` でリンク速度 (1000Mb/s が期待値) も見てほしい
-6. テストパターン / 動画 / 向き / ガンマは Tang Primer 20K の 4〜7 と同じ。GbE では udpvideosend の fps が Tang Primer 20K より
-   上がるはず (上限はパネルのフレーム境界での切り替え待ち)
-7. ソフト版と GMT 版で表示が同じであること
+6. テストパターン / 動画 / 向き / ガンマは Tang Primer 20K の 4〜7 と同じだが、6 枚では画面サイズを 128x192 にする:
+   `cargo run --release -- --width 128 --height 192 --test-pattern`、動画は `VIDEO_WIDTH=128 VIDEO_HEIGHT=192 VIDEO_FILE=... ./play_video.sh`
+   (4 枚は 128x128 のまま)。各パネルの左右が逆なら `CHAIN_REVERSE`、パネルの位置が入れ替わっていればつなぎ先を知らせてほしい。
+   GbE では udpvideosend の fps が Tang Primer 20K より上がるはず (上限はパネルのフレーム境界での切り替え待ち)
+7. 4 枚構成で、ソフト版と GMT 版の表示が同じであること
 8. ping が通らない場合は、RGMII のタイミングを変えたビルドを順に試す (make 変数、既定以外の値はビルドディレクトリ名に付く)。
    各ビルドで ping と `ethtool -S <if>` の受信エラー (rx_crc_errors など)、`ip -s link` の RX/TX カウンタを見てほしい
 

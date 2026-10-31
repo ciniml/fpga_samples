@@ -6,16 +6,20 @@
 //
 //   RTL8211E U43 ("PHY1", RGMII, 10/100/1000 Mb/s); RXC on H4 (GCLKT_15).
 //   The PHY2 port (U42) is not used.
-//   HUB75: J4 and J6 of the first connector group (J4..J11 share CLK /
-//   LAT / OE / A..E), each a chain of two 64x64 panels = 128x64;
-//   lanes 0..3 = J4 R1/R2, J6 R1/R2 → 128x128. The second group (J12..J19)
-//   is kept blank (OE high).
+//   HUB75: J4..J9 of the first connector group (J4..J11 share CLK / LAT /
+//   OE / A..E), one 64x64 panel each, 2 panels across and PANEL_ROWS
+//   down, row major from the top left: J4 J5 / J6 J7 / J8 J9 → 128 × 64
+//   PANEL_ROWS (3: 128x192, 2: 128x128 with J8 / J9 dark). Lanes are 64
+//   wide, row major (UdpVideoWriter): panel (row p, column c) shows lanes
+//   4p + c (R1, upper half) and 4p + 2 + c (R2). The second group
+//   (J12..J19) is kept blank (OE high).
 //   Clocks from the 50 MHz oscillator (B16) through PLLB (VCO 1000 MHz):
 //     125 MHz system / RGMII TX, 125 MHz + 270° (TXD if TXC_SHIFTED),
 //     50 MHz display (HUB75 CLK = 50 / 3 = 16.7 MHz).
 //
-// HUB75_IMPL (0: soft, 1: GMT) and the RGMII delay options (PHY_DELAY_BITS,
-// TXC_SHIFTED, RX_DELAY) come from the package ethernet_hub75_cfg
+// HUB75_IMPL (0: soft, 1: GMT), PANEL_ROWS and the RGMII delay options
+// (PHY_DELAY_BITS, TXC_SHIFTED, RX_DELAY) come from the package
+// ethernet_hub75_cfg
 // that the build writes (project.tcl), so that both versions build from
 // one top.
 //
@@ -24,6 +28,7 @@
 // RTL8211E answered on MDIO.
 module DkLedRxcardTop #(
     param HUB75_IMPL    : u32     = $sv::ethernet_hub75_cfg::HUB75_IMPL    ,
+    param PANEL_ROWS    : u32     = $sv::ethernet_hub75_cfg::PANEL_ROWS    , // 64x64 panel rows (2 or 3), 2 panels each
     param CHAIN_REVERSE : bit     = 0                                      ,
     param COMPONENT_BITS: u32     = 6                                      ,
     param CLOCK_DIVIDER : u32     = 0                                      ,
@@ -49,8 +54,12 @@ module DkLedRxcardTop #(
     rgmii_rx_ctl: input  'rx logic       ,
     rgmii_rxd   : input  'rx logic    <4>,
 
-    hub75_j4  : output 'd logic<6>, // R1 G1 B1 R2 G2 B2
-    hub75_j6  : output 'd logic<6>,
+    hub75_j4  : output 'd logic<6>, // R1 G1 B1 R2 G2 B2, row 1 left
+    hub75_j5  : output 'd logic<6>, // row 1 right
+    hub75_j6  : output 'd logic<6>, // row 2 left
+    hub75_j7  : output 'd logic<6>, // row 2 right
+    hub75_j8  : output 'd logic<6>, // row 3 left
+    hub75_j9  : output 'd logic<6>, // row 3 right
     hub75a_row: output 'd logic<5>, // A..E
     hub75a_clk: output 'd logic   ,
     hub75a_lat: output 'd logic   ,
@@ -280,29 +289,32 @@ module DkLedRxcardTop #(
     );
 
     // ---- core ----
-    var row     : 'd logic<5>;
-    var r       : 'd logic<4>;
-    var g       : 'd logic<4>;
-    var b       : 'd logic<4>;
-    var oe      : 'd logic   ;
-    var lat     : 'd logic   ;
-    var hclk    : 'd logic   ;
-    var frame   : 'd logic   ;
-    var ev_video: 's logic   ;
-    var ev_net  : 's logic   ;
-    var ev_drop : 's logic   ;
-    var ev_flip : 's logic   ;
+    const NUM_LANES: u32 = 4 * PANEL_ROWS;
+
+    var row     : 'd logic<5>        ;
+    var r       : 'd logic<NUM_LANES>;
+    var g       : 'd logic<NUM_LANES>;
+    var b       : 'd logic<NUM_LANES>;
+    var oe      : 'd logic           ;
+    var lat     : 'd logic           ;
+    var hclk    : 'd logic           ;
+    var frame   : 'd logic           ;
+    var ev_video: 's logic           ;
+    var ev_net  : 's logic           ;
+    var ev_drop : 's logic           ;
+    var ev_flip : 's logic           ;
 
     unsafe (cdc) {
         inst u_core: EthernetHub75Core #(
-            WIDTH         : 128           ,
-            HEIGHT        : 128           ,
-            SCAN_ROWS     : 32            ,
-            COMPONENT_BITS: COMPONENT_BITS,
-            CLOCK_DIVIDER : CLOCK_DIVIDER ,
-            CLK_LOW_EXTRA : CLK_LOW_EXTRA ,
-            CHAIN_REVERSE : CHAIN_REVERSE ,
-            HUB75_IMPL    : HUB75_IMPL    ,
+            WIDTH         : 128            ,
+            HEIGHT        : 64 * PANEL_ROWS,
+            LANE_WIDTH    : 64             ,
+            SCAN_ROWS     : 32             ,
+            COMPONENT_BITS: COMPONENT_BITS ,
+            CLOCK_DIVIDER : CLOCK_DIVIDER  ,
+            CLK_LOW_EXTRA : CLK_LOW_EXTRA  ,
+            CHAIN_REVERSE : CHAIN_REVERSE  ,
+            HUB75_IMPL    : HUB75_IMPL     ,
         ) (
             i_clk      : sys_clk  ,
             i_rst      : sys_rst  ,
@@ -334,8 +346,23 @@ module DkLedRxcardTop #(
         );
     }
 
-    assign hub75_j4   = {b[1], g[1], r[1], b[0], g[0], r[0]};
-    assign hub75_j6   = {b[3], g[3], r[3], b[2], g[2], r[2]};
+    // connector k = J(4 + k): panel row k / 2, column k % 2
+    var jout: 'd logic<6> [6];
+    for k in 0..6 :g_conn {
+        if k <: 2 * PANEL_ROWS :g_on {
+            const UP: u32 = 4 * (k / 2) + k % 2;
+            const LO: u32 = UP + 2;
+            assign jout[k] = {b[LO], g[LO], r[LO], b[UP], g[UP], r[UP]};
+        } else :g_off {
+            assign jout[k] = 6'd0;
+        }
+    }
+    assign hub75_j4   = jout[0];
+    assign hub75_j5   = jout[1];
+    assign hub75_j6   = jout[2];
+    assign hub75_j7   = jout[3];
+    assign hub75_j8   = jout[4];
+    assign hub75_j9   = jout[5];
     assign hub75a_row = row;
     assign hub75a_clk = hclk;
     assign hub75a_lat = lat;
