@@ -7,7 +7,7 @@ PC から UDP で送った映像 (RGB565) を受けて HUB75 パネルに表示�
 | ボード | PHY | パネル | 状態 |
 |---|---|---|---|
 | Tang Primer 20K (Dock) | RTL8201F、RMII 100M | HUB75 ×2 系統 (各 64x64 ×2 枚のチェーン) = 128x128 | シミュレーション・配置配線 OK、実機未確認 |
-| DK_LED-RXCARD_GW3A-LV20UG324S_V2.1 (Arora III) | RTL8211E、RGMII 10/100/1000M | HUB75 J4〜J9 に 64x64 を 1 枚ずつ、横 2 × 縦 3 = 128x192 (`PANEL_ROWS=2` で上 4 枚 128x128) | ソフト版 (6 枚 / 4 枚)、GMT 版 (4 枚) がシミュレーション・配置配線 OK、実機未確認 |
+| DK_LED-RXCARD_GW3A-LV20UG324S_V2.1 (Arora III) | RTL8211E、RGMII 10/100/1000M | HUB75 J4〜J9 に 64x64 を 1 枚ずつ、横 2 × 縦 3 = 128x192 (`PANEL_ROWS=2` で上 4 枚 128x128) | ソフト版 6 枚 / 4 枚は実機で表示 OK (1000M)。GMT 版 (4 枚) はシミュレーション・配置配線 OK、実機未確認 |
 
 ```
 PC (udpvideosend) ── UDP 10004 ──► PHY ─ RmiiRx ─ EthRxMac ─(PktFifo: PHY clk → sys)─► EthService ─► UdpVideoWriter
@@ -97,6 +97,7 @@ make TARGET=dk_led_rxcard_gw3a20                  # Arora III、ソフト版 6 �
 make TARGET=dk_led_rxcard_gw3a20 PANEL_ROWS=2     # Arora III、ソフト版 上 4 枚 128x128 (build/dk_led_rxcard_gw3a20_4p)
 make TARGET=dk_led_rxcard_gw3a20 HUB75_IMPL=gmt PANEL_ROWS=2   # Arora III、GMT 版 4 枚 (build/dk_led_rxcard_gw3a20_gmt_4p)
 make TARGET=dk_led_rxcard_gw3a20 [...] run        # Gowin programmer_cli で SRAM に書き込み (変数はビルドと同じに)
+make TARGET=dk_led_rxcard_gw3a20 CONN_ID=1         # 配線確認用: J4〜J11 にコネクタごとの単色 (build/dk_led_rxcard_gw3a20_connid)
 make sim                 # テストベンチ (Verilator、Tang Primer 20K)
 make -C test rxcard IMPL=soft|gmt [PROWS=2] [TXS=1]   # テストベンチ (Arora III、PROWS=2 は 4 枚、TXS=1 は TXC_SHIFTED 版)
 ```
@@ -249,6 +250,23 @@ RTL8211E 役の MDIO スレーブ (アドレス 1) と、RGMII の向こう側�
 ソフト版・GMT 版 (それぞれ 6 枚 / 4 枚)・TXS=1 (ソフト版) とも PASS (6 枚は 128x192 = 24576 画素、48 パケット)。GMT 版では最初、GMT 側の保留が解けてから `Hub75Planes` が busy を出すまでの 1 クロックに busy が
 落ち、ack が 2 回出ていた (検査で見つかり修正済み)。
 
+### 実機の結果 (Arora III、2026-10-31)
+
+ソフト版、64x64 ×6 枚 (J4〜J9) と上 4 枚 (`PANEL_ROWS=2`):
+
+- リンク 1000M 全二重。既定の `PHY_DLY=on` (RTL8211E の RX / TX 遅延を MDIO で強制オン) のまま ping・ARP が通った
+  (RTT 0.17 ms)。`TXC_SHIFTED` / `RX_DELAY` の切り分けビルドは不要だった
+- udpvideosend のテストパターン: 4 枚 (128x128、32 パケット)、6 枚 (128x192、48 パケット) とも 489 fps で、パネルの
+  リフレッシュ (489.2 Hz) と一致 (毎フレーム ack が返り、パネルのフレーム境界で切り替わっている)
+- `tools/testcards.py` (パネル番号・矢印、カラーバーと 32 段グレー、8 px 格子とパネル境界、跳ねるボール) で、並び・向き・
+  色の順・パネル間の位置ずれがないことを確認。ボールは送信側 (Python で描画) の速さで約 162 fps
+- 右列が映らなかった最初の不具合はケーブルのつなぎ間違いだった。切り分けに使った `CONN_ID=1` のビルドは、J4〜J11 に
+  コネクタごとの単色 (J4 赤、J5 緑、J6 青、J7 黄、J8 シアン、J9 マゼンタ、J10 白、J11 上赤 / 下青) を出す
+- 書き込み: ボードの USB-JTAG は FT232H (0403:6014)。Linux の `ftdi_sio` が掴んでいると `programmer_cli` が
+  `Cable failed to open via the channel` で失敗する。`sudo modprobe -r ftdi_sio` (make run が実行) で外すか、
+  `openFPGALoader -c ft232 --detect` を一度実行すると (GW3A は未対応でエラーになるが) その際にドライバが外れて書き込めるようになる。
+  充電専用の USB ケーブルでは FT232H 自体が見えない
+
 ### 実機の確認手順 (Arora III)
 
 1. パネル: 64x64 を J4〜J9 に 1 枚ずつ、上段 J4 (左) / J5 (右)、中段 J6 / J7、下段 J8 / J9。4 枚だけなら J4〜J7 で
@@ -264,7 +282,7 @@ RTL8211E 役の MDIO スレーブ (アドレス 1) と、RGMII の向こう側�
    `ethtool <if>` でリンク速度 (1000Mb/s が期待値) も見てほしい
 6. テストパターン / 動画 / 向き / ガンマは Tang Primer 20K の 4〜7 と同じだが、6 枚では画面サイズを 128x192 にする:
    `cargo run --release -- --width 128 --height 192 --test-pattern`、動画は `VIDEO_WIDTH=128 VIDEO_HEIGHT=192 VIDEO_FILE=... ./play_video.sh`
-   (4 枚は 128x128 のまま)。各パネルの左右が逆なら `CHAIN_REVERSE`、パネルの位置が入れ替わっていればつなぎ先を知らせてほしい。
+   (4 枚は 128x128 のまま)。静止画のテストは `tools/testcards.py [幅] [高さ] [秒] [周回]` (既定 128 192 8 秒)。各パネルの左右が逆なら `CHAIN_REVERSE`、パネルの位置が入れ替わっていればつなぎ先を知らせてほしい。
    GbE では udpvideosend の fps が Tang Primer 20K より上がるはず (上限はパネルのフレーム境界での切り替え待ち)
 7. 4 枚構成で、ソフト版と GMT 版の表示が同じであること
 8. ping が通らない場合は、RGMII のタイミングを変えたビルドを順に試す (make 変数、既定以外の値はビルドディレクトリ名に付く)。

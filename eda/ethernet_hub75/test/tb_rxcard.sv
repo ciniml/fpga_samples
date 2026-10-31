@@ -65,7 +65,7 @@ module tb;
         .rgmii_txc(txc), .rgmii_tx_ctl(tx_ctl), .rgmii_txd(txd),
         .rgmii_rxc(rxc), .rgmii_rx_ctl(rx_ctl), .rgmii_rxd(rxd),
         .hub75_j4(j[0]), .hub75_j5(j[1]), .hub75_j6(j[2]), .hub75_j7(j[3]), .hub75_j8(j[4]),
-        .hub75_j9(j[5]), .hub75a_row(row_pins), .hub75a_clk(hclk),
+        .hub75_j9(j[5]), .hub75_j10(), .hub75_j11(), .hub75a_row(row_pins), .hub75a_clk(hclk),
         .hub75a_lat(lat), .hub75a_oe(oe), .hub75b_oe(oe_b)
     );
 

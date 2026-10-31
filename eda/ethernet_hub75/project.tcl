@@ -13,6 +13,7 @@ set PHY_DELAY     [lindex $argv 9]
 set TXC_SHIFTED   [lindex $argv 10]
 set RX_DELAY      [lindex $argv 11]
 set PANEL_ROWS    [lindex $argv 12]
+set CONN_ID       [lindex $argv 13]
 
 set_option -output_base_name ${PROJECT_NAME}
 set_device -name $DEVICE_FAMILY $DEVICE_PART
@@ -45,6 +46,7 @@ puts $fp "package ethernet_hub75_cfg;"
 puts $fp "    localparam int unsigned HUB75_IMPL = ${HUB75_IMPL};"
 puts $fp "    localparam int unsigned RX_DELAY = ${RX_DELAY};"
 puts $fp "    localparam int unsigned PANEL_ROWS = ${PANEL_ROWS};"
+puts $fp "    localparam bit CONN_ID = 1'b${CONN_ID};"
 puts $fp "    localparam bit TXC_SHIFTED = 1'b${TXC_SHIFTED};"
 puts $fp "    localparam bit \[15:0\] PHY_DELAY_BITS = 16'h${PHY_DELAY};"
 puts $fp "endpackage"

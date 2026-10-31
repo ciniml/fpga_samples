@@ -29,6 +29,7 @@
 module DkLedRxcardTop #(
     param HUB75_IMPL    : u32     = $sv::ethernet_hub75_cfg::HUB75_IMPL    ,
     param PANEL_ROWS    : u32     = $sv::ethernet_hub75_cfg::PANEL_ROWS    , // 64x64 panel rows (2 or 3), 2 panels each
+    param CONN_ID       : bit     = $sv::ethernet_hub75_cfg::CONN_ID       , // 1: J4..J11 show fixed colours (wiring check)
     param CHAIN_REVERSE : bit     = 0                                      ,
     param COMPONENT_BITS: u32     = 6                                      ,
     param CLOCK_DIVIDER : u32     = 0                                      ,
@@ -60,6 +61,8 @@ module DkLedRxcardTop #(
     hub75_j7  : output 'd logic<6>, // row 2 right
     hub75_j8  : output 'd logic<6>, // row 3 left
     hub75_j9  : output 'd logic<6>, // row 3 right
+    hub75_j10 : output 'd logic<6>, // unused (CONN_ID only)
+    hub75_j11 : output 'd logic<6>, // unused (CONN_ID only)
     hub75a_row: output 'd logic<5>, // A..E
     hub75a_clk: output 'd logic   ,
     hub75a_lat: output 'd logic   ,
@@ -346,10 +349,18 @@ module DkLedRxcardTop #(
         );
     }
 
-    // connector k = J(4 + k): panel row k / 2, column k % 2
-    var jout: 'd logic<6> [6];
-    for k in 0..6 :g_conn {
-        if k <: 2 * PANEL_ROWS :g_on {
+    // connector k = J(4 + k): panel row k / 2, column k % 2. CONN_ID
+    // replaces the data of J4..J11 by a colour per connector ({B, G, R}
+    // of the upper / lower half): J4 red, J5 green, J6 blue, J7 yellow,
+    // J8 cyan, J9 magenta, J10 white, J11 red over blue
+    const ID_UP: bit<3> [8] = '{3'b001, 3'b010, 3'b100, 3'b011, 3'b110, 3'b101, 3'b111, 3'b001};
+    const ID_LO: bit<3> [8] = '{3'b001, 3'b010, 3'b100, 3'b011, 3'b110, 3'b101, 3'b111, 3'b100};
+
+    var jout: 'd logic<6> [8];
+    for k in 0..8 :g_conn {
+        if CONN_ID :g_id {
+            assign jout[k] = {ID_LO[k], ID_UP[k]};
+        } else if k <: 2 * PANEL_ROWS :g_on {
             const UP: u32 = 4 * (k / 2) + k % 2;
             const LO: u32 = UP + 2;
             assign jout[k] = {b[LO], g[LO], r[LO], b[UP], g[UP], r[UP]};
@@ -363,6 +374,8 @@ module DkLedRxcardTop #(
     assign hub75_j7   = jout[3];
     assign hub75_j8   = jout[4];
     assign hub75_j9   = jout[5];
+    assign hub75_j10  = jout[6];
+    assign hub75_j11  = jout[7];
     assign hub75a_row = row;
     assign hub75a_clk = hclk;
     assign hub75a_lat = lat;

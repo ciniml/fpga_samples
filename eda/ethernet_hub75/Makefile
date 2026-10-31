@@ -30,6 +30,11 @@ else ifeq ($(TARGET)$(HUB75_IMPL),dk_led_rxcard_gw3a20gmt)
 # BSRAMs = 144 > 120: the GMT build fits up to PANEL_ROWS=2
 $(error HUB75_IMPL=gmt does not fit 6 panels (BSRAM); use PANEL_ROWS=2)
 endif
+# CONN_ID=1: wiring check, J4..J11 show one colour each (see top.veryl)
+CONN_ID ?= 0
+ifneq ($(CONN_ID),0)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_connid
+endif
 PHY_DLY ?= on
 TXC_SHIFTED ?= 0
 RX_DELAY ?= 0
@@ -59,7 +64,7 @@ FILELIST := $(abspath $(PROJECT_NAME).f)
 VERYL_SRCS := Veryl.toml $(wildcard src/common/*.veryl) $(wildcard src/*/*.veryl) \
               $(wildcard $(RTL_DIR)/eth_mac/*.veryl) $(wildcard $(RTL_DIR)/hub75/*.veryl)
 
-PROJECT_ADDITIONAL_ARGS := $(FILELIST) $(TOP_MODULE) $(HUB75_IMPL_NUM) $(PHY_DELAY_HEX) $(TXC_SHIFTED) $(RX_DELAY) $(PANEL_ROWS)
+PROJECT_ADDITIONAL_ARGS := $(FILELIST) $(TOP_MODULE) $(HUB75_IMPL_NUM) $(PHY_DELAY_HEX) $(TXC_SHIFTED) $(RX_DELAY) $(PANEL_ROWS) $(CONN_ID)
 
 SRCS := project.tcl src/$(TARGET)/pins.cst $(wildcard src/$(TARGET)/*.sdc) $(wildcard src/$(TARGET)/ip/*.v) $(FILELIST)
 
