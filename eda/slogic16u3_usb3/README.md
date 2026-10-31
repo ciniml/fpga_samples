@@ -188,4 +188,8 @@ GTR12 quad、CSR、upar アービタは GUI 生成のまま (quad の 8b10b / �
 Gowin の PHY のときと同等。合成は PHY 部分 (IP + アービタ) が LUT 2,312 / FF 1,175 → 自作で全体 LUT 9,254 (62 %)、
 pclk 125 MHz をすべて満たした (IP 版は -0.1 ns 前後)。リンク確立の途中で復号エラー 44 / 不一致 624 (U0 では増えない)。
 
-未確認: 再接続 (ポート disable → enable) の繰り返し、U1〜U3 (P1 / P3)、TAP なしのビルド、Warm Reset、SSC の大きいホスト。
+TAP なし (`OWNPHY=1`) は配置次第で pclk が 107〜124 MHz にぶれる (遅いのは rtl/usb3 の LTSSM / デバイス部)。
+`PLACE_OPT=4` が 124.1 MHz (4 端点、TNS -0.18 ns) で、実機で列挙、PRBS 379.5 MB/s 誤り 0、ループバック 1 GiB 一致、
+Hot Reset (usbreset) 20 回すべて再列挙してループバック一致。place 3 (+ serdesRetiming / replicate_resources) は 115〜119 MHz。
+
+未確認: 再接続 (ポート disable → enable) の繰り返し、U1〜U3 (P1 / P3)、Warm Reset、SSC の大きいホスト。

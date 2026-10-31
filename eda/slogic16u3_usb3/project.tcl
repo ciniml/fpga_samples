@@ -149,14 +149,10 @@ if {$TRACE} {
 set fh [open pins_gen.cst w]; puts -nonewline $fh $cst; close $fh
 add_file -type cst [file normalize pins_gen.cst]
 set SDC [file normalize ${SRC_DIR}/[expr {$LANES ? "timing_lanes.sdc" : ($REF ? "timing_ref.sdc" : "timing.sdc")}]]
-if {$TRACE || $TAP || $OWNPHY} {
+if {$TRACE || $TAP} {
     # one file: the trace / tap clock groups refer to pclk of timing.sdc (SDC files are read separately)
     set fh [open $SDC r]; set sdc [read $fh]; close $fh
     if {$TRACE} { set fh [open ${SRC_DIR}/timing_trace.sdc r]; append sdc [read $fh]; close $fh }
-    if {$OWNPHY && !$TAP} {
-        # our PHY reads the receive FIFO in the lane's PCS RX clock directly
-        set sdc [string map [list {u_serdes/q0_lane0_fabric_rx_clk} {u_serdes/q0_lane0_pcs_rx_o_fabric_clk}] $sdc]
-    }
     if {$TAP} {
         # the clock nets now leave SerDes_Top on TAP_clk_o: synthesis names them after the top-level wire
         set sdc [string map [list {u_serdes/q0_lane0_fabric_rx_clk} {tap_clk[2]} \
