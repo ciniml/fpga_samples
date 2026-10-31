@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
 // Co-simulation bench for host/slogic_probe.py --sim: reads "<n> <tms><tdi>..." lines on
 // stdin, clocks them into top.v through a behavioural GW_JTAG (TAP + IDCODE/STATUS/
 // a fake SAMPLE register), prints the TDO bits back. The board model drives a few pins.

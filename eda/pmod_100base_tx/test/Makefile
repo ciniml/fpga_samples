@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 # Logic-level test of the bring-up top (eth100_test + Eth100Phy, auto-negotiation,
 # test frames with FCS both ways, UART report). Vendor primitives are not used.
 R := ../../../rtl

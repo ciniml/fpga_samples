@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 """defines_gen.v for the simulation (same content as project.tcl writes, plus IDX_<ball>)."""
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'host'))

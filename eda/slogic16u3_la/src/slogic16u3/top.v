@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
 // Logic analyzer on the Sipeed SLogic16U3 (GW5AT-15): 16 channels at up to 800 MS/s, streamed over
 // USB 3.0 (rtl/la LaCore + rtl/usb3).
 //

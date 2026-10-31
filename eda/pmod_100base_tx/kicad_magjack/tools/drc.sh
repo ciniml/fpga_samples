@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 # fill zones + DRC (with schematic parity)
 cd "$(dirname "$0")/.."
 N=$(basename *.kicad_pro .kicad_pro)

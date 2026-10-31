@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
 // SLogic16U3 USB 2.0 pins. @DXP@/@DXN@ and @TDP@/@TDN@ are filled by project.tcl:
 // DX=K -> dx = K3/K2, term = P2/P1; DX=P -> dx = P2/P1, term = K3/K2 (which one is the dx pair is being tested)
 IO_LOC "usb_dp" @DXP@;

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
 // SLogic16U3 USB 3.0: PHY pclk 125 MHz, ref_clk ~125 MHz (internal oscillator PLL), osc ~52 MHz (JTAG status).
 // The USB 3.0 PHY IP also runs logic on the lane's recovered receive clock (125 MHz, into its elastic
 // buffer) and on the register-port clock of its upar arbiter; both cross to pclk inside the IP.

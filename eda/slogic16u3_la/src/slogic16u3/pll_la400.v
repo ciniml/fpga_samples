@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2025.
 // SLogic16U3 logic analyzer: the sampling FCLK from the USB 3.0 PHY's pclk (125 MHz, locked to the
 // 125 MHz oscillator on Q0 REFCLK0): VCO = 125 / 5 x 48 = 1200 MHz (700..1400), / 3 = 400 MHz
 // (IDES8 FCLK, DDR: 800 MS/s; CLKDIV /4 makes the 100 MHz sample clock).

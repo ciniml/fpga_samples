@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 """Back silkscreen: pinout / notes, logo and board name / revision / date / author
 (as on the other boards: logo + name / Rev / date / "Kenta Ida (@ciniml)").
 apply(board) is called by gen_pcb.py; run stand-alone to redo the silk of the

@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 # Check the schematic and the board (ERC, DRC with schematic parity) and
 # write the fabrication outputs to fab/ (Gerbers + drill zip, BOM,
 # placement, schematic PDF, board images) from the files as they are.

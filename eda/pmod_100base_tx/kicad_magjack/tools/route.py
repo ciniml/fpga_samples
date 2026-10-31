@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 """Autoroute the non-critical nets with Freerouting and merge the result into the board.
 
 usage: route.py <freerouting.jar>

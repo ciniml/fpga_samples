@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 """Make a built bitstream boot right as the SLogic16U3 flash application.
 
     host/mkdfu.py build/<dir>/impl/pnr/slogic16u3_la.fs OUT_PREFIX [--next 0x800000]

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
 // TRACE=1: the EasyCDR trace link clocks (pll_trace500 from pclk: 500 MHz OSER10 FCLK, CLKDIV /5 = 100 MHz).
 // The trace front end samples on pclk and hands records to the link clock through its asynchronous FIFO.
 create_clock -name tr_f500 -period 2 -waveform {0 1} [get_nets {tr_f500}]

@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 # fill zones + DRC (with schematic parity) + quick PNG of the copper
 cd "$(dirname "$0")/.."
 python3 - <<'P' 2>&1 | grep -v assert

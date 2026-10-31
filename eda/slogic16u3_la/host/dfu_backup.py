@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 """Back up the SLogic16U3 SPI flash through the official DFU USB-SPI bridge (read only).
 
     host/dfu_backup.py --tools <sipeed/slogic16u3-tools> --out DIR [--reads 2] [REGION ...]

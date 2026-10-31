@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 """Generate pmod_100base_tx.kicad_pcb: placement, critical hand routing, outline, silk, zones.
 
 Board coordinates below are relative to the board's top-left corner (X right, Y down, mm).

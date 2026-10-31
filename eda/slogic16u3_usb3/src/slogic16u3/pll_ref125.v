@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2025.
 // SLogic16U3 USB 3.0: the USB 3.0 PHY IP's ref_clk (125 MHz, its reset / register-port logic) from the
 // internal oscillator (~51.66 MHz measured): VCO = 51.66 x 29 / 2 = 749 MHz (700..1400), / 6 = ~124.8 MHz
 // (the line rate comes from the 125 MHz oscillator on Q0 REFCLK0, not from this clock).

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
 // Read-only status register on GW_JTAG ER1 (IR 0x42), the same scheme as
 // eda/slogic16u3_probe: TCK / TDI are taken from the pads and oversampled by
 // the internal oscillator, GW_JTAG's strobes are synchronised, so nothing is

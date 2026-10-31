@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
 // eth100_test (frame generator / FCS checker / UART report) on two Eth100Phy
 // cores through the behavioural line model (rtl/eth100_phy/test/eth100_chan.sv).
 // Side A sends test frames to side B and vice versa; both must count them as

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 """Status of the SLogic16U3 USB 2.0 bring-up design over JTAG (ER1, read-only, 128 bits).
 
 Uses the CMSIS-DAP / FT2232 JTAG layer of ../../slogic16u3_probe/host/slogic_probe.py.

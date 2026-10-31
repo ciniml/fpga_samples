@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
 // Cross-check build (REF=1): Gowin's USB 3.0 reference device controller (CDC/bulk reference design
 // for the GW5AT-60, eda/targets/tangconsole60k/doc/gowin_usb3_ref, not part of this repository's
 // sources) on the same USB 3.0 PHY IP (Q0 lane 0), clocks and pins as top.v. It tells a problem of

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2025.
 // SLogic16U3 USB 2.0 HS: 60 MHz -> VCO 960 MHz (MDIV 16) -> clkout0 960 MHz (IDES16 / OSER16 FCLK,
 // 1.92 Gsps = 4 samples per HS bit), clkout1 480 MHz (CLKDIV /8 -> clk60). Both outputs come from the
 // same VCO with no phase offset, so the two CLKDIV /8 outputs (120 / 60 MHz) are synchronous.

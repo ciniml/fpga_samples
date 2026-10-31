@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
 // SLogic16U3 USB 2.0 HS: SerDes tx_pcs_clkout 125 MHz -> pll_60m 60 MHz -> pll_hs960 960 / 480 MHz
 // -> CLKDIV /8 = os_pclk 120 MHz (from 960), clk60 60 MHz (from 480): synchronous pair
 create_clock -name sd_txclk -period 8 -waveform {0 4} [get_nets {sd_txclk}]

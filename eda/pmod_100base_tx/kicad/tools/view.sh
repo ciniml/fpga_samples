@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 # layout PNGs for human review: out/layout_top.png (F.Cu+silk), out/layout_bottom.png, out/render_*.png
 cd "$(dirname "$0")/.."
 kicad-cli pcb export svg --mode-single --fit-page-to-board --exclude-drawing-sheet --layers F.Cu,F.Silkscreen,F.Fab,Edge.Cuts -o out/layout_top.svg $(basename *.kicad_pcb) >/dev/null 2>&1

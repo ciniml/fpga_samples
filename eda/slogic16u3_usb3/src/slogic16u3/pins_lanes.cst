@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
 // SLogic16U3 USB 3.0 bring-up: the SerDes Q0 lanes / REFCLK0 are placed by the IP; only the fabric pins here
 IO_LOC "usb_cmp_dp" H3,H2;
 IO_PORT "usb_cmp_dp" IO_TYPE=LVDS25 PULL_MODE=NONE DIFF_RESISTOR=OFF;

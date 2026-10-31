@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
 // USB 3.0 (SuperSpeed) device on the Sipeed SLogic16U3 (GW5AT-15): Gowin USB 3.0 PHY IP + rtl/usb3.
 //
 //   D14 high -> 125 MHz oscillator on Q0 REFCLK0 -> USB 3.0 PHY (GUI, src/slogic16u3/usb3_ln0: Q0 lane 0,

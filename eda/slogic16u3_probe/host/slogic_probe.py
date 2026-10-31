@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 """SLogic16U3 pin investigation over JTAG (CMSIS-DAP v2 or FT2232 probe, pyusb only).
 
 Method 1 -- IEEE 1149.1 SAMPLE on the running factory firmware (non-intrusive):

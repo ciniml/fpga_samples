@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 """EP1 IN throughput / integrity test of the SLogic16U3 USB 3.0 device: switches EP1 IN to the PRBS15
 source (vendor request 0x02, register value 0x0001), reads for a while and checks every byte against the
 PRBS15 sequence (x^15 + x^14 + 1, 8 bits per byte, first bit in bit 0; the byte stream repeats

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
 // SLogic16U3 logic analyzer. The SerDes Q0 lanes / REFCLK0 are placed by the IP; only the fabric pins here.
 // CH0..15 and CK0/1 (bank 1): SSTL33 inputs against the external VREF on M8 (J12's PWM through an RC);
 // the CH inputs are divided by ~2 on the board (threshold ~6.7 V x duty), the CK inputs are not (~3.3 V x duty).
