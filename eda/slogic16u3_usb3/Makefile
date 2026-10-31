@@ -23,10 +23,13 @@ export TRACE TRACE_INVERT
 # TAP=1: observe the boundary between the USB 3.0 PHY soft IP and the GTR12 quad (phy_tap.v, ER2)
 TAP ?=
 export TAP
+# OWNPHY=1: our USB 3.0 PHY (usb3_softphy.v, rtl/usb3 usb3_phy_*) in place of Gowin's PHY soft IP
+OWNPHY ?=
+export OWNPHY
 export PLACE_OPT ROUTE_OPT PNR_EXTRA
-BUILD_SUFFIX := _$(SERDES_IP)$(if $(filter 1,$(REF)),_ref)$(if $(PLACE_OPT),_p$(PLACE_OPT))$(if $(ROUTE_OPT),_r$(ROUTE_OPT))$(if $(filter 1,$(TRACE)),_trace)$(if $(filter 1,$(TAP)),_tap)$(if $(TAG),_$(TAG))
+BUILD_SUFFIX := _$(SERDES_IP)$(if $(filter 1,$(REF)),_ref)$(if $(PLACE_OPT),_p$(PLACE_OPT))$(if $(ROUTE_OPT),_r$(ROUTE_OPT))$(if $(filter 1,$(TRACE)),_trace)$(if $(filter 1,$(TAP)),_tap)$(if $(filter 1,$(OWNPHY)),_own)$(if $(TAG),_$(TAG))
 
-USB3_VERYL_SV := $(addprefix ../../rtl/usb3/,usb3_pkg.sv usb3_crc_pkg.sv usb3_scrambler.sv usb3_rx_fifo.sv usb3_rx_parser.sv usb3_tx_framer.sv usb3_ltssm.sv usb3_link.sv usb3_top.sv usb3_descriptor_rom.sv usb3_device.sv)
+USB3_VERYL_SV := $(addprefix ../../rtl/usb3/,usb3_pkg.sv usb3_crc_pkg.sv usb3_scrambler.sv usb3_rx_fifo.sv usb3_rx_parser.sv usb3_tx_framer.sv usb3_ltssm.sv usb3_link.sv usb3_top.sv usb3_descriptor_rom.sv usb3_device.sv usb3_phy_pkg.sv usb3_phy_tx.sv usb3_phy_rx.sv usb3_phy_eb.sv usb3_phy_ctl.sv)
 
 SRCS := $(wildcard src/$(TARGET)/*.v) $(wildcard src/$(TARGET)/*.cst) $(wildcard src/$(TARGET)/*.sdc) \
         $(wildcard src/$(TARGET)/$(SERDES_IP)/*.v) $(wildcard src/$(TARGET)/$(SERDES_IP)/*/*.v) \

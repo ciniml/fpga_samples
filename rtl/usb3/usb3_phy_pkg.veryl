@@ -1,0 +1,220 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file usb3_phy_pkg.veryl
+ * @brief 8b/10b code for the soft USB 3.0 PHY (Usb3PhyTx / Usb3PhyRx): pure
+ *        functions, so that four symbols a clock chain their running
+ *        disparity combinationally.
+ *
+ * Symbol bit order: bit 0 = a (first on the line) ... bit 9 = j. The tables
+ * hold the form used with RD- entering the sub-block, written abcdei / fghj
+ * with a / f in the most significant bit.
+ */
+package usb3_phy_pkg {
+    /// 5b/6b, RD- form (abcdei, a = bit 5)
+    function enc6 (
+        d5: input logic<5>,
+    ) -> logic<6> {
+        return case d5 {
+            5'd0   : 6'b100111,
+            5'd1   : 6'b011101,
+            5'd2   : 6'b101101,
+            5'd3   : 6'b110001,
+            5'd4   : 6'b110101,
+            5'd5   : 6'b101001,
+            5'd6   : 6'b011001,
+            5'd7   : 6'b111000,
+            5'd8   : 6'b111001,
+            5'd9   : 6'b100101,
+            5'd10  : 6'b010101,
+            5'd11  : 6'b110100,
+            5'd12  : 6'b001101,
+            5'd13  : 6'b101100,
+            5'd14  : 6'b011100,
+            5'd15  : 6'b010111,
+            5'd16  : 6'b011011,
+            5'd17  : 6'b100011,
+            5'd18  : 6'b010011,
+            5'd19  : 6'b110010,
+            5'd20  : 6'b001011,
+            5'd21  : 6'b101010,
+            5'd22  : 6'b011010,
+            5'd23  : 6'b111010,
+            5'd24  : 6'b110011,
+            5'd25  : 6'b100110,
+            5'd26  : 6'b010110,
+            5'd27  : 6'b110110,
+            5'd28  : 6'b001110,
+            5'd29  : 6'b101110,
+            5'd30  : 6'b011110,
+            default: 6'b101011, // 31
+        };
+    }
+
+    /// 3b/4b of data symbols, RD- form (fghj, f = bit 3); 7 is the primary form
+    function enc4d (
+        d3: input logic<3>,
+    ) -> logic<4> {
+        return case d3 {
+            3'd0   : 4'b1011,
+            3'd1   : 4'b1001,
+            3'd2   : 4'b0101,
+            3'd3   : 4'b1100,
+            3'd4   : 4'b1101,
+            3'd5   : 4'b1010,
+            3'd6   : 4'b0110,
+            default: 4'b1110,
+        };
+    }
+
+    /// 3b/4b of control symbols, RD- form
+    function enc4k (
+        d3: input logic<3>,
+    ) -> logic<4> {
+        return case d3 {
+            3'd0   : 4'b1011,
+            3'd1   : 4'b0110,
+            3'd2   : 4'b1010,
+            3'd3   : 4'b1100,
+            3'd4   : 4'b1101,
+            3'd5   : 4'b0101,
+            3'd6   : 4'b1001,
+            default: 4'b0111,
+        };
+    }
+
+    function pop6 (
+        c: input logic<6>,
+    ) -> logic<3> {
+        return {2'b0, c[0]} + {2'b0, c[1]} + {2'b0, c[2]} + {2'b0, c[3]} + {2'b0, c[4]} + {2'b0, c[5]};
+    }
+
+    function pop4 (
+        c: input logic<4>,
+    ) -> logic<3> {
+        return {2'b0, c[0]} + {2'b0, c[1]} + {2'b0, c[2]} + {2'b0, c[3]};
+    }
+
+    function pop10 (
+        c: input logic<10>,
+    ) -> logic<4> {
+        var n: logic<4>;
+        n = 0;
+        for i in 0..10 {
+            n += {3'b0, c[i]};
+        }
+        return n;
+    }
+
+    /// Encode one symbol. Returns {rd_out, symbol[9:0]} (rd: 1 = RD+).
+    /// Control symbols: K28.x and K23.7 / K27.7 / K29.7 / K30.7.
+    function enc8b10b (
+        k : input logic   ,
+        d : input logic<8>,
+        rd: input logic   ,
+    ) -> logic<11> {
+        var d5 : logic<5>;
+        var d3 : logic<3>;
+        var c6 : logic<6>;
+        var c4 : logic<4>;
+        var r  : logic   ;
+        var n6 : logic<3>;
+        var n4 : logic<3>;
+        var alt: logic   ;
+        var d7 : logic   ;
+        d5 = d[4:0];
+        d3 = d[7:5];
+        c6 = if k && d5 == 5'd28 ? 6'b001111 : enc6(d5);
+        n6 = pop6(c6);
+        d7 = !k && d5 == 5'd7;
+        if rd && (n6 != 3'd3 || d7) {
+            c6 = ~c6;
+        }
+        r   = rd ^ (n6 != 3'd3);
+        alt = !r && (d5 == 5'd17 || d5 == 5'd18 || d5 == 5'd20) || r && (d5 == 5'd11 || d5 == 5'd13 || d5 == 5'd14);
+        c4  = if k ? enc4k(d3) : if d3 == 3'd7 && alt ? 4'b0111 : enc4d(d3);
+        n4  = pop4(c4);
+        if r && (k || n4 != 3'd2 || d3 == 3'd3) {
+            c4 = ~c4;
+        }
+        r = r ^ (n4 != 3'd2);
+        return {r, c4[0], c4[1], c4[2], c4[3], c6[0], c6[1], c6[2], c6[3], c6[4], c6[5]};
+    }
+
+    /// Decode one symbol. Returns {rd_out, disp_err, code_err, k, data[7:0]}.
+    /// The disparity check is the symbol-level one (a +2 symbol needs RD-, a -2
+    /// symbol RD+); the running disparity follows the received symbol.
+    function dec8b10b (
+        s : input logic<10>,
+        rd: input logic    ,
+    ) -> logic<12> {
+        var c6 : logic<6>;
+        var c4 : logic<4>;
+        var e6 : logic<6>;
+        var e4 : logic<4>;
+        var f6 : logic   ;
+        var f4 : logic   ;
+        var d5 : logic<5>;
+        var d3 : logic<3>;
+        var k28: logic   ;
+        var kx7: logic   ;
+        var n  : logic<4>;
+        var ro : logic   ;
+        var de : logic   ;
+        var ii : logic<5>;
+        var jj : logic<3>;
+        c6  = {s[0], s[1], s[2], s[3], s[4], s[5]};
+        c4  = {s[6], s[7], s[8], s[9]};
+        f6  = 0;
+        d5  = 0;
+        k28 = c6 == 6'b001111 || c6 == 6'b110000;
+        for i in 0..32 {
+            ii = i;
+            e6 = enc6(ii);
+            if c6 == e6 || ((pop6(e6) != 3'd3 || ii == 5'd7) && c6 == ~e6) {
+                f6 = 1;
+                d5 = ii;
+            }
+        }
+        if k28 {
+            f6 = 1;
+            d5 = 5'd28;
+        }
+        f4 = 0;
+        d3 = 0;
+        for j in 0..8 {
+            jj = j;
+            if k28 {
+                // K28.1 / K28.6 and K28.2 / K28.5 share their 4b codes: which one it is follows from
+                // the 6b form (001111 leaves RD+, so the 4b part is the complement of the RD- form)
+                e4 = enc4k(jj);
+                if c4 == (if c6 == 6'b001111 ? ~e4 : e4) {
+                    f4 = 1;
+                    d3 = jj;
+                }
+            } else {
+                e4 = enc4d(jj);
+                if c4 == e4 || ((pop4(e4) != 3'd2 || jj == 3'd3) && c4 == ~e4) {
+                    f4 = 1;
+                    d3 = jj;
+                }
+            }
+        }
+        // alternate D.x.7 / K.x.7 form
+        if !k28 && (c4 == 4'b0111 || c4 == 4'b1000) {
+            f4 = 1;
+            d3 = 3'd7;
+        }
+        kx7 = !k28 && (c4 == 4'b0111 || c4 == 4'b1000) && (d5 == 5'd23 || d5 == 5'd27 || d5 == 5'd29 || d5 == 5'd30);
+        n   = pop10(s);
+        ro  = if n == 4'd6 ? 1'b1 : if n == 4'd4 ? 1'b0 : rd;
+        de  = n == 4'd6 && rd || n == 4'd4 && !rd;
+        return {ro, de, !f6 || !f4 || (n != 4'd4 && n != 4'd5 && n != 4'd6), k28 || kx7, d3, d5};
+    }
+
+    /// K28.1 (SKP)
+    const K_SKP_B: logic<8> = 8'h3C;
+}

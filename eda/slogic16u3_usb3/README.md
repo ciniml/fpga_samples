@@ -25,6 +25,7 @@ make ... REF=1                    # 切り分け用: Gowin のリファレンス
 make ... PLACE_OPT=3 PNR_EXTRA="serdesRetiming=1" TAG=sr   # PnR オプション (下記「タイミング」)
 make ... TRACE=1 [TRACE_INVERT=1] # EasyCDR トレース送信 (UART ピン、下記。受信側では未確認)
 make ... TAP=1                    # PHY 境界の観測 (phy_tap.v、下記「USB 3.0 PHY IP の境界の観測」)
+make ... OWNPHY=1 [TAP=1]         # 自作 PHY (usb3_softphy.v + rtl/usb3 usb3_phy_*) で Gowin の PHY ソフト IP を置き換え (下記)
 ~/repos/rust-dap/fpga-config/target/release/gowin-prog --cable dap sram build/slogic16u3_usb3_ln0/impl/pnr/slogic16u3_usb3.fs
 python3 host/usb3_status.py [-w]        # ER1: LTSSM 状態 / 遷移履歴、カウンタ、受信のデコードエラー
 python3 host/usb3_trace.py              # ER2: U0 の PIPE 送受信 1024 語 (デスクランブルしてパケット表示)
@@ -162,3 +163,29 @@ IP の中身は見ない。`project.tcl` がビルド時に `serdes.v` の写し
 未観測: 受信側 (quad からの生 10 ビット、IP の整列・8b10b 復号・エラスティックバッファ)、`0x808b34` / `0x004031` の
 ビットの意味、P1 / P3 (U1〜U3)。Polling.RxEQ では rtl/usb3 の LTSSM が RxPolarity を頻繁に切り替えている
 (ログが埋まる。D21.5 判定の追い込み)。
+
+## 自作 USB 3.0 PHY (OWNPHY=1)
+
+Gowin の USB 3.0 PHY ソフト IP (`USB3_0_PHY_Top`、暗号化) を自作の PHY に置き換える。`project.tcl` が `serdes.v` の写しで
+`USB3_0_PHY_Top_inst` のモジュールを `usb3_softphy` (同じポート + IP が使っていない quad の `rxdet_result`) に替える。
+GTR12 quad、CSR、upar アービタは GUI 生成のまま (quad の 8b10b / 整列 / CTC はバイパスの設定)。
+
+| 部品 | クロック | 内容 |
+|---|---|---|
+| `Usb3PhyTx` (rtl/usb3) | pclk (= PCS TX) | 4 シンボル/クロックの 8b/10b (RD を組み合わせで連鎖)、LFPS は全 1 × 4 語 / 全 0 × 4 語の方形波、アイドルは 1010… |
+| `Usb3PhyRx` | 再生クロック (PCS RX) | 極性反転、40 ビット位置でのカンマ探索 (位置 mod 10 が境界、ずれは 2 回連続で追従)、復号 (誤りは EDB、状態 4 / 7)、速すぎるとき SKP の組を除去 |
+| `Usb3PhyEb` | 再生 → pclk | 16 語の非同期 FIFO。8 語たまってから読み始め、3 語以下で 1 クロック休む (PipeRxDataValid = 0) |
+| `Usb3PhyCtl` | pclk | 電力状態変化と受信側検出の PhyStatus / RxStatus、RxElecIdle |
+| `Usb3PhyDrp` | DRP | TAP=1 で見た DRP 操作 (ドライバ入切 `0x8003a4`、検出 `0x80033f` / `0x808b34`、P0 移行 `0x808238` / `0x8082d8`) |
+
+- RxElecIdle は P0 でも、正しい 8b/10b の語を受けている間は 1 にする。rtl/usb3 の LTSSM は RxElecIdle 0 が 20 ms 続くと
+  Warm Reset とみなす (Gowin の PHY は P0 の間ずっと 1)。最初これをせず、U0 に入っては 20 ms で RxDetect に戻っていた。
+- シミュレーション: `rtl/usb3/test/run_phy.sh` (Verilator)。8b/10b の全符号 (両 RD) の往復、送信 → ビットずれ・極性反転 →
+  受信 → エラスティックバッファのループバック (受信側 ±300〜3000 ppm)、制御部と DRP 手順。
+
+実機 (2026-11-01、`OWNPHY=1 TAP=1`、ハブ経由): **SuperSpeed で列挙** (1209:0001、5000M)、U0 で安定。EP1 IN の PRBS
+382 MB/s・3.8 GB 誤り 0、ループバックの送受信同時 1 GiB 一致 (片方向 52.5 MB/s、DPP CRC エラー 0、Recovery 0)。
+Gowin の PHY のときと同等。合成は PHY 部分 (IP + アービタ) が LUT 2,312 / FF 1,175 → 自作で全体 LUT 9,254 (62 %)、
+pclk 125 MHz をすべて満たした (IP 版は -0.1 ns 前後)。リンク確立の途中で復号エラー 44 / 不一致 624 (U0 では増えない)。
+
+未確認: 再接続 (ポート disable → enable) の繰り返し、U1〜U3 (P1 / P3)、TAP なしのビルド、Warm Reset、SSC の大きいホスト。

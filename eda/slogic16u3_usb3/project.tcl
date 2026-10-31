@@ -66,6 +66,9 @@ if {$TRACE} {
 # extra ports of SerDes_Top (TAP_o, TAP_clk_o); the packet trace on ER2 is replaced by the tap.
 set TAP [expr {!$LANES && !$REF && [info exists ::env(TAP)] && $::env(TAP) eq "1"}]
 if {$TAP} { append defs "`define PHYTAP\n" }
+# OWNPHY=1 (usb3_ln0 device build): our PHY (src/slogic16u3/usb3_softphy.v + rtl/usb3 usb3_phy_*) in place
+# of Gowin's USB 3.0 PHY soft IP; the quad, its CSR and the upar arbiter stay
+set OWNPHY [expr {!$LANES && !$REF && [info exists ::env(OWNPHY)] && $::env(OWNPHY) eq "1"}]
 set fh [open defines_gen.v w]; puts -nonewline $fh $defs; close $fh
 add_file -type verilog [file normalize defines_gen.v]
 
@@ -99,8 +102,17 @@ if {$LANES} {
     }
 }
 add_file -type verilog [file normalize ${SRC_DIR}/jtag_status.v]
-if {$TAP} {
+if {$TAP || $OWNPHY} {
     set fh [open ${IPDIR}/serdes.v r]; set sv [read $fh]; close $fh
+}
+if {$OWNPHY} {
+    if {[regsub {USB3_0_PHY_Top USB3_0_PHY_Top_inst \(} $sv "usb3_softphy USB3_0_PHY_Top_inst (\n    .serdes_rxdet_result_i(q0_fabric_ln0_rxdet_result)," sv] != 1} { error "OWNPHY: USB3_0_PHY_Top_inst not found" }
+    foreach f {usb3_phy_pkg usb3_phy_tx usb3_phy_rx usb3_phy_eb usb3_phy_ctl} {
+        add_file -type verilog [file normalize ${RTL_DIR}/usb3/${f}.sv]
+    }
+    add_file -type verilog [file normalize ${SRC_DIR}/usb3_softphy.v]
+}
+if {$TAP} {
     set d "upar_arbiter_wrap_SerDes_Top_inst_drp"
     set tapsig [join [list \
         q0_fabric_ln0_rxdata_o\[39:0\] q0_fabric_ln0_txdata_i\[39:0\] \
@@ -114,13 +126,19 @@ if {$TAP} {
         q0_lane0_fabric_rx_clk q0_lane0_fabric_tx_clk ${d}_clk_o\[0\]] ", "]
     if {[regsub {module SerDes_Top \(} $sv "module SerDes_Top (TAP_o, TAP_clk_o, " sv] != 1} { error "TAP: SerDes_Top header not found" }
     if {[regsub {\nendmodule //SerDes_Top} $sv "\noutput \[222:0\] TAP_o;\noutput \[5:0\] TAP_clk_o;\nassign TAP_o = {$tapsig};\nassign TAP_clk_o = {$tapclk};\nendmodule //SerDes_Top" sv] != 1} { error "TAP: SerDes_Top end not found" }
-    set fh [open serdes_tap.v w]; puts -nonewline $fh $sv; close $fh
-    add_file -type verilog [file normalize serdes_tap.v]
     add_file -type verilog [file normalize ${SRC_DIR}/phy_tap.v]
+}
+if {$TAP || $OWNPHY} {
+    set fh [open serdes_gen.v w]; puts -nonewline $fh $sv; close $fh
+    add_file -type verilog [file normalize serdes_gen.v]
 } else {
     add_file -type verilog ${IPDIR}/serdes.v
 }
-foreach f [glob -nocomplain ${IPDIR}/*/*.v] { if {![string match *_tmp.v $f]} { add_file -type verilog $f } }
+foreach f [glob -nocomplain ${IPDIR}/*/*.v] {
+    if {[string match *_tmp.v $f]} continue
+    if {$OWNPHY && [string match */usb3_0_phy/* $f]} continue
+    add_file -type verilog $f
+}
 set GW_JTAG_V [file normalize [file join [file dirname [info nameofexecutable]] .. data ipcores gw_jtag.v]]
 add_file -type verilog $GW_JTAG_V
 set fh [open ${SRC_DIR}/[expr {$LANES ? "pins_lanes.cst" : "pins.cst"}] r]; set cst [read $fh]; close $fh
@@ -131,10 +149,14 @@ if {$TRACE} {
 set fh [open pins_gen.cst w]; puts -nonewline $fh $cst; close $fh
 add_file -type cst [file normalize pins_gen.cst]
 set SDC [file normalize ${SRC_DIR}/[expr {$LANES ? "timing_lanes.sdc" : ($REF ? "timing_ref.sdc" : "timing.sdc")}]]
-if {$TRACE || $TAP} {
+if {$TRACE || $TAP || $OWNPHY} {
     # one file: the trace / tap clock groups refer to pclk of timing.sdc (SDC files are read separately)
     set fh [open $SDC r]; set sdc [read $fh]; close $fh
     if {$TRACE} { set fh [open ${SRC_DIR}/timing_trace.sdc r]; append sdc [read $fh]; close $fh }
+    if {$OWNPHY && !$TAP} {
+        # our PHY reads the receive FIFO in the lane's PCS RX clock directly
+        set sdc [string map [list {u_serdes/q0_lane0_fabric_rx_clk} {u_serdes/q0_lane0_pcs_rx_o_fabric_clk}] $sdc]
+    }
     if {$TAP} {
         # the clock nets now leave SerDes_Top on TAP_clk_o: synthesis names them after the top-level wire
         set sdc [string map [list {u_serdes/q0_lane0_fabric_rx_clk} {tap_clk[2]} \

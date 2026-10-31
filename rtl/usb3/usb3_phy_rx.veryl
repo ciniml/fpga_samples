@@ -1,0 +1,282 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file usb3_phy_rx.veryl
+ * @brief Receive half of the soft USB 3.0 PHY, in the recovered clock of the
+ *        lane: 40 raw bits a clock from the SerDes (bit 0 first) -> symbol
+ *        alignment on the comma -> 8b/10b decoding -> SKP removal -> words
+ *        for the elastic buffer (Usb3PhyAfifo).
+ *
+ * - Polarity (RxPolarity) inverts the raw bits; i_polarity comes from pclk
+ *   and is synchronised here.
+ * - Alignment: the comma (0011111 / 1100000 in abcdefg) is searched at all
+ *   40 bit positions of the last two words; its position modulo 10 is the
+ *   symbol boundary. Unlocked, the first comma sets it; locked, a comma at
+ *   another boundary twice in a row moves it. The four symbols of a word
+ *   start anywhere relative to the ordered sets (the link layer does not
+ *   need COM in symbol 0).
+ * - Decoding: a symbol with a code error becomes EDB (K28.3); the word's
+ *   status is 4 (decode error) or else 7 (disparity error).
+ * - SKP removal: with i_drop (the buffer is filling: this clock runs faster
+ *   than pclk), a pair of SKP symbols is left out of the stream (at most
+ *   once every 16 words); the two symbols left over wait in a residue for
+ *   the next word. Status 2 marks the word after it.
+ */
+module Usb3PhyRx (
+    i_clk     : input  clock    ,
+    i_rst     : input  reset    ,
+    i_rxdata  : input  logic<40>,
+    i_valid   : input  logic    ,
+    i_polarity: input  logic    , // asynchronous (pclk)
+    i_drop    : input  logic    , // remove a SKP pair when there is one
+    o_valid   : output logic    ,
+    o_data    : output logic<32>,
+    o_k       : output logic<4> ,
+    o_status  : output logic<3> ,
+    o_locked  : output logic    ,
+) {
+    import usb3_phy_pkg::*;
+
+    // ---- stage 0: polarity
+    var pol_s1: logic    ;
+    var pol_s2: logic    ;
+    var din   : logic<40>;
+    var v0    : logic    ;
+    // ---- stage 1: two-word window, comma search
+    var prev  : logic<40>;
+    var w1    : logic<80>;
+    var v1    : logic    ;
+    // ---- stage 2: alignment
+    var cfound: logic    ;
+    var cpos  : logic<4> ;
+    var w2    : logic<80>;
+    var v2    : logic    ;
+    var off   : logic<4> ;
+    var locked: logic    ;
+    var bad   : logic    ;
+    var al    : logic<40>;
+    var v3    : logic    ;
+    // ---- stage 3: decoding
+    var rd    : logic    ;
+    var sym   : logic<44>; // 4 x {disp_err, code_err, k, data}
+    var v4    : logic    ;
+    // ---- stage 4: SKP removal
+    var res   : logic<22>; // residue: 2 symbols
+    var hv    : logic    ;
+    var cool  : logic<4> ;
+    var odata : logic<32>;
+    var ok    : logic<4> ;
+    var ost   : logic<3> ;
+    var ov    : logic    ;
+    var dropped: logic   ;
+
+    assign o_valid  = ov;
+    assign o_data   = odata;
+    assign o_k      = ok;
+    assign o_status = ost;
+    assign o_locked = locked;
+
+    // comma search over the window (combinational, on w1)
+    var c_hit: logic   ;
+    var c_pos: logic<4>;
+    always_comb {
+        var b: logic<7>;
+        var m: logic<4>;
+        c_hit = 0;
+        c_pos = 0;
+        for i in 0..40 {
+            b = w1[i+:7];
+            m = i % 10;
+            if !c_hit && (b == 7'b1111100 || b == 7'b0000011) {
+                c_hit = 1;
+                c_pos = m;
+            }
+        }
+    }
+
+    // decoding of the aligned word (combinational, on al)
+    var dec_w : logic<44>;
+    var dec_rd: logic    ;
+    always_comb {
+        var r: logic    ;
+        var e: logic<12>;
+        r     = rd;
+        dec_w = 0;
+        for i in 0..4 {
+            e = dec8b10b(al[i * 10+:10], r);
+            // {disp_err, code_err, k, data}; a code error is replaced by EDB
+            dec_w[i * 11+:11] = if e[9] ? {e[10], 1'b1, 1'b1, 8'hFC} : {e[10], 1'b0, e[8], e[7:0]};
+            r                 = e[11];
+        }
+        dec_rd = r;
+    }
+
+    // SKP pair position in the decoded word: 0 none, 1 = symbols 0/1, 2 = 2/3, 3 = 1/2
+    function is_skp (
+        s: input logic<11>,
+    ) -> logic {
+        return s[8] && s[7:0] == K_SKP_B && !s[9];
+    }
+    let skp0: logic    = is_skp(sym[0+:11]);
+    let skp1: logic    = is_skp(sym[11+:11]);
+    let skp2: logic    = is_skp(sym[22+:11]);
+    let skp3: logic    = is_skp(sym[33+:11]);
+    let pair: logic<2> = if skp0 && skp1 ? 2'd1 : if skp2 && skp3 ? 2'd2 : if skp1 && skp2 ? 2'd3 : 2'd0;
+
+    function word_out (
+        w: input logic<44>,
+    ) -> logic<39> {
+        var d : logic<32>;
+        var k : logic<4> ;
+        var ce: logic    ;
+        var de: logic    ;
+        ce = 0;
+        de = 0;
+        for i in 0..4 {
+            d[i * 8+:8] = w[i * 11+:8];
+            k[i]        = w[i * 11 + 8];
+            ce          |= w[i * 11 + 9];
+            de          |= w[i * 11 + 10];
+        }
+        return {if ce ? 3'd4 : if de ? 3'd7 : 3'd0, k, d};
+    }
+
+    // stage 4 (combinational): the word that goes out this clock, the residue after it
+    var g_v   : logic    ;
+    var g_w   : logic<44>;
+    var g_res : logic<22>;
+    var g_hv  : logic    ;
+    var g_drop: logic    ;
+    always_comb {
+        var rem: logic<22>;
+        g_v    = 0;
+        g_w    = 0;
+        g_res  = res;
+        g_hv   = hv;
+        g_drop = 0;
+        rem    = case pair {
+            2'd1   : sym[22+:22],
+            2'd2   : sym[0+:22],
+            default: {sym[33+:11], sym[0+:11]},
+        };
+        if v4 {
+            if i_drop && cool == 4'd0 && pair != 2'd0 {
+                g_drop = 1;
+                if !hv {
+                    g_res = rem;
+                    g_hv  = 1;
+                } else {
+                    g_w  = {rem, res};
+                    g_v  = 1;
+                    g_hv = 0;
+                }
+            } else if !hv {
+                g_w = sym;
+                g_v = 1;
+            } else {
+                g_w   = {sym[0+:22], res};
+                g_res = sym[22+:22];
+                g_v   = 1;
+            }
+        }
+    }
+    let g_out: logic<39> = word_out(g_w);
+
+    always_ff {
+        if_reset {
+            pol_s1  = 0;
+            pol_s2  = 0;
+            din     = 0;
+            v0      = 0;
+            prev    = 0;
+            w1      = 0;
+            v1      = 0;
+            cfound  = 0;
+            cpos    = 0;
+            w2      = 0;
+            v2      = 0;
+            off     = 0;
+            locked  = 0;
+            bad     = 0;
+            al      = 0;
+            v3      = 0;
+            rd      = 0;
+            sym     = 0;
+            v4      = 0;
+            res     = 0;
+            hv      = 0;
+            cool    = 0;
+            odata   = 0;
+            ok      = 0;
+            ost     = 0;
+            ov      = 0;
+            dropped = 0;
+        } else {
+            pol_s1 = i_polarity;
+            pol_s2 = pol_s1;
+            din    = if pol_s2 ? ~i_rxdata : i_rxdata;
+            v0     = i_valid;
+
+            v1 = v0;
+            if v0 {
+                w1   = {din, prev};
+                prev = din;
+            }
+
+            v2 = v1;
+            if v1 {
+                w2     = w1;
+                cfound = c_hit;
+                cpos   = c_pos;
+            } else {
+                cfound = 0;
+            }
+            if v1 && cfound {
+                // the comma seen in the previous word decides the boundary
+                if !locked {
+                    off    = cpos;
+                    locked = 1;
+                    bad    = 0;
+                } else if cpos != off {
+                    if bad {
+                        off = cpos;
+                        bad = 0;
+                    } else {
+                        bad = 1;
+                    }
+                } else {
+                    bad = 0;
+                }
+            }
+
+            v3 = v2 && locked;
+            if v2 {
+                al = w2[off+:40];
+            }
+
+            v4 = v3;
+            if v3 {
+                sym = dec_w;
+                rd  = dec_rd;
+            }
+
+            if v4 {
+                res  = g_res;
+                hv   = g_hv;
+                cool = if g_drop ? 4'd15 : if cool != 4'd0 ? cool - 4'd1 : 4'd0;
+            }
+            ov = g_v;
+            if g_v {
+                odata   = g_out[31:0];
+                ok      = g_out[35:32];
+                ost     = if g_out[38:36] == 3'd0 && (g_drop || dropped) ? 3'd2 : g_out[38:36];
+                dropped = 0;
+            } else if g_drop {
+                dropped = 1;
+            }
+        }
+    }
+}
