@@ -28,9 +28,9 @@ D- 側の比較器を省き、FPGA ピン 7 本 + VBUS 検出 1 本に収めた�
 | Ref | 値 | 役割 |
 |---|---|---|
 | R6, R7 | 100 Ω | dx 対の直列抵抗 (TN710 R6/R7)。送信と差動受信がこの対を共用する |
-| R2, R3 | 36 Ω | HS 終端 (ピンの Low 駆動 + 36 Ω ≈ 45 Ω、TN710 R2/R3) |
+| R2, R3 | 33 Ω | HS 終端 (ピンの Low 駆動 + 33 Ω、TN710 R2/R3 は 36 Ω。JLC の Basic 部品にするため 33 Ω に変更、終端は約 42 Ω の見込み) |
 | R1 | 1.5 kΩ | D+ プルアップ。PULLUP が High でアタッチ |
-| R8 / R9 | 1.8 kΩ / 75 Ω | VREF = 3.3 V × 75 / 1875 ≈ 132 mV (D+ 比較器の N 側) |
+| R8 / R9 | 4.7 kΩ / 200 Ω | VREF = 3.3 V × 200 / 4900 ≈ 135 mV (D+ 比較器の N 側。TN710 は 1.8 kΩ / 75 Ω で 132 mV、Basic 部品にするため変更) |
 | C1 | 1 µF | VREF のバイパス |
 | R10, R11 | 5.1 kΩ | CC1/CC2 の Rd (UFP) |
 | R12 / R13 | 100 kΩ / 150 kΩ | VBUS 検出の分圧 |
@@ -38,7 +38,7 @@ D- 側の比較器を省き、FPGA ピン 7 本 + VBUS 検出 1 本に収めた�
 | C3, C4 | 10 µF, 100 nF | 3.3 V のデカップリング |
 
 - TN710 の R4/R5 (Dual LVDS の差動受信用 0 Ω) は Single 配線にはないので欠番にしてある。
-- TN710 の定数表に合わせるため、部品番号はそのまま使っている。
+- TN710 の定数表に合わせるため、部品番号はそのまま使っている (R2/R3 と R8/R9 の値は上記のとおり変更)。
 
 ## ピン割り当て
 
@@ -83,10 +83,11 @@ D- 側の比較器を省き、FPGA ピン 7 本 + VBUS 検出 1 本に収めた�
 | `fab/Pmod_USB_HS_Single_gerber.zip` | ガーバー (F/B Cu、Mask、Silk、F.Paste、Edge) とドリル (PTH/NPTH 別) |
 | `fab/Pmod_USB_HS_Single_bom.csv` | 部品表 (LCSC 番号、MPN 付き) |
 | `fab/Pmod_USB_HS_Single_pos.csv` | 実装位置 (表面のみ) |
+| `fab/jlc/Pmod_USB_HS_Single_jlc_bom.csv`, `_jlc_cpl.csv` | JLC 実装用の BOM / CPL (`tools/jlc_files.py`、LCSC 番号のない J1 は除く) |
 | `fab/Pmod_USB_HS_Single_schematic.pdf` | 回路図 |
 | `fab/*.png` | 3D レンダリング |
 | `fab/erc.rpt`, `fab/drc.rpt` | 検査結果 (ライブラリ表の警告はヘッドレス環境に由来) |
-| `fab/lcsc/Pmod_USB_HS_Single_lcsc_5pcs.csv` | LCSC 部品購入用 (5 枚分、J1 含む、2026-10-20 時点で約 $5.84)。`tools/lcsc_order.py N` で N 枚分を作り直す (LCSC に問い合わせて最小発注数・単価・在庫を反映、要ネットワーク、`build.sh` には含まない) |
+| `fab/lcsc/Pmod_USB_HS_Single_lcsc_5pcs.csv` | LCSC 部品購入用 (5 枚分、J1 含む、2026-10-29 時点で約 $5.84)。`tools/lcsc_order.py N` で N 枚分を作り直す (LCSC に問い合わせて最小発注数・単価・在庫を反映、要ネットワーク、`build.sh` には含まない) |
 
 回路図 (`tools/gen_sch.py`) と基板 (`tools/gen_pcb.py`、配置・配線・ベタを座標で記述) は最初スクリプトから生成した。
 その後、基板は KiCad で手を入れている (F.Cu の +3V3 ベタ、配線の調整) ので、GUI 側を正とする。
@@ -94,10 +95,12 @@ D- 側の比較器を省き、FPGA ピン 7 本 + VBUS 検出 1 本に収めた�
 部品の LCSC 番号と MPN は `tools/gen_sch.py` の `PARTS` が正。変えたら `tools/gen_sch.py` → `tools/update_fields.py`
 (配線を残したまま基板側の部品の欄だけ更新) → `tools/build.sh`。
 裏面シルク (ロゴ、基板名 / 版 / 日付 / 作者、ピン表) は `tools/silk.py` が持つ。単体で実行すると、基板の裏面シルクだけをその場で入れ直す (銅箔は触らない)。
+表面のリファレンス文字は circuitpnr (`cpnr labels`) で置き、`cpnr label-check` で重なり・パッド干渉・取り違えがないことを確かめた
+(`gen_pcb.py` は非表示で作るので、`REGEN=1` のあとは置き直しが要る)。
 
 ## 部品
 
-LCSC 番号は 2026-10-20 時点。JLC の Basic 部品があるものはそれを選んだ (JLC と LCSC の在庫は別)。
+LCSC 番号は 2026-10-29 時点。JLC の Basic 部品があるものはそれを選んだ (JLC と LCSC の在庫は別)。JLC の拡張部品 (手数料あり) は D1/D2 と J2 の 2 種類、R13 は Preferred Extended。
 
 | Ref | 部品 | LCSC | 備考 |
 |---|---|---|---|
@@ -105,21 +108,21 @@ LCSC 番号は 2026-10-20 時点。JLC の Basic 部品があるものはそれ�
 | J2 | HRO TYPE-C-31-M-12 | C165948 | 16 ピン (USB 2.0)。外形 7.3 mm、前端は基板端から約 0.65 mm 出る (要実物確認) |
 | D1, D2 | TI TPD1E05U06DPYR | C436349 | X1SON-2 (0.6 × 1.0 mm)。手はんだは難しい。同名の互換品 (TECH PUBLIC C907835、Leiditech C2972479) はクランプ電圧などが違うので使わない |
 | R1 | 1.5 kΩ 1% 0402 UNI-ROYAL 0402WGF1501TCE | C25867 | |
-| R2, R3 | 36 Ω 1% 0402 UNI-ROYAL 0402WGF360JTCE | C57678 | |
+| R2, R3 | 33 Ω 1% 0402 UNI-ROYAL 0402WGF330JTCE | C25105 | JLC Basic。LCSC 在庫切れのときは購入一覧で YAGEO RC0402FR-0733RL (C138002) に置き換わる |
 | R6, R7 | 100 Ω 1% 0402 UNI-ROYAL 0402WGF1000TCE | C25076 | |
-| R8 / R9 | 1.8 kΩ / 75 Ω 1% 0402 UNI-ROYAL | C25871 / C25133 | |
+| R8 / R9 | 4.7 kΩ / 200 Ω 1% 0402 UNI-ROYAL | C25900 / C25087 | JLC Basic |
 | R10, R11 | 5.1 kΩ 1% 0402 UNI-ROYAL 0402WGF5101TCE | C25905 | |
 | R12 / R13 | 100 kΩ / 150 kΩ 1% 0402 UNI-ROYAL | C25741 / C25755 | |
-| C1, C5 | 1 µF X5R 0402 Samsung CL05A105KA5NQNC | C52923 | LCSC 在庫 0 のため、購入一覧では YAGEO CC0402KRX5R7BB105 (C325464、16 V) に置き換わる |
+| C1, C5 | 1 µF X5R 0402 Samsung CL05A105KA5NQNC | C52923 | LCSC で在庫切れのときは、購入一覧で YAGEO CC0402KRX5R7BB105 (C325464、16 V) などに置き換わる |
 | C3 | 10 µF 10 V X5R 0603 Samsung CL10A106KP8NNNC | C19702 | |
-| C4 | 100 nF X7R 0402 Samsung CL05B104KB54PNC | C307331 | |
+| C4 | 100 nF X7R 0402 Samsung CL05B104KB54PNC | C307331 | LCSC 在庫切れのときは、購入一覧で Samsung CL05B104KO5NNNC (C1525、16 V) に置き換わる |
 
 ## 未確定事項
 
 - **差動インピーダンス**: Pmod_RPiCamera と同じ寸法 (100 Ω 想定、2 層 1.6 mm でのペア結合が主体) で、USB の 90 Ω に合わせた計算はしていない。
   - 基板上の D+/D- は約 15 mm で、FPGA ボード側の Pmod 配線とヘッダの方が支配的。
   - 製造業者のスタックアップで要再計算。
-- **定数**: TN710 の Arora-V の値そのままで、HS の振幅 (400 mV) は未実測。SLogic16U3 の実装値も不明。
+- **定数**: R2/R3 と R8/R9 以外は TN710 の Arora-V の値そのままで、HS の振幅 (400 mV) と終端 (33 Ω + IO の ON 抵抗) は未実測。SLogic16U3 の実装値も不明。
   - R6/R7 (直列) と IO の DRIVE で振幅が決まる。
 - **Pmod 経由の HS 品質**: 送受信が同じ dx 対を通るので、ヘッダから FPGA までの未整合区間が両方向に効く。`SINGLE_PMOD.md` §7 を参照。
 - **Tang Primer 25K の pmod2**: G11/G10 を ELVDS_IOBUF (エミュレート差動の出力) にできるか、960 MHz の FCLK が届くかは合成で未確認。

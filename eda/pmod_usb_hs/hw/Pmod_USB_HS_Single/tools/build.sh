@@ -1,6 +1,8 @@
 #!/bin/bash
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 # Check the schematic and the board (REGEN=1: regenerate them first), and write the
-# fabrication outputs to fab/ (Gerbers + drill zip, BOM, placement,
+# fabrication outputs to fab/ (Gerbers + drill zip, BOM, placement, JLC BOM/CPL,
 # schematic PDF, board images).
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -31,6 +33,7 @@ kicad-cli pcb export drill --format excellon --excellon-separate-th -o fab/gerbe
 kicad-cli pcb export pos --side front --format csv --units mm -o fab/${N}_pos.csv $N.kicad_pcb >/dev/null
 kicad-cli sch export bom --fields 'Reference,Value,Footprint,${QUANTITY},LCSC,MPN,Description' \
     --group-by Value,Footprint --exclude-dnp -o fab/${N}_bom.csv $N.kicad_sch >/dev/null
+python3 tools/jlc_files.py $N fab
 kicad-cli sch export pdf -o fab/${N}_schematic.pdf $N.kicad_sch >/dev/null
 kicad-cli pcb render --side top --width 1600 --height 1200 --perspective --rotate "-35,0,20" --zoom 1.1 \
     -o fab/${N}_3d.png $N.kicad_pcb >/dev/null

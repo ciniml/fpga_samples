@@ -1481,18 +1481,18 @@
 		(dnp no)
 		(uuid e5ab4f32-4b99-5e55-9ab5-a8465d793747)
 		(property "Reference" "R2" (at 129.54 49.53 0) (effects (font (size 1.27 1.27))))
-		(property "Value" "36" (at 129.54 52.07 0) (effects (font (size 1.27 1.27))))
+		(property "Value" "33" (at 129.54 52.07 0) (effects (font (size 1.27 1.27))))
 		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
 			(at 127.00 50.80 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
 		(property "Datasheet" "~" (at 127.00 50.80 0) (effects (font (size 1.27 1.27)) (hide yes)))
-		(property "Description" "36R 1% 0402 (HS termination, D+)"
+		(property "Description" "33R 1% 0402 (HS termination, D+)"
 			(at 127.00 50.80 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
-		(property "LCSC" "C57678" (at 127.00 50.80 0) (effects (font (size 1.27 1.27)) (hide yes)))
-		(property "MPN" "UNI-ROYAL 0402WGF360JTCE"
+		(property "LCSC" "C25105" (at 127.00 50.80 0) (effects (font (size 1.27 1.27)) (hide yes)))
+		(property "MPN" "UNI-ROYAL 0402WGF330JTCE"
 			(at 127.00 50.80 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
@@ -1534,18 +1534,18 @@
 		(dnp no)
 		(uuid a952fa4e-005f-55b1-9254-de3939365b4e)
 		(property "Reference" "R3" (at 142.24 49.53 0) (effects (font (size 1.27 1.27))))
-		(property "Value" "36" (at 142.24 52.07 0) (effects (font (size 1.27 1.27))))
+		(property "Value" "33" (at 142.24 52.07 0) (effects (font (size 1.27 1.27))))
 		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
 			(at 139.70 50.80 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
 		(property "Datasheet" "~" (at 139.70 50.80 0) (effects (font (size 1.27 1.27)) (hide yes)))
-		(property "Description" "36R 1% 0402 (HS termination, D-)"
+		(property "Description" "33R 1% 0402 (HS termination, D-)"
 			(at 139.70 50.80 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
-		(property "LCSC" "C57678" (at 139.70 50.80 0) (effects (font (size 1.27 1.27)) (hide yes)))
-		(property "MPN" "UNI-ROYAL 0402WGF360JTCE"
+		(property "LCSC" "C25105" (at 139.70 50.80 0) (effects (font (size 1.27 1.27)) (hide yes)))
+		(property "MPN" "UNI-ROYAL 0402WGF330JTCE"
 			(at 139.70 50.80 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
@@ -1640,18 +1640,18 @@
 		(dnp no)
 		(uuid 83dc932f-0cb5-50c1-a764-2d9efa4307da)
 		(property "Reference" "R8" (at 104.14 87.63 0) (effects (font (size 1.27 1.27))))
-		(property "Value" "1.8k" (at 104.14 90.17 0) (effects (font (size 1.27 1.27))))
+		(property "Value" "4.7k" (at 104.14 90.17 0) (effects (font (size 1.27 1.27))))
 		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
 			(at 101.60 88.90 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
 		(property "Datasheet" "~" (at 101.60 88.90 0) (effects (font (size 1.27 1.27)) (hide yes)))
-		(property "Description" "1.8k 1% 0402 (VREF ~130 mV)"
+		(property "Description" "4.7k 1% 0402 (VREF ~135 mV)"
 			(at 101.60 88.90 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
-		(property "LCSC" "C25871" (at 101.60 88.90 0) (effects (font (size 1.27 1.27)) (hide yes)))
-		(property "MPN" "UNI-ROYAL 0402WGF1801TCE"
+		(property "LCSC" "C25900" (at 101.60 88.90 0) (effects (font (size 1.27 1.27)) (hide yes)))
+		(property "MPN" "UNI-ROYAL 0402WGF4701TCE"
 			(at 101.60 88.90 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
@@ -1709,18 +1709,18 @@
 		(dnp no)
 		(uuid 117f645b-c260-5792-85fa-2b6810b604cd)
 		(property "Reference" "R9" (at 116.84 87.63 0) (effects (font (size 1.27 1.27))))
-		(property "Value" "75" (at 116.84 90.17 0) (effects (font (size 1.27 1.27))))
+		(property "Value" "200" (at 116.84 90.17 0) (effects (font (size 1.27 1.27))))
 		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
 			(at 114.30 88.90 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
 		(property "Datasheet" "~" (at 114.30 88.90 0) (effects (font (size 1.27 1.27)) (hide yes)))
-		(property "Description" "75R 1% 0402 (VREF)"
+		(property "Description" "200R 1% 0402 (VREF)"
 			(at 114.30 88.90 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
-		(property "LCSC" "C25133" (at 114.30 88.90 0) (effects (font (size 1.27 1.27)) (hide yes)))
-		(property "MPN" "UNI-ROYAL 0402WGF750JTCE"
+		(property "LCSC" "C25087" (at 114.30 88.90 0) (effects (font (size 1.27 1.27)) (hide yes)))
+		(property "MPN" "UNI-ROYAL 0402WGF2000TCE"
 			(at 114.30 88.90 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
@@ -2668,11 +2668,11 @@
 		(effects (font (size 1.27 1.27)) (justify left))
 		(uuid 5e9ec6bc-e415-5216-8692-93dff166ed11)
 	)
-	(text "Pmod 2/8 D+ / VREF: LVDS25 input pair = D+ comparator (squelch). VREF = 3.3 V x 75 / 1875 = 132 mV."
+	(text "Pmod 2/8 D+ / VREF: LVDS25 input pair = D+ comparator (squelch). VREF = 3.3 V x 200 / 4900 = 135 mV."
 		(exclude_from_sim no)
 		(at 25.40 173.99 0)
 		(effects (font (size 1.27 1.27)) (justify left))
-		(uuid cf4638e1-5ecb-5078-aa43-5061841b8a0c)
+		(uuid d4197318-d998-54d6-a946-a30fba75f834)
 	)
 	(text "Pmod 3/9 TERM_DP/DN: drive low = 45 ohm HS termination (pin + R2/R3), Hi-Z = FS line state input (LVCMOS33)."
 		(exclude_from_sim no)

@@ -68,10 +68,10 @@ PARTS = {
     'J2': ('C165948', 'HRO TYPE-C-31-M-12'),
     'D1': ('C436349', 'TI TPD1E05U06DPYR'), 'D2': ('C436349', 'TI TPD1E05U06DPYR'),
     'R6': ('C25076', 'UNI-ROYAL 0402WGF1000TCE'), 'R7': ('C25076', 'UNI-ROYAL 0402WGF1000TCE'),
-    'R2': ('C57678', 'UNI-ROYAL 0402WGF360JTCE'), 'R3': ('C57678', 'UNI-ROYAL 0402WGF360JTCE'),
+    'R2': ('C25105', 'UNI-ROYAL 0402WGF330JTCE'), 'R3': ('C25105', 'UNI-ROYAL 0402WGF330JTCE'),
     'R1': ('C25867', 'UNI-ROYAL 0402WGF1501TCE'),
-    'R8': ('C25871', 'UNI-ROYAL 0402WGF1801TCE'),
-    'R9': ('C25133', 'UNI-ROYAL 0402WGF750JTCE'),
+    'R8': ('C25900', 'UNI-ROYAL 0402WGF4701TCE'),
+    'R9': ('C25087', 'UNI-ROYAL 0402WGF2000TCE'),
     'R10': ('C25905', 'UNI-ROYAL 0402WGF5101TCE'), 'R11': ('C25905', 'UNI-ROYAL 0402WGF5101TCE'),
     'R12': ('C25741', 'UNI-ROYAL 0402WGF1003TCE'),
     'R13': ('C25755', 'UNI-ROYAL 0402WGF1503TCE'),
@@ -213,12 +213,12 @@ def build():
     # ---- Single LVDS network (TN710 USB2.0-RC, Arora-V values, no D- comparator) ----
     resistor('R6', '100', 101.6, 50.8, 'USB_DP', 'DX_P', '100R 1% 0402 (dx series, D+)')
     resistor('R7', '100', 114.3, 50.8, 'USB_DN', 'DX_N', '100R 1% 0402 (dx series, D-)')
-    resistor('R2', '36', 127.0, 50.8, 'USB_DP', 'TERM_DP', '36R 1% 0402 (HS termination, D+)')
-    resistor('R3', '36', 139.7, 50.8, 'USB_DN', 'TERM_DN', '36R 1% 0402 (HS termination, D-)')
+    resistor('R2', '33', 127.0, 50.8, 'USB_DP', 'TERM_DP', '33R 1% 0402 (HS termination, D+)')
+    resistor('R3', '33', 139.7, 50.8, 'USB_DN', 'TERM_DN', '33R 1% 0402 (HS termination, D-)')
     resistor('R1', '1.5k', 152.4, 50.8, 'USB_DP', 'PULLUP', '1.5k 1% 0402 (D+ pull-up, soft connect)')
     # VREF (one comparator) and the 3.3 V decoupling
-    resistor('R8', '1.8k', 101.6, 88.9, '+3V3', 'VREF', '1.8k 1% 0402 (VREF ~130 mV)')
-    resistor('R9', '75', 114.3, 88.9, 'VREF', 'GND', '75R 1% 0402 (VREF)')
+    resistor('R8', '4.7k', 101.6, 88.9, '+3V3', 'VREF', '4.7k 1% 0402 (VREF ~135 mV)')
+    resistor('R9', '200', 114.3, 88.9, 'VREF', 'GND', '200R 1% 0402 (VREF)')
     resistor('C1', '1u', 127.0, 88.9, 'VREF', 'GND', '1 uF 10 V X5R 0402 (VREF)', fp=C0402, lib_id='Device:C')
     resistor('C3', '10u', 139.7, 88.9, '+3V3', 'GND', '10 uF 10 V X5R 0603', fp=C0603, lib_id='Device:C')
     resistor('C4', '100n', 152.4, 88.9, '+3V3', 'GND', '100 nF 16 V X7R 0402', fp=C0402, lib_id='Device:C')
@@ -257,7 +257,7 @@ def build():
         'Pmod USB HS Single: USB 2.0 HS device on one Pmod (Gowin SoftPHY Single LVDS wiring without the D- comparator).',
         'FPGA side: rtl/usb/gowin/usb_phy_gowin_sl.v with CMP1=1 (eda/pmod_usb_hs/SINGLE_PMOD.md). Arora-V (GW5A) values from TN710.',
         'Pmod 1/7 DX_P/DX_N: LVCMOS33D bidirectional pair (transmit + differential receive), R6/R7 in series.',
-        'Pmod 2/8 D+ / VREF: LVDS25 input pair = D+ comparator (squelch). VREF = 3.3 V x 75 / 1875 = 132 mV.',
+        'Pmod 2/8 D+ / VREF: LVDS25 input pair = D+ comparator (squelch). VREF = 3.3 V x 200 / 4900 = 135 mV.',
         'Pmod 3/9 TERM_DP/DN: drive low = 45 ohm HS termination (pin + R2/R3), Hi-Z = FS line state input (LVCMOS33).',
         'Pmod 4 PULLUP: high = 1.5k on D+ (FS attach). Pmod 10 VBUS_DET: VBUS / 1.67 (LVCMOS33 input).',
         'UFP only: Rd 5.1k on CC1/CC2, VBUS is not used as a supply. Shield to GND.',
