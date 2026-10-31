@@ -20,6 +20,10 @@
 //   3: DdrFb + GmtCornerTurn + Hub75RowPlanes: as 2, the fetched rows
 //      turned into bit-plane words by the GW3A GMT (GW3A only)
 //   4: as 3 with the corner turn in fabric instead of the GMT (comparison)
+//   5: DdrPlaneFb + Hub75PlaneStream: the frame buffer in external DRAM as
+//      bit planes (UdpVideoWriter → GMT corner turn on the way in), no row
+//      buffer: the display fetches one plane of a scan row at a time
+//   6: as 5 with the corner turn in fabric (comparison)
 //
 // Four clock domains: PHY receive ('p), PHY transmit ('t), system ('s:
 // service and frame buffer writes) and display ('d: the HUB75 engine),
@@ -243,7 +247,7 @@ module EthernetHub75Core #(
     var flip_busy: 's logic           ; // seen by the writer: drop bytes, ack when it falls
     var busy_d   : 's logic           ;
 
-    if HUB75_IMPL <: 2 :g_writer {
+    if HUB75_IMPL <: 2 || HUB75_IMPL >= 5 :g_writer {
         inst writer: UdpVideoWriter #(
             WIDTH         : WIDTH         ,
             HEIGHT        : HEIGHT        ,
@@ -397,7 +401,7 @@ module EthernetHub75Core #(
         );
 
         assign flip_busy = ct_busy || panel_busy;
-    } else :g_ddr {
+    } else if HUB75_IMPL <: 5 :g_ddr {
         const LX_BITS: u32 = $clog2(LANE_WIDTH);
 
         var fetch_req : 'm logic             ;
@@ -573,6 +577,98 @@ module EthernetHub75Core #(
                 o_clk       : o_hclk   ,
             );
         }
+    } else :g_plane {
+        const LX_BITS   : u32 = $clog2(LANE_WIDTH);
+        const PLANE_BITS: u32 = if COMPONENT_BITS >: 1 ? $clog2(COMPONENT_BITS) : 1;
+
+        var fetch_req  : 'm logic             ;
+        var fetch_row  : 'm logic<5>          ;
+        var fetch_plane: 'm logic<PLANE_BITS> ;
+        var fetch_buf  : 'm logic             ;
+        var fetch_done : 'm logic             ;
+        var fill_we    : 'm logic             ;
+        var fill_lane  : 'm logic<LANE_BITS>  ;
+        var fill_addr  : 'm logic<LX_BITS - 1>;
+        var fill_data  : 'm logic<12>         ;
+
+        inst fb: DdrPlaneFb #(
+            LANE_WIDTH    : LANE_WIDTH     ,
+            NUM_LANES     : NUM_LANES      ,
+            SCAN_ROWS     : SCAN_ROWS      ,
+            COMPONENT_BITS: COMPONENT_BITS ,
+            CHAIN_REVERSE : CHAIN_REVERSE  ,
+            USE_GMT       : HUB75_IMPL == 5,
+            MEM_ADDR_BITS : MEM_ADDR_BITS  ,
+            BIST_BURSTS   : BIST_BURSTS    ,
+        ) (
+            i_clk         : i_clk         ,
+            i_rst         : i_rst         ,
+            i_we          : fb_we         ,
+            i_lane        : fb_lane       ,
+            i_addr        : fb_addr       ,
+            i_rgb         : fb_rgb        ,
+            i_flip_req    : flip_req      ,
+            o_flip_busy   : flip_busy     ,
+            o_overflow    : o_overflow    ,
+            i_mclk        : i_mclk        ,
+            i_mrst        : i_mrst        ,
+            i_mem_init    : i_mem_init    ,
+            o_mreq_valid  : o_mreq_valid  ,
+            i_mreq_ready  : i_mreq_ready  ,
+            o_mreq_we     : o_mreq_we     ,
+            o_mreq_addr   : o_mreq_addr   ,
+            o_mreq_wdata  : o_mreq_wdata  ,
+            i_mrd_valid   : i_mrd_valid   ,
+            i_mrd_data    : i_mrd_data    ,
+            i_fetch_req   : fetch_req     ,
+            i_fetch_row   : fetch_row     ,
+            i_fetch_plane : fetch_plane   ,
+            i_fetch_buf   : fetch_buf     ,
+            o_fetch_done  : fetch_done    ,
+            o_fill_we     : fill_we       ,
+            o_fill_lane   : fill_lane     ,
+            o_fill_addr   : fill_addr     ,
+            o_fill_data   : fill_data     ,
+            o_ready       : o_fb_ready    ,
+            o_bist_errors : o_bist_errors ,
+            o_bist_first  : o_bist_first  ,
+            o_bist_pass   : o_bist_pass   ,
+            o_bist_mask   : o_bist_mask   ,
+            o_bist_parity : o_bist_parity ,
+            i_bist_restart: i_bist_restart,
+        );
+
+        inst panel: hub75::Hub75PlaneStream #(
+            SCAN_ROWS     : SCAN_ROWS     ,
+            CHAIN_LEN     : LANE_WIDTH    ,
+            NUM_LANES     : NUM_LANES     ,
+            CLOCK_DIVIDER : CLOCK_DIVIDER ,
+            CLK_LOW_EXTRA : CLK_LOW_EXTRA ,
+            COMPONENT_BITS: COMPONENT_BITS,
+            BASE_OE_CYCLES: BASE_OE_CYCLES,
+        ) (
+            i_fclk       : i_mclk     ,
+            i_frst       : i_mrst     ,
+            i_we         : fill_we    ,
+            i_wlane      : fill_lane  ,
+            i_waddr      : fill_addr  ,
+            i_wdata      : fill_data  ,
+            o_fetch_req  : fetch_req  ,
+            o_fetch_row  : fetch_row  ,
+            o_fetch_plane: fetch_plane,
+            o_fetch_buf  : fetch_buf  ,
+            i_fetch_done : fetch_done ,
+            i_clk        : i_dclk     ,
+            i_rst        : i_drst     ,
+            o_frame      : o_frame    ,
+            o_row        : o_row      ,
+            o_r          : o_r        ,
+            o_g          : o_g        ,
+            o_b          : o_b        ,
+            o_oe         : o_oe       ,
+            o_lat        : o_lat      ,
+            o_clk        : o_hclk     ,
+        );
     }
 
     let _unused: 's logic = |rpop_cnt;

@@ -28,6 +28,7 @@ module GmtCornerTurn #(
     param COMPONENT_BITS: u32 = 6                                                  ,
     param CHAIN_REVERSE : bit = 0                                                  ,
     param USE_GMT       : bit = 1                                                  , // 0: transpose in fabric
+    param PLANE_MAJOR   : bit = 0                                                  , // 1: columns out plane by plane (B, G, R of a plane in turn)
     const ROW_BITS      : u32 = $clog2(SCAN_ROWS)                                  ,
     const X_BITS        : u32 = $clog2(CHAIN_LEN)                                  ,
     const XW_BITS       : u32 = X_BITS - 5                                         ,
@@ -66,8 +67,18 @@ module GmtCornerTurn #(
     var rdata: logic<32>    ;
     var rbuf : logic        ;
     var k    : logic<K_BITS>; // column being read
-    let raddr: logic<6>      = {rbuf, k as 5};
-    let wdata: logic<32>     = {1'b0 repeat 32 - PX_BITS, i_rgb};
+    // column read: k in order (colour by colour), or with PLANE_MAJOR
+    // colour * COMPONENT_BITS + plane, the three colours of a plane in turn
+    var col  : logic<2>         ; // colour of column k
+    var pl   : logic<PLANE_BITS>; // plane of column k
+    var k_pm : logic<5>         ; // colour * COMPONENT_BITS + plane, counted (no multiplier)
+    let raddr: logic<6>          = {rbuf, if PLANE_MAJOR ? k_pm : k as 5};
+    let k_end: logic             = if PLANE_MAJOR ?
+        pl == (COMPONENT_BITS - 1) as PLANE_BITS && col == 2'd2
+    :
+        k == (PX_BITS - 1) as K_BITS
+    ;
+    let wdata: logic<32>         = {1'b0 repeat 32 - PX_BITS, i_rgb};
 
     if USE_GMT :g_gmt {
         inst u_gmt: $sv::GMT_DB #(
@@ -122,8 +133,6 @@ module GmtCornerTurn #(
     var active : logic                    ;
     var j_lane : logic<LANE_BITS>         ;
     var j_addr : logic<ROW_BITS + XW_BITS>;
-    var col    : logic<2>                 ; // colour of column k
-    var pl     : logic<PLANE_BITS>        ; // plane of column k
     var v1     : logic                    ; // rdata holds column k1
     var col1   : logic<2>                 ;
     var pl1    : logic<PLANE_BITS>        ;
@@ -153,6 +162,7 @@ module GmtCornerTurn #(
             j_addr  = 0 as ROW_BITS + XW_BITS;
             col     = 2'd0;
             pl      = 0 as PLANE_BITS;
+            k_pm    = 5'd0;
             v1      = 1'b0;
             col1    = 2'd0;
             pl1     = 0 as PLANE_BITS;
@@ -168,13 +178,23 @@ module GmtCornerTurn #(
             col1 = col;
             pl1  = pl;
             if active {
-                if k == (PX_BITS - 1) as K_BITS {
+                if k_end {
                     active = 1'b0;
                 } else {
                     k = k + (1 as K_BITS);
-                    if pl == (COMPONENT_BITS - 1) as PLANE_BITS {
-                        pl  = 0 as PLANE_BITS;
-                        col = col + 2'd1;
+                    if PLANE_MAJOR {
+                        if col == 2'd2 {
+                            col  = 2'd0;
+                            pl   = pl + (1 as PLANE_BITS);
+                            k_pm = (pl + (1 as PLANE_BITS)) as 5;
+                        } else {
+                            col  = col + 2'd1;
+                            k_pm = k_pm + COMPONENT_BITS as 5;
+                        }
+                    } else if pl == (COMPONENT_BITS - 1) as PLANE_BITS {
+                        pl   = 0 as PLANE_BITS;
+                        k_pm = 5'd0;
+                        col  = col + 2'd1;
                     } else {
                         pl = pl + (1 as PLANE_BITS);
                     }
@@ -189,6 +209,7 @@ module GmtCornerTurn #(
                 k      = 0 as K_BITS;
                 col    = 2'd0;
                 pl     = 0 as PLANE_BITS;
+                k_pm   = 5'd0;
                 j_lane = i_lane;
                 j_addr = {i_addr[ROW_BITS + X_BITS - 1:X_BITS], i_addr[X_BITS - 1:5]};
             }

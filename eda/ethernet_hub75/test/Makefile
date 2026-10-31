@@ -17,12 +17,14 @@ RTL := $(DEP)/eth_mac/crc32.sv \
        $(DEP)/hub75/hub75_planes.sv \
        $(DEP)/hub75/hub75_row_lanes.sv \
        $(DEP)/hub75/hub75_row_planes.sv \
+       $(DEP)/hub75/hub75_plane_stream.sv \
        $(TOP_DIR)/src/common/eth_service.sv \
        $(TOP_DIR)/src/common/udp_video_writer.sv \
        $(TOP_DIR)/src/common/gmt_corner_turn.sv \
        $(TOP_DIR)/src/common/fb_afifo.sv \
        $(TOP_DIR)/src/common/ddr_fb.sv \
        $(TOP_DIR)/src/common/ddr_read_tune.sv \
+       $(TOP_DIR)/src/common/ddr_plane_fb.sv \
        $(TOP_DIR)/src/common/ethernet_hub75_core.sv
 TB := gw3a_sim.sv rpll_hub75_sim.sv $(TOP_DIR)/src/tangprimer20k/top.sv tb_tp20k.sv
 
@@ -31,7 +33,7 @@ TXS ?= 0
 PROWS ?= 3
 CBITS ?= 6
 RXCARD_OBJ := obj_rxcard_$(IMPL)$(if $(filter 1,$(TXS)),_txs)$(if $(filter 2,$(PROWS)),_4p)$(if $(filter-out 6,$(CBITS)),_c$(CBITS))
-RXCARD_G   := $(if $(filter gmt,$(IMPL)),1,$(if $(filter ddr,$(IMPL)),2,$(if $(filter ddrgmt,$(IMPL)),3,$(if $(filter ddrsoftturn,$(IMPL)),4,0))))
+RXCARD_G   := $(if $(filter gmt,$(IMPL)),1,$(if $(filter ddr,$(IMPL)),2,$(if $(filter ddrgmt,$(IMPL)),3,$(if $(filter ddrsoftturn,$(IMPL)),4,$(if $(filter ddrplane,$(IMPL)),5,$(if $(filter ddrplanesoft,$(IMPL)),6,0))))))
 # the DDR2 PHY is replaced by ddr2_phy_sim.sv (slot-level model)
 RXCARD_TB  := ethernet_hub75_cfg.sv gw3a_sim.sv \
               $(DEP)/ddr2/ddr2_ctrl.sv $(TOP_DIR)/../../rtl/ddr2/test/ddr2_model.sv ddr2_phy_sim.sv \
