@@ -19,6 +19,7 @@
 //      burst port of Ddr2Ctrl, 'm), row buffers in block RAM
 //   3: DdrFb + GmtCornerTurn + Hub75RowPlanes: as 2, the fetched rows
 //      turned into bit-plane words by the GW3A GMT (GW3A only)
+//   4: as 3 with the corner turn in fabric instead of the GMT (comparison)
 //
 // Four clock domains: PHY receive ('p), PHY transmit ('t), system ('s:
 // service and frame buffer writes) and display ('d: the HUB75 engine),
@@ -502,11 +503,12 @@ module EthernetHub75Core #(
             var done_q   : 'm logic             ;
 
             inst turn: GmtCornerTurn #(
-                SCAN_ROWS     : 2             ,
-                CHAIN_LEN     : LANE_WIDTH    ,
-                NUM_LANES     : NUM_LANES     ,
-                COMPONENT_BITS: COMPONENT_BITS,
-                CHAIN_REVERSE : CHAIN_REVERSE ,
+                USE_GMT       : HUB75_IMPL == 3,
+                SCAN_ROWS     : 2              ,
+                CHAIN_LEN     : LANE_WIDTH     ,
+                NUM_LANES     : NUM_LANES      ,
+                COMPONENT_BITS: COMPONENT_BITS ,
+                CHAIN_REVERSE : CHAIN_REVERSE  ,
             ) (
                 i_clk     : i_mclk   ,
                 i_rst     : i_mrst   ,

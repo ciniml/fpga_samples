@@ -31,7 +31,7 @@ TXS ?= 0
 PROWS ?= 3
 CBITS ?= 6
 RXCARD_OBJ := obj_rxcard_$(IMPL)$(if $(filter 1,$(TXS)),_txs)$(if $(filter 2,$(PROWS)),_4p)$(if $(filter-out 6,$(CBITS)),_c$(CBITS))
-RXCARD_G   := $(if $(filter gmt,$(IMPL)),1,$(if $(filter ddr,$(IMPL)),2,$(if $(filter ddrgmt,$(IMPL)),3,0)))
+RXCARD_G   := $(if $(filter gmt,$(IMPL)),1,$(if $(filter ddr,$(IMPL)),2,$(if $(filter ddrgmt,$(IMPL)),3,$(if $(filter ddrsoftturn,$(IMPL)),4,0))))
 # the DDR2 PHY is replaced by ddr2_phy_sim.sv (slot-level model)
 RXCARD_TB  := ethernet_hub75_cfg.sv gw3a_sim.sv \
               $(DEP)/ddr2/ddr2_ctrl.sv $(TOP_DIR)/../../rtl/ddr2/test/ddr2_model.sv ddr2_phy_sim.sv \

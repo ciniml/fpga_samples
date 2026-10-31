@@ -1,11 +1,12 @@
 PROJECT_NAME := ethernet_hub75
 
-# make TARGET=tangprimer20k (default) | dk_led_rxcard_gw3a20 [HUB75_IMPL=soft|gmt|ddr|ddrgmt]
+# make TARGET=tangprimer20k (default) | dk_led_rxcard_gw3a20 [HUB75_IMPL=soft|gmt|ddr|ddrgmt|ddrsoftturn]
 TARGET ?= tangprimer20k
 # Frame buffer / HUB75 output stage: soft (Hub75Lanes, frame in BSRAM),
 # gmt (GW3A GMT hard block + Hub75Planes, Arora III only) or ddr (frame in
 # the DDR2 of the DK_LED-RXCARD, DdrFb + Hub75RowLanes) or ddrgmt (DDR2,
-# rows turned into bit planes by the GMT, Hub75RowPlanes). Builds go to
+# rows turned into bit planes by the GMT, Hub75RowPlanes) or ddrsoftturn
+# (as ddrgmt with the transpose in fabric, for comparison). Builds go to
 # build/<target>_gmt / _ddr / _ddrgmt.
 HUB75_IMPL ?= soft
 ifeq ($(HUB75_IMPL),gmt)
@@ -22,6 +23,12 @@ BUILD_SUFFIX := _ddrgmt
 HUB75_IMPL_NUM := 3
 ifneq ($(TARGET),dk_led_rxcard_gw3a20)
 $(error HUB75_IMPL=ddrgmt is for TARGET=dk_led_rxcard_gw3a20 only)
+endif
+else ifeq ($(HUB75_IMPL),ddrsoftturn)
+BUILD_SUFFIX := _ddrsoftturn
+HUB75_IMPL_NUM := 4
+ifneq ($(TARGET),dk_led_rxcard_gw3a20)
+$(error HUB75_IMPL=ddrsoftturn is for TARGET=dk_led_rxcard_gw3a20 only)
 endif
 else
 HUB75_IMPL_NUM := 0

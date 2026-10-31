@@ -17,12 +17,17 @@
 // aligned rows, so a lost packet only leaves stale words in that frame.
 // The flip request is held back until the last group is copied out, and
 // o_busy keeps the writer from starting the next frame meanwhile.
+//
+// USE_GMT = 0 replaces GMT_DB by the same thing in fabric (two 32 x PX_BITS
+// flip-flop arrays, rows written, a column read into a register the next
+// clock), to compare the hard block with its soft equivalent.
 module GmtCornerTurn #(
     param SCAN_ROWS     : u32 = 32                                                 ,
     param CHAIN_LEN     : u32 = 128                                                ,
     param NUM_LANES     : u32 = 4                                                  ,
     param COMPONENT_BITS: u32 = 6                                                  ,
     param CHAIN_REVERSE : bit = 0                                                  ,
+    param USE_GMT       : bit = 1                                                  , // 0: transpose in fabric
     const ROW_BITS      : u32 = $clog2(SCAN_ROWS)                                  ,
     const X_BITS        : u32 = $clog2(CHAIN_LEN)                                  ,
     const XW_BITS       : u32 = X_BITS - 5                                         ,
@@ -64,38 +69,54 @@ module GmtCornerTurn #(
     let raddr: logic<6>      = {rbuf, k as 5};
     let wdata: logic<32>     = {1'b0 repeat 32 - PX_BITS, i_rgb};
 
-    inst u_gmt: $sv::GMT_DB #(
-        WADDR_REMAP_EN: 1'b0   ,
-        COMP_EN       : 4'b0001,
-    ) (
-        WCLK   : i_clk       ,
-        WCE    : 1'b1        ,
-        RCLK   : i_clk       ,
-        RCE    : 1'b1        ,
-        WEN0   : i_we        ,
-        WEN1   : 1'b0        ,
-        WEN2   : 1'b0        ,
-        WEN3   : 1'b0        ,
-        RSTN   : !i_rst      ,
-        WADDR  : {wbuf, in_x},
-        RADDR  : raddr       ,
-        WDATA0 : wdata       ,
-        WDATA1 : 32'd0       ,
-        WDATA2 : 32'd0       ,
-        WDATA3 : 32'd0       ,
-        GSRN   : 1'b1        ,
-        RDATA0 : rdata       ,
-        RDATA1 : _           ,
-        RDATA2 : _           ,
-        RDATA3 : _           ,
-        CFGRSTN: 1'b1        ,
-        MDCLK  : 1'b0        ,
-        MDWDATA: 8'd0        ,
-        MDAINC : 1'b0        ,
-        MDOPC  : 2'b00       ,
-        MD1BITM: 1'b0        ,
-        MDRDATA: _           ,
-    );
+    if USE_GMT :g_gmt {
+        inst u_gmt: $sv::GMT_DB #(
+            WADDR_REMAP_EN: 1'b0   ,
+            COMP_EN       : 4'b0001,
+        ) (
+            WCLK   : i_clk       ,
+            WCE    : 1'b1        ,
+            RCLK   : i_clk       ,
+            RCE    : 1'b1        ,
+            WEN0   : i_we        ,
+            WEN1   : 1'b0        ,
+            WEN2   : 1'b0        ,
+            WEN3   : 1'b0        ,
+            RSTN   : !i_rst      ,
+            WADDR  : {wbuf, in_x},
+            RADDR  : raddr       ,
+            WDATA0 : wdata       ,
+            WDATA1 : 32'd0       ,
+            WDATA2 : 32'd0       ,
+            WDATA3 : 32'd0       ,
+            GSRN   : 1'b1        ,
+            RDATA0 : rdata       ,
+            RDATA1 : _           ,
+            RDATA2 : _           ,
+            RDATA3 : _           ,
+            CFGRSTN: 1'b1        ,
+            MDCLK  : 1'b0        ,
+            MDWDATA: 8'd0        ,
+            MDAINC : 1'b0        ,
+            MDOPC  : 2'b00       ,
+            MD1BITM: 1'b0        ,
+            MDRDATA: _           ,
+        );
+    } else :g_soft {
+        // the transpose in fabric: rows written, column k read (registered).
+        // Kept in flip-flops: as a RAM Gowin would replicate it once per
+        // row read (32 block RAMs)
+        #[sv("syn_ramstyle=\"registers\"")]
+        var arr: logic<PX_BITS> [64];
+        always_ff {
+            if i_we {
+                arr[{wbuf, in_x}] = i_rgb;
+            }
+            for r in 0..32 {
+                rdata[r] = arr[{raddr[5], r[4:0]}][raddr[4:0]];
+            }
+        }
+    }
 
     // ---- copy-out of the finished buffer ----
     var active : logic                    ;
