@@ -4,10 +4,36 @@
 // for the 16-panel build, --frame 128x192 for the 6-panel build). Keys come
 // from the terminal (input.rs); --auto lets a bot play (attract mode).
 pub mod blocks;
+pub mod bricks;
 pub mod gfx;
 pub mod input;
+pub mod invaders;
 pub mod net;
 pub mod stg;
+
+/// xorshift64 (games need no more)
+pub struct Rng(pub u64);
+impl Rng {
+    pub fn new(seed: u64) -> Rng {
+        Rng(seed | 1)
+    }
+    pub fn next(&mut self) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0
+    }
+    /// 0 <= f < 1
+    pub fn f(&mut self) -> f32 {
+        (self.next() >> 40) as f32 / (1u64 << 24) as f32
+    }
+    pub fn range(&mut self, a: f32, b: f32) -> f32 {
+        a + (b - a) * self.f()
+    }
+    pub fn chance(&mut self, p: f32) -> bool {
+        self.f() < p
+    }
+}
 
 use clap::Parser;
 use std::io::{IsTerminal, Write};
