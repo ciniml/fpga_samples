@@ -20,13 +20,15 @@ pub enum Key {
     Right,
     Up,
     Down,
-    Shot,
-    Bomb,
+    A,     // z
+    B,     // x / b
+    Space, // space
+    Hold,  // c / v
     Start,
     Pause,
     Quit,
 }
-const NKEYS: usize = 9;
+const NKEYS: usize = 11;
 
 const FIRST_HOLD: Duration = Duration::from_millis(550); // > auto-repeat delay
 const REPEAT_HOLD: Duration = Duration::from_millis(120); // > auto-repeat period
@@ -35,6 +37,7 @@ pub struct Input {
     pub releases: bool, // the terminal reports key releases
     until: [Option<Instant>; NKEYS],
     pressed: [bool; NKEYS], // pressed since the last frame
+    hits: [u32; NKEYS],     // presses + auto-repeats since the last frame
 }
 
 fn map(k: &KeyEvent) -> Option<Key> {
@@ -46,8 +49,10 @@ fn map(k: &KeyEvent) -> Option<Key> {
         KeyCode::Right | KeyCode::Char('d') | KeyCode::Char('l') => Key::Right,
         KeyCode::Up | KeyCode::Char('w') | KeyCode::Char('k') => Key::Up,
         KeyCode::Down | KeyCode::Char('s') | KeyCode::Char('j') => Key::Down,
-        KeyCode::Char('z') | KeyCode::Char(' ') => Key::Shot,
-        KeyCode::Char('x') | KeyCode::Char('b') => Key::Bomb,
+        KeyCode::Char('z') => Key::A,
+        KeyCode::Char('x') | KeyCode::Char('b') => Key::B,
+        KeyCode::Char(' ') => Key::Space,
+        KeyCode::Char('c') | KeyCode::Char('v') => Key::Hold,
         KeyCode::Enter => Key::Start,
         KeyCode::Char('p') => Key::Pause,
         KeyCode::Char('q') | KeyCode::Esc => Key::Quit,
@@ -79,7 +84,7 @@ impl Input {
                 )
             )?;
         }
-        Ok(Input { releases, until: [None; NKEYS], pressed: [false; NKEYS] })
+        Ok(Input { releases, until: [None; NKEYS], pressed: [false; NKEYS], hits: [0; NKEYS] })
     }
 
     /// reads all pending events
@@ -95,6 +100,7 @@ impl Input {
                     if kind == KeyEventKind::Press {
                         self.pressed[i] = true;
                     }
+                    self.hits[i] += 1;
                     self.until[i] = Some(if self.releases {
                         now + Duration::from_secs(3600)
                     } else if self.until[i].map_or(false, |t| t > now) {
@@ -118,6 +124,18 @@ impl Input {
     /// pressed since the last call (edge)
     pub fn take(&mut self, k: Key) -> bool {
         std::mem::replace(&mut self.pressed[k as usize], false)
+    }
+
+    /// presses and auto-repeats since the last call (one step each, like a
+    /// text cursor: for moves that follow the terminal's repeat rate)
+    pub fn hits(&mut self, k: Key) -> u32 {
+        std::mem::replace(&mut self.hits[k as usize], 0)
+    }
+
+    /// forget the edges and counts (e.g. after a scene change)
+    pub fn flush(&mut self) {
+        self.pressed = [false; NKEYS];
+        self.hits = [0; NKEYS];
     }
 }
 

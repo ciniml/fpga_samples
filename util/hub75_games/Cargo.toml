@@ -1,9 +1,9 @@
 [package]
-name = "hub75_stg"
+name = "hub75_games"
 version = "0.1.0"
 edition = "2021"
 
-# Vertical scrolling shooter for the HUB75 panels of eda/ethernet_hub75
+# Games for the HUB75 panels of eda/ethernet_hub75
 # (128x192, sent over UDP in the udpvideosend format)
 
 [dependencies]

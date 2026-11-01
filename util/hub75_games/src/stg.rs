@@ -5,6 +5,7 @@
 // change with its health. The ship fires by itself; power items widen the
 // shot (3 levels), a bomb clears the bullets and hurts every enemy.
 use crate::gfx::{scale, Canvas, Rgb, Sprite, H, W};
+use crate::input::{Input, Key};
 
 /// one tick of controls (from the keyboard or the bot)
 #[derive(Default, Clone, Copy)]
@@ -190,7 +191,7 @@ enum Scene {
     Over,
 }
 
-pub struct Game {
+pub struct Stg {
     rng: Rng,
     scene: Scene,
     pub tick: u64,
@@ -221,13 +222,13 @@ pub struct Game {
     spr: Sprites,
 }
 
-impl Game {
-    pub fn new(seed: u64, hi: u64) -> Game {
+impl Stg {
+    pub fn new(seed: u64, hi: u64) -> Stg {
         let mut rng = Rng(seed | 1);
         let stars = (0..70)
             .map(|i| Star { x: rng.range(0.0, WF), y: rng.range(0.0, HF), v: [0.3, 0.7, 1.4][i % 3] })
             .collect();
-        Game {
+        Stg {
             rng,
             scene: Scene::Title,
             tick: 0,
@@ -262,7 +263,7 @@ impl Game {
     fn start(&mut self) {
         let hi = self.hi;
         let seed = self.rng.next();
-        *self = Game::new(seed, hi);
+        *self = Stg::new(seed, hi);
         self.scene = Scene::Play;
         self.invuln = 120;
     }
@@ -720,7 +721,7 @@ impl Game {
     }
 
     // ---------------------------------------------------------------
-    pub fn draw(&self, c: &mut Canvas) {
+    fn render(&self, c: &mut Canvas) {
         c.clear([0, 0, 6]);
         for s in &self.stars {
             let k = (s.v * 120.0) as u8;
@@ -841,5 +842,36 @@ impl Game {
                 c.text_centre("ENTER: RETRY", mid + 46, 1, [255, 255, 255]);
             }
         }
+    }
+}
+
+fn ctl_from(inp: &mut Input) -> Ctl {
+    let axis = |a: Key, b: Key| inp.held(b) as i32 as f32 - inp.held(a) as i32 as f32;
+    let (dx, dy) = (axis(Key::Left, Key::Right), axis(Key::Up, Key::Down));
+    Ctl {
+        dx,
+        dy,
+        bomb: inp.take(Key::B),
+        start: inp.take(Key::Start) | inp.take(Key::Space) | inp.take(Key::A),
+        pause: inp.take(Key::Pause),
+    }
+}
+
+impl crate::Game for Stg {
+    fn step(&mut self, inp: Option<&mut Input>) {
+        let ctl = match inp {
+            Some(i) => ctl_from(i),
+            None => self.bot(),
+        };
+        self.update(&ctl);
+    }
+    fn draw(&self, c: &mut Canvas) {
+        self.render(c);
+    }
+    fn status(&self) -> String {
+        format!("stage {}  score {:07}", self.stage, self.score)
+    }
+    fn hi(&self) -> u64 {
+        self.hi
     }
 }
