@@ -9,7 +9,8 @@
 //     the TX FIFO.
 //   - UDP VIDEO_PORT: payload = 2-byte big-endian byte offset + data
 //     bytes, streamed to UdpVideoWriter (the protocol of the Chisel
-//     EthernetVideoSystem / util/udpvideosend). The sender's MAC / IP /
+//     EthernetVideoSystem / util/udpvideosend; UdpVideoWriter counts the
+//     offset in 2-byte units for frames over 64 KB). The sender's MAC / IP /
 //     port are remembered; `i_ack_req` sends it a 4-byte 0xdeadbeef.
 //   - UDP LUT_PORT: payload streamed to the colour table loader.
 //   - UDP STAT_PORT (0: off): any datagram is answered (to its sender's

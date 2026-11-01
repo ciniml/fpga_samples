@@ -3,6 +3,7 @@
 package ethernet_hub75_cfg;
     localparam int unsigned HUB75_IMPL = 0;
     localparam int unsigned RX_DELAY = 0;
+    localparam int unsigned PANEL_COLS = 2;
     localparam int unsigned PANEL_ROWS = 3;
     localparam bit CONN_ID = 1'b0;
     localparam int unsigned COMPONENT_BITS = 6;

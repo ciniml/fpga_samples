@@ -6,13 +6,18 @@
 //
 //   RTL8211E U43 ("PHY1", RGMII, 10/100/1000 Mb/s); RXC on H4 (GCLKT_15).
 //   The PHY2 port (U42) is not used.
-//   HUB75: J4..J9 of the first connector group (J4..J11 share CLK / LAT /
-//   OE / A..E), one 64x64 panel each, 2 panels across and PANEL_ROWS
-//   down, row major from the top left: J4 J5 / J6 J7 / J8 J9 → 128 × 64
-//   PANEL_ROWS (3: 128x192, 2: 128x128 with J8 / J9 dark). Lanes are 64
-//   wide, row major (UdpVideoWriter): panel (row p, column c) shows lanes
-//   4p + c (R1, upper half) and 4p + 2 + c (R2). The second group
-//   (J12..J19) is kept blank (OE high).
+//   HUB75: one 64x64 panel per connector, PANEL_COLS (2 or 4) across and
+//   PANEL_ROWS down, row major from the top left in connector order J4,
+//   J5, ...: 2 x 3 = J4 J5 / J6 J7 / J8 J9 (128x192, default), 2 x 2 =
+//   128x128 on J4..J7, 4 x 4 = J4..J7 / J8..J11 / J12..J15 / J16..J19
+//   (256x256). The two connector groups (J4..J11, J12..J19) have their
+//   own CLK / LAT / OE / A..E pins, driven alike; the second group is kept
+//   blank (OE high) when the panels fit the first. Lanes are 64 wide,
+//   row major (UdpVideoWriter): panel (row p, column c) shows lanes
+//   2 PANEL_COLS p + c (R1, upper half) and 2 PANEL_COLS p + PANEL_COLS +
+//   c (R2). Unused connectors output 0. More than 6 panels need the DDR2
+//   frame buffer (HUB75_IMPL >= 2); the video frame is then over 64 KB and
+//   the packet offsets count 2-byte units (UdpVideoWriter).
 //   DDR2 U46 (W9725G6KB, 16M x 16, banks 2 / 3 at 1.8 V; DM not wired):
 //   the frame buffer for HUB75_IMPL 2 / 3 (Ddr2Ctrl + Ddr2PhyGw3a), held idle
 //   (CKE low) otherwise.
@@ -21,7 +26,7 @@
 //     50 MHz display (HUB75 CLK = 50 / 3 = 16.7 MHz), 333.3 MHz DDR2 fclk
 //     (CK 166.7 MHz) and through CLKDIV / 4 the 83.3 MHz DDR2 pclk.
 //
-// HUB75_IMPL (0: soft, 1: GMT, 2: DDR2, 3: DDR2 + GMT), PANEL_ROWS and the RGMII delay options
+// HUB75_IMPL (0: soft, 1: GMT, 2..6: DDR2), PANEL_COLS / PANEL_ROWS and the RGMII delay options
 // (PHY_DELAY_BITS, TXC_SHIFTED, RX_DELAY) come from the package
 // ethernet_hub75_cfg
 // that the build writes (project.tcl), so that both versions build from
@@ -55,8 +60,9 @@
 //   03                  run the memory test (it clears the frame buffer)
 module DkLedRxcardTop #(
     param HUB75_IMPL    : u32     = $sv::ethernet_hub75_cfg::HUB75_IMPL    ,
-    param PANEL_ROWS    : u32     = $sv::ethernet_hub75_cfg::PANEL_ROWS    , // 64x64 panel rows (2 or 3), 2 panels each
-    param CONN_ID       : bit     = $sv::ethernet_hub75_cfg::CONN_ID       , // 1: J4..J11 show fixed colours (wiring check)
+    param PANEL_COLS    : u32     = $sv::ethernet_hub75_cfg::PANEL_COLS    , // 64x64 panels across (2 or 4)
+    param PANEL_ROWS    : u32     = $sv::ethernet_hub75_cfg::PANEL_ROWS    , // 64x64 panel rows (PANEL_COLS x PANEL_ROWS <= 16)
+    param CONN_ID       : bit     = $sv::ethernet_hub75_cfg::CONN_ID       , // 1: J4..J19 show fixed colours (wiring check)
     param CHAIN_REVERSE : bit     = 0                                      ,
     param COMPONENT_BITS: u32     = $sv::ethernet_hub75_cfg::COMPONENT_BITS, // BCM planes per colour (6..8)
     param BASE_OE_CYCLES: u32     = $sv::ethernet_hub75_cfg::BASE_OE_CYCLES, // OE unit (LSB plane 2x this)
@@ -85,19 +91,30 @@ module DkLedRxcardTop #(
     rgmii_rx_ctl: input  'rx logic       ,
     rgmii_rxd   : input  'rx logic    <4>,
 
-    hub75_j4  : output 'd logic<6>, // R1 G1 B1 R2 G2 B2, row 1 left
-    hub75_j5  : output 'd logic<6>, // row 1 right
-    hub75_j6  : output 'd logic<6>, // row 2 left
-    hub75_j7  : output 'd logic<6>, // row 2 right
-    hub75_j8  : output 'd logic<6>, // row 3 left
-    hub75_j9  : output 'd logic<6>, // row 3 right
-    hub75_j10 : output 'd logic<6>, // unused (CONN_ID only)
-    hub75_j11 : output 'd logic<6>, // unused (CONN_ID only)
-    hub75a_row: output 'd logic<5>, // A..E
+    hub75_j4  : output 'd logic<6>, // R1 G1 B1 R2 G2 B2 of panel 0 (top left)
+    hub75_j5  : output 'd logic<6>, // panel 1, ...
+    hub75_j6  : output 'd logic<6>,
+    hub75_j7  : output 'd logic<6>,
+    hub75_j8  : output 'd logic<6>,
+    hub75_j9  : output 'd logic<6>,
+    hub75_j10 : output 'd logic<6>,
+    hub75_j11 : output 'd logic<6>,
+    hub75_j12 : output 'd logic<6>,
+    hub75_j13 : output 'd logic<6>,
+    hub75_j14 : output 'd logic<6>,
+    hub75_j15 : output 'd logic<6>,
+    hub75_j16 : output 'd logic<6>,
+    hub75_j17 : output 'd logic<6>,
+    hub75_j18 : output 'd logic<6>,
+    hub75_j19 : output 'd logic<6>,
+    hub75a_row: output 'd logic<5>, // A..E of J4..J11
     hub75a_clk: output 'd logic   ,
     hub75a_lat: output 'd logic   ,
     hub75a_oe : output 'd logic   ,
-    hub75b_oe : output 'd logic   , // second group, blanked
+    hub75b_row: output 'd logic<5>, // J12..J19
+    hub75b_clk: output 'd logic   ,
+    hub75b_lat: output 'd logic   ,
+    hub75b_oe : output 'd logic   ,
 
     ddr_ck   : output 'm logic        , // H17 (CK# H18), SSTL18D
     ddr_cke  : output 'm logic        , // F14
@@ -551,7 +568,8 @@ module DkLedRxcardTop #(
     var ctrl_valid: 's logic     ;
     var ctrl_data : 's logic<8>  ;
     // ---- core ----
-    const NUM_LANES: u32 = 4 * PANEL_ROWS;
+    const NUM_PANELS: u32 = PANEL_COLS * PANEL_ROWS;
+    const NUM_LANES : u32 = 2 * NUM_PANELS;
 
     var row     : 'd logic<5>        ;
     var r       : 'd logic<NUM_LANES>;
@@ -568,7 +586,7 @@ module DkLedRxcardTop #(
 
     unsafe (cdc) {
         inst u_core: EthernetHub75Core #(
-            WIDTH         : 128            ,
+            WIDTH         : 64 * PANEL_COLS,
             HEIGHT        : 64 * PANEL_ROWS,
             LANE_WIDTH    : 64             ,
             SCAN_ROWS     : 32             ,
@@ -737,25 +755,27 @@ module DkLedRxcardTop #(
     }
     assign restart_m = rt_m2 != rt_m3;
 
-    // connector k = J(4 + k): panel row k / 2, column k % 2. CONN_ID
-    // replaces the data of J4..J11 by a colour per connector ({B, G, R}
-    // of the upper / lower half): J4 red, J5 green, J6 blue, J7 yellow,
-    // J8 cyan, J9 magenta, J10 white, J11 red over blue
+    // connector k = J(4 + k): panel row k / PANEL_COLS, column k %
+    // PANEL_COLS. CONN_ID replaces the data of J4..J19 by a colour per
+    // connector ({B, G, R} of the upper / lower half): J4 red, J5 green,
+    // J6 blue, J7 yellow, J8 cyan, J9 magenta, J10 white, J11 red over
+    // blue, and J12..J19 the same over white
     const ID_UP: bit<3> [8] = '{3'b001, 3'b010, 3'b100, 3'b011, 3'b110, 3'b101, 3'b111, 3'b001};
     const ID_LO: bit<3> [8] = '{3'b001, 3'b010, 3'b100, 3'b011, 3'b110, 3'b101, 3'b111, 3'b100};
 
-    var jout: 'd logic<6> [8];
-    for k in 0..8 :g_conn {
+    var jout: 'd logic<6> [16];
+    for k in 0..16 :g_conn {
         if CONN_ID :g_id {
-            assign jout[k] = {ID_LO[k], ID_UP[k]};
-        } else if k <: 2 * PANEL_ROWS :g_on {
-            const UP: u32 = 4 * (k / 2) + k % 2;
-            const LO: u32 = UP + 2;
+            assign jout[k] = {if k <: 8 ? ID_LO[k % 8] : 3'b111, ID_UP[k % 8]};
+        } else if k <: NUM_PANELS :g_on {
+            const UP: u32 = 2 * PANEL_COLS * (k / PANEL_COLS) + k % PANEL_COLS;
+            const LO: u32 = UP + PANEL_COLS;
             assign jout[k] = {b[LO], g[LO], r[LO], b[UP], g[UP], r[UP]};
         } else :g_off {
             assign jout[k] = 6'd0;
         }
     }
+    let group_b: 'd logic = CONN_ID || NUM_PANELS >: 8;
     assign hub75_j4   = jout[0];
     assign hub75_j5   = jout[1];
     assign hub75_j6   = jout[2];
@@ -764,11 +784,22 @@ module DkLedRxcardTop #(
     assign hub75_j9   = jout[5];
     assign hub75_j10  = jout[6];
     assign hub75_j11  = jout[7];
+    assign hub75_j12  = jout[8];
+    assign hub75_j13  = jout[9];
+    assign hub75_j14  = jout[10];
+    assign hub75_j15  = jout[11];
+    assign hub75_j16  = jout[12];
+    assign hub75_j17  = jout[13];
+    assign hub75_j18  = jout[14];
+    assign hub75_j19  = jout[15];
     assign hub75a_row = row;
     assign hub75a_clk = hclk;
     assign hub75a_lat = lat;
     assign hub75a_oe  = oe;
-    assign hub75b_oe  = 1'b1;
+    assign hub75b_row = if group_b ? row : 5'd0;
+    assign hub75b_clk = group_b && hclk;
+    assign hub75b_lat = group_b && lat;
+    assign hub75b_oe  = !group_b || oe;
 
     // ---- LEDs ----
     var frame_cnt: 'd logic<8> ;

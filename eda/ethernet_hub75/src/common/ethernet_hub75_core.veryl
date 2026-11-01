@@ -580,6 +580,7 @@ module EthernetHub75Core #(
     } else :g_plane {
         const LX_BITS   : u32 = $clog2(LANE_WIDTH);
         const PLANE_BITS: u32 = if COMPONENT_BITS >: 1 ? $clog2(COMPONENT_BITS) : 1;
+        const FILL_NIBS : u32 = 2; // plane buffer fill: 4 clocks per burst
 
         var fetch_req  : 'm logic             ;
         var fetch_row  : 'm logic<5>          ;
@@ -588,8 +589,8 @@ module EthernetHub75Core #(
         var fetch_done : 'm logic             ;
         var fill_we    : 'm logic             ;
         var fill_lane  : 'm logic<LANE_BITS>  ;
-        var fill_addr  : 'm logic<LX_BITS - 1>;
-        var fill_data  : 'm logic<12>         ;
+        var fill_addr  : 'm logic<LX_BITS - 2>;
+        var fill_data  : 'm logic<24>         ;
 
         inst fb: DdrPlaneFb #(
             LANE_WIDTH    : LANE_WIDTH     ,
@@ -600,6 +601,7 @@ module EthernetHub75Core #(
             USE_GMT       : HUB75_IMPL == 5,
             MEM_ADDR_BITS : MEM_ADDR_BITS  ,
             BIST_BURSTS   : BIST_BURSTS    ,
+            FILL_NIBS     : FILL_NIBS      ,
         ) (
             i_clk         : i_clk         ,
             i_rst         : i_rst         ,
@@ -646,6 +648,7 @@ module EthernetHub75Core #(
             CLK_LOW_EXTRA : CLK_LOW_EXTRA ,
             COMPONENT_BITS: COMPONENT_BITS,
             BASE_OE_CYCLES: BASE_OE_CYCLES,
+            FILL_NIBS     : FILL_NIBS     ,
         ) (
             i_fclk       : i_mclk     ,
             i_frst       : i_mrst     ,

@@ -106,6 +106,8 @@ module DdrFb #(
     const K_BITS      : u32 = if GROUP >: 1 ? $clog2(GROUP) : 1;
     const ROW_BITS    : u32 = $clog2(SCAN_ROWS);
     const RQ_DEPTH    : u32 = 32;
+    const POS_BITS    : u32 = $clog2(FRAME_BYTES) + 1;
+    const WORD_OFS    : bit = FRAME_BYTES >: 65536; // packet offsets in 2-byte units (UdpVideoWriter)
 
     // ==================================================================
     // System domain: byte assembly, flip request, colour tables
@@ -119,7 +121,7 @@ module DdrFb #(
     let wbank: 's logic = ~ack_s2;
     assign o_flip_busy = busy;
 
-    var pos      : 's logic<17>     ;
+    var pos      : 's logic<POS_BITS>;
     var wword    : 's logic<128>    ;
     var push     : 's logic         ;
     var push_flip: 's logic         ;
@@ -144,7 +146,7 @@ module DdrFb #(
     always_ff (i_clk) {
         if i_rst {
             req_tog   = 1'b0;
-            pos       = 17'd0;
+            pos       = 0;
             wword     = 128'd0;
             push      = 1'b0;
             push_flip = 1'b0;
@@ -160,7 +162,7 @@ module DdrFb #(
                 }
             }
             if i_start {
-                pos = {1'b0, i_offset};
+                pos = if WORD_OFS ? ({i_offset, 1'b0} as POS_BITS) : (i_offset as POS_BITS);
             } else if i_valid {
                 if !busy && pos <: FRAME_BYTES {
                     wword[pos[3:0] * 8+:8] = i_data;
@@ -175,7 +177,7 @@ module DdrFb #(
                         }
                     }
                 }
-                pos = pos + 17'd1;
+                pos = pos + 1;
             }
         }
     }

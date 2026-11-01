@@ -5,7 +5,9 @@
 // buffer writes for Hub75Lanes.
 //
 // The frame is WIDTH × HEIGHT RGB565 pixels, little endian, row major,
-// addressed by byte offset (the protocol of util/udpvideosend). Writing
+// addressed by byte offset (the protocol of util/udpvideosend; frames
+// larger than 64 KB, e.g. 256x256, count the offset in 2-byte units, so
+// up to 128 KB). Writing
 // the frame's last byte requests a bank flip; until the display has
 // switched (i_flip_busy) incoming bytes are dropped, and the sender
 // waits for the ack anyway.
@@ -58,9 +60,11 @@ module UdpVideoWriter #(
 ) {
     const FRAME_BYTES: u32 = WIDTH * HEIGHT * 2;
     const PIDX_BITS  : u32 = X_BITS + Y_BITS;
+    const POS_BITS   : u32 = PIDX_BITS + 2;
+    const WORD_OFS   : bit = FRAME_BYTES >: 65536; // offset in 2-byte units
 
     // ---- byte assembly ----
-    var pos     : logic<17>       ;
+    var pos     : logic<POS_BITS> ;
     var lo      : logic<8>        ;
     var s1_valid: logic           ;
     var s1_px   : logic<16>       ;
@@ -71,7 +75,7 @@ module UdpVideoWriter #(
 
     always_ff {
         if i_rst {
-            pos      = 17'd0;
+            pos      = 0;
             lo       = 8'd0;
             s1_valid = 1'b0;
             s1_px    = 16'd0;
@@ -81,7 +85,7 @@ module UdpVideoWriter #(
             s1_valid = 1'b0;
             flip_q   = 1'b0;
             if i_start {
-                pos = {1'b0, i_offset};
+                pos = if WORD_OFS ? ({i_offset, 1'b0} as POS_BITS) : (i_offset as POS_BITS);
             } else if i_valid {
                 if !i_flip_busy && pos <: FRAME_BYTES {
                     if !pos[0] {
@@ -95,7 +99,7 @@ module UdpVideoWriter #(
                         flip_q = 1'b1;
                     }
                 }
-                pos = pos + 17'd1;
+                pos = pos + 1;
             }
         }
     }

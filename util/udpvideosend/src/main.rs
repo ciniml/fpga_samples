@@ -47,6 +47,8 @@ fn main() -> anyhow::Result<()> {
     let packet_payload_size = 1024;
     let packet_size = HEADER_SIZE + packet_payload_size;
     let number_of_packets = (frame_bytes + packet_payload_size - 1) / packet_payload_size;
+    // frames over 64 KB (e.g. 256x256 RGB565): the offset counts 2-byte units
+    let offset_unit = if frame_bytes > 65536 { 2 } else { 1 };
 
     let (buffer_return, buffer_acquire) = std::sync::mpsc::channel();
     for _ in 0..128 {
@@ -81,7 +83,7 @@ fn main() -> anyhow::Result<()> {
                 // Set the header for each packet
                 for packet_index in 0..number_of_packets {
                     let packet_offset = packet_index * packet_size;
-                    let packet_start_address = (packet_index * packet_payload_size) as u16;
+                    let packet_start_address = (packet_index * packet_payload_size / offset_unit) as u16;
                     buf[packet_offset + 0] = (packet_start_address >> 8) as u8;
                     buf[packet_offset + 1] = (packet_start_address & 0xff) as u8;
                 }
@@ -126,7 +128,7 @@ fn main() -> anyhow::Result<()> {
                 // Set the header for each packet
                 for packet_index in 0..number_of_packets {
                     let packet_offset = packet_index * packet_size;
-                    let packet_start_address = (packet_index * packet_payload_size) as u16;
+                    let packet_start_address = (packet_index * packet_payload_size / offset_unit) as u16;
                     buf[packet_offset + 0] = (packet_start_address >> 8) as u8;
                     buf[packet_offset + 1] = (packet_start_address & 0xff) as u8;
                 }

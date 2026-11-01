@@ -56,15 +56,26 @@ endif
 #               the data, for a PHY with its TX delay off)
 #   RX_DELAY    IODELAY steps (12.5 ps) on RXD / RX_CTL, 0..255
 # Non-default values are appended to the build directory name.
-# DK_LED-RXCARD panels: PANEL_ROWS rows of two 64x64 panels on J4..J9
-# (3: 128x192, default; 2: 128x128 on J4..J7, build directory suffix _4p)
+# DK_LED-RXCARD panels: PANEL_COLS x PANEL_ROWS 64x64 panels, one per
+# connector from J4 (2 x 3 = 128x192 on J4..J9, default; 2 x 2 = 128x128 on
+# J4..J7; 4 x 4 = 256x256 on J4..J19, DDR2 frame buffers only). Other than
+# 6 panels the build directory gets the suffix _<n>p.
+PANEL_COLS ?= 2
 PANEL_ROWS ?= 3
-ifneq ($(PANEL_ROWS),3)
-BUILD_SUFFIX := $(BUILD_SUFFIX)_$(shell expr $(PANEL_ROWS) \* 2)p
+NUM_PANELS := $(shell expr $(PANEL_COLS) \* $(PANEL_ROWS))
+ifneq ($(NUM_PANELS),6)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_$(NUM_PANELS)p
 else ifeq ($(TARGET)$(HUB75_IMPL),dk_led_rxcard_gw3a20gmt)
 # 12 lanes × 3 colours of 768-word plane memories, each rounded up to 4
 # BSRAMs = 144 > 120: the GMT build fits up to PANEL_ROWS=2
 $(error HUB75_IMPL=gmt does not fit 6 panels (BSRAM); use PANEL_ROWS=2)
+endif
+ifeq ($(TARGET),dk_led_rxcard_gw3a20)
+ifneq ($(shell test $(NUM_PANELS) -gt 6 && echo big),)
+ifneq ($(filter soft gmt,$(HUB75_IMPL)),)
+$(error $(NUM_PANELS) panels need a DDR2 frame buffer (HUB75_IMPL=ddr, ddrplane, ...))
+endif
+endif
 endif
 # DK_LED-RXCARD gradation: COLOR_BITS BCM planes per colour (6 default, 7 or
 # 8; build directory suffix _c<n>). The OE unit shrinks with it (16 >> (n - 6)
@@ -74,7 +85,7 @@ COLOR_BITS ?= 6
 BASE_OE := $(shell expr 16 / \( 1 \* $$(( 1 << ($(COLOR_BITS) - 6) )) \))
 ifneq ($(COLOR_BITS),6)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_c$(COLOR_BITS)
-ifeq ($(TARGET)$(PANEL_ROWS),dk_led_rxcard_gw3a203)
+ifeq ($(TARGET)$(NUM_PANELS),dk_led_rxcard_gw3a206)
 ifneq ($(filter soft gmt,$(HUB75_IMPL)),)
 $(error COLOR_BITS=$(COLOR_BITS) with the BSRAM frame buffer (HUB75_IMPL=$(HUB75_IMPL)) fits PANEL_ROWS=2 only)
 endif
@@ -115,7 +126,7 @@ VERYL_SRCS := Veryl.toml $(wildcard src/common/*.veryl) $(wildcard src/*/*.veryl
               $(wildcard $(RTL_DIR)/eth_mac/*.veryl) $(wildcard $(RTL_DIR)/hub75/*.veryl) \
               $(wildcard $(RTL_DIR)/ddr2/*.veryl)
 
-PROJECT_ADDITIONAL_ARGS := $(FILELIST) $(TOP_MODULE) $(HUB75_IMPL_NUM) $(PHY_DELAY_HEX) $(TXC_SHIFTED) $(RX_DELAY) $(PANEL_ROWS) $(CONN_ID) $(COLOR_BITS) $(BASE_OE)
+PROJECT_ADDITIONAL_ARGS := $(FILELIST) $(TOP_MODULE) $(HUB75_IMPL_NUM) $(PHY_DELAY_HEX) $(TXC_SHIFTED) $(RX_DELAY) $(PANEL_ROWS) $(CONN_ID) $(COLOR_BITS) $(BASE_OE) $(PANEL_COLS)
 
 SRCS := project.tcl $(wildcard src/$(TARGET)/*.cst) $(wildcard src/$(TARGET)/*.sdc) $(wildcard src/$(TARGET)/ip/*.v) $(FILELIST)
 

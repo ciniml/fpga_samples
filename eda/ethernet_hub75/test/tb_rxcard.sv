@@ -11,7 +11,7 @@
 //   2. ICMP echo request (64 B)      -> echo reply (checksums, payload)
 //   3. a frame with a bad FCS        -> dropped, no reply
 //   4. a video frame (util/udpvideosend format: W * H * 2 / 1024 packets
-//      of 2 + 1024 B)
+//      of 2 + 1024 B; the offset in 2-byte units for frames over 64 KB)
 //                                    -> 0xdeadbeef ack, then the panel
 //      model must show every pixel (identity colour table)
 //   5. a colour table (LUT port) + a second frame -> panel shows the table
@@ -19,8 +19,8 @@
 //   6. ARP again (the service still answers after the video traffic)
 //   7. 100 Mb/s: RXC to 25 MHz, ARP and ICMP in nibble mode
 //
-// The panel model (one 64x64 panel per connector, J4 J5 / J6 J7 / J8 J9
-// row major, PROWS rows) shifts the lanes on HUB75 CLK rising edges,
+// The panel model (one 64x64 panel per connector from J4, PCOLS across,
+// PROWS rows, row major) shifts the lanes on HUB75 CLK rising edges,
 // takes a bit plane on every LAT (MSB plane first after a row change) and
 // checks the OE pulse length of each plane; unused connectors must stay 0.
 `timescale 1ns/1ps
@@ -29,8 +29,9 @@
 /* verilator lint_off BLKSEQ */
 /* verilator lint_off INITIALDLY */
 module tb;
+    parameter int PCOLS = 2;   // panels across (DUT PANEL_COLS)
     parameter int PROWS = 3;   // panel rows (DUT PANEL_ROWS)
-    localparam int W = 128, H = 64 * PROWS, CHAIN = 64, LANES = 4 * PROWS, SCAN = 32;
+    localparam int W = 64 * PCOLS, H = 64 * PROWS, CHAIN = 64, NPAN = PCOLS * PROWS, LANES = 2 * NPAN, SCAN = 32;
     parameter int BITS = 6;          // DUT COMPONENT_BITS
     localparam int BASE_OE = 16 >> (BITS - 6), NPK = W * H * 2 / 1024;
     localparam logic [47:0] DUT_MAC  = 48'h11_22_33_44_55_66;
@@ -61,19 +62,23 @@ module tb;
     tri1        mdio;
     wire        hclk, lat, oe, oe_b;
     wire  [4:0] row_pins;
-    wire  [5:0] j [6];   // J4..J9
+    wire  [5:0] j [16];  // J4..J19
+    wire  [4:0] row_b;
+    wire        hclk_b, lat_b;
     tri   [15:0] ddr_dq;
     tri   [1:0]  ddr_dqs;
 
-    DkLedRxcardTop #(.HUB75_IMPL(IMPL), .PANEL_ROWS(PROWS), .COMPONENT_BITS(BITS), .BASE_OE_CYCLES(BASE_OE), .TXC_SHIFTED(TXS), .PHY_RST_LOG2(8), .PHY_WAIT_LOG2(8),
+    DkLedRxcardTop #(.HUB75_IMPL(IMPL), .PANEL_COLS(PCOLS), .PANEL_ROWS(PROWS), .COMPONENT_BITS(BITS), .BASE_OE_CYCLES(BASE_OE), .TXC_SHIFTED(TXS), .PHY_RST_LOG2(8), .PHY_WAIT_LOG2(8),
                      .DDR_T_INIT_PS(20_000_000), .BIST_BURSTS(4096)) dut (
         .clk50(clk50), .key_n(1'b1), .led(led),
         .phy_rst_n(rstn), .phy_mdc(mdc), .phy_mdio(mdio),
         .rgmii_txc(txc), .rgmii_tx_ctl(tx_ctl), .rgmii_txd(txd),
         .rgmii_rxc(rxc), .rgmii_rx_ctl(rx_ctl), .rgmii_rxd(rxd),
         .hub75_j4(j[0]), .hub75_j5(j[1]), .hub75_j6(j[2]), .hub75_j7(j[3]), .hub75_j8(j[4]),
-        .hub75_j9(j[5]), .hub75_j10(), .hub75_j11(), .hub75a_row(row_pins), .hub75a_clk(hclk),
-        .hub75a_lat(lat), .hub75a_oe(oe), .hub75b_oe(oe_b),
+        .hub75_j9(j[5]), .hub75_j10(j[6]), .hub75_j11(j[7]), .hub75_j12(j[8]), .hub75_j13(j[9]),
+        .hub75_j14(j[10]), .hub75_j15(j[11]), .hub75_j16(j[12]), .hub75_j17(j[13]), .hub75_j18(j[14]),
+        .hub75_j19(j[15]), .hub75a_row(row_pins), .hub75a_clk(hclk), .hub75a_lat(lat), .hub75a_oe(oe),
+        .hub75b_row(row_b), .hub75b_clk(hclk_b), .hub75b_lat(lat_b), .hub75b_oe(oe_b),
         .ddr_ck(), .ddr_cke(), .ddr_odt(), .ddr_cs_n(), .ddr_ras_n(), .ddr_cas_n(), .ddr_we_n(),
         .ddr_ba(), .ddr_a(), .ddr_dq(ddr_dq), .ddr_dqs(ddr_dqs)
     );
@@ -373,12 +378,13 @@ module tb;
     int   panel_frames = 0;
     realtime frame_t0 = 0, frame_period = 0;
     logic hclk_d = 0, lat_d = 0;
-    // lane l (64 wide, row major): panel row l / 4, column l % 2, R2 half
-    // when (l / 2) % 2; connector J(4 + 2 * row + column)
+    // lane l (64 wide, row major): panel row l / (2 PCOLS), column l %
+    // PCOLS, R2 half when (l / PCOLS) % 2; connector J(4 + PCOLS * row +
+    // column)
     logic [LANES-1:0] lanes_r, lanes_g, lanes_b;
     always_comb
         for (int l = 0; l < LANES; l++) begin
-            automatic int k = 2 * (l / 4) + l % 2, o = ((l / 2) % 2) * 3;
+            automatic int k = PCOLS * (l / (2 * PCOLS)) + l % PCOLS, o = ((l / PCOLS) % 2) * 3;
             lanes_r[l] = j[k][o];
             lanes_g[l] = j[k][o + 1];
             lanes_b[l] = j[k][o + 2];
@@ -390,11 +396,16 @@ module tb;
         lat_d  <= lat;
         if (!oe) oe_len++;
         if (hclk && !hclk_d) begin
-            for (int k = 2 * PROWS; k < 6; k++)
+            for (int k = NPAN; k < 16; k++)
                 if (j[k] !== 6'd0) begin
                     $display("[%0t] ERROR: unused connector J%0d = %b", $time, 4 + k, j[k]);
                     errors++;
                 end
+            // the second group runs with the first when it has panels
+            if (NPAN > 8 ? (row_b !== row_pins || hclk_b !== hclk || lat_b !== lat || oe_b !== oe) : oe_b !== 1'b1) begin
+                $display("[%0t] ERROR: group 2 control row %0d clk %b lat %b oe %b", $time, row_b, hclk_b, lat_b, oe_b);
+                errors++;
+            end
             if (shift_idx < CHAIN) begin
                 sr_r[shift_idx] = lanes_r;
                 sr_g[shift_idx] = lanes_g;
@@ -415,7 +426,7 @@ module tb;
             if (shift_idx == CHAIN && plane >= 0) begin
                 for (int x = 0; x < CHAIN; x++)
                     for (int l = 0; l < LANES; l++) begin
-                        automatic int y0 = (l / 2) * SCAN, x0 = (l % 2) * CHAIN;
+                        automatic int y0 = (l / PCOLS) * SCAN, x0 = (l % PCOLS) * CHAIN;
                         img_r[y0 + row][x0 + x][plane] = sr_r[x][l];
                         img_g[y0 + row][x0 + x][plane] = sr_g[x][l];
                         img_b[y0 + row][x0 + x][plane] = sr_b[x][l];
@@ -459,7 +470,7 @@ module tb;
 
     task automatic send_video_frame();
         for (int p = 0; p < NPK; p++) begin
-            put16(42, p * 1024);
+            put16(42, W * H * 2 > 65536 ? p * 512 : p * 1024);
             for (int i = 0; i < 1024; i++) begin
                 automatic int byte_off = p * 1024 + i;
                 automatic logic [15:0] px = frame_px[byte_off / 2];

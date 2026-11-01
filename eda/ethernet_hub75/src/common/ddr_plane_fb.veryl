@@ -26,8 +26,10 @@
 // is taken when the display asks for the MSB plane of row 0 (the same
 // handshake as DdrFb: o_flip_busy until then).
 //
-// Plane fetch: 2 NUM_LANES reads, unpacked a nibble per clock into the
-// plane buffer (8 nibbles per word, R / G / B of one lane at once).
+// Plane fetch: 2 NUM_LANES reads (all issued at once: the read FIFO holds
+// a whole plane), unpacked FILL_NIBS nibbles per clock into the plane
+// buffer (8 nibbles per word, R / G / B of one lane at once): 8 /
+// FILL_NIBS clocks per burst.
 //
 // Start-up and the memory test are those of DdrFb (the clear covers both
 // banks of this layout).
@@ -41,11 +43,13 @@ module DdrPlaneFb #(
     param MEM_ADDR_BITS : u32 = 21                                                 ,
     param BIST_BURSTS   : u32 = 1 << 21                                            ,
     param FIFO_AW       : u32 = 8                                                  ,
+    param FILL_NIBS     : u32 = 2                                                  , // nibbles per fill write (1, 2, 4)
     const LANE_BITS     : u32 = if NUM_LANES >: 1 ? $clog2(NUM_LANES) : 1          ,
     const LX_BITS       : u32 = $clog2(LANE_WIDTH)                                 ,
     const ROW_BITS      : u32 = $clog2(SCAN_ROWS)                                  ,
     const PLANE_BITS    : u32 = if COMPONENT_BITS >: 1 ? $clog2(COMPONENT_BITS) : 1,
     const PX_BITS       : u32 = 3 * COMPONENT_BITS                                 ,
+    const NIB_BITS      : u32 = $clog2(FILL_NIBS)                                  ,
 ) (
     // ---- system: pixels from UdpVideoWriter ----
     i_clk      : input  's clock                    ,
@@ -78,8 +82,8 @@ module DdrPlaneFb #(
     o_fetch_done : output 'm logic             ,
     o_fill_we    : output 'm logic             ,
     o_fill_lane  : output 'm logic<LANE_BITS>  ,
-    o_fill_addr  : output 'm logic<LX_BITS - 1>, // {buffer, chain_x / 4}
-    o_fill_data  : output 'm logic<12>         , // {R, G, B} nibbles
+    o_fill_addr  : output 'm logic<LX_BITS - 1 - NIB_BITS>, // {buffer, chain_x / (4 FILL_NIBS)}
+    o_fill_data  : output 'm logic<12 * FILL_NIBS>       , // groups of {R, G, B} nibbles
 
     // ---- status ('m) ----
     o_ready       : output 'm logic                      ,
@@ -96,7 +100,9 @@ module DdrPlaneFb #(
     const DW      : u32 = 1 + FB_BITS + 128; // {flip, address, data}
     const NREAD   : u32 = NUM_LANES << XW_BITS; // bursts per plane fetch
     const RD_BITS : u32 = $clog2(NREAD + 1);
-    const RQ_DEPTH: u32 = 32;
+    const RQ_BITS : u32 = if NREAD >: 32 ? $clog2(NREAD) : 5; // read FIFO: a whole plane
+    const RQ_DEPTH: u32 = 1 << RQ_BITS;
+    const ST_BITS : u32 = 3 - NIB_BITS; // unpack steps per burst
 
     // ==================================================================
     // System domain: corner turn, bursts, flip
@@ -346,9 +352,9 @@ module DdrPlaneFb #(
     var f_buf    : 'm logic            ;
     var zero_fill: 'm logic            ;
     var iss_i    : 'm logic<RD_BITS>   ; // bursts issued
-    var rq_wptr  : 'm logic<6>         ;
-    var rq_rptr  : 'm logic<6>         ;
-    let rq_count : 'm logic<6>          = rq_wptr - rq_rptr;
+    var rq_wptr  : 'm logic<RQ_BITS + 1>;
+    var rq_rptr  : 'm logic<RQ_BITS + 1>;
+    let rq_count : 'm logic<RQ_BITS + 1> = rq_wptr - rq_rptr;
     let iss_more : 'm logic             = iss_i != NREAD as RD_BITS;
     // burst iss_i = lane iss_i >> XW_BITS, word iss_i % 2^XW_BITS
     let iss_addr: 'm logic<FB_BITS> = {ack_tog, f_row, iss_i[XW_BITS + LANE_BITS - 1:0], f_plane};
@@ -412,22 +418,22 @@ module DdrPlaneFb #(
     var rq_q  : 'm logic<128>           ;
     always_ff (i_mclk) {
         if i_mrd_valid && mode == Mode::RUN {
-            rq_mem[rq_wptr[4:0]] = i_mrd_data;
+            rq_mem[rq_wptr[RQ_BITS - 1:0]] = i_mrd_data;
         }
-        rq_q = rq_mem[rq_rptr[4:0]];
+        rq_q = rq_mem[rq_rptr[RQ_BITS - 1:0]];
     }
 
     // ---- unpacker: a burst = R, G, B words of one lane / word, 8 nibbles ----
     var up_i    : 'm logic<RD_BITS>    ; // burst being unpacked
-    var up_nib  : 'm logic<3>          ;
+    var up_nib  : 'm logic<ST_BITS>    ; // step: nibbles FILL_NIBS up_nib ..
     var up_load : 'm logic             ;
     var up_have : 'm logic             ;
     var up_more : 'm logic             ;
     var cur     : 'm logic<128>        ;
     var fill_we : 'm logic             ;
     var fill_ln : 'm logic<LANE_BITS>  ;
-    var fill_ad : 'm logic<LX_BITS - 1>;
-    var fill_d  : 'm logic<12>         ;
+    var fill_ad : 'm logic<LX_BITS - 1 - NIB_BITS>;
+    var fill_d  : 'm logic<12 * FILL_NIBS>        ;
     var fill_end: 'm logic             ;
     var done_q  : 'm logic             ;
 
@@ -438,7 +444,18 @@ module DdrPlaneFb #(
     assign o_fetch_done = done_q;
 
     let up_emit: 'm logic = up_more && (up_have || zero_fill);
-    let up_last: 'm logic = up_nib == 3'd7 && up_i == (NREAD - 1) as RD_BITS;
+    let up_end : 'm logic = up_nib == '1;
+    let up_last: 'm logic = up_end && up_i == (NREAD - 1) as RD_BITS;
+    // the nibbles of this step: group n = nibble FILL_NIBS up_nib + n
+    var up_d: 'm logic<12 * FILL_NIBS>;
+    always_comb {
+        for n in 0..FILL_NIBS {
+            up_d[12 * n+:12] = {
+                cur[64 + ((up_nib << NIB_BITS) + n) * 4+:4], cur[32 + ((up_nib << NIB_BITS) + n) * 4+:4],
+                cur[((up_nib << NIB_BITS) + n) * 4+:4]
+            };
+        }
+    }
 
     always_ff (i_mclk) {
         if i_mrst {
@@ -464,10 +481,10 @@ module DdrPlaneFb #(
             f_buf        = 1'b0;
             zero_fill    = 1'b0;
             iss_i        = 0;
-            rq_wptr      = 6'd0;
-            rq_rptr      = 6'd0;
+            rq_wptr      = 0;
+            rq_rptr      = 0;
             up_i         = 0;
-            up_nib       = 3'd0;
+            up_nib       = 0;
             up_load      = 1'b0;
             up_have      = 1'b0;
             up_more      = 1'b0;
@@ -475,7 +492,7 @@ module DdrPlaneFb #(
             fill_we      = 1'b0;
             fill_ln      = 0;
             fill_ad      = 0;
-            fill_d       = 12'd0;
+            fill_d       = 0;
             fill_end     = 1'b0;
             done_q       = 1'b0;
         } else {
@@ -596,7 +613,7 @@ module DdrPlaneFb #(
                 zero_fill = mode != Mode::RUN;
                 iss_i     = 0;
                 up_i      = 0;
-                up_nib    = 3'd0;
+                up_nib    = 0;
                 up_more   = 1'b1;
                 up_have   = 1'b0;
                 // the frame is chosen at the MSB plane of row 0
@@ -612,18 +629,18 @@ module DdrPlaneFb #(
                 iss_i = iss_i + 1;
             }
             if i_mrd_valid && mode == Mode::RUN {
-                rq_wptr = rq_wptr + 6'd1;
+                rq_wptr = rq_wptr + 1;
             }
 
             // ---- unpacker ----
             // the next burst is read while the last nibble of the current
-            // one goes out (no gap: 8 clocks per burst)
+            // one goes out (no gap: 8 / FILL_NIBS clocks per burst)
             if up_load {
                 cur     = rq_q;
                 up_have = 1'b1;
                 up_load = 1'b0;
-                rq_rptr = rq_rptr + 6'd1;
-            } else if up_more && !zero_fill && rq_count != 6'd0 && (!up_have || up_nib == 3'd6) {
+                rq_rptr = rq_rptr + 1;
+            } else if up_more && !zero_fill && rq_count != 0 && (!up_have || up_nib == ((1 << ST_BITS) - 2) as ST_BITS) {
                 up_load = 1'b1;
             }
 
@@ -633,14 +650,10 @@ module DdrPlaneFb #(
                 fill_we  = 1'b1;
                 fill_ln  = up_i[XW_BITS + LANE_BITS - 1:XW_BITS];
                 fill_ad  = {f_buf, up_i[XW_BITS - 1:0], up_nib};
-                fill_d   = if zero_fill ?
-                    12'd0
-                :
-                    {cur[64 + up_nib * 4+:4], cur[32 + up_nib * 4+:4], cur[up_nib * 4+:4]}
-                ;
+                fill_d   = if zero_fill ? 0 : up_d;
                 fill_end = up_last;
-                if up_nib == 3'd7 {
-                    up_nib  = 3'd0;
+                if up_end {
+                    up_nib  = 0;
                     up_have = up_load; // the next burst lands in cur this clock
                     if up_i == (NREAD - 1) as RD_BITS {
                         up_more = 1'b0;
@@ -648,7 +661,7 @@ module DdrPlaneFb #(
                         up_i = up_i + 1;
                     }
                 } else {
-                    up_nib = up_nib + 3'd1;
+                    up_nib = up_nib + 1;
                 }
             }
             done_q = fill_end;

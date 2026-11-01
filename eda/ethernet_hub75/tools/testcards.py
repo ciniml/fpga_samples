@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-# Test cards for ethernet_hub75 (udpvideosend format, waits for each ack).
+# Test cards for ethernet_hub75 (udpvideosend format, waits for each ack;
+# frames over 64 KB, e.g. 256x256, give the offset in 2-byte units).
 #   testcards.py [width] [height] [seconds per card] [loops]
 # Cards, in turn:
 #   1 panel  - each 64x64 panel its own colour, a white frame, its number
-#              (1..6, row major) and an arrow in its top-left corner
+#              (1..16, row major) and an arrow in its top-left corner
 #   2 bars   - colour bars (top) and a 32-step grey ramp (bottom)
 #   3 grid   - 8 px grid, panel boundaries red, centre cross green
 #   4 ball   - a ball bouncing over the whole display + frame counter
@@ -66,7 +67,10 @@ def card_panel():
                 img.set(x0 + 2 + i, y0 + 2, (255, 255, 0)); img.set(x0 + 2, y0 + 2 + i, (255, 255, 0))
                 img.set(x0 + 2 + i, y0 + 2 + i, (255, 255, 0))
             n += 1
-            img.text(str(n), x0 + 17, y0 + 11, 6, (255, 255, 255))
+            if n < 10:
+                img.text(str(n), x0 + 17, y0 + 11, 6, (255, 255, 255))
+            else:
+                img.text(str(n), x0 + 9, y0 + 18, 4, (255, 255, 255))
     return img
 
 def card_bars():
@@ -116,8 +120,9 @@ s.settimeout(0.2)
 
 def send(img):
     data = img.bytes()
+    unit = 2 if len(data) > 65536 else 1
     for off in range(0, len(data), 1024):
-        s.sendto(off.to_bytes(2, "big") + data[off:off + 1024], ("192.168.10.2", 10004))
+        s.sendto((off // unit).to_bytes(2, "big") + data[off:off + 1024], ("192.168.10.2", 10004))
     try:
         s.recvfrom(16)
         return True

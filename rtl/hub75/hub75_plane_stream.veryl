@@ -20,11 +20,12 @@
 //     starts, so the filler has at least a plane's shift time (CHAIN_LEN
 //     HUB75 clocks). Row 0's MSB plane starts a frame (the filler flips
 //     frames there).
-//   - The buffer of a lane is a small distributed RAM of 12-bit words =
-//     4 bits each of R, G, B: word {buffer, chain_x / 4} holds chain_x %
-//     4 = i at bit i of each nibble ({R[3:0], G[3:0], B[3:0]}). The
-//     filler writes nibble by nibble, the engine reads one word per shift
-//     and picks one bit per colour.
+//   - The buffer of a lane is a small distributed RAM of FILL_NIBS
+//     12-bit groups = 4 bits each of R, G, B: word {buffer, chain_x / (4
+//     FILL_NIBS)} holds chain_x % (4 FILL_NIBS) = 4 n + i at bit i of the
+//     nibbles of group n ({R[3:0], G[3:0], B[3:0]} at 12 n). The filler
+//     writes a word at a time, the engine reads one word per shift and
+//     picks one bit per colour.
 pub module Hub75PlaneStream #(
     param SCAN_ROWS     : u32 = 32                                                 , // rows sharing one row address (1/SCAN_ROWS scan, <= 32)
     param CHAIN_LEN     : u32 = 128                                                , // shift cells per row (panel width × panels in the chain)
@@ -33,18 +34,21 @@ pub module Hub75PlaneStream #(
     param CLK_LOW_EXTRA : u32 = 1                                                  ,
     param COMPONENT_BITS: u32 = 6                                                  , // BCM bit planes per colour component
     param BASE_OE_CYCLES: u32 = 16                                                 , // OE pulse unit; LSB plane shows 2×this
+    param FILL_NIBS     : u32 = 1                                                  , // 12-bit groups per fill write (1, 2, 4)
     const ROW_BITS      : u32 = $clog2(SCAN_ROWS)                                  ,
     const X_BITS        : u32 = $clog2(CHAIN_LEN)                                  ,
     const LANE_BITS     : u32 = if NUM_LANES >: 1 ? $clog2(NUM_LANES) : 1          ,
     const PLANE_BITS    : u32 = if COMPONENT_BITS >: 1 ? $clog2(COMPONENT_BITS) : 1,
+    const NIB_BITS      : u32 = $clog2(FILL_NIBS)                                  ,
+    const WA_BITS       : u32 = X_BITS - 1 - NIB_BITS                              ,
 ) (
     // ---- fill domain ----
     i_fclk       : input  'f clock            ,
     i_frst       : input  'f logic            , // synchronous, active high
     i_we         : input  'f logic            ,
     i_wlane      : input  'f logic<LANE_BITS> ,
-    i_waddr      : input  'f logic<X_BITS - 1>, // {buffer, chain_x / 4}
-    i_wdata      : input  'f logic<12>        , // {R, G, B} nibbles, bit i = chain_x % 4 == i
+    i_waddr      : input  'f logic<WA_BITS>      , // {buffer, chain_x / (4 FILL_NIBS)}
+    i_wdata      : input  'f logic<12 * FILL_NIBS>, // groups of {R, G, B} nibbles
     o_fetch_req  : output 'f logic            , // pulse: fill plane o_fetch_plane of row o_fetch_row
     o_fetch_row  : output 'f logic<5>         ,
     o_fetch_plane: output 'f logic<PLANE_BITS>,
@@ -63,7 +67,7 @@ pub module Hub75PlaneStream #(
     o_lat  : output 'd logic           ,
     o_clk  : output 'd logic           ,
 ) {
-    const DEPTH      : u32 = CHAIN_LEN / 2; // both plane buffers, 4 cells per word
+    const DEPTH      : u32 = CHAIN_LEN / 2 / FILL_NIBS; // both plane buffers, 4 FILL_NIBS cells per word
     const OE_MAX     : u32 = BASE_OE_CYCLES << COMPONENT_BITS;
     const OE_BITS    : u32 = $clog2(OE_MAX + 1);
     const CLKDIV_BITS: u32 = $clog2(CLOCK_DIVIDER + 2);
@@ -134,22 +138,23 @@ pub module Hub75PlaneStream #(
     }
 
     // ---------------------------------------------------------------
-    // Plane buffers: one distributed RAM per lane, {buffer, chain_x / 4}.
+    // Plane buffers: one distributed RAM per lane, {buffer, chain_x / (4
+    // FILL_NIBS)}.
     // ---------------------------------------------------------------
-    var address  : 'd logic<X_BITS>            ; // registered chain_x
-    var read_buf : 'd logic                    ;
-    var lane_word: 'd logic<12>     [NUM_LANES];
+    var address  : 'd logic<X_BITS>                        ; // registered chain_x
+    var read_buf : 'd logic                                ;
+    var lane_word: 'd logic<12 * FILL_NIBS>     [NUM_LANES];
 
     for i in 0..NUM_LANES :g_lane {
         #[sv("syn_ramstyle=\"distributed_ram\"")]
-        var mem: logic<12> [DEPTH];
+        var mem: logic<12 * FILL_NIBS> [DEPTH];
         always_ff (i_fclk) {
             if i_we && i_wlane == i {
                 mem[i_waddr] = i_wdata;
             }
         }
         unsafe (cdc) {
-            assign lane_word[i] = mem[{read_buf, address[X_BITS - 1:2]}];
+            assign lane_word[i] = mem[{read_buf, address[X_BITS - 1:2 + NIB_BITS]}];
         }
     }
 
@@ -177,10 +182,21 @@ pub module Hub75PlaneStream #(
     var plane_r: 'd logic<NUM_LANES>;
     var plane_g: 'd logic<NUM_LANES>;
     var plane_b: 'd logic<NUM_LANES>;
+    // group n = chain_x / 4 % FILL_NIBS
+    let grp: 'd logic<3> = if FILL_NIBS == 1 ? 3'd0 : (address[X_BITS - 1:2] as 3) & (FILL_NIBS - 1) as 3;
     for i in 0..NUM_LANES :g_plane {
-        assign plane_r[i] = lane_word[i][8 + address[1:0]];
-        assign plane_g[i] = lane_word[i][4 + address[1:0]];
-        assign plane_b[i] = lane_word[i][address[1:0]];
+        var gw: 'd logic<12>;
+        always_comb {
+            gw = lane_word[i][11:0];
+            for n in 1..FILL_NIBS {
+                if grp == n {
+                    gw = lane_word[i][12 * n+:12];
+                }
+            }
+        }
+        assign plane_r[i] = gw[8 + address[1:0]];
+        assign plane_g[i] = gw[4 + address[1:0]];
+        assign plane_b[i] = gw[address[1:0]];
     }
 
     let clock_enable: 'd logic    = (state != ST_RESET) && (clock_counter == 0);
