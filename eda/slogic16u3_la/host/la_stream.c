@@ -195,7 +195,9 @@ static void LIBUSB_CALL cb(struct libusb_transfer *t) {
     inflight--;
 }
 
-static int queue_n = 4, xfer_size = 1 << 20;
+/* 8 transfers of 1 MiB in flight (as serial_bridge la.rs): with 4, 800 MS/s x 4 CH (400.7 MB/s) overflowed the
+ * device FIFO (32 KiB with the EP1 IN buffers, ~80 us) in ~1 of 4 10-s runs on a busy host, with 2 in every run */
+static int queue_n = 8, xfer_size = 1 << 20;
 
 static void group_regs(int g, const gcfg_t *c) {
     int b = g ? 0x0A : 0x02;
