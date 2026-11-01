@@ -12,17 +12,25 @@ TAG ?=
 JTAG_STATUS ?=
 # LA_TIMEOUT: LaFramer's partial-block timeout (pclk, default 2500): a placement "seed" (project.tcl)
 LA_TIMEOUT ?=
-export PLACE_OPT ROUTE_OPT PNR_EXTRA JTAG_STATUS LA_TIMEOUT
-BUILD_SUFFIX := $(if $(PLACE_OPT),_p$(PLACE_OPT))$(if $(ROUTE_OPT),_r$(ROUTE_OPT))$(if $(JTAG_STATUS),_js)$(if $(LA_TIMEOUT),_to$(LA_TIMEOUT))$(if $(TAG),_$(TAG))
+# OWNPHY / NOARB / QCSR / QCSR_STATIC / QCSR_ARGS: our USB 3.0 PHY (default), as ../slogic16u3_usb3 (ownphy.tcl)
+OWNPHY ?=
+NOARB ?=
+QCSR ?=
+QCSR_STATIC ?=
+QCSR_ARGS ?=
+export PLACE_OPT ROUTE_OPT PNR_EXTRA JTAG_STATUS LA_TIMEOUT OWNPHY NOARB QCSR QCSR_STATIC QCSR_ARGS
+BUILD_SUFFIX := $(if $(filter 0,$(OWNPHY)),_ipphy)$(if $(filter 0,$(NOARB)),_arb)$(if $(filter 0,$(QCSR)),_csrfile)$(if $(QCSR_STATIC),_csr$(QCSR_STATIC))$(if $(PLACE_OPT),_p$(PLACE_OPT))$(if $(ROUTE_OPT),_r$(ROUTE_OPT))$(if $(JTAG_STATUS),_js)$(if $(LA_TIMEOUT),_to$(LA_TIMEOUT))$(if $(TAG),_$(TAG))
 
 # the USB 3.0 PHY IP and the shared top-level helpers live in ../slogic16u3_usb3
 USB3_SRC := ../slogic16u3_usb3/src/$(TARGET)
-USB3_VERYL_SV := $(addprefix ../../rtl/usb3/,usb3_pkg.sv usb3_crc_pkg.sv usb3_scrambler.sv usb3_rx_fifo.sv usb3_rx_parser.sv usb3_tx_framer.sv usb3_ltssm.sv usb3_link.sv usb3_top.sv usb3_descriptor_rom.sv usb3_device.sv)
+USB3_VERYL_SV := $(addprefix ../../rtl/usb3/,usb3_pkg.sv usb3_crc_pkg.sv usb3_scrambler.sv usb3_rx_fifo.sv usb3_rx_parser.sv usb3_tx_framer.sv usb3_ltssm.sv usb3_link.sv usb3_top.sv usb3_descriptor_rom.sv usb3_device.sv usb3_phy_pkg.sv usb3_phy_tx.sv usb3_phy_rx.sv usb3_phy_eb.sv usb3_phy_ctl.sv)
 LA_VERYL_SV := $(addprefix ../../rtl/la/,la_pkg.sv la_afifo.sv la_front.sv la_packer.sv la_framer.sv la_trig.sv la_slice.sv la_core.sv)
 
 SRCS := $(wildcard src/$(TARGET)/*.v) $(wildcard src/$(TARGET)/*.cst) $(wildcard src/$(TARGET)/*.sdc) \
         $(USB3_SRC)/jtag_status.v $(USB3_SRC)/pll_ref125.v \
         $(wildcard $(USB3_SRC)/usb3_ln0/*.v) $(wildcard $(USB3_SRC)/usb3_ln0/*/*.v) $(USB3_SRC)/usb3_ln0/serdes.csr \
+        $(USB3_SRC)/usb3_softphy.v $(USB3_SRC)/quad_drp_mux.v ../slogic16u3_usb3/ownphy.tcl \
+        ../slogic16u3_usb3/csr/gw5at15_csr.py ../slogic16u3_usb3/csr/q0_ln0_base.csr \
         $(USB3_VERYL_SV) $(LA_VERYL_SV) project.tcl
 
 include ../build_gowin.mk

@@ -39,6 +39,10 @@ if {[info exists ::env(JTAG_STATUS)] && $::env(JTAG_STATUS) eq "1"} { append def
 # slightly different value changes the netlist a little and so the placement, the way to look for a
 # build that meets 125 MHz
 if {[info exists ::env(LA_TIMEOUT)] && $::env(LA_TIMEOUT) ne ""} { append defs "`define LA_TIMEOUT $::env(LA_TIMEOUT)\n" }
+# OWNPHY / NOARB / QCSR (each on by default, =0 turns it off): our USB 3.0 PHY, no upar arbiter, the quad
+# configured from the fabric with an empty CSR file (../slogic16u3_usb3/ownphy.tcl, README there)
+source ${USB3_SRC}/../../ownphy.tcl
+append defs [ownphy_config]
 set fh [open defines_gen.v w]; puts -nonewline $fh $defs; close $fh
 add_file -type verilog [file normalize defines_gen.v]
 add_file -type verilog [file normalize ${SRC_DIR}/top.v]
@@ -52,18 +56,26 @@ foreach f {usb3_pkg usb3_crc_pkg usb3_scrambler usb3_rx_fifo usb3_rx_parser usb3
 foreach f {la_pkg la_afifo la_front la_packer la_framer la_trig la_slice la_core} {
     add_file -type verilog [file normalize ${RTL_DIR}/la/${f}.sv]
 }
-add_file -type verilog ${IPDIR}/serdes.v
-foreach f [glob -nocomplain ${IPDIR}/*/*.v] { if {![string match *_tmp.v $f]} { add_file -type verilog $f } }
+if {$OWNPHY} {
+    set fh [open ${IPDIR}/serdes.v r]; set sv [read $fh]; close $fh
+    ownphy_serdes sv $SRC_DIR $RTL_DIR
+    set fh [open serdes_gen.v w]; puts -nonewline $fh $sv; close $fh
+    add_file -type verilog [file normalize serdes_gen.v]
+} else {
+    add_file -type verilog ${IPDIR}/serdes.v
+}
+ownphy_ip_files $IPDIR
 set GW_JTAG_V [file normalize [file join [file dirname [info nameofexecutable]] .. data ipcores gw_jtag.v]]
 add_file -type verilog $GW_JTAG_V
 add_file -type cst [file normalize ${SRC_DIR}/pins.cst]
 # timing.sdc, without the JTAG clock (tck) unless JTAG_STATUS=1
 set fh [open ${SRC_DIR}/timing.sdc r]; set sdc [read $fh]; close $fh
 if {[string first LA_JTAG_STATUS $defs] < 0} { set sdc [join [lsearch -all -inline -not [split $sdc "\n"] {*tck*}] "\n"] }
+set sdc [ownphy_sdc $sdc]
 set fh [open timing_gen.sdc w]; puts -nonewline $fh $sdc; close $fh
 add_file -type sdc [file normalize timing_gen.sdc]
 
-set CSR ${IPDIR}/serdes.csr
+set CSR [ownphy_csr $IPDIR]
 set fh [open $gdir/${PROJECT_NAME}.gprj.user w]
 puts $fh "<?xml version=\"1\" encoding=\"UTF-8\"?>\n<!DOCTYPE ProjectUserData>\n<UserConfig>\n    <Version>1.0</Version>"
 puts $fh "    <ResultFileList>\n        <ResultFile ResultFileType=\"RES.serdes.csr\" ResultFilePath=\"$CSR\"/>\n    </ResultFileList>\n</UserConfig>"

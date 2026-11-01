@@ -70,27 +70,12 @@ if {$TAP} { append defs "`define PHYTAP\n" }
 # IP's DRP channel, and its control lines {rdvld, ready, rden, wren} are status bits [63:60]
 set TAP_UPAR [expr {$TAP && [info exists ::env(TAP_UPAR)] && $::env(TAP_UPAR) eq "1"}]
 if {$TAP_UPAR} { append defs "`define PHYTAP_UPAR\n" }
-# OWNPHY=1 (usb3_ln0 device build): our PHY (src/slogic16u3/usb3_softphy.v + rtl/usb3 usb3_phy_*) in place
-# of Gowin's USB 3.0 PHY soft IP; the quad, its CSR and the upar arbiter stay
-set OWNPHY [expr {!$LANES && !$REF && [info exists ::env(OWNPHY)] && $::env(OWNPHY) eq "1"}]
-# NOARB=1 (with OWNPHY=1): no upar arbiter either; our PHY's register port goes straight to GTR12_UPARA
-# (the arbiter's wrapper ties upar_rst / upar_bus_width to 0 and passes the clock through; its encrypted
-# core only merges up to four channels, and our PHY is the only one)
-set NOARB [expr {$OWNPHY && [info exists ::env(NOARB)] && $::env(NOARB) eq "1"}]
-if {$NOARB} { append defs "`define QUAD_XDRP\n" }
-# QCSR=1 (with NOARB=1): the quad's static configuration is also written at run time, from a ROM made by
-# csr/gw5at15_csr.py (quad_drp_mux.v, before our PHY's first access). QCSR_STATIC: what is left in the
-# CSR file for PnR - "full" (default: the IP's serdes.csr), or gw5at15_csr.py --keep prefixes ("top",
-# "none" ...). QCSR_ARGS: gw5at15_csr.py Lane fields for both.
-set QCSR [expr {$NOARB && [info exists ::env(QCSR)] && $::env(QCSR) eq "1"}]
-set QCSR_STATIC [expr {[info exists ::env(QCSR_STATIC)] && $::env(QCSR_STATIC) ne "" ? $::env(QCSR_STATIC) : "full"}]
-set QCSR_ARGS [expr {[info exists ::env(QCSR_ARGS)] ? $::env(QCSR_ARGS) : ""}]
-set CSRGEN [file normalize ${SRC_DIR}/../../csr/gw5at15_csr.py]
-if {$QCSR} {
-    append defs "`define QUAD_CSR_INIT\n"
-    exec python3 $CSRGEN --verilog -o [file normalize quad_csr_rom.vh] {*}$QCSR_ARGS
-    set_option -include_path [file normalize .]
-}
+# OWNPHY / NOARB / QCSR (usb3_ln0 device build, each on by default, =0 turns it off): our PHY in place of
+# Gowin's USB 3.0 PHY soft IP, no upar arbiter, the quad's static configuration from the fabric with an
+# empty CSR file (ownphy.tcl, shared with slogic16u3_la). TAP=1 observes Gowin's IP: OWNPHY defaults to 0 there.
+source [file normalize ${SRC_DIR}/../../ownphy.tcl]
+if {$LANES || $REF} { set ::env(OWNPHY) 0 }
+append defs [ownphy_config [expr {!$TAP}]]
 set fh [open defines_gen.v w]; puts -nonewline $fh $defs; close $fh
 add_file -type verilog [file normalize defines_gen.v]
 
@@ -127,34 +112,7 @@ add_file -type verilog [file normalize ${SRC_DIR}/jtag_status.v]
 if {$TAP || $OWNPHY} {
     set fh [open ${IPDIR}/serdes.v r]; set sv [read $fh]; close $fh
 }
-if {$OWNPHY} {
-    if {[regsub {USB3_0_PHY_Top USB3_0_PHY_Top_inst \(} $sv "usb3_softphy USB3_0_PHY_Top_inst (\n    .serdes_rxdet_result_i(q0_fabric_ln0_rxdet_result)," sv] != 1} { error "OWNPHY: USB3_0_PHY_Top_inst not found" }
-    foreach f {usb3_phy_pkg usb3_phy_tx usb3_phy_rx usb3_phy_eb usb3_phy_ctl} {
-        add_file -type verilog [file normalize ${RTL_DIR}/usb3/${f}.sv]
-    }
-    add_file -type verilog [file normalize ${SRC_DIR}/usb3_softphy.v]
-}
-if {$NOARB} {
-    # quad_drp_mux.v in place of the arbiter: our PHY's channel plus channel x, brought out on SerDes_Top
-    # as XDRP_i {req, wr, addr[23:0], wdata[31:0]} / XDRP_o {done, rdata[31:0]} (top.v: the host's quad
-    # register access)
-    set d "upar_arbiter_wrap_SerDes_Top_inst"
-    set direct [join [list \
-        "input \[57:0\] XDRP_i;" "output \[33:0\] XDRP_o;" \
-        "assign upar_rst = 1'b0;" "assign upar_bus_width_s = 1'b0;" \
-        "assign ${d}_drp_clk_o\[0\] = q0_fabric_cm_life_clk_o;" "assign ${d}_drp_resp_o\[0\] = 1'b0;" \
-        "quad_drp_mux u_quad_drp_mux (.clk(q0_fabric_cm_life_clk_o)," \
-        "    .p_wren(${d}_drp_wren_i\[0\]), .p_rden(${d}_drp_rden_i\[0\]), .p_addr(${d}_drp_addr_i\[23:0\])," \
-        "    .p_wrdata(${d}_drp_wrdata_i\[31:0\]), .p_strb(${d}_drp_strb_i\[7:0\]), .p_ready(${d}_drp_ready_o\[0\])," \
-        "    .p_rdvld(${d}_drp_rdvld_o\[0\]), .p_rddata(${d}_drp_rddata_o\[31:0\])," \
-        "    .x_req(XDRP_i\[57\]), .x_wr(XDRP_i\[56\]), .x_addr(XDRP_i\[55:32\]), .x_wdata(XDRP_i\[31:0\])," \
-        "    .x_done(XDRP_o\[32\]), .x_rdata(XDRP_o\[31:0\]), .init_done(XDRP_o\[33\])," \
-        "    .wren(upar_wren_s), .rden(upar_rden_s), .addr(upar_addr_s), .wrdata(upar_wrdata_s), .strb(upar_strb_s)," \
-        "    .ready(upar_ready_s), .rdvld(upar_rdvld_s), .rddata(upar_rddata_s));"] "\n"]
-    if {[regsub {\\~upar_arbiter_wrap\.SerDes_Top upar_arbiter_wrap_SerDes_Top_inst \(.*?\n\);\n} $sv "$direct\n" sv] != 1} { error "NOARB: arbiter instance not found" }
-    if {[regsub {module SerDes_Top \(} $sv "module SerDes_Top (XDRP_i, XDRP_o, " sv] != 1} { error "NOARB: SerDes_Top header not found" }
-    add_file -type verilog [file normalize ${SRC_DIR}/quad_drp_mux.v]
-}
+ownphy_serdes sv $SRC_DIR $RTL_DIR
 if {$TAP} {
     set d "upar_arbiter_wrap_SerDes_Top_inst_drp"
     set tapsig [join [list \
@@ -178,12 +136,7 @@ if {$TAP || $OWNPHY} {
 } else {
     add_file -type verilog ${IPDIR}/serdes.v
 }
-foreach f [glob -nocomplain ${IPDIR}/*/*.v] {
-    if {[string match *_tmp.v $f]} continue
-    if {$OWNPHY && [string match */usb3_0_phy/* $f]} continue
-    if {$NOARB && [string match */upar_arbiter/* $f]} continue
-    add_file -type verilog $f
-}
+ownphy_ip_files $IPDIR
 set GW_JTAG_V [file normalize [file join [file dirname [info nameofexecutable]] .. data ipcores gw_jtag.v]]
 add_file -type verilog $GW_JTAG_V
 set fh [open ${SRC_DIR}/[expr {$LANES ? "pins_lanes.cst" : "pins.cst"}] r]; set cst [read $fh]; close $fh
@@ -198,10 +151,7 @@ if {$TRACE || $TAP || $NOARB} {
     # one file: the trace / tap clock groups refer to pclk of timing.sdc (SDC files are read separately)
     set fh [open $SDC r]; set sdc [read $fh]; close $fh
     if {$TRACE} { set fh [open ${SRC_DIR}/timing_trace.sdc r]; append sdc [read $fh]; close $fh }
-    if {$NOARB && !$TAP} {
-        # no arbiter: the register port runs straight in the quad's clock
-        set sdc [string map [list {u_serdes/upar_arbiter_wrap_SerDes_Top_inst_drp_clk_o[0]} {u_serdes/q0_fabric_cm_life_clk_o}] $sdc]
-    }
+    if {!$TAP} { set sdc [ownphy_sdc $sdc] }
     if {$TAP} {
         # the clock nets now leave SerDes_Top on TAP_clk_o: synthesis names them after the top-level wire
         set sdc [string map [list {u_serdes/q0_lane0_fabric_rx_clk} {tap_clk[2]} \
@@ -213,13 +163,7 @@ if {$TRACE || $TAP || $NOARB} {
 }
 add_file -type sdc $SDC
 
-set CSR ${IPDIR}/serdes.csr
-if {$QCSR && $QCSR_STATIC ne "full"} {
-    set CSR [file normalize serdes_static.csr]
-    set keep {}
-    foreach p [split $QCSR_STATIC ","] { lappend keep --keep $p }
-    exec python3 $CSRGEN {*}$keep -o $CSR {*}$QCSR_ARGS
-}
+set CSR [ownphy_csr $IPDIR]
 set fh [open $gdir/${PROJECT_NAME}.gprj.user w]
 puts $fh "<?xml version=\"1\" encoding=\"UTF-8\"?>\n<!DOCTYPE ProjectUserData>\n<UserConfig>\n    <Version>1.0</Version>"
 puts $fh "    <ResultFileList>\n        <ResultFile ResultFileType=\"RES.serdes.csr\" ResultFilePath=\"$CSR\"/>\n    </ResultFileList>\n</UserConfig>"

@@ -1,5 +1,10 @@
 # slogic16u3_usb3 — Sipeed SLogic16U3 の USB 3.0 (SuperSpeed) を rtl/usb3 で動かす
 
+**既定の構成 (2026-11-01 から)**: 自作の USB 3.0 PHY (`usb3_softphy.v` + rtl/usb3 `usb3_phy_*`)、upar アービタなし
+(`quad_drp_mux.v`)、quad の静的設定はファブリックの ROM から (CSR ファイルは空)。Gowin の IP で残るのは GTR12 の
+インスタンス配線 (`usb3_ln0/serdes.v` の写し) だけ。`OWNPHY=0` / `NOARB=0` / `QCSR=0` で Gowin の IP に戻せる
+(`ownphy.tcl`、slogic16u3_la と共通)。経緯は下記「USB 3.0 PHY IP の境界の観測」以降。
+
 状態 (2026-10-11): **SuperSpeed で動作**。1209:0001 "USB SS Sample" (5000M、bcdUSB 3.10) で列挙し、
 EP1 IN (デバイス → ホスト) は PRBS で 362 MB/s・21.8 GB 誤り 0、ループバックの送受信同時 1 GiB 一致 (下記)。
 FPGA をロードし直すと、ホストが前のデバイスとしてリセットを試み "device firmware changed" → 切断 → 再列挙を
@@ -24,12 +29,10 @@ make ... SERDES_IP=serdes_4ln     # レーン特定用 (top_lanes.v、Customized
 make ... REF=1                    # 切り分け用: Gowin のリファレンスコントローラを同じ PHY で (top_ref.v)
 make ... PLACE_OPT=3 PNR_EXTRA="serdesRetiming=1" TAG=sr   # PnR オプション (下記「タイミング」)
 make ... TRACE=1 [TRACE_INVERT=1] # EasyCDR トレース送信 (UART ピン、下記。受信側では未確認)
-make ... TAP=1 [TAP_UPAR=1]       # PHY 境界の観測 (TAP_UPAR: quad 側の DRP バス) (phy_tap.v、下記「USB 3.0 PHY IP の境界の観測」)
-make ... OWNPHY=1 NOARB=1 PLACE_OPT=3 PNR_EXTRA="serdesRetiming=1" TAG=sr  # 自作 PHY、upar アービタなし (Gowin の暗号化 IP なし)
-make ... OWNPHY=1 NOARB=1 QCSR=1 QCSR_STATIC=none  # さらに quad の静的設定もファブリックから (CSR ファイルは空、下記「CSR の自作」)
+make ... TAP=1 [TAP_UPAR=1]       # Gowin の PHY IP の境界の観測 (TAP=1 では OWNPHY の既定が 0) (TAP_UPAR: quad 側の DRP バス) (phy_tap.v、下記「USB 3.0 PHY IP の境界の観測」)
+make ... OWNPHY=0                 # Gowin の USB 3.0 PHY IP (暗号化) を使う (NOARB=0: アービタあり、QCSR=0 / QCSR_STATIC=full: CSR ファイル)
 python3 csr/check_csr.py                # csr/gw5at15_csr.py と Gowin の toml→CSR ツールの突き合わせ
 python3 host/quad_reg.py read 0x808238  # (NOARB=1) quad のレジスタを USB 越しに読み書き / csr: CSR の全アドレスを読み戻し
-make ... OWNPHY=1 PLACE_OPT=4 PNR_EXTRA="serdesRetiming=1" TAG=sr  # 自作 PHY (usb3_softphy.v + rtl/usb3 usb3_phy_*) で Gowin の PHY ソフト IP を置き換え (下記)
 ~/repos/rust-dap/fpga-config/target/release/gowin-prog --cable dap sram build/slogic16u3_usb3_ln0/impl/pnr/slogic16u3_usb3.fs
 python3 host/usb3_status.py [-w]        # ER1: LTSSM 状態 / 遷移履歴、カウンタ、受信のデコードエラー
 python3 host/usb3_trace.py              # ER2: U0 の PIPE 送受信 1024 語 (デスクランブルしてパケット表示)

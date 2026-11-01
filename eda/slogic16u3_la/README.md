@@ -5,7 +5,13 @@ Sipeed SLogic16U3 (GW5AT-LV15MG132C1/I0) を USB 3.0 のロジックアナライ
 目標は公式仕様の **800 MS/s × 4 CH、400 MS/s × 8 CH、200 MS/s × 16 CH** (どれも 400 MB/s) です。
 
 - RTL: `rtl/la` (Veryl、`veryl test` で LaCore 全体を試験)
-- USB 3.0 コア: `rtl/usb3`、PHY IP と共通部品: `../slogic16u3_usb3/src/slogic16u3`
+- USB 3.0 コア: `rtl/usb3`、PHY と共通部品: `../slogic16u3_usb3/src/slogic16u3`。PHY は既定で自作 (2026-11-01 から、
+  `../slogic16u3_usb3/ownphy.tcl`: 自作 PHY、upar アービタなし、quad の設定はファブリックから、Gowin の暗号化 IP なし)。
+  `OWNPHY=0` で Gowin の USB 3.0 PHY IP に戻る。ビルド済みの `bitstream/slogic16u3_la.bin` は Gowin の PHY IP のまま
+- 自作 PHY (`make PLACE_OPT=4 ROUTE_OPT=2 LA_TIMEOUT=2600`、pclk 130.1 / sclk 107.4 MHz、LUT 83 %) は `la_stream -T` の
+  15 構成すべて PASS、800 MS/s × 4 CH で 400.7 MB/s。ただし 800 MS/s × 4 CH (リンクの 9 割) を 10 秒流すと、デバイスの
+  FIFO があふれる回が Gowin の PHY より多い (交互に入れ替えて各 24 回: 自作 5 回、Gowin 1 回。Recovery は起きておらず、
+  データの誤りもない)。原因は未調査
 - ホスト: `host/la_stream.c` (取り込み・テストモード検証・自動マトリクス)、`host/la_status.py` (JTAG 状態、`make JTAG_STATUS=1` のビルドのみ)、
   GUI は `util/serial_bridge` の `/la` (`host/web/la.html`、下記)
 

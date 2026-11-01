@@ -47,15 +47,22 @@ module top (
     TLVDS_IBUF u_cmp_dn (.I(usb_cmp_dn), .IB(usb_cmp_dn_n), .O(cmp_dn));
 
     // ---------------------------------------------------------------- ref_clk, PHY reset (as slogic16u3_usb3)
-    reg [20:0] seq = 21'd0;
-    always @(posedge osc) if (!seq[20]) seq <= seq + 21'd1;
+`ifdef QUAD_CSR_INIT
+    // QCSR (default): the quad is configured from the fabric right after configuration; the PHY starts
+    // ~0.65 s later (as slogic16u3_usb3)
+    localparam SEQ_W = 25;
+`else
+    localparam SEQ_W = 21;
+`endif
+    reg [SEQ_W-1:0] seq = {SEQ_W{1'b0}};
+    always @(posedge osc) if (!seq[SEQ_W-1]) seq <= seq + 1'b1;
     wire ref_clk /* synthesis syn_keep=1 */, ref_lock;
     pll_ref125 u_pll (.lock(ref_lock), .clkout0(ref_clk), .clkin(osc));
     reg [2:0] start_s = 3'd0;
     reg [16:0] phy_rst_cnt = 17'd0;
     wire phy_resetn = phy_rst_cnt[16];
     always @(posedge ref_clk) begin
-        start_s <= {start_s[1:0], seq[20] & ref_lock};
+        start_s <= {start_s[1:0], seq[SEQ_W-1] & ref_lock};
         if (!start_s[2]) phy_rst_cnt <= 17'd0;
         else if (!phy_resetn) phy_rst_cnt <= phy_rst_cnt + 17'd1;
     end
@@ -65,6 +72,9 @@ module top (
     wire [31:0] rx_data, tx_data; wire [3:0] rx_k, tx_k; wire rx_valid, rx_elecidle, phy_status, power_present;
     wire [2:0] rx_status; wire [1:0] power_down; wire tx_elecidle, tx_detectrx, rx_polarity, rx_termination;
     SerDes_Top u_serdes (
+`ifdef QUAD_XDRP
+        .XDRP_i(58'd0), .XDRP_o(),   // (no host access to the quad registers here)
+`endif
         .USB3_0_PHY_Top_pclk(pclk),
         .USB3_0_PHY_Top_PipeRxData(rx_data),
         .USB3_0_PHY_Top_PipeRxDataK(rx_k),
