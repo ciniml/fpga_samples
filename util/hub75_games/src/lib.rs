@@ -5,6 +5,8 @@
 // from the terminal (input.rs); --auto lets a bot play (attract mode).
 pub mod blocks;
 pub mod bricks;
+pub mod fireworks;
+pub mod flame;
 pub mod gfx;
 pub mod input;
 pub mod invaders;
@@ -56,6 +58,10 @@ pub trait Game {
     /// one line for the terminal
     fn status(&self) -> String;
     fn hi(&self) -> u64;
+    /// false for the demos (they run without a terminal, no --auto needed)
+    fn needs_keys(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Parser)]
@@ -128,7 +134,7 @@ pub fn run<G: Game>(name: &str, keys: &str, make: impl FnOnce(u64, u64) -> G) ->
     // without a terminal (e.g. started in the background) only --auto works
     let mut inp = if std::io::stdin().is_terminal() {
         Some(input::Input::new()?)
-    } else if cli.auto {
+    } else if cli.auto || !game.needs_keys() {
         None
     } else {
         return Err("no terminal for the keys (use --auto for the attract mode)".into());
