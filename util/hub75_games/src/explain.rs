@@ -7,14 +7,15 @@
 // 3. scanning: two rows lit at a time, sped up until the picture looks whole
 // 4. BCM: LEDs are on or off, brightness is on-time weighted 32:16:...:1
 // 5. the corner turn: pixel values → bit planes (the GMT block of GW3A)
-// 6. the numbers
+// 6. the recap: the five steps again, each with a small moving picture
+// 7. the specs
 use crate::fx::{mix, new_buf, smooth, to_canvas, Col};
 use crate::gfx::{Canvas, H, W};
 use crate::input::{Input, Key};
 use crate::jp::{self, Font};
 use std::f32::consts::{PI, TAU};
 
-const SCENES: [u64; 7] = [720, 900, 900, 1000, 900, 900, 720];
+const SCENES: [u64; 8] = [720, 900, 900, 1000, 900, 900, 780, 720];
 const FADE: u64 = 20;
 const WHITE: Col = [0.95, 0.95, 1.0];
 const CYAN: Col = [0.3, 0.85, 1.0];
@@ -494,8 +495,104 @@ impl Explain {
         }
     }
 
-    fn summary(&self, buf: &mut [Col]) {
+    fn recap(&self, buf: &mut [Col]) {
         header(buf, "まとめ");
+        let steps = ["①", "②", "③", "④", "⑤"];
+        let texts = ["絵をUDPで送る", "受けてDDR2に保存", "2行ずつ高速に点灯", "明るさ=点ける時間", "桁ごとに並べ替え"];
+        let t = self.t as f32;
+        let tk = self.tick as f32;
+        // the steps light up in turn, a dot running down the line between them
+        fill(buf, 11, 38, 1, 128, [0.15, 0.2, 0.3]);
+        let dot = (t * 0.9) % 140.0;
+        if t > 30.0 {
+            fill(buf, 10, 36 + dot as i32, 3, 3, CYAN);
+        }
+        for k in 0..5 {
+            let y = 28 + k as i32 * 31;
+            let at = 30.0 + k as f32 * 70.0;
+            let a = smooth(at, at + 20.0, t);
+            let sc = |c: Col, f: f32| [c[0] * f, c[1] * f, c[2] * f];
+            let lit = 0.3 + 0.7 * a;
+            fill(buf, 2, y, 19, 19, [0.0; 3]);
+            jp::draw(buf, Font::B16, steps[k], 3, y - 1, sc(GOLD, lit));
+            jp::draw(buf, Font::S12, texts[k], 24, y + 1, sc(WHITE, lit));
+            if a <= 0.0 {
+                continue;
+            }
+            // a small picture of the step under its text (x 24..124, y + 15..y + 27)
+            let (x0, y0) = (24, y + 15);
+            match k {
+                0 => {
+                    // packets going right, the ack coming back
+                    for j in 0..4 {
+                        let x = ((tk * 1.2) as i32 + j * 22) % 88;
+                        fill(buf, x0 + x, y0 + 3, 8, 3, sc(hue(j as f32 * 0.25), a));
+                        fill(buf, x0 + x + 8, y0 + 3, 2, 3, sc(GOLD, a));
+                    }
+                    let x = 96 - ((tk * 1.5) as i32 % 100);
+                    fill(buf, x0 + x, y0 + 8, 3, 3, sc([1.0, 0.95, 0.4], a));
+                }
+                1 => {
+                    // two pages, swapping every second
+                    let front = (self.tick / 60) % 2;
+                    let fill_k = (self.tick % 60) as i32 * 10 / 60;
+                    for pg in 0..2u64 {
+                        let x = x0 + 20 + pg as i32 * 34;
+                        frame(buf, x, y0, 26, 12, sc(if pg == front { GOLD } else { DIM }, a));
+                        let rows = if pg == front { 10 } else { fill_k };
+                        for yy in 0..rows {
+                            for xx in 0..24 {
+                                let c = pic((xx as f32 + 0.5) / 24.0, (yy as f32 + 0.5) / 10.0, 0.0);
+                                put(buf, x + 1 + xx, y0 + 1 + yy, sc(c, a));
+                            }
+                        }
+                    }
+                    fill(buf, x0 + 4, y0 + 5, 12, 2, sc(CYAN, a));
+                }
+                2 => {
+                    // a mini panel: one row pair at a time, fast
+                    frame(buf, x0 + 30, y0, 42, 12, sc([0.25, 0.25, 0.3], a));
+                    let r = (self.tick as i32 / 3) % 5;
+                    for rr in [r, r + 5] {
+                        for xx in 0..40 {
+                            let c = pic((xx as f32 + 0.5) / 40.0, (rr as f32 + 0.5) / 10.0, 0.0);
+                            put(buf, x0 + 31 + xx, y0 + 1 + rr, sc([c[0] * 2.0, c[1] * 2.0, c[2] * 2.0], a));
+                        }
+                    }
+                }
+                3 => {
+                    // the weighted segments and a cursor
+                    let v = 45;
+                    let mut u = 0;
+                    for b in (0..6).rev() {
+                        let len = (1 << b) * 3 / 2;
+                        let c = if v >> b & 1 != 0 { [1.0, 0.3, 0.2] } else { [0.08, 0.08, 0.1] };
+                        fill(buf, x0 + u, y0 + 3, (len - 1).max(1), 6, sc(c, a));
+                        u += len;
+                    }
+                    let cx = (tk * 0.8) as i32 % u;
+                    fill(buf, x0 + cx, y0 + 1, 1, 10, sc(WHITE, a));
+                }
+                _ => {
+                    // a 4 x 2 grid of bits turning into 2 x 4, back and forth
+                    let p = smooth(0.0, 1.0, ((tk * 0.02).sin() * 1.5 + 0.5).clamp(0.0, 1.0));
+                    for i in 0..4 {
+                        for c in 0..2 {
+                            let (bx, by) = (i as f32 * 5.0, c as f32 * 5.0 + 2.0);
+                            let (ax, ay) = (c as f32 * 5.0 + 5.0, i as f32 * 3.0);
+                            let x = x0 as f32 + 40.0 + bx + (ax - bx) * p;
+                            let yy = y0 as f32 + by + (ay - by) * p;
+                            let h = hue(i as f32 / 4.0);
+                            fill(buf, x as i32, yy as i32, 4, if p > 0.5 { 2 } else { 4 }, sc(h, a));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn specs(&self, buf: &mut [Col]) {
+        header(buf, "仕様");
         let rows = [
             ("パネルの書き換え", "488回/秒"),
             ("映像の入力", "1000BASE-T"),
@@ -529,14 +626,15 @@ impl crate::Game for Explain {
             3 => self.scan(&mut buf),
             4 => self.bcm(&mut buf),
             5 => self.transpose(&mut buf),
-            _ => self.summary(&mut buf),
+            6 => self.recap(&mut buf),
+            _ => self.specs(&mut buf),
         }
         let len = SCENES[self.scene];
         let fade = (self.t.min(len - self.t) as f32 / FADE as f32).min(1.0);
         to_canvas(&buf, c, fade, 1.4);
     }
     fn status(&self) -> String {
-        let names = ["overview", "packets", "receive", "scan", "bcm", "transpose", "summary"];
+        let names = ["overview", "packets", "receive", "scan", "bcm", "transpose", "recap", "specs"];
         format!("scene {}", names[self.scene])
     }
     fn hi(&self) -> u64 {
