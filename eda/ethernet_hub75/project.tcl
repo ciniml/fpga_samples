@@ -36,6 +36,13 @@ if {[info exists ::env(GW_ROUTE_OPTION)]} { set route_opt $::env(GW_ROUTE_OPTION
 set_option -place_option $place_opt
 set_option -route_option $route_opt
 
+if {${TARGET} == "dk_led_rxcard_gw3a20"} {
+    # HUB75 J12..J19 use SSPI / CPU / I2C dual-purpose pins (R3, R5, T3, N5,
+    # P7, U5, V5, N6); configuration is over JTAG
+    set_option -use_sspi_as_gpio 1
+    set_option -use_cpu_as_gpio 1
+    set_option -use_i2c_as_gpio 1
+}
 if {${TARGET} == "tangprimer20k"} {
     set_option -use_sspi_as_gpio 1
     set_option -use_done_as_gpio 1
