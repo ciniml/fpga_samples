@@ -260,4 +260,8 @@ quad の静的設定 (PnR に渡す CSR ファイル) は `upar_write_driver(ア
   ので、QCSR=1 では PHY の開始を約 0.65 s 遅らせた (top.v) — これで Disabled は出なくなった。
 - 電源を全部切って入れ直した後 (フラッシュの設計が先に起動し、その後 SRAM ロード) も同じ試験が通った (列挙 5000M、
   PRBS 384.7 MB/s 誤り 0、非同期 447.4 MB/s、1 GiB 一致、Hot Reset 20/20)。USB ケーブルの抜き差しからも復帰する。
-- 未確認: `QCSR_STATIC=top` (top.* の 7 行だけ残す)、フラッシュから QCSR=1 の設計を直接起動する場合。
+- フラッシュから直接起動 (2026-11-01): q2 の位流の次アドレスを 0x800000 にして (`../slogic16u3_la/host/mkdfu.py`)
+  公式 DFU で 0x0 に書き、電源を全部切って入れ直すと、コンフィグから 12 秒で 5000M で列挙 (Disabled なし)。
+  PRBS 376.8 MB/s 誤り 0、1 GiB 一致、Hot Reset 20/20、非同期 447.4 MB/s。CSR ファイル無しで電源投入から動く。
+  書き込み前の 0x0 / 0x800000 は `~/fpga-dumps/slogic16u3_before_qcsr_20261101/` (以前の USB3 設計、DFU は 10/12 と同一)。
+- 未確認: `QCSR_STATIC=top` (top.* の 7 行だけ残す)。
