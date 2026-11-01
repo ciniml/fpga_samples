@@ -65,35 +65,6 @@ fn now() -> NaiveDateTime {
     real + *off
 }
 
-/// a soft halo around a mask: two box blurs
-fn blur(mask: &[f32], r: i32) -> Vec<f32> {
-    let mut a = mask.to_vec();
-    for _ in 0..2 {
-        let mut b = vec![0.0; W * H];
-        for y in 0..H {
-            for x in 0..W {
-                let mut s = 0.0;
-                for dx in -r..=r {
-                    let xx = (x as i32 + dx).clamp(0, W as i32 - 1) as usize;
-                    s += a[y * W + xx];
-                }
-                b[y * W + x] = s / (2 * r + 1) as f32;
-            }
-        }
-        for y in 0..H {
-            for x in 0..W {
-                let mut s = 0.0;
-                for dy in -r..=r {
-                    let yy = (y as i32 + dy).clamp(0, H as i32 - 1) as usize;
-                    s += b[yy * W + x];
-                }
-                a[y * W + x] = s / (2 * r + 1) as f32;
-            }
-        }
-    }
-    a
-}
-
 pub struct Expo {
     rng: Rng,
     tick: u64,
@@ -245,30 +216,6 @@ impl Expo {
         }
     }
 
-    /// text with a colour function and a glow around it
-    fn glow_text(buf: &mut [Col], lines: &[(Font, &str, i32)], col: impl Fn(i32, i32) -> Col, glow: Col) {
-        let mut mask = vec![0.0f32; W * H];
-        let mut px = Vec::new();
-        for &(f, s, y) in lines {
-            for (x, yy) in jp::pixels(f, s, jp::centre_x(f, s), y) {
-                if x >= 0 && yy >= 0 && (x as usize) < W && (yy as usize) < H {
-                    mask[yy as usize * W + x as usize] = 1.0;
-                    px.push((x, yy));
-                }
-            }
-        }
-        let halo = blur(&mask, 3);
-        for i in 0..W * H {
-            let h = halo[i] * 1.6;
-            for k in 0..3 {
-                buf[i][k] += glow[k] * h;
-            }
-        }
-        for (x, y) in px {
-            buf[y as usize * W + x as usize] = col(x, y);
-        }
-    }
-
     fn boot(&self, buf: &mut [Col]) {
         let t = self.t as i32;
         let green = [0.25, 1.0, 0.4];
@@ -318,7 +265,7 @@ impl Expo {
         self.circuit(buf, 0.8);
         let t = self.tick as f32;
         let sweep = (self.t as f32 * 1.5) % 260.0 - 60.0; // a highlight running across
-        Self::glow_text(
+        jp::glow_text(
             buf,
             &[(Font::S12, "ELEKI EXPO", 30), (Font::B24, "超エレキ", 56), (Font::B24, "万博2026", 88)],
             |x, y| {
@@ -344,7 +291,7 @@ impl Expo {
         let t = self.tick as f32;
         jp::draw_centre(buf, Font::B16, "匠の電子工作館", 6, [0.5, 0.85, 1.0]);
         let sweep = (self.t as f32 * 1.5) % 260.0 - 60.0;
-        Self::glow_text(
+        jp::glow_text(
             buf,
             &[(Font::B24, "W40", 30), (Font::B24, "ふがふが", 64)],
             |x, y| {
@@ -398,7 +345,7 @@ impl Expo {
         jp::draw(buf, Font::S12, "CH1", 6, 2, [0.9, 0.9, 0.2]);
         jp::draw(buf, Font::S12, "1kHz", 98, 2, [0.6, 0.6, 0.65]);
         let beat = 0.8 + 0.2 * (self.tick as f32 * 0.25).sin().max(0.0);
-        Self::glow_text(
+        jp::glow_text(
             buf,
             &[(Font::B16, "エンジニアを", 114), (Font::B16, "技術で癒す！", 138)],
             |_, _| [1.0 * beat, 0.55 * beat, 0.75 * beat],
@@ -458,7 +405,7 @@ impl Expo {
         let (open, close) = (open_time(), close_time());
         let t = self.tick as f32;
         let glow = |buf: &mut [Col], lines: &[(Font, &str, i32)], col: Col| {
-            Self::glow_text(buf, lines, |_, _| col, [col[0] * 0.4, col[1] * 0.4, col[2] * 0.4]);
+            jp::glow_text(buf, lines, |_, _| col, [col[0] * 0.4, col[1] * 0.4, col[2] * 0.4]);
         };
         if now < close {
             let left = (close - now).num_seconds();

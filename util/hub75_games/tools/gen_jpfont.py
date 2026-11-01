@@ -4,9 +4,11 @@
 # not need the fonts. Add new text to TEXT and run again:
 #   python3 tools/gen_jpfont.py
 # S12: IPAGothic 12 px (thin, made for small sizes), B16 / B24: Noto Sans
-# CJK JP Bold 16 / 24 px (headings).
-from PIL import Image, ImageDraw, ImageFont
-import os
+# CJK JP Bold 16 / 24 px (headings). IPAGothic loses stems of Latin
+# letters at 12 px (M, N, W...), so the ASCII of S12 comes from the X11
+# bitmap font 6x12 (same advance and baseline).
+from PIL import Image, ImageDraw, ImageFont, PcfFontFile
+import gzip, io, os, tempfile
 
 TEXT = """
 超エレキ万博 ELEKI EXPO 2026 先進テクノロジの祭典 エンジニアを技術で癒す！
@@ -16,6 +18,7 @@ TEXT = """
 実習テクノロジ館 体験エレクトロニクス館 7つの館 年月日 月火水木金土日 曜 午前 午後 時計
 トランジスタ技術 Interface CQ ham radio 秋葉原 会場 東京都千代田区外神田
 ふがふが W40 FPGAを使った デジタルサイネージ用 LEDマトリクスの 点灯制御 ここ 展示 ブース
+×→①②③④⑤えかきくけさじずせそだてにはへべみむめもらるれケダッドハバビヘメモ一上下信値像光全切列力受号同回壊変大宛届振捨換明映書替最枚査桁検残気消物画目素絵置行表裏見解説路転込返送速道部面
 """
 
 FONTS = [
@@ -23,6 +26,16 @@ FONTS = [
     ("B16", "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc", 16, 0, 110),
     ("B24", "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc", 24, 0, 110),
 ]
+
+def x11_font(path):
+    """an X11 .pcf.gz bitmap font for PIL (converted in a temporary dir)"""
+    pcf = PcfFontFile.PcfFontFile(io.BytesIO(gzip.open(path).read()))
+    with tempfile.TemporaryDirectory() as d:
+        pcf.save(os.path.join(d, "f"))
+        return ImageFont.load(os.path.join(d, "f.pil"))
+
+
+ASCII_S12 = x11_font("/usr/share/fonts/X11/misc/6x12-ISO8859-1.pcf.gz")
 
 chars = sorted(set(chr(c) for c in range(32, 127)) | set(TEXT) - set("\n"))
 out = [
@@ -43,10 +56,15 @@ for name, path, size, index, thr in FONTS:
     # trim the empty rows every glyph shares at the top and bottom
     imgs = {}
     for ch in chars:
-        adv = round(f.getlength(ch))
-        w = max(adv, 1)
-        im = Image.new("L", (w + 4, h), 0)
-        ImageDraw.Draw(im).text((0, 0), ch, font=f, fill=255)
+        if name == "S12" and ord(ch) < 127:
+            adv = w = 6
+            im = Image.new("L", (w + 4, h), 0)
+            ImageDraw.Draw(im).text((0, 0), ch, font=ASCII_S12, fill=255)
+        else:
+            adv = round(f.getlength(ch))
+            w = max(adv, 1)
+            im = Image.new("L", (w + 4, h), 0)
+            ImageDraw.Draw(im).text((0, 0), ch, font=f, fill=255)
         im = im.point(lambda v: 255 if v > thr else 0)
         bbox = im.getbbox()
         if bbox and bbox[2] > w:

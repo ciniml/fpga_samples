@@ -11,6 +11,7 @@ pub mod clock;
 pub mod fireworks;
 pub mod fountain;
 pub mod fractal;
+pub mod explain;
 pub mod expo;
 pub mod fireflies;
 pub mod flame;

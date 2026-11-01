@@ -89,3 +89,32 @@ pub fn line(buf: &mut [Col], ax: f32, ay: f32, bx: f32, by: f32, width: f32, col
         }
     }
 }
+
+/// a soft halo around a mask: two box blurs
+pub fn blur(mask: &[f32], r: i32) -> Vec<f32> {
+    let mut a = mask.to_vec();
+    for _ in 0..2 {
+        let mut b = vec![0.0; W * H];
+        for y in 0..H {
+            for x in 0..W {
+                let mut s = 0.0;
+                for dx in -r..=r {
+                    let xx = (x as i32 + dx).clamp(0, W as i32 - 1) as usize;
+                    s += a[y * W + xx];
+                }
+                b[y * W + x] = s / (2 * r + 1) as f32;
+            }
+        }
+        for y in 0..H {
+            for x in 0..W {
+                let mut s = 0.0;
+                for dy in -r..=r {
+                    let yy = (y as i32 + dy).clamp(0, H as i32 - 1) as usize;
+                    s += b[yy * W + x];
+                }
+                a[y * W + x] = s / (2 * r + 1) as f32;
+            }
+        }
+    }
+    a
+}
