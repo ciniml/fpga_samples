@@ -32,6 +32,7 @@ make ... TRACE=1 [TRACE_INVERT=1] # EasyCDR トレース送信 (UART ピン、�
 make ... TAP=1 [TAP_UPAR=1]       # Gowin の PHY IP の境界の観測 (TAP=1 では OWNPHY の既定が 0) (TAP_UPAR: quad 側の DRP バス) (phy_tap.v、下記「USB 3.0 PHY IP の境界の観測」)
 make ... OWNPHY=0                 # Gowin の USB 3.0 PHY IP (暗号化) を使う (NOARB=0: アービタあり、QCSR=0 / QCSR_STATIC=full: CSR ファイル)
 python3 csr/check_csr.py                # csr/gw5at15_csr.py と Gowin の toml→CSR ツールの突き合わせ
+host/usb3_prbs_async -m 2 -q 4 -s 10    # EP1 IN の PRBS をロジアナと同じ 400.7 MB/s で (16 KiB の FIFO モデル: usb3_status.py にあふれ・NRDY)
 python3 host/quad_reg.py read 0x808238  # (NOARB=1) quad のレジスタを USB 越しに読み書き / csr: CSR の全アドレスを読み戻し
 ~/repos/rust-dap/fpga-config/target/release/gowin-prog --cable dap sram build/slogic16u3_usb3_ln0/impl/pnr/slogic16u3_usb3.fs
 python3 host/usb3_status.py [-w]        # ER1: LTSSM 状態 / 遷移履歴、カウンタ、受信のデコードエラー

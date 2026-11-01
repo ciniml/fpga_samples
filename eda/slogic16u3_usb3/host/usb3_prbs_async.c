@@ -5,7 +5,8 @@
  * a request scheduled, and checks every byte against PRBS15 (same source and bit order as usb3_prbs.py).
  *
  *     cc -O2 -o usb3_prbs_async usb3_prbs_async.c -lusb-1.0
- *     usb3_prbs_async [-s SECONDS] [-q QUEUE] [-b SIZE] [-n]      (-n: no check)
+ *     usb3_prbs_async [-s SECONDS] [-q QUEUE] [-b SIZE] [-m MODE] [-n]   (-n: no check; -m 2: the source at
+ *         the logic analyzer's 400.7 MB/s through a modelled LA FIFO, see usb3_status.py)
  */
 #include <libusb-1.0/libusb.h>
 #include <stdio.h>
@@ -72,12 +73,13 @@ static void LIBUSB_CALL cb(struct libusb_transfer *t) {
 static double now(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return ts.tv_sec + ts.tv_nsec * 1e-9; }
 
 int main(int argc, char **argv) {
-    double secs = 10; int queue = 8, size = 1 << 20, o;
-    while ((o = getopt(argc, argv, "s:q:b:n")) != -1)
+    double secs = 10; int queue = 8, size = 1 << 20, mode = 1, o;
+    while ((o = getopt(argc, argv, "s:q:b:m:n")) != -1)
         switch (o) {
         case 's': secs = atof(optarg); break;
         case 'q': queue = atoi(optarg); break;
         case 'b': size = atoi(optarg); break;
+        case 'm': mode = atoi(optarg); break;
         case 'n': nocheck = 1; break;
         default: return 2;
         }
@@ -90,7 +92,7 @@ int main(int argc, char **argv) {
     unsigned char *junk = malloc(1 << 16); int got;
     libusb_control_transfer(h, 0x40, 0x02, 0x0000, 0, NULL, 0, 1000);      /* loopback mode, drain */
     while (libusb_bulk_transfer(h, 0x81, junk, 1 << 16, &got, 50) == 0) ;
-    libusb_control_transfer(h, 0x40, 0x02, 0x0001, 0, NULL, 0, 1000);      /* PRBS mode */
+    libusb_control_transfer(h, 0x40, 0x02, mode, 0, NULL, 0, 1000);        /* PRBS mode (2: at 400.7 MB/s) */
     struct libusb_transfer **ts = calloc(queue, sizeof *ts);
     double t0 = now();
     for (int i = 0; i < queue; i++) {

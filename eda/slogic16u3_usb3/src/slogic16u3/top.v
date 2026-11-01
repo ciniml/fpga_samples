@@ -203,16 +203,42 @@ module top (
             prbs15_word = b;
         end
     endfunction
-    wire       prbs_mode = vendor_reg == 16'h0001;   // (exactly 1: usb_echo.py writes 0x5AA5 as a register test)
+    // vendor register 0x0002: the same source at the logic analyzer's 400.7 MB/s (800 MS/s x 4 CH) through a
+    // modelled 16 KiB FIFO (the LA's group FIFO, 4096 words): the backlog of words due, its maximum, the
+    // times it would have overflowed and the NRDYs sent on EP1 IN go to the status register
+    wire       prbs_mode = vendor_reg == 16'h0001 || vendor_reg == 16'h0002;   // (usb_echo.py writes 0x5AA5 as a register test)
+    wire       prbs_rate = vendor_reg == 16'h0002;
     reg        prbs_mode_d = 1'b0;
     reg [14:0] prbs_s = 15'h7FFF;
     reg [31:0] prbs_w = 32'd0;            // registered word (keeps the 32-step XOR network off the RAM write)
     always @(posedge pclk) begin
         prbs_mode_d <= prbs_mode;
         if (prbs_mode && !prbs_mode_d) begin prbs_s <= 15'h7FFF; prbs_w <= prbs15_word(15'h7FFF); end
-        else if (prbs_mode && epw_ready) begin prbs_s <= prbs15_adv32(prbs_s); prbs_w <= prbs15_word(prbs15_adv32(prbs_s)); end
+        else if (prbs_mode && epw_ready && epw_valid) begin prbs_s <= prbs15_adv32(prbs_s); prbs_w <= prbs15_word(prbs15_adv32(prbs_s)); end
     end
-    assign epw_valid   = prbs_mode && prbs_mode_d;   // (not in the clock that restarts it)
+    reg [15:0] rate_acc = 16'd0;
+    reg [12:0] backlog = 13'd0;          // words due (rate mode), saturating at 4096 = the LA FIFO overflowing
+    reg [12:0] backlog_max = 13'd0;
+    reg [15:0] cnt_ovf = 16'd0, cnt_nrdy = 16'd0;
+    reg        ovf_d = 1'b0, flow_d = 1'b0;
+    reg [16:0] armed = 17'd0;             // counting starts once 256 KiB went out (the host is reading by then)
+    wire       rate_tick = rate_acc > 16'd65535 - 16'd52519;      // 52519 / 65536 x 500 MB/s = 400.7 MB/s
+    wire       epw_take = epw_valid && epw_ready;
+    always @(posedge pclk) begin
+        rate_acc <= rate_acc + 16'd52519;
+        flow_d <= dbg_state[37];
+        if (prbs_mode && !prbs_mode_d) begin
+            backlog <= 13'd0; backlog_max <= 13'd0; cnt_ovf <= 16'd0; cnt_nrdy <= 16'd0; armed <= 17'd0;
+        end else begin
+            if (epw_take && !armed[16]) armed <= armed + 17'd1;
+            if (backlog != 13'd4096 || epw_take) backlog <= backlog + (rate_tick && backlog != 13'd4096) - epw_take;
+            if (armed[16] && backlog > backlog_max) backlog_max <= backlog;
+            ovf_d <= backlog == 13'd4096;
+            if (armed[16] && backlog == 13'd4096 && !ovf_d) cnt_ovf <= cnt_ovf + 16'd1;
+            if (armed[16] && dbg_state[37] && !flow_d) cnt_nrdy <= cnt_nrdy + 16'd1;   // in_flow: NRDY sent on EP1 IN
+        end
+    end
+    assign epw_valid   = prbs_mode && prbs_mode_d && (!prbs_rate || backlog != 13'd0);   // (not in the clock that restarts it)
     assign epw_data    = prbs_w;
     assign ep_tx_valid = prbs_mode ? 1'b0 : ep_rx_valid;
     assign ep_tx_data  = ep_rx_data;
@@ -281,18 +307,22 @@ module top (
     // Polling-time statistics and the Polling.Config capture that found the bring-up problems were
     // removed again: the device sits at 83 % of the CLSs and the debug logic cost pclk timing.)
     reg [15:0] cnt_com = 16'd0, cnt_dec = 16'd0, cnt_disp = 16'd0;
+    reg [15:0] cnt_dbg = 16'd0;     // Usb3Device debug events (EP1 IN ACK with Retry / ignored, SeqNum skipped, response lost)
     wire [3:0] com_k = {rx_k[3] && rx_data[31:24] == 8'hBC, rx_k[2] && rx_data[23:16] == 8'hBC,
                         rx_k[1] && rx_data[15:8] == 8'hBC, rx_k[0] && rx_data[7:0] == 8'hBC};
     always @(posedge pclk) begin
         if (rx_valid && |com_k) cnt_com <= cnt_com + 16'd1;
         if (rx_status == 3'd4) cnt_dec <= cnt_dec + 16'd1;
         if (rx_status == 3'd7) cnt_disp <= cnt_disp + 16'd1;
+        if (dbg_strobe && dbg_event) cnt_dbg <= cnt_dbg + 16'd1;
     end
 
     // [15:0] magic, [16] ref_lock, [17] phy_resetn, [23:18] USB 2.0 pads {cdn, cdp, tdn, tdp, dxn, dxp},
     // [43:24] pclk / 16 edges per 2^22 osc, [351:44] pclk snapshot, [383:352] uptime (2^16 osc),
-    // [399:384] COM count, [415:400] decode errors, [431:416] disparity errors (pclk, sampled as is)
-    wire [431:0] cap = {cnt_disp, cnt_dec, cnt_com, up, snap, pf, pads_s, phy_resetn, ref_lock, 16'h5B31};
+    // [399:384] COM count, [415:400] decode errors, [431:416] disparity errors, [447:432] debug events,
+    // [463:448] NRDYs on EP1 IN, [479:464] modelled LA FIFO overflows, [495:480] its maximum backlog (words)
+    // (pclk, sampled as is)
+    wire [495:0] cap = {3'd0, backlog_max, cnt_ovf, cnt_nrdy, cnt_dbg, cnt_disp, cnt_dec, cnt_com, up, snap, pf, pads_s, phy_resetn, ref_lock, 16'h5B31};
 `ifndef PHYTAP
     // ---------------------------------------------------------------- packet trace (ER2)
     // 1024 pclk words of {RxStatus, RxValid, RxDataK, RxData, TxDataK, TxData} in a ring that runs
@@ -444,7 +474,7 @@ module top (
     localparam integer L2 = 288;
 `endif
 
-    jtag_status #(.L(432), .L2(L2)) u_jtag (.tck_pad_i(tck_pad_i), .tms_pad_i(tms_pad_i), .tdi_pad_i(tdi_pad_i),
+    jtag_status #(.L(496), .L2(L2)) u_jtag (.tck_pad_i(tck_pad_i), .tms_pad_i(tms_pad_i), .tdi_pad_i(tdi_pad_i),
         .tdo_pad_o(tdo_pad_o), .osc(osc), .cap(cap), .cap2(cap2), .o_w2(w2), .o_w2_data(w2_data));
 
     assign led_r = in_u0;

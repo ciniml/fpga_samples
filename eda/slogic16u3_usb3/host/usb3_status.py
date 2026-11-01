@@ -32,7 +32,7 @@ def st(n):
 
 def read(j):
     j.ir(0x42)
-    raw = j.dr(432 + 8)
+    raw = j.dr(496 + 8)
     for off in range(8):
         v = raw >> off
         if v & 0xFFFF == MAGIC:
@@ -51,7 +51,7 @@ def read(j):
         'u0': f(112, 16), 'hp': f(128, 16), 'resets': f(144, 16), 'dpp_err': f(160, 16), 'physt': f(176, 16),
         'lfps': f(192, 16), 'seen': f(208, 32), 'trace': [f(240 + 5 * i, 5) for i in range(16)],
         'bytes': f(320, 32), 'up': f(352, 32) * 65536 / OSC_HZ,
-        'com': f(384, 16), 'dec_err': f(400, 16), 'disp_err': f(416, 16),
+        'com': f(384, 16), 'dec_err': f(400, 16), 'disp_err': f(416, 16), 'dbg': f(432, 16), 'nrdy': f(448, 16), 'ovf': f(464, 16), 'bl_max': f(480, 13),
         # Tang Console build: SerDes lane debug in the spare bits
         'cmu_ok': f(79, 1), 'rx_lock': f(78, 1), 'lane_rstn': f(71, 1), 'lane_stat': f(69, 2) | (f(61, 3) << 2) | (f(55, 1) << 5),
     }
@@ -90,7 +90,7 @@ def main():
     print('seen:', ' '.join(st(i) for i in range(32) if s['seen'] >> i & 1))
     print('trace (old -> new):', ' > '.join(st(x) for x in reversed(s['trace'])))
     print(fmt(s))
-    print(f"rx: COM={s['com']} decode_err={s['dec_err']} disparity_err={s['disp_err']}")
+    print(f"rx: COM={s['com']} decode_err={s['dec_err']} disparity_err={s['disp_err']} | device debug events={s['dbg']} | EP1 IN NRDY={s['nrdy']} LA-FIFO model overflows={s['ovf']} max backlog={s['bl_max']} words")
     print(f"lane (Console build): rx_term={s['rx_term']} qpll_ok={s['cmu_ok']} pma_rx_lock={s['rx_lock']} rstn={s['lane_rstn']} stat[5:0]=0x{s['lane_stat']:02x} astat[5:0]=0x{s['pads']:02x}")
     if a.upar:
         b, l, v = s['bytes'], s['lfps'], s['vreg']
