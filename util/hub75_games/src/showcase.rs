@@ -22,6 +22,13 @@ impl Showcase {
             ("aurora", Box::new(crate::aurora::Aurora::new(seed ^ 3, 0))),
             ("storm", Box::new(crate::storm::Storm::new(seed ^ 4, 0))),
             ("hourglass", Box::new(crate::hourglass::Hourglass::new(seed ^ 5, 0))),
+            ("matrix", Box::new(crate::matrix::Matrix::new(seed ^ 6, 0))),
+            ("lavalamp", Box::new(crate::lavalamp::LavaLamp::new(seed ^ 7, 0))),
+            ("fireflies", Box::new(crate::fireflies::Fireflies::new(seed ^ 8, 0))),
+            ("life", Box::new(crate::life::Life::new(seed ^ 9, 0))),
+            ("fractal", Box::new(crate::fractal::Fractal::new(seed ^ 10, 0))),
+            ("fountain", Box::new(crate::fountain::Fountain::new(seed ^ 11, 0))),
+            ("aquarium", Box::new(crate::aquarium::Aquarium::new(seed ^ 12, 0))),
         ];
         Showcase { demos, idx: 0, t: 0 }
     }

@@ -3,16 +3,23 @@
 // and sends it over UDP into the top-left corner of the display (256x256
 // for the 16-panel build, --frame 128x192 for the 6-panel build). Keys come
 // from the terminal (input.rs); --auto lets a bot play (attract mode).
+pub mod aquarium;
 pub mod aurora;
 pub mod blocks;
 pub mod bricks;
 pub mod fireworks;
+pub mod fountain;
+pub mod fractal;
+pub mod fireflies;
 pub mod flame;
 pub mod fx;
 pub mod gfx;
 pub mod hourglass;
 pub mod input;
+pub mod lavalamp;
 pub mod invaders;
+pub mod life;
+pub mod matrix;
 pub mod net;
 pub mod showcase;
 pub mod stg;
