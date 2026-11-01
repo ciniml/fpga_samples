@@ -231,6 +231,7 @@ module Usb3Ltssm #(
     // ---------------------------------------------------------------- PIPE handshakes
     var pd       : logic<2>;
     var pd_wait  : logic   ; // waiting for PhyStatus after a PowerDown change
+    var st_chg   : logic   ; // set for one clock after a state change
     var det_req  : logic   ; // receiver detection in progress
     var det_done : logic   ;
     var det_found: logic   ;
@@ -268,7 +269,7 @@ module Usb3Ltssm #(
     // registered: the state decode would otherwise feed the transmit mux and the
     // TS sequencing in the same clock
     var tx_sel_c: logic;
-    assign tx_sel_c = (state == State::PollingRxEq && !pd_wait) || state == State::PollingActive || state
+    assign tx_sel_c = (state == State::PollingRxEq && !pd_wait && !st_chg) || state == State::PollingActive || state
         == State::PollingConfig || state == State::RecoveryActive || state == State::RecoveryConfig || state
         == State::HotResetActive;
     always_ff {
@@ -321,9 +322,8 @@ module Usb3Ltssm #(
     // registered timeout flags (one clock late, cleared on every state
     // change together with t_us; keeps the 20-bit comparators off the
     // state-machine path)
-    var tmo_r : logic<8>;
-    var tmo_c : logic<8>;
-    var st_chg: logic   ; // set for one clock after a state change
+    var tmo_r: logic<8>;
+    var tmo_c: logic<8>;
     always_comb {
         tmo_c[0] = t_us >= 100;
         tmo_c[1] = t_us >= 1000;
@@ -551,6 +551,38 @@ module Usb3Ltssm #(
                 pb_on   = 0;
                 pb_us   = 15;
             }
+            // held clear outside Polling.LFPS (was: cleared on entry, behind the next-state logic)
+            if state != State::PollingLfps {
+                pb_sent     = 0;
+                tx_after_rx = 0;
+            }
+            // Polling.LFPS is entered from Rx.Detect.Active only: polarity and scrambling are reset there
+            if state == State::RxDetectActive {
+                o_scr_bypass  = 0;
+                o_rx_polarity = 0;
+            }
+            // U0 entry qualifier: the state U0 was entered from (held in U0)
+            if state != State::U0 {
+                o_from_recovery = state == State::RecoveryIdle;
+            }
+
+            // ---- PowerDown change on entry -> wait for PhyStatus. Done in the clock after the state
+            // change (st_chg), off the next-state logic; the states that look at pd_wait do not move
+            // in that clock (tmo masked, counters clear, or guarded by st_chg)
+            if st_chg {
+                if ((state == State::PollingLfps && !POLL_LFPS_P2) || state == State::PollingRxEq || state
+                        == State::RecoveryActive) && pd != 2'b00 {
+                    pd      = 2'b00;
+                    pd_wait = 1;
+                } else if (state == State::RxDetectActive || state == State::RxDetectReset) && pd != RXDET_PD {
+                    pd      = RXDET_PD;
+                    pd_wait = 1;
+                } else if (state == State::U3 || state == State::Inactive || state == State::Disabled
+                        || (state == State::PollingLfps && POLL_LFPS_P2)) && pd != LOW_PD {
+                    pd      = LOW_PD;
+                    pd_wait = 1;
+                }
+            }
 
             // ---- transitions
             if i_power_present == 0 && state != State::PhyWait {
@@ -623,7 +655,7 @@ module Usb3Ltssm #(
                         if !pd_wait {
                             if (pb_sent == POLL_LFPS_SENT as 5 && burst_cnt == 2 && tx_after_rx
                                     == POLL_LFPS_AFTER_RX as 4 && !pb_on)
-                                || (POLL_LFPS_BLIND_US != 0 && t_us >= POLL_LFPS_BLIND_US as 20 && !pb_on) {
+                                || (POLL_LFPS_BLIND_US != 0 && t_us >= POLL_LFPS_BLIND_US as 20 && !pb_on && !st_chg) {
                                 ns = State::PollingRxEq;
                             } else if tmo[6] {
                                 ns = State::Disabled;
@@ -670,7 +702,7 @@ module Usb3Ltssm #(
                     State::U3: {
                         pd = LOW_PD;
                         // host wakeup: LFPS present -> respond with LFPS (>= 80 us), then Recovery
-                        if lfps_long && !pd_wait {
+                        if lfps_long && !pd_wait && !st_chg {
                             ns = State::U3Wake;
                         }
                     }
@@ -749,13 +781,6 @@ module Usb3Ltssm #(
                 o_rx_flush = ns == State::PollingActive || ns == State::RecoveryActive || ns == State::HotResetActive
                     || !rx_en_c;
                 case ns {
-                    State::PollingLfps: {
-                        pb_sent       = 0;
-                        tx_after_rx   = 0;
-                        pb_us         = 15;
-                        o_scr_bypass  = 0;
-                        o_rx_polarity = 0;
-                    }
                     State::PollingRxEq: {
                         skp_cnt = 0;
                     }
@@ -773,23 +798,9 @@ module Usb3Ltssm #(
                         o_hot_reset = 1;
                     }
                     State::U0: {
-                        o_u0_entry      = 1;
-                        o_from_recovery = state == State::RecoveryIdle;
+                        o_u0_entry = 1;
                     }
                     default: {}
-                }
-                // PowerDown change -> wait for PhyStatus
-                if ((ns == State::PollingLfps && !POLL_LFPS_P2) || ns == State::PollingRxEq || ns
-                        == State::RecoveryActive) && pd != 2'b00 {
-                    pd      = 2'b00;
-                    pd_wait = 1;
-                } else if (ns == State::RxDetectActive || ns == State::RxDetectReset) && pd != RXDET_PD {
-                    pd      = RXDET_PD;
-                    pd_wait = 1;
-                } else if (ns == State::U3 || ns == State::Inactive || ns == State::Disabled
-                        || (ns == State::PollingLfps && POLL_LFPS_P2)) && pd != LOW_PD {
-                    pd      = LOW_PD;
-                    pd_wait = 1;
                 }
             }
         }
