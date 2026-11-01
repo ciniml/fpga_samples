@@ -1,8 +1,9 @@
 // The game: a vertical scrolling shooter on 128x192, 60 ticks a second.
 //
-// Each stage is ~40 s of enemy waves (random picks, denser and faster
+// Three stages of ~32 s of enemy waves (random picks, denser and faster
 // every stage), a warning, then a boss with three bullet patterns that
-// change with its health. The ship fires by itself; power items widen the
+// change with its health; it leaves after 25 s. After the third boss: ALL
+// CLEAR and a bonus for the ships and bombs left (a game is ~3 minutes). The ship fires by itself; power items widen the
 // shot (3 levels), a bomb clears the bullets and hurts every enemy.
 use crate::gfx::{scale, Canvas, Rgb, Sprite, H, W};
 use crate::input::{Input, Key};
@@ -18,7 +19,9 @@ pub struct Ctl {
 }
 use std::f32::consts::PI;
 
-const STAGE_LEN: u32 = 40 * 60;
+const STAGE_LEN: u32 = 32 * 60;
+const STAGES: u32 = 3;
+const BOSS_TIME: u32 = 25 * 60; // then the boss flies away
 const WF: f32 = W as f32;
 const HF: f32 = H as f32;
 
@@ -212,6 +215,10 @@ pub struct Stg {
     clear: i32,
     flash: i32,
     over: i32,
+    boss_on: bool,
+    escaped: bool,
+    all_clear: bool,
+    bonus: u64,
     paused: bool,
     enemies: Vec<Enemy>,
     bullets: Vec<Bullet>,
@@ -249,6 +256,10 @@ impl Stg {
             clear: 0,
             flash: 0,
             over: 0,
+            boss_on: false,
+            escaped: false,
+            all_clear: false,
+            bonus: 0,
             paused: false,
             enemies: Vec::new(),
             bullets: Vec::new(),
@@ -287,7 +298,8 @@ impl Stg {
             Scene::Over => {
                 self.over += 1;
                 self.step_world();
-                if self.over > 60 && ctl.start {
+                let wait = if self.all_clear { 180 } else { 60 }; // time to read the bonus
+                if self.over > wait && ctl.start {
                     self.start();
                 } else if self.over > 600 {
                     self.scene = Scene::Title;
@@ -307,7 +319,8 @@ impl Stg {
     /// attract mode: keep below the nearest enemy, step away from the
     /// bullets coming close, bomb when cornered; starts the next game
     pub fn bot(&self) -> Ctl {
-        let mut ctl = Ctl { start: self.tick % 120 == 0, ..Ctl::default() };
+        let start = self.tick % 120 == 0 && (self.scene == Scene::Title || self.over > 300);
+        let mut ctl = Ctl { start, ..Ctl::default() };
         if self.scene != Scene::Play || self.dead > 0 {
             return ctl;
         }
@@ -426,10 +439,18 @@ impl Stg {
         // ---- stage flow ----
         if self.clear > 0 {
             self.clear -= 1;
-            if self.clear == 0 {
+            if self.clear == 0 && self.stage == STAGES {
+                self.bonus = 30000 * self.lives.max(0) as u64 + 10000 * self.bombs as u64;
+                self.score += self.bonus;
+                self.hi = self.hi.max(self.score);
+                self.all_clear = true;
+                self.scene = Scene::Over;
+                self.over = 0;
+            } else if self.clear == 0 {
                 self.stage += 1;
                 self.t = 0;
                 self.wave_cd = 120;
+                self.escaped = false;
             }
         } else if self.t < STAGE_LEN {
             self.wave_cd -= 1;
@@ -443,14 +464,20 @@ impl Stg {
         } else if self.warning > 0 {
             self.warning -= 1;
             if self.warning == 0 {
-                let hp = 260 + 120 * self.stage as i32;
+                let hp = 220 + 100 * self.stage as i32;
                 self.enemies.push(Enemy::new(Kind::Boss, 64.0, -12.0, 0.0, 0.5, hp));
+                self.boss_on = true;
             }
         }
 
         self.step_enemies();
         self.step_world();
         self.collide();
+        if self.boss_on && self.clear == 0 && !self.enemies.iter().any(|e| e.kind == Kind::Boss) {
+            self.boss_on = false; // it flew away: the stage ends without its points
+            self.escaped = true;
+            self.clear = 240;
+        }
     }
 
     fn spawn_wave(&mut self) {
@@ -546,7 +573,9 @@ impl Stg {
                     }
                 }
                 Kind::Boss => {
-                    if e.y < 34.0 {
+                    if e.t > BOSS_TIME {
+                        e.y -= 1.0;
+                    } else if e.y < 34.0 {
                         e.y += e.vy;
                     } else {
                         let tt = e.t as f32;
@@ -595,7 +624,9 @@ impl Stg {
             self.fire(x, y, a, v, big);
         }
         // (enemies with hp <= 0 are scored and removed in collide())
-        self.enemies.retain(|e| e.y < HF + 16.0 && e.x > -40.0 && e.x < WF + 40.0);
+        self.enemies.retain(|e| {
+            e.y < HF + 16.0 && e.x > -40.0 && e.x < WF + 40.0 && (e.kind != Kind::Boss || e.y > -30.0)
+        });
     }
 
     fn step_world(&mut self) {
@@ -673,6 +704,7 @@ impl Stg {
                     self.items.push(Item { x: e.x - 8.0, y: e.y, kind: ItemKind::Power });
                     self.items.push(Item { x: e.x + 8.0, y: e.y, kind: ItemKind::Bomb });
                     self.clear = 240;
+                    self.boss_on = false;
                 }
             }
         }
@@ -822,6 +854,9 @@ impl Stg {
         let mid = 80;
         if self.scene == Scene::Play && self.t < 150 && self.clear == 0 {
             c.text_centre(&format!("STAGE {}", self.stage), mid, 2, [255, 255, 255]);
+            if self.stage == STAGES {
+                c.text_centre("FINAL", mid + 20, 1, [255, 120, 60]);
+            }
         }
         if self.warning > 0 && self.warning / 15 % 2 == 0 {
             c.rect(0, mid - 6, W as i32, 2, [255, 0, 0]);
@@ -831,11 +866,21 @@ impl Stg {
         if self.clear > 0 && self.clear < 200 {
             c.text_centre("STAGE", mid - 8, 2, [255, 230, 0]);
             c.text_centre("CLEAR", mid + 10, 2, [255, 230, 0]);
+            if self.escaped {
+                c.text_centre("THE BOSS ESCAPED", mid + 32, 1, [255, 120, 60]);
+            }
         }
         if self.paused {
             c.text_centre("PAUSE", mid, 2, [255, 255, 255]);
         }
-        if self.scene == Scene::Over {
+        if self.scene == Scene::Over && self.all_clear {
+            c.text_centre("ALL", mid - 10, 3, [255, 230, 0]);
+            c.text_centre("CLEAR", mid + 14, 3, [255, 230, 0]);
+            c.text_centre(&format!("BONUS {}", self.bonus), mid + 40, 1, [255, 255, 255]);
+            if self.over > 180 && self.tick / 30 % 2 == 0 {
+                c.text_centre("ENTER: AGAIN", mid + 54, 1, [255, 255, 255]);
+            }
+        } else if self.scene == Scene::Over {
             c.text_centre("GAME", mid - 10, 3, [255, 60, 60]);
             c.text_centre("OVER", mid + 14, 3, [255, 60, 60]);
             if self.over > 60 && self.tick / 30 % 2 == 0 {

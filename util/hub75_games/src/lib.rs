@@ -35,6 +35,16 @@ impl Rng {
     }
 }
 
+/// play time of the timed games (blocks, bricks): 3 minutes of ticks; the
+/// shooters are paced to about the same length by their stage counts
+pub const TIME_LIMIT: i32 = 180 * 60;
+
+/// ticks (60 a second) as "m:ss", rounded up
+pub fn mmss(ticks: i32) -> String {
+    let s = (ticks.max(0) + 59) / 60;
+    format!("{}:{:02}", s / 60, s % 60)
+}
+
 use clap::Parser;
 use std::io::{IsTerminal, Write};
 use std::time::{Duration, Instant};

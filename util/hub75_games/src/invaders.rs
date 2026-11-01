@@ -4,11 +4,14 @@
 //
 // Rows score 30 / 20 / 20 / 10 / 10, the UFO 50..300. Each new wave
 // starts lower and steps faster. An extra cannon at 1500 points. The game
-// ends when the cannons run out or the aliens reach the ground.
+// ends when the cannons run out or the aliens reach the ground, or with
+// ALL CLEAR (and a bonus for the cannons left) after the third wave, so a
+// game takes about 3 minutes.
 use crate::gfx::{scale, Canvas, Rgb, Sprite, W};
 use crate::input::{Input, Key};
 use crate::Rng;
 
+const WAVES: u32 = 3;
 const COLS: usize = 8;
 const ROWS: usize = 5;
 const DXA: f32 = 13.0; // alien spacing
@@ -121,6 +124,8 @@ pub struct Invaders {
     dead: i32,
     wave_t: i32, // pause before the next wave
     over_t: i32,
+    all_clear: bool,
+    bonus: u64,
     paused: bool,
     sparks: Vec<Spark>,
     spr: Sprites,
@@ -153,6 +158,8 @@ impl Invaders {
             dead: 0,
             wave_t: 0,
             over_t: 0,
+            all_clear: false,
+            bonus: 0,
             paused: false,
             sparks: Vec::new(),
             spr: sprites(),
@@ -182,6 +189,11 @@ impl Invaders {
                 }
             }
         }
+    }
+
+    /// ticks per formation step with n aliens left (2 px a step, at most 1 px a tick)
+    fn step_period(&self, n: usize) -> i32 {
+        (1 + n as i32 * 20 / 40 - (self.wave as i32 - 1) * 3).max(2)
     }
 
     fn count(&self) -> usize {
@@ -227,11 +239,35 @@ impl Invaders {
     /// bot: under the lowest alien of the nearest column, out of the way of
     /// bombs falling close above
     fn bot(&self) -> (f32, bool) {
+        // where each column's lowest alien will be when a shot fired now
+        // reaches it (the formation folded back at the walls)
+        let (mut minx, mut maxx) = (f32::MAX, f32::MIN);
+        for r in 0..ROWS {
+            for c in 0..COLS {
+                if self.alive[r][c] {
+                    let (x, _) = self.alien_pos(c, r);
+                    minx = minx.min(x);
+                    maxx = maxx.max(x);
+                }
+            }
+        }
+        let v = self.dir * 2.0 / self.step_period(self.count()) as f32;
+        let (lo, hi) = (8.0 - minx, WF - 8.0 - maxx); // room for the formation offset
+        let lead = |y: f32| {
+            let d = v * (PLAYER_Y - 4.0 - y) / 4.0;
+            let span = (hi - lo).max(0.1);
+            let mut o = (d - lo).rem_euclid(2.0 * span);
+            if o > span {
+                o = 2.0 * span - o;
+            }
+            o + lo
+        };
         let mut target = self.px;
         let mut best = f32::MAX;
         for c in 0..COLS {
             if let Some(r) = (0..ROWS).rev().find(|&r| self.alive[r][c]) {
-                let (x, _) = self.alien_pos(c, r);
+                let (x, y) = self.alien_pos(c, r);
+                let x = x + lead(y);
                 let d = (x - self.px).abs() + r as f32 * 0.5;
                 if d < best {
                     best = d;
@@ -244,6 +280,16 @@ impl Invaders {
                 target = ux;
             }
         }
+        // step aside from shield pixels that would stop the shot
+        let blocked = |x: f32| {
+            let xi = x as i32;
+            SHIELD_X.iter().enumerate().any(|(i, &sx)| {
+                xi >= sx && xi < sx + SHW as i32 && (0..SHH).any(|y| self.shields[i][y][(xi - sx) as usize])
+            })
+        };
+        if let Some(k) = [0.0f32, -2.0, 2.0, -3.5, 3.5].iter().find(|&&k| !blocked(target + k)) {
+            target += k;
+        }
         let mut dx = ((target - self.px) / 2.0).clamp(-1.0, 1.0);
         for b in &self.bombs {
             if (b.x - self.px).abs() < 9.0 && b.y > PLAYER_Y - 45.0 && b.y < PLAYER_Y + 2.0 {
@@ -251,7 +297,7 @@ impl Invaders {
                 dx = if (self.px < 12.0 && away < 0.0) || (self.px > WF - 12.0 && away > 0.0) { -away } else { away };
             }
         }
-        (dx, (target - self.px).abs() < 5.0)
+        (dx, (target - self.px).abs() < 3.0 && !blocked(self.px))
     }
 
     fn play(&mut self, inp: Option<&mut Input>) {
@@ -301,7 +347,7 @@ impl Invaders {
         let n = self.count();
         self.step_cd -= 1;
         if self.step_cd <= 0 {
-            self.step_cd = (1 + n as i32 * 24 / 40 - (self.wave as i32 - 1) * 2).max(1);
+            self.step_cd = self.step_period(n);
             self.frame ^= 1;
             let (mut minx, mut maxx) = (f32::MAX, f32::MIN);
             for r in 0..ROWS {
@@ -445,7 +491,13 @@ impl Invaders {
             self.extra = true;
             self.lives += 1;
         }
-        if self.count() == 0 {
+        if self.count() == 0 && self.wave == WAVES {
+            self.bonus = 500 * (self.lives.max(0) as u64 + 1);
+            self.score += self.bonus;
+            self.all_clear = true;
+            self.scene = Scene::Over;
+            self.over_t = 0;
+        } else if self.count() == 0 {
             self.wave += 1;
             self.new_wave();
             self.wave_t = 120;
@@ -512,11 +564,19 @@ impl Invaders {
         let mid = 96;
         if self.scene == Scene::Play && self.wave_t > 0 {
             c.text_centre(&format!("WAVE {}", self.wave), mid, 2, [255, 255, 255]);
+            if self.wave == WAVES {
+                c.text_centre("FINAL", mid + 20, 1, [255, 120, 60]);
+            }
         }
         if self.paused {
             c.text_centre("PAUSE", mid, 2, [255, 255, 255]);
         }
-        if self.scene == Scene::Over {
+        if self.scene == Scene::Over && self.all_clear {
+            c.rect(14, mid - 14, 100, 66, [0, 0, 0]);
+            c.text_centre("ALL", mid - 10, 3, [255, 230, 0]);
+            c.text_centre("CLEAR", mid + 14, 3, [255, 230, 0]);
+            c.text_centre(&format!("BONUS {}", self.bonus), mid + 42, 1, [255, 255, 255]);
+        } else if self.scene == Scene::Over {
             c.rect(14, mid - 14, 100, 66, [0, 0, 0]);
             c.text_centre("GAME", mid - 10, 3, [255, 60, 60]);
             c.text_centre("OVER", mid + 14, 3, [255, 60, 60]);
@@ -562,7 +622,7 @@ impl crate::Game for Invaders {
         let bot = inp.is_none();
         let start = match inp.as_deref_mut() {
             Some(i) => i.take(Key::Start) | (self.scene != Scene::Play && i.take(Key::Space)),
-            None => self.tick % 150 == 0,
+            None => self.tick % 150 == 0 && self.scene == Scene::Title, // (the end screen: 5 s)
         };
         match self.scene {
             Scene::Title => {

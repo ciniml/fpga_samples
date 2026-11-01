@@ -5,10 +5,12 @@
 // hold (once per piece), ghost piece, 0.5 s lock delay (reset by moves, at
 // most 15 times), gravity speeding up every 10 lines, 100 / 300 / 500 / 800
 // x level for 1..4 lines, 1 / 2 points per cell of soft / hard drop.
+// A game lasts at most 3 minutes (TIME UP), the clock is top right.
 // Moves follow the key events (each press or auto-repeat is one step), so
 // they work the same in every terminal.
 use crate::gfx::{scale, Canvas, Rgb, W};
 use crate::input::{Input, Key};
+use crate::{mmss, TIME_LIMIT};
 
 const BW: usize = 10;
 const BH: usize = 22; // 2 hidden rows on top
@@ -137,6 +139,8 @@ pub struct Blocks {
     lines: u32,
     level: u32,
     over_t: i32,
+    time_left: i32,
+    time_up: bool,
     paused: bool,
     sparks: Vec<Spark>,
     plan: Option<(usize, i32)>, // bot: rotation, x
@@ -173,6 +177,8 @@ impl Blocks {
             lines: 0,
             level: 1,
             over_t: 0,
+            time_left: TIME_LIMIT,
+            time_up: false,
             paused: false,
             sparks: Vec::new(),
             plan: None,
@@ -325,6 +331,16 @@ impl Blocks {
     }
 
     fn play(&mut self, inp: Option<&mut Input>) {
+        if !self.paused {
+            self.time_left -= 1;
+            if self.time_left <= 0 {
+                self.scene = Scene::Over;
+                self.over_t = 0;
+                self.time_up = true;
+                self.hi = self.hi.max(self.score);
+                return;
+            }
+        }
         if self.clear_t > 0 {
             self.clear_t -= 1;
             if self.clear_t == 0 {
@@ -518,6 +534,9 @@ impl Blocks {
         // top
         c.text("SCORE", 4, 2, 1, g);
         c.text(&format!("{:07}", self.score), 4, 12, 2, [255, 255, 255]);
+        c.text("TIME", 100, 2, 1, g);
+        let tc = if self.time_left > 600 { [255, 255, 255] } else if self.tick / 15 % 2 == 0 { [255, 40, 40] } else { [120, 0, 0] };
+        c.text(&mmss(self.time_left), 100, 14, 1, tc);
         if self.clear_t > 0 && self.last_clear >= 2 {
             let (s, col) = match self.last_clear {
                 2 => ("DOUBLE", [0, 220, 255]),
@@ -532,8 +551,13 @@ impl Blocks {
         }
         if self.scene == Scene::Over && self.over_t > 66 {
             c.rect(X0 + 4, Y0 + 56, 72, 50, [0, 0, 0]);
-            c.text("GAME", X0 + 16, Y0 + 62, 2, [255, 60, 60]);
-            c.text("OVER", X0 + 16, Y0 + 80, 2, [255, 60, 60]);
+            if self.time_up {
+                c.text("TIME", X0 + 16, Y0 + 62, 2, [255, 230, 0]);
+                c.text("UP", X0 + 28, Y0 + 80, 2, [255, 230, 0]);
+            } else {
+                c.text("GAME", X0 + 16, Y0 + 62, 2, [255, 60, 60]);
+                c.text("OVER", X0 + 16, Y0 + 80, 2, [255, 60, 60]);
+            }
             if self.tick / 30 % 2 == 0 {
                 c.text("ENTER", X0 + 25, Y0 + 97, 1, [255, 255, 255]);
             }
@@ -631,7 +655,7 @@ impl crate::Game for Blocks {
         let bot = inp.is_none();
         let start = match inp.as_deref_mut() {
             Some(i) => i.take(Key::Start) | i.take(Key::Space),
-            None => self.tick % 150 == 0,
+            None => self.tick % 150 == 0 && self.scene == Scene::Title, // (the end screen: 5 s)
         };
         match self.scene {
             Scene::Title => {
@@ -670,7 +694,7 @@ impl crate::Game for Blocks {
         self.render(c);
     }
     fn status(&self) -> String {
-        format!("level {}  lines {}  score {:07}", self.level, self.lines, self.score)
+        format!("level {}  lines {}  score {:07}  time {}", self.level, self.lines, self.score, mmss(self.time_left))
     }
     fn hi(&self) -> u64 {
         self.hi

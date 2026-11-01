@@ -5,10 +5,11 @@
 // degrees), it speeds up a little with every paddle hit and with every
 // stage. Some bricks drop capsules: W wide paddle, M multi-ball (each ball
 // splits in three), S slow ball, 1UP. Silver bricks take several hits.
-// Stages cycle through four layouts.
+// Stages cycle through four layouts. A game lasts at most 3 minutes
+// (TIME UP), the clock is in the middle of the top line.
 use crate::gfx::{scale, Canvas, Rgb, H, W};
 use crate::input::{Input, Key};
-use crate::Rng;
+use crate::{mmss, Rng, TIME_LIMIT};
 
 const COLS: usize = 12;
 const ROWS: usize = 9;
@@ -99,6 +100,8 @@ pub struct Bricks {
     msg_t: i32, // "STAGE n" / "CLEAR"
     clear_t: i32,
     over_t: i32,
+    time_left: i32,
+    time_up: bool,
     paused: bool,
 }
 
@@ -124,6 +127,8 @@ impl Bricks {
             msg_t: 0,
             clear_t: 0,
             over_t: 0,
+            time_left: TIME_LIMIT,
+            time_up: false,
             paused: false,
         };
         g.layout();
@@ -318,6 +323,27 @@ impl Bricks {
         }
         let bricks_x = if n > 0.0 { sx / n } else { 64.0 };
         let target = match target {
+            // a few bricks left: aim at the lowest one (straight or off a wall)
+            Some(t) if n <= 8.0 && n > 0.0 => {
+                let (r, c) = (0..ROWS)
+                    .rev()
+                    .flat_map(|r| (0..COLS).map(move |c| (r, c)))
+                    .filter(|&(r, c)| self.grid[r][c].is_some())
+                    .min_by(|a, b| {
+                        let d = |(r, c): (usize, usize)| (ROWS - r) as f32 * 20.0 + (BX0 + c as f32 * BRW - t).abs();
+                        d(*a).total_cmp(&d(*b))
+                    })
+                    .unwrap();
+                let (bx, by) = (BX0 + c as f32 * BRW + 5.0, BY0 + r as f32 * BRH + 3.0);
+                let dy = PADDLE_Y - R - by;
+                let a = [bx, 2.0 * (LEFT + R) - bx, 2.0 * (RIGHT - R) - bx]
+                    .iter()
+                    .map(|&x| (x - t).atan2(dy))
+                    .min_by(|a, b| a.abs().total_cmp(&b.abs()))
+                    .unwrap()
+                    .clamp(-55f32.to_radians(), 55f32.to_radians());
+                t - a / 60f32.to_radians() * self.paddle_w() / 2.0
+            }
             // the aim drifts with time so that the ball does not settle on one path
             Some(t) => t - (bricks_x - t).signum() * self.paddle_w() * (0.2 + 0.25 * (self.tick as f32 * 0.0137).sin()),
             None => self.balls.first().map_or(64.0, |b| b.x),
@@ -338,6 +364,13 @@ impl Bricks {
             None => self.bot(),
         };
         if self.paused {
+            return;
+        }
+        self.time_left -= 1;
+        if self.time_left <= 0 {
+            self.scene = Scene::Over;
+            self.over_t = 0;
+            self.time_up = true;
             return;
         }
         self.msg_t = (self.msg_t - 1).max(0);
@@ -484,8 +517,10 @@ impl Bricks {
         // HUD
         c.text(&format!("{:06}", self.score), 1, 1, 1, [255, 255, 255]);
         c.text(&format!("HI{:06}", self.hi), 80, 1, 1, [255, 230, 0]);
-        for i in 0..self.lives.clamp(0, 6) {
-            c.rect(46 + 7 * i, 3, 5, 2, [200, 200, 220]);
+        let tc = if self.time_left > 600 { [255, 255, 255] } else if self.tick / 15 % 2 == 0 { [255, 40, 40] } else { [120, 0, 0] };
+        c.text_centre(&mmss(self.time_left), 1, 1, tc);
+        for i in 0..self.lives.clamp(0, 8) {
+            c.rect(4 + 7 * i, H as i32 - 4, 5, 2, [200, 200, 220]);
         }
         let mid = 120;
         if self.msg_t > 0 {
@@ -498,8 +533,9 @@ impl Bricks {
             c.text_centre("PAUSE", mid, 2, [255, 255, 255]);
         }
         if self.scene == Scene::Over {
-            c.text_centre("GAME", mid - 10, 3, [255, 60, 60]);
-            c.text_centre("OVER", mid + 14, 3, [255, 60, 60]);
+            let (w1, w2, col) = if self.time_up { ("TIME", "UP", [255, 230, 0]) } else { ("GAME", "OVER", [255, 60, 60]) };
+            c.text_centre(w1, mid - 10, 3, col);
+            c.text_centre(w2, mid + 14, 3, col);
             if self.over_t > 60 && self.tick / 30 % 2 == 0 {
                 c.text_centre("ENTER: RETRY", mid + 44, 1, [255, 255, 255]);
             }
@@ -544,7 +580,7 @@ impl crate::Game for Bricks {
         let bot = inp.is_none();
         let start = match inp.as_deref_mut() {
             Some(i) => i.take(Key::Start) | (self.scene != Scene::Play && i.take(Key::Space)),
-            None => self.tick % 150 == 0,
+            None => self.tick % 150 == 0 && self.scene == Scene::Title, // (the end screen: 5 s)
         };
         match self.scene {
             Scene::Title => {
@@ -574,7 +610,7 @@ impl crate::Game for Bricks {
         self.render(c);
     }
     fn status(&self) -> String {
-        format!("stage {}  score {:06}  balls {}", self.stage, self.score, self.lives.max(0))
+        format!("stage {}  score {:06}  balls {}  time {}", self.stage, self.score, self.lives.max(0), mmss(self.time_left))
     }
     fn hi(&self) -> u64 {
         self.hi
