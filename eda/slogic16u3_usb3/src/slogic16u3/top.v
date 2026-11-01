@@ -44,15 +44,22 @@ module top (
     // ---------------------------------------------------------------- ref_clk, PHY reset
     // ~20 ms after configuration the PLL leaves reset (the 125 MHz oscillator settles meanwhile);
     // phy_resetn ~1 ms after its lock (as the Console design)
-    reg [20:0] seq = 21'd0;
-    always @(posedge osc) if (!seq[20]) seq <= seq + 21'd1;
+`ifdef QUAD_CSR_INIT
+    // QCSR=1: the quad is configured from the fabric (quad_drp_mux.v) right after configuration; the
+    // PHY starts ~0.65 s later (with the CSR file the quad has the seconds of the bitstream load to settle)
+    localparam SEQ_W = 25;
+`else
+    localparam SEQ_W = 21;
+`endif
+    reg [SEQ_W-1:0] seq = {SEQ_W{1'b0}};
+    always @(posedge osc) if (!seq[SEQ_W-1]) seq <= seq + 1'b1;
     wire ref_clk /* synthesis syn_keep=1 */, ref_lock;
     pll_ref125 u_pll (.lock(ref_lock), .clkout0(ref_clk), .clkin(osc));
     reg [2:0] start_s = 3'd0;
     reg [16:0] phy_rst_cnt = 17'd0;
     wire phy_resetn = phy_rst_cnt[16];
     always @(posedge ref_clk) begin
-        start_s <= {start_s[1:0], seq[20] & ref_lock};
+        start_s <= {start_s[1:0], seq[SEQ_W-1] & ref_lock};
         if (!start_s[2]) phy_rst_cnt <= 17'd0;
         else if (!phy_resetn) phy_rst_cnt <= phy_rst_cnt + 17'd1;
     end
@@ -64,9 +71,15 @@ module top (
 `ifdef PHYTAP
     wire [322:0] tap; wire [5:0] tap_clk;   // TAP=1: boundary of the PHY soft IP (see the tap below)
 `endif
+`ifdef QUAD_XDRP
+    wire [57:0] xdrp_i; wire [33:0] xdrp_o;  // NOARB=1: host access to the quad registers (below)
+`endif
     SerDes_Top u_serdes (
 `ifdef PHYTAP
         .TAP_o(tap), .TAP_clk_o(tap_clk),
+`endif
+`ifdef QUAD_XDRP
+        .XDRP_i(xdrp_i), .XDRP_o(xdrp_o),
 `endif
         .USB3_0_PHY_Top_pclk(pclk),
         .USB3_0_PHY_Top_PipeRxData(rx_data),
@@ -122,6 +135,38 @@ module top (
         .o_ltssm_state(ltssm_state), .o_in_u0(in_u0), .o_u0_entry(u0_entry), .o_hot_reset(hot_reset), .o_warm_reset(warm_reset),
         .o_configured(link_configured));
 
+`ifdef QUAD_XDRP
+    // ---- quad register access (vendor requests 0x03 write / 0x04 read, wIndex = register):
+    //   write 0 / 1: address [15:0] / [23:16], 2 / 3: data [15:0] / [31:16], 4: start (wValue 1 write, 0 read)
+    //   read 0: address, 1: write data, 2: read data, 3: {accesses done [15:0], 14'b0, init done, busy}
+    // The access runs in the quad's register clock (quad_drp_mux.v, channel x), our PHY's accesses first.
+    // host/quad_reg.py
+    wire reg_wr; wire [7:0] reg_addr; wire [15:0] reg_wdata; reg [31:0] reg_rdata;
+    reg  [23:0] xa = 24'd0; reg [31:0] xd = 32'd0; reg xreq = 1'b0, xwr = 1'b0;
+    reg  [2:0]  xdone_s = 3'd0; reg [15:0] xcnt = 16'd0;
+    wire        xbusy = xreq != xdone_s[1];
+    always @(posedge pclk) begin
+        xdone_s <= {xdone_s[1:0], xdrp_o[32]};
+        if (xdone_s[2] != xdone_s[1]) xcnt <= xcnt + 16'd1;
+        if (reg_wr && !xbusy) case (reg_addr)
+            8'd0: xa[15:0] <= reg_wdata;
+            8'd1: xa[23:16] <= reg_wdata[7:0];
+            8'd2: xd[15:0] <= reg_wdata;
+            8'd3: xd[31:16] <= reg_wdata;
+            8'd4: begin xwr <= reg_wdata[0]; xreq <= !xreq; end
+            default: ;
+        endcase
+    end
+    assign xdrp_i = {xreq, xwr, xa, xd};
+    always @* case (reg_addr)
+        8'd0: reg_rdata = {8'd0, xa};
+        8'd1: reg_rdata = xd;
+        8'd2: reg_rdata = xdrp_o[31:0];
+        8'd3: reg_rdata = {xcnt, 14'd0, xdrp_o[33], xbusy};
+        default: reg_rdata = 32'd0;
+    endcase
+`endif
+
     Usb3Device #(.STREAM_FLUSH_US(1000)) u_dev (.i_clk(pclk), .i_rst(prst),
         .i_in_u0(in_u0), .i_hot_reset(hot_reset), .i_warm_reset(warm_reset),
         .i_rx_hp_valid(rx_hp_valid), .i_rx_hp_hdr(rx_hp_hdr),
@@ -130,7 +175,11 @@ module top (
         .i_tx_hp_ready(tx_hp_ready), .i_dpp_rd(dpp_rd), .i_dpp_addr(dpp_addr), .o_dpp_data(dpp_rdata),
         .o_configured(dev_configured), .o_address(dev_address), .o_reset(dev_reset), .o_dbg_event(dbg_event), .o_dbg_strobe(dbg_strobe), .o_dbg_state(dbg_state),
         .o_vendor_reg(vendor_reg), .i_vendor_status({8'h55, 3'b0, ltssm_state, 7'b0, link_configured, 8'h03}),
+`ifdef QUAD_XDRP
+        .o_reg_wr(reg_wr), .o_reg_addr(reg_addr), .o_reg_wdata(reg_wdata), .i_reg_rdata(reg_rdata),
+`else
         .o_reg_wr(), .o_reg_addr(), .o_reg_wdata(), .i_reg_rdata(32'd0),
+`endif
         .o_rx_valid(ep_rx_valid), .o_rx_data(ep_rx_data), .i_rx_ready(ep_rx_ready),
         .i_tx_valid(ep_tx_valid), .i_tx_data(ep_tx_data), .o_tx_ready(ep_tx_ready),
         .i_txw_valid(epw_valid), .i_txw_data(epw_data), .o_txw_ready(epw_ready));

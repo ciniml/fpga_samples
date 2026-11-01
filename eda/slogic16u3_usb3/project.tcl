@@ -77,6 +77,20 @@ set OWNPHY [expr {!$LANES && !$REF && [info exists ::env(OWNPHY)] && $::env(OWNP
 # (the arbiter's wrapper ties upar_rst / upar_bus_width to 0 and passes the clock through; its encrypted
 # core only merges up to four channels, and our PHY is the only one)
 set NOARB [expr {$OWNPHY && [info exists ::env(NOARB)] && $::env(NOARB) eq "1"}]
+if {$NOARB} { append defs "`define QUAD_XDRP\n" }
+# QCSR=1 (with NOARB=1): the quad's static configuration is also written at run time, from a ROM made by
+# csr/gw5at15_csr.py (quad_drp_mux.v, before our PHY's first access). QCSR_STATIC: what is left in the
+# CSR file for PnR - "full" (default: the IP's serdes.csr), or gw5at15_csr.py --keep prefixes ("top",
+# "none" ...). QCSR_ARGS: gw5at15_csr.py Lane fields for both.
+set QCSR [expr {$NOARB && [info exists ::env(QCSR)] && $::env(QCSR) eq "1"}]
+set QCSR_STATIC [expr {[info exists ::env(QCSR_STATIC)] && $::env(QCSR_STATIC) ne "" ? $::env(QCSR_STATIC) : "full"}]
+set QCSR_ARGS [expr {[info exists ::env(QCSR_ARGS)] ? $::env(QCSR_ARGS) : ""}]
+set CSRGEN [file normalize ${SRC_DIR}/../../csr/gw5at15_csr.py]
+if {$QCSR} {
+    append defs "`define QUAD_CSR_INIT\n"
+    exec python3 $CSRGEN --verilog -o [file normalize quad_csr_rom.vh] {*}$QCSR_ARGS
+    set_option -include_path [file normalize .]
+}
 set fh [open defines_gen.v w]; puts -nonewline $fh $defs; close $fh
 add_file -type verilog [file normalize defines_gen.v]
 
@@ -121,16 +135,25 @@ if {$OWNPHY} {
     add_file -type verilog [file normalize ${SRC_DIR}/usb3_softphy.v]
 }
 if {$NOARB} {
+    # quad_drp_mux.v in place of the arbiter: our PHY's channel plus channel x, brought out on SerDes_Top
+    # as XDRP_i {req, wr, addr[23:0], wdata[31:0]} / XDRP_o {done, rdata[31:0]} (top.v: the host's quad
+    # register access)
     set d "upar_arbiter_wrap_SerDes_Top_inst"
     set direct [join [list \
+        "input \[57:0\] XDRP_i;" "output \[33:0\] XDRP_o;" \
         "assign upar_rst = 1'b0;" "assign upar_bus_width_s = 1'b0;" \
-        "assign upar_wren_s = ${d}_drp_wren_i\[0\];" "assign upar_rden_s = ${d}_drp_rden_i\[0\];" \
-        "assign upar_addr_s = ${d}_drp_addr_i\[23:0\];" "assign upar_wrdata_s = ${d}_drp_wrdata_i\[31:0\];" \
-        "assign upar_strb_s = ${d}_drp_strb_i\[7:0\];" \
-        "assign ${d}_drp_clk_o\[0\] = q0_fabric_cm_life_clk_o;" "assign ${d}_drp_ready_o\[0\] = upar_ready_s;" \
-        "assign ${d}_drp_rdvld_o\[0\] = upar_rdvld_s;" "assign ${d}_drp_rddata_o\[31:0\] = upar_rddata_s;" \
-        "assign ${d}_drp_resp_o\[0\] = 1'b0;"] "\n"]
+        "assign ${d}_drp_clk_o\[0\] = q0_fabric_cm_life_clk_o;" "assign ${d}_drp_resp_o\[0\] = 1'b0;" \
+        "quad_drp_mux u_quad_drp_mux (.clk(q0_fabric_cm_life_clk_o)," \
+        "    .p_wren(${d}_drp_wren_i\[0\]), .p_rden(${d}_drp_rden_i\[0\]), .p_addr(${d}_drp_addr_i\[23:0\])," \
+        "    .p_wrdata(${d}_drp_wrdata_i\[31:0\]), .p_strb(${d}_drp_strb_i\[7:0\]), .p_ready(${d}_drp_ready_o\[0\])," \
+        "    .p_rdvld(${d}_drp_rdvld_o\[0\]), .p_rddata(${d}_drp_rddata_o\[31:0\])," \
+        "    .x_req(XDRP_i\[57\]), .x_wr(XDRP_i\[56\]), .x_addr(XDRP_i\[55:32\]), .x_wdata(XDRP_i\[31:0\])," \
+        "    .x_done(XDRP_o\[32\]), .x_rdata(XDRP_o\[31:0\]), .init_done(XDRP_o\[33\])," \
+        "    .wren(upar_wren_s), .rden(upar_rden_s), .addr(upar_addr_s), .wrdata(upar_wrdata_s), .strb(upar_strb_s)," \
+        "    .ready(upar_ready_s), .rdvld(upar_rdvld_s), .rddata(upar_rddata_s));"] "\n"]
     if {[regsub {\\~upar_arbiter_wrap\.SerDes_Top upar_arbiter_wrap_SerDes_Top_inst \(.*?\n\);\n} $sv "$direct\n" sv] != 1} { error "NOARB: arbiter instance not found" }
+    if {[regsub {module SerDes_Top \(} $sv "module SerDes_Top (XDRP_i, XDRP_o, " sv] != 1} { error "NOARB: SerDes_Top header not found" }
+    add_file -type verilog [file normalize ${SRC_DIR}/quad_drp_mux.v]
 }
 if {$TAP} {
     set d "upar_arbiter_wrap_SerDes_Top_inst_drp"
@@ -191,6 +214,12 @@ if {$TRACE || $TAP || $NOARB} {
 add_file -type sdc $SDC
 
 set CSR ${IPDIR}/serdes.csr
+if {$QCSR && $QCSR_STATIC ne "full"} {
+    set CSR [file normalize serdes_static.csr]
+    set keep {}
+    foreach p [split $QCSR_STATIC ","] { lappend keep --keep $p }
+    exec python3 $CSRGEN {*}$keep -o $CSR {*}$QCSR_ARGS
+}
 set fh [open $gdir/${PROJECT_NAME}.gprj.user w]
 puts $fh "<?xml version=\"1\" encoding=\"UTF-8\"?>\n<!DOCTYPE ProjectUserData>\n<UserConfig>\n    <Version>1.0</Version>"
 puts $fh "    <ResultFileList>\n        <ResultFile ResultFileType=\"RES.serdes.csr\" ResultFilePath=\"$CSR\"/>\n    </ResultFileList>\n</UserConfig>"

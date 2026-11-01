@@ -26,6 +26,9 @@ make ... PLACE_OPT=3 PNR_EXTRA="serdesRetiming=1" TAG=sr   # PnR オプション
 make ... TRACE=1 [TRACE_INVERT=1] # EasyCDR トレース送信 (UART ピン、下記。受信側では未確認)
 make ... TAP=1 [TAP_UPAR=1]       # PHY 境界の観測 (TAP_UPAR: quad 側の DRP バス) (phy_tap.v、下記「USB 3.0 PHY IP の境界の観測」)
 make ... OWNPHY=1 NOARB=1 PLACE_OPT=3 PNR_EXTRA="serdesRetiming=1" TAG=sr  # 自作 PHY、upar アービタなし (Gowin の暗号化 IP なし)
+make ... OWNPHY=1 NOARB=1 QCSR=1 QCSR_STATIC=none  # さらに quad の静的設定もファブリックから (CSR ファイルは空、下記「CSR の自作」)
+python3 csr/check_csr.py                # csr/gw5at15_csr.py と Gowin の toml→CSR ツールの突き合わせ
+python3 host/quad_reg.py read 0x808238  # (NOARB=1) quad のレジスタを USB 越しに読み書き / csr: CSR の全アドレスを読み戻し
 make ... OWNPHY=1 PLACE_OPT=4 PNR_EXTRA="serdesRetiming=1" TAG=sr  # 自作 PHY (usb3_softphy.v + rtl/usb3 usb3_phy_*) で Gowin の PHY ソフト IP を置き換え (下記)
 ~/repos/rust-dap/fpga-config/target/release/gowin-prog --cable dap sram build/slogic16u3_usb3_ln0/impl/pnr/slogic16u3_usb3.fs
 python3 host/usb3_status.py [-w]        # ER1: LTSSM 状態 / 遷移履歴、カウンタ、受信のデコードエラー
@@ -218,3 +221,43 @@ Warm Reset と見ているが、Gowin の PHY と比べてはいない)。
   パーサ / LTSSM / デバイス部 (いずれも -0.6 ns 前後)。
 - 実機: 列挙 5000M、PRBS 379.7 MB/s 誤り 0、ループバック 1 GiB 一致 (片方向 51.8 MB/s)、Hot Reset 20/20。
   LUT 8,476 (57 %)、FF 4,898。
+- ポートの disable → enable による再接続 5 回: 5 回とも 5000M で再列挙。リセットのカウンタが 150、復号エラーが約 6.3 万増えた
+  (アービタありの OWNPHY と同程度)。その後も PRBS 誤り 0、1 GiB 一致、Hot Reset 20/20 (このときは別ジョブでホストの負荷が
+  高く、PRBS 300〜317 MB/s、ループバック 38.6 MB/s だった)。
+- rtl/usb3 の遅いパスを直した後 (2026-11-01): 既定 (PnR オプションなし) を含む 5 通りの配置がすべて 125 MHz を満たす
+  (125.0〜129.9 MHz、違反なし。LUT 8,345 / FF 4,973)。直したのは次の 4 か所:
+  - LTSSM: 状態に入るときの処理 (Polling バーストのカウンタ、RxPolarity / スクランブル無効のクリア、U0 の入り方) を次状態の
+    判定から外した (状態の外で常時クリア、または Rx.Detect.Active でクリア)。PowerDown の変更は状態が変わった次のクロック。
+  - パーサ: 読み出し位置ごとの「最初の HPSTART / LCSTART / COM×4」を前のクロックで求めてレジスタに置く。ヘッダの
+    CRC-16 と TS の判定は、選んだワードを 1 段レジスタに入れてから (CRC-32 と同じ)。
+  - デバイス: 送信要求を 1 段レジスタに入れてからリンクへ渡す (応答が 1 クロック遅れる)。
+  実機 (p3_r2 + serdesRetiming、129.9 MHz): PRBS 381.3 MB/s 誤り 0、1 GiB 一致 (52.8 MB/s)、Hot Reset 20/20。
+  libusb 非同期 (`host/usb3_prbs_async.c`、キュー 4 × 1 MiB) で 447.4 MB/s、60 秒 26.8 GB 誤り 0 (Gowin の PHY のときの
+  446.3 MB/s と同じ。上の 381 MB/s は Python の同期読み出し)。
+
+## CSR の自作 (csr/、QCSR=1)
+
+quad の静的設定 (PnR に渡す CSR ファイル) は `upar_write_driver(アドレス, 値)` 256 行の書き込み列で、読み出しや
+待ちは含まない。アドレスはバイト単位、値は 32 ビット語のアドレス下位 2 ビットのバイトレーンに置く (`0x800224` ← 0x41、
+`0x800225` ← 0x4100 …。TAP=1 で見た実行時の書き込みも同じ)。
+- `csr/gw5at15_csr.py`: この設計の書き込み列 (`csr/q0_ln0_base.csr`、Gowin の --comment のレジスタ群名付き) に、
+  toml のキーを 1 つずつ変えて見つけたフィールドを当てて出力する。8b10b / ワード整列 / CTC (`cfg_fpcs`)、極性、信号検出の
+  閾値、DC 結合、手動の受信イコライザ (`0x8082d0` boost / `0x8082d4` att / `0x8003a2`)、手動の送信 FFE (`0x808234`
+  txlev / `0x808238` c1・cm / `0x8082d8`)。Gowin の PHY が P0 に入るときに書く `0x808238` ← 0x805 は FFE (c1 8、
+  cm 5 = de-emphasis) と分かった。`csr/check_csr.py` で 19 通りの設定が Gowin のツールの出力とバイト一致。
+- `host/quad_reg.py` (NOARB=1 のビルド): ベンダ要求 0x03 / 0x04 → top.v → `quad_drp_mux.v` (アービタの代わり、
+  PHY のアクセスと 1 つずつ交互) で quad のレジスタを読み書き。リンク中に CSR の 231 アドレスを読み戻すと 230 が
+  書いた値のまま (違う 1 つは PHY が実行時に書く `0x808238`)。
+- 実行時の書き込みは効く: リンク中に手動イコライザの att を 0 にするとデコードエラーと Recovery が続く。
+  `0x8003a7` ← 0x60000000 (手動イコライザの切り替え) だけでもリンクが落ちる。極性ビット (`0x809008`) はリンク中に
+  書いても変化なし (quad の PCS 側の処理で、バイパス中は効かないと見ている)。
+- `QCSR=1`: `gw5at15_csr.py --verilog` の ROM を `quad_drp_mux.v` がコンフィグ直後に書く (PHY の DRP より先)。
+  `QCSR_STATIC=none` で CSR ファイルを空にしても (Gowin の静的設定なし) 実機で列挙 5000M、PRBS 381 MB/s 誤り 0、
+  1 GiB 一致、Hot Reset 20/20、非同期 447.4 MB/s、再ロード 5/5。SRAM の再ロードで quad のレジスタは消える
+  (ROM に無いレジスタに書いた値が 0 に戻る) ので、前のビットストリームの設定が残って動いているのではない。
+- 書いた直後に PHY を動かすと、最初の Rx.Detect が続けて失敗して eSS.Disabled を一度通る (RxElecIdle が数万回
+  ばたつく、書き込みの間を空けても同じ)。CSR ファイルなら quad はビットストリームのロード中 (約 3 秒) に設定される
+  ので、QCSR=1 では PHY の開始を約 0.65 s 遅らせた (top.v) — これで Disabled は出なくなった。
+- 電源を全部切って入れ直した後 (フラッシュの設計が先に起動し、その後 SRAM ロード) も同じ試験が通った (列挙 5000M、
+  PRBS 384.7 MB/s 誤り 0、非同期 447.4 MB/s、1 GiB 一致、Hot Reset 20/20)。USB ケーブルの抜き差しからも復帰する。
+- 未確認: `QCSR_STATIC=top` (top.* の 7 行だけ残す)、フラッシュから QCSR=1 の設計を直接起動する場合。
