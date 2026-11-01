@@ -26,7 +26,7 @@ D14=1 -> 125 MHz XO -> Q0 REFCLK0 -> USB 3.0 PHY IP (GUI 生成、src/slogic16u3
 ```sh
 DISPLAY= QT_QPA_PLATFORM=offscreen make GW_SH=~/gowin/1.9.12.03/IDE/bin/gw_sh            # USB 3.0 デバイス (top.v)
 make ... SERDES_IP=serdes_4ln     # レーン特定用 (top_lanes.v、Customized PHY 4 レーン)
-make ... REF=1                    # 切り分け用: Gowin のリファレンスコントローラを同じ PHY で (top_ref.v)
+make ... REF=1                    # 切り分け用: Gowin のリファレンスコントローラを同じ PHY (既定は自作 PHY) で (top_ref.v)
 make ... PLACE_OPT=3 PNR_EXTRA="serdesRetiming=1" TAG=sr   # PnR オプション (下記「タイミング」)
 make ... TRACE=1 [TRACE_INVERT=1] # EasyCDR トレース送信 (UART ピン、下記。受信側では未確認)
 make ... TAP=1 [TAP_UPAR=1]       # Gowin の PHY IP の境界の観測 (TAP=1 では OWNPHY の既定が 0) (TAP_UPAR: quad 側の DRP バス) (phy_tap.v、下記「USB 3.0 PHY IP の境界の観測」)
@@ -47,7 +47,9 @@ python3 host/usb3_phytap.py status|arm-log|log|arm-win|win   # TAP=1: DRP / 状�
 - `REF=1` は `eda/targets/tangconsole60k/doc/gowin_usb3_ref` (Gowin の GW5AT-60 用リファレンス、このリポジトリの
   ソースではない) をビルドディレクトリにコピーし、BSRAM に収めるため EP1 を 4 KiB にした
   `src/slogic16u3/ref_override/usb3_macro_define.v` で差し替えて使う。リンク確立 (SuperSpeed として認識) まで行くことで
-  ボード / PHY 側の正常を確認した。
+  ボード / PHY 側の正常を確認した。自作 PHY (既定) でも Gowin の PHY (`OWNPHY=0`) でも同じところまで (U0 に入り、
+  ディスクリプタ読み出しはホスト側で -71)。参照コントローラはリセット後の PhyStatus の立ち下がり (PIPE の PHY 準備完了)
+  を待つので、自作 PHY はリセット中 PhyStatus を 1 にしている。
 - JTAG ER2 は書き込み可 (jtag_status.v): 最上位ビットを立てて index を書いたスキャンの次のスキャンでその項目が読める。
 - U0 のトレースはスクランブルされているので、ホスト側でアイドル (スクランブルされた 0) から LFSR 状態を総当たりで
   求めてデスクランブルする。

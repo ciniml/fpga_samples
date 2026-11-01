@@ -72,9 +72,10 @@ set TAP_UPAR [expr {$TAP && [info exists ::env(TAP_UPAR)] && $::env(TAP_UPAR) eq
 if {$TAP_UPAR} { append defs "`define PHYTAP_UPAR\n" }
 # OWNPHY / NOARB / QCSR (usb3_ln0 device build, each on by default, =0 turns it off): our PHY in place of
 # Gowin's USB 3.0 PHY soft IP, no upar arbiter, the quad's static configuration from the fabric with an
-# empty CSR file (ownphy.tcl, shared with slogic16u3_la). TAP=1 observes Gowin's IP: OWNPHY defaults to 0 there.
+# empty CSR file (ownphy.tcl, shared with slogic16u3_la), also under REF=1. TAP=1 observes Gowin's IP: OWNPHY
+# defaults to 0 there. SERDES_IP=serdes_4ln has no USB 3.0 PHY.
 source [file normalize ${SRC_DIR}/../../ownphy.tcl]
-if {$LANES || $REF} { set ::env(OWNPHY) 0 }
+if {$LANES} { set ::env(OWNPHY) 0 }
 append defs [ownphy_config [expr {!$TAP}]]
 set fh [open defines_gen.v w]; puts -nonewline $fh $defs; close $fh
 add_file -type verilog [file normalize defines_gen.v]
@@ -143,6 +144,10 @@ set fh [open ${SRC_DIR}/[expr {$LANES ? "pins_lanes.cst" : "pins.cst"}] r]; set 
 if {$TRACE} {
     regsub {IO_LOC "trace_p" F14;\nIO_PORT "trace_p" [^\n]*\nIO_LOC "trace_n" E14;\nIO_PORT "trace_n" [^\n]*\n} $cst \
         "IO_LOC \"trace_p\" F14,E14;\nIO_PORT \"trace_p\" IO_TYPE=LVCMOS33D PULL_MODE=NONE DRIVE=16;\n" cst
+}
+if {$REF} {
+    # top_ref.v has no trace pins
+    regsub -all {IO_(LOC|PORT) "trace_[pn]"[^\n]*\n} $cst "" cst
 }
 set fh [open pins_gen.cst w]; puts -nonewline $fh $cst; close $fh
 add_file -type cst [file normalize pins_gen.cst]

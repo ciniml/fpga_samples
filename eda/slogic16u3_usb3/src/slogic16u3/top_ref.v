@@ -2,7 +2,7 @@
 // Copyright Kenta Ida 2026.
 // Cross-check build (REF=1): Gowin's USB 3.0 reference device controller (CDC/bulk reference design
 // for the GW5AT-60, eda/targets/tangconsole60k/doc/gowin_usb3_ref, not part of this repository's
-// sources) on the same USB 3.0 PHY IP (Q0 lane 0), clocks and pins as top.v. It tells a problem of
+// sources) on the same USB 3.0 PHY (ours by default, OWNPHY=0: Gowin's IP; Q0 lane 0), clocks and pins as top.v. It tells a problem of
 // rtl/usb3 apart from one of the board / PHY. JTAG ER1 (IR 0x42): 256 bits of PIPE statistics,
 // see host/usb3_ref_status.py.
 module top (
@@ -26,12 +26,23 @@ module top (
     wire ref_clk /* synthesis syn_keep=1 */, ref_lock;
     pll_ref125 u_pll (.lock(ref_lock), .clkout0(ref_clk), .clkin(osc));
 
+`ifdef QUAD_CSR_INIT
+    // QCSR (default): the quad is configured from the fabric right after configuration; the controller
+    // (and with it the PHY) starts ~0.65 s later (as top.v)
+    reg [24:0] seq = 25'd0;
+    always @(posedge osc) if (!seq[24]) seq <= seq + 1'b1;
+    wire start = seq[24];
+`else
+    wire start = 1'b1;
+`endif
     // as the reference top: 256 pclk after start, the controller leaves reset and drives the PHY reset
     wire pclk /* synthesis syn_keep = 1 */;
     reg [7:0] cnt0 = 8'd0;
+    reg [2:0] start_s = 3'd0;
     reg phy_resetn = 1'b0, sys_rst_n = 1'b0;
     always @(posedge pclk) begin
-        if (cnt0 < 8'd255) cnt0 <= cnt0 + 8'd1;
+        start_s <= {start_s[1:0], start};
+        if (start_s[2] && cnt0 < 8'd255) cnt0 <= cnt0 + 8'd1;
         phy_resetn <= cnt0 == 8'd255;
         sys_rst_n  <= cnt0 == 8'd255;
     end
@@ -42,6 +53,9 @@ module top (
     wire [2:0] phy_rx_status; wire [1:0] phy_power_down, phy_tx_deemph; wire [2:0] phy_tx_margin;
     wire phy_tx_oneszeros, phy_tx_swing, phy_rx_polarity, phy_rx_termination, phy_rate, phy_elas_buf_mode;
     SerDes_Top u_serdes (
+`ifdef QUAD_XDRP
+        .XDRP_i(58'd0), .XDRP_o(),   // (no host access to the quad registers here)
+`endif
         .USB3_0_PHY_Top_ref_clk(ref_clk), .USB3_0_PHY_Top_pclk(pclk),
         .USB3_0_PHY_Top_PipeRxData(phy_pipe_rx_data), .USB3_0_PHY_Top_PipeRxDataK(phy_pipe_rx_datak),
         .USB3_0_PHY_Top_PipeRxDataValid(phy_pipe_rx_valid), .USB3_0_PHY_Top_RxElecIdle(phy_rx_elecidle),

@@ -124,7 +124,7 @@ module usb3_softphy (
     reg [3:0]  o_k = 4'd0;
     reg [2:0]  o_st = 3'd0;
     always @(posedge pclk) begin
-        o_physt <= phy_status;
+        o_physt <= phy_status || prst;   // PIPE: PhyStatus held through reset, its fall = PHY ready (REF=1 waits for it)
         o_rv    <= rv;
         o_d     <= rv ? rword[31:0] : 32'd0;
         o_k     <= rv ? rword[35:32] : 4'd0;
