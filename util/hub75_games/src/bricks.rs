@@ -278,13 +278,13 @@ impl Bricks {
         self.grid[r][c] = None;
         self.score += if br.silver { 50 * self.stage as u64 } else { 10 + 10 * (ROWS - r) as u64 };
         self.burst(x, y, br.c, 8);
-        if self.rng.chance(0.12) {
+        if self.rng.chance(0.25) {
             let p = self.rng.f();
             let kind = if p < 0.35 {
                 Cap::Wide
             } else if p < 0.7 {
                 Cap::Multi
-            } else if p < 0.94 {
+            } else if p < 0.96 {
                 Cap::Slow
             } else {
                 Cap::Life
