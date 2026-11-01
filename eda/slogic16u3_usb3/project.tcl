@@ -61,6 +61,36 @@ if {$TRACE} {
     }
     add_file -type verilog [file normalize ${RTL_DIR}/displayport/src/encoder_8b10b.sv]
 }
+# TAP=1 (usb3_ln0 device build): observe the boundary between the USB 3.0 PHY soft IP and the GTR12 quad
+# (phy_tap.v, host/usb3_phytap.py). The IP's serdes.v is copied with its internal nets brought out on two
+# extra ports of SerDes_Top (TAP_o, TAP_clk_o); the packet trace on ER2 is replaced by the tap.
+set TAP [expr {!$LANES && !$REF && [info exists ::env(TAP)] && $::env(TAP) eq "1"}]
+if {$TAP} { append defs "`define PHYTAP\n" }
+# TAP_UPAR=1 (with TAP=1): the log follows the quad side of the upar arbiter (GTR12_UPARA) instead of the
+# IP's DRP channel, and its control lines {rdvld, ready, rden, wren} are status bits [63:60]
+set TAP_UPAR [expr {$TAP && [info exists ::env(TAP_UPAR)] && $::env(TAP_UPAR) eq "1"}]
+if {$TAP_UPAR} { append defs "`define PHYTAP_UPAR\n" }
+# OWNPHY=1 (usb3_ln0 device build): our PHY (src/slogic16u3/usb3_softphy.v + rtl/usb3 usb3_phy_*) in place
+# of Gowin's USB 3.0 PHY soft IP; the quad, its CSR and the upar arbiter stay
+set OWNPHY [expr {!$LANES && !$REF && [info exists ::env(OWNPHY)] && $::env(OWNPHY) eq "1"}]
+# NOARB=1 (with OWNPHY=1): no upar arbiter either; our PHY's register port goes straight to GTR12_UPARA
+# (the arbiter's wrapper ties upar_rst / upar_bus_width to 0 and passes the clock through; its encrypted
+# core only merges up to four channels, and our PHY is the only one)
+set NOARB [expr {$OWNPHY && [info exists ::env(NOARB)] && $::env(NOARB) eq "1"}]
+if {$NOARB} { append defs "`define QUAD_XDRP\n" }
+# QCSR=1 (with NOARB=1): the quad's static configuration is also written at run time, from a ROM made by
+# csr/gw5at15_csr.py (quad_drp_mux.v, before our PHY's first access). QCSR_STATIC: what is left in the
+# CSR file for PnR - "full" (default: the IP's serdes.csr), or gw5at15_csr.py --keep prefixes ("top",
+# "none" ...). QCSR_ARGS: gw5at15_csr.py Lane fields for both.
+set QCSR [expr {$NOARB && [info exists ::env(QCSR)] && $::env(QCSR) eq "1"}]
+set QCSR_STATIC [expr {[info exists ::env(QCSR_STATIC)] && $::env(QCSR_STATIC) ne "" ? $::env(QCSR_STATIC) : "full"}]
+set QCSR_ARGS [expr {[info exists ::env(QCSR_ARGS)] ? $::env(QCSR_ARGS) : ""}]
+set CSRGEN [file normalize ${SRC_DIR}/../../csr/gw5at15_csr.py]
+if {$QCSR} {
+    append defs "`define QUAD_CSR_INIT\n"
+    exec python3 $CSRGEN --verilog -o [file normalize quad_csr_rom.vh] {*}$QCSR_ARGS
+    set_option -include_path [file normalize .]
+}
 set fh [open defines_gen.v w]; puts -nonewline $fh $defs; close $fh
 add_file -type verilog [file normalize defines_gen.v]
 
@@ -94,8 +124,66 @@ if {$LANES} {
     }
 }
 add_file -type verilog [file normalize ${SRC_DIR}/jtag_status.v]
-add_file -type verilog ${IPDIR}/serdes.v
-foreach f [glob -nocomplain ${IPDIR}/*/*.v] { if {![string match *_tmp.v $f]} { add_file -type verilog $f } }
+if {$TAP || $OWNPHY} {
+    set fh [open ${IPDIR}/serdes.v r]; set sv [read $fh]; close $fh
+}
+if {$OWNPHY} {
+    if {[regsub {USB3_0_PHY_Top USB3_0_PHY_Top_inst \(} $sv "usb3_softphy USB3_0_PHY_Top_inst (\n    .serdes_rxdet_result_i(q0_fabric_ln0_rxdet_result)," sv] != 1} { error "OWNPHY: USB3_0_PHY_Top_inst not found" }
+    foreach f {usb3_phy_pkg usb3_phy_tx usb3_phy_rx usb3_phy_eb usb3_phy_ctl} {
+        add_file -type verilog [file normalize ${RTL_DIR}/usb3/${f}.sv]
+    }
+    add_file -type verilog [file normalize ${SRC_DIR}/usb3_softphy.v]
+}
+if {$NOARB} {
+    # quad_drp_mux.v in place of the arbiter: our PHY's channel plus channel x, brought out on SerDes_Top
+    # as XDRP_i {req, wr, addr[23:0], wdata[31:0]} / XDRP_o {done, rdata[31:0]} (top.v: the host's quad
+    # register access)
+    set d "upar_arbiter_wrap_SerDes_Top_inst"
+    set direct [join [list \
+        "input \[57:0\] XDRP_i;" "output \[33:0\] XDRP_o;" \
+        "assign upar_rst = 1'b0;" "assign upar_bus_width_s = 1'b0;" \
+        "assign ${d}_drp_clk_o\[0\] = q0_fabric_cm_life_clk_o;" "assign ${d}_drp_resp_o\[0\] = 1'b0;" \
+        "quad_drp_mux u_quad_drp_mux (.clk(q0_fabric_cm_life_clk_o)," \
+        "    .p_wren(${d}_drp_wren_i\[0\]), .p_rden(${d}_drp_rden_i\[0\]), .p_addr(${d}_drp_addr_i\[23:0\])," \
+        "    .p_wrdata(${d}_drp_wrdata_i\[31:0\]), .p_strb(${d}_drp_strb_i\[7:0\]), .p_ready(${d}_drp_ready_o\[0\])," \
+        "    .p_rdvld(${d}_drp_rdvld_o\[0\]), .p_rddata(${d}_drp_rddata_o\[31:0\])," \
+        "    .x_req(XDRP_i\[57\]), .x_wr(XDRP_i\[56\]), .x_addr(XDRP_i\[55:32\]), .x_wdata(XDRP_i\[31:0\])," \
+        "    .x_done(XDRP_o\[32\]), .x_rdata(XDRP_o\[31:0\]), .init_done(XDRP_o\[33\])," \
+        "    .wren(upar_wren_s), .rden(upar_rden_s), .addr(upar_addr_s), .wrdata(upar_wrdata_s), .strb(upar_strb_s)," \
+        "    .ready(upar_ready_s), .rdvld(upar_rdvld_s), .rddata(upar_rddata_s));"] "\n"]
+    if {[regsub {\\~upar_arbiter_wrap\.SerDes_Top upar_arbiter_wrap_SerDes_Top_inst \(.*?\n\);\n} $sv "$direct\n" sv] != 1} { error "NOARB: arbiter instance not found" }
+    if {[regsub {module SerDes_Top \(} $sv "module SerDes_Top (XDRP_i, XDRP_o, " sv] != 1} { error "NOARB: SerDes_Top header not found" }
+    add_file -type verilog [file normalize ${SRC_DIR}/quad_drp_mux.v]
+}
+if {$TAP} {
+    set d "upar_arbiter_wrap_SerDes_Top_inst_drp"
+    set tapsig [join [list \
+        upar_rddata_s upar_rdvld_s upar_ready_s upar_strb_s upar_wrdata_s upar_addr_s upar_rden_s upar_wren_s \
+        q0_fabric_ln0_rxdata_o\[39:0\] q0_fabric_ln0_txdata_i\[39:0\] \
+        q0_fabric_ln0_stat_o_h q0_fabric_ln0_stat_o q0_lane0_rx_if_fifo_aempty q0_fabric_ln0_tx_vld_in \
+        q0_fabric_ln0_rx_vld_out q0_lane0_pcs_rx_rst q0_lane0_pcs_tx_rst q0_fabric_ln0_rstn_i q0_fabric_cmu_ok_o \
+        q0_fabric_ln0_rxdet_result q0_fabric_ln0_pma_rx_lock_o q0_fabric_ln0_rxelecidle_o_h q0_fabric_ln0_rxelecidle_o \
+        q0_fabric_ln0_astat_o \
+        ${d}_rddata_o\[31:0\] ${d}_rdvld_o\[0\] ${d}_ready_o\[0\] ${d}_strb_i\[7:0\] ${d}_wrdata_i\[31:0\] \
+        ${d}_addr_i\[23:0\] ${d}_rden_i\[0\] ${d}_wren_i\[0\]] ", "]
+    set tapclk [join [list q0_fabric_cm_life_clk_o q0_lane0_pcs_rx_o_fabric_clk q0_lane0_pcs_tx_o_fabric_clk \
+        q0_lane0_fabric_rx_clk q0_lane0_fabric_tx_clk ${d}_clk_o\[0\]] ", "]
+    if {[regsub {module SerDes_Top \(} $sv "module SerDes_Top (TAP_o, TAP_clk_o, " sv] != 1} { error "TAP: SerDes_Top header not found" }
+    if {[regsub {\nendmodule //SerDes_Top} $sv "\noutput \[322:0\] TAP_o;\noutput \[5:0\] TAP_clk_o;\nassign TAP_o = {$tapsig};\nassign TAP_clk_o = {$tapclk};\nendmodule //SerDes_Top" sv] != 1} { error "TAP: SerDes_Top end not found" }
+    add_file -type verilog [file normalize ${SRC_DIR}/phy_tap.v]
+}
+if {$TAP || $OWNPHY} {
+    set fh [open serdes_gen.v w]; puts -nonewline $fh $sv; close $fh
+    add_file -type verilog [file normalize serdes_gen.v]
+} else {
+    add_file -type verilog ${IPDIR}/serdes.v
+}
+foreach f [glob -nocomplain ${IPDIR}/*/*.v] {
+    if {[string match *_tmp.v $f]} continue
+    if {$OWNPHY && [string match */usb3_0_phy/* $f]} continue
+    if {$NOARB && [string match */upar_arbiter/* $f]} continue
+    add_file -type verilog $f
+}
 set GW_JTAG_V [file normalize [file join [file dirname [info nameofexecutable]] .. data ipcores gw_jtag.v]]
 add_file -type verilog $GW_JTAG_V
 set fh [open ${SRC_DIR}/[expr {$LANES ? "pins_lanes.cst" : "pins.cst"}] r]; set cst [read $fh]; close $fh
@@ -106,16 +194,32 @@ if {$TRACE} {
 set fh [open pins_gen.cst w]; puts -nonewline $fh $cst; close $fh
 add_file -type cst [file normalize pins_gen.cst]
 set SDC [file normalize ${SRC_DIR}/[expr {$LANES ? "timing_lanes.sdc" : ($REF ? "timing_ref.sdc" : "timing.sdc")}]]
-if {$TRACE} {
-    # one file: the trace clock groups refer to pclk of timing.sdc (SDC files are read separately)
+if {$TRACE || $TAP || $NOARB} {
+    # one file: the trace / tap clock groups refer to pclk of timing.sdc (SDC files are read separately)
     set fh [open $SDC r]; set sdc [read $fh]; close $fh
-    set fh [open ${SRC_DIR}/timing_trace.sdc r]; append sdc [read $fh]; close $fh
+    if {$TRACE} { set fh [open ${SRC_DIR}/timing_trace.sdc r]; append sdc [read $fh]; close $fh }
+    if {$NOARB && !$TAP} {
+        # no arbiter: the register port runs straight in the quad's clock
+        set sdc [string map [list {u_serdes/upar_arbiter_wrap_SerDes_Top_inst_drp_clk_o[0]} {u_serdes/q0_fabric_cm_life_clk_o}] $sdc]
+    }
+    if {$TAP} {
+        # the clock nets now leave SerDes_Top on TAP_clk_o: synthesis names them after the top-level wire
+        set sdc [string map [list {u_serdes/q0_lane0_fabric_rx_clk} {tap_clk[2]} \
+            {u_serdes/upar_arbiter_wrap_SerDes_Top_inst_drp_clk_o[0]} {tap_clk[0]}] $sdc]
+        set fh [open ${SRC_DIR}/timing_tap.sdc r]; append sdc [read $fh]; close $fh
+    }
     set fh [open timing_gen.sdc w]; puts -nonewline $fh $sdc; close $fh
     set SDC [file normalize timing_gen.sdc]
 }
 add_file -type sdc $SDC
 
 set CSR ${IPDIR}/serdes.csr
+if {$QCSR && $QCSR_STATIC ne "full"} {
+    set CSR [file normalize serdes_static.csr]
+    set keep {}
+    foreach p [split $QCSR_STATIC ","] { lappend keep --keep $p }
+    exec python3 $CSRGEN {*}$keep -o $CSR {*}$QCSR_ARGS
+}
 set fh [open $gdir/${PROJECT_NAME}.gprj.user w]
 puts $fh "<?xml version=\"1\" encoding=\"UTF-8\"?>\n<!DOCTYPE ProjectUserData>\n<UserConfig>\n    <Version>1.0</Version>"
 puts $fh "    <ResultFileList>\n        <ResultFile ResultFileType=\"RES.serdes.csr\" ResultFilePath=\"$CSR\"/>\n    </ResultFileList>\n</UserConfig>"

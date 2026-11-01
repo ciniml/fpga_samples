@@ -1,0 +1,86 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file usb3_phy_tx.veryl
+ * @brief Transmit half of the soft USB 3.0 PHY: PIPE 32 bits / 125 MHz in,
+ *        40 bits (four 10-bit symbols, symbol 0 in [9:0], bit 0 first on the
+ *        line) to the SerDes out.
+ *
+ * - P0 with TxElecIdle 0: the four bytes are 8b/10b encoded, the running
+ *   disparity chained through them.
+ * - LFPS (TxElecIdle 0 in P1 / P2 / P3, or TxElecIdle 1 + TxDetectRx 1 in
+ *   P0): a square wave of 160 ones and 160 zeros (64 ns, 15.6 MHz), as
+ *   Gowin's PHY sends it. The driver itself is switched by the DRP sequencer
+ *   (Usb3PhyDrp), which follows o_drive.
+ * - Electrical idle: 1010... (the data is not on the line then).
+ */
+module Usb3PhyTx (
+    i_clk         : input  clock    ,
+    i_rst         : input  reset    ,
+    i_data        : input  logic<32>,
+    i_k           : input  logic<4> ,
+    i_elecidle    : input  logic    , // TxElecIdle
+    i_detectrx    : input  logic    , // TxDetectRx_loopback
+    i_power_down  : input  logic<2> ,
+    o_txdata      : output logic<40>,
+    o_drive       : output logic    , // the line should be driven (data or LFPS)
+    o_lfps        : output logic    ,
+) {
+    import usb3_phy_pkg::*;
+
+    var rd   : logic    ;
+    var sq   : logic<3> ; // square wave phase: words 0..3 ones, 4..7 zeros
+    var txd  : logic<40>;
+    var drive: logic    ;
+    var lfps : logic    ;
+
+    let p0      : logic = i_power_down == 2'd0;
+    let data_on : logic = p0 && !i_elecidle;
+    let lfps_on : logic = !p0 && !i_elecidle || p0 && i_elecidle && i_detectrx;
+
+    var enc   : logic<40>;
+    var rd_nxt: logic    ;
+    always_comb {
+        var r: logic    ;
+        var e: logic<11>;
+        r   = rd;
+        enc = 0;
+        for i in 0..4 {
+            e               = enc8b10b(i_k[i], i_data[i * 8+:8], r);
+            enc[i * 10+:10] = e[9:0];
+            r               = e[10];
+        }
+        rd_nxt = r;
+    }
+
+    assign o_txdata = txd;
+    assign o_drive  = drive;
+    assign o_lfps   = lfps;
+
+    always_ff {
+        if_reset {
+            rd    = 0;
+            sq    = 0;
+            txd   = 40'hAAAAAAAAAA;
+            drive = 0;
+            lfps  = 0;
+        } else {
+            drive = data_on || lfps_on;
+            lfps  = lfps_on;
+            if data_on {
+                txd = enc;
+                rd  = rd_nxt;
+                sq  = 0;
+            } else if lfps_on {
+                txd = if sq[2] ? 40'h0000000000 : 40'hFFFFFFFFFF;
+                sq  += 1;
+            } else {
+                txd = 40'hAAAAAAAAAA;
+                sq  = 0;
+            }
+        }
+    }
+}

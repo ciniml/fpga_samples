@@ -101,6 +101,7 @@ module Usb3RxParser (
     var   i_avail: logic<5>          ; // 11 when the 8 symbols at pos are valid and progress is allowed, else 0
     var   hit_c  : logic<5>      [21]; // {END, SDP, COM4, SLC, SHP} ordered set starting at window position p
     var   hit_r  : logic<8 * 17>     ; // flat, 8 bits per position (an array maps to LUT RAM; a stride of 5 made a multiplier)
+    var   fnd_r  : logic<8 * 8>      ; // per read position p: first HPSTART / LCSTART / COM4 at p..p+3, {00, ts, lc, hp, found, s[1:0]}, registered like hit_r
 
     function cls_at (
         p: input u32,
@@ -141,6 +142,22 @@ module Usb3RxParser (
                 for p in 0..17 {
                     hit_r[p * 8+:8] = {3'b0, hit_c[p + 4]};
                 }
+                for p in 0..8 {
+                    var f: logic<8>;
+                    f = 0;
+                    for i in 0..4 {
+                        if !f[2] {
+                            if hit_c[p + 4 + i][H_SHP] {
+                                f = {5'b00001, 1'b1, i as 2};
+                            } else if hit_c[p + 4 + i][H_SLC] {
+                                f = {5'b00010, 1'b1, i as 2};
+                            } else if hit_c[p + 4 + i][H_COM] {
+                                f = {5'b00100, 1'b1, i as 2};
+                            }
+                        }
+                    }
+                    fnd_r[p * 8+:8] = f;
+                }
             }
         }
     }
@@ -164,6 +181,8 @@ module Usb3RxParser (
     var widx    : logic<2>     ; // word index inside a body
     var hdr     : logic<96>    ;
     var crc16   : logic<16>    ;
+    var c16w    : logic<32>    ; // header word folded into crc16 on the next clock
+    var c16p    : logic        ; // c16w pending
     var kbad    : logic        ;
     var remain  : logic<11>    ; // DPP data bytes still to come
     var crc32   : logic<32>    ;
@@ -178,6 +197,10 @@ module Usb3RxParser (
     var lc_k    : logic        ; // a K-code was inside
     var ts_cnt  : logic<2>  [3]; // filler votes: [0] D10.2, [1] D5.2, [2] D21.5 (per word, 0..4 -> saturate)
     var ts_ok   : logic<3>     ; // all fillers so far matched: {D21.5, D5.2, D10.2}
+    var tsw_v   : logic        ; // a TS body word checked on the next clock (off the read-position mux)
+    var tsw_i   : logic<2>     ; // its index
+    var tsw_raw : logic<32>    ;
+    var tsw_k   : logic<4>     ;
     var idle_cnt: logic<4>     ;
 
     function sym (
@@ -223,35 +246,21 @@ module Usb3RxParser (
     assign w_raw  = v_raw[31:0];
 
     always_comb {
-        var s       : logic<2>;
-        found    = 0;
-        found_s  = 0;
-        found_hp = 0;
-        found_lc = 0;
-        found_ts = 0;
-        for i in 0..4 {
-            s = i as 2;
-            if !found {
-                if hit_at(s, H_SHP) {
-                    found    = 1;
-                    found_s  = s;
-                    found_hp = 1;
-                } else if hit_at(s, H_SLC) {
-                    found    = 1;
-                    found_s  = s;
-                    found_lc = 1;
-                } else if hit_at(s, H_COM) {
-                    found    = 1;
-                    found_s  = s;
-                    found_ts = 1;
-                }
-            }
-        }
+        var f       : logic<8>;
+        f        = fnd_r[pos * 8+:8];
+        found    = f[2];
+        found_s  = f[1:0];
+        found_hp = f[3];
+        found_lc = f[4];
+        found_ts = f[5];
     }
 
     var crc16_w: logic<16>;
+    var crc16_f: logic<16>; // crc16 with the pending word: the CRC of all header words so far
     var crc32_w: logic<32>;
-    assign crc16_w = crc16_w4(crc16, w_desc);
+    // CRC-16 runs one clock behind the header words, like CRC-32 below
+    assign crc16_w = crc16_w4(crc16, c16w);
+    assign crc16_f = if c16p ? crc16_w : crc16;
     // CRC-32 runs one clock behind the data (cd / cm registered from the
     // window), keeping the read-position mux out of the CRC logic
     always_comb {
@@ -287,7 +296,7 @@ module Usb3RxParser (
                         pop = 4;
                         if widx == 3 {
                             // DP header with good CRC: the DPP must follow immediately
-                            if hdr[4:0] == PKT_DP && !kbad && w_k == 0 && ~crc16 == {w_desc[15:8], w_desc[7:0]}
+                            if hdr[4:0] == PKT_DP && !kbad && w_k == 0 && ~crc16_f == {w_desc[15:8], w_desc[7:0]}
                                 && lcw_ok(w_desc[31:16]) {
                                 nstate = State::DppStart;
                             } else {
@@ -359,6 +368,12 @@ module Usb3RxParser (
             widx           = 0;
             hdr            = 0;
             crc16          = 0;
+            c16w           = 0;
+            c16p           = 0;
+            tsw_v          = 0;
+            tsw_i          = 0;
+            tsw_raw        = 0;
+            tsw_k          = 0;
             kbad           = 0;
             remain         = 0;
             crc32          = 0;
@@ -400,9 +415,45 @@ module Usb3RxParser (
             o_dpp_valid    = 0;
             o_dpp_end      = 0;
             o_dpp_err      = 0;
-            // pending CRC word and DPP end check (independent of i_adv)
+            // pending CRC words, TS word and DPP end check (independent of i_adv)
             crc32 = crc32_w;
             cm    = 0;
+            crc16 = crc16_f;
+            c16p  = 0;
+            // words that are only used when a flag says so next clock: loaded every clock (no
+            // enable from the state decision)
+            cd         = w_desc;
+            lc_d       = w_desc;
+            o_dpp_data = w_desc;
+            tsw_v      = 0;
+            tsw_raw    = w_raw;
+            tsw_k      = w_k;
+            if tsw_v {
+                var ok: logic<3>;
+                ok = if tsw_i == 0 ? 3'b111 : ts_ok;
+                if tsw_i == 0 {
+                    o_ts_cfg = tsw_raw[15:8];
+                }
+                for i in 0..4 {
+                    if i >= 2 || tsw_i != 0 {
+                        if tsw_k[i] || tsw_raw[i * 8+:8] != D10_2 {
+                            ok[0] = 0;
+                        }
+                        if tsw_k[i] || tsw_raw[i * 8+:8] != D5_2 {
+                            ok[1] = 0;
+                        }
+                        if tsw_k[i] || tsw_raw[i * 8+:8] != D21_5 {
+                            ok[2] = 0;
+                        }
+                    }
+                }
+                ts_ok = ok;
+                if tsw_i == 2 {
+                    o_ts_valid = ok != 0;
+                    o_ts_type  = if ok[1] ? 2 : 1;
+                    o_ts_inv   = ok[2];
+                }
+            }
             if lc_p {
                 lc_p       = 0;
                 o_lc_valid = !lc_k && lc_d[15:0] == lc_d[31:16] && lcw_ok(lc_d[15:0]);
@@ -441,7 +492,6 @@ module Usb3RxParser (
                                     widx     = 0;
                                     kbad     = 0;
                                     crc16    = 16'hFFFF;
-                                    ts_ok    = 3'b111;
                                     idle_cnt = 0;
                                     o_idle8  = 0;
                                 } else {
@@ -473,12 +523,13 @@ module Usb3RxParser (
                                 }
                                 if widx != 3 {
                                     hdr[widx * 32+:32] = w_desc;
-                                    crc16              = crc16_w;
+                                    c16w               = w_desc;
+                                    c16p               = 1;
                                 } else {
                                     o_hp_valid  = 1;
                                     o_hp_hdr    = hdr;
                                     o_hp_lcw    = w_desc[31:16];
-                                    o_hp_crc_ok = !kbad && w_k == 0 && ~crc16 == {w_desc[15:8], w_desc[7:0]}
+                                    o_hp_crc_ok = !kbad && w_k == 0 && ~crc16_f == {w_desc[15:8], w_desc[7:0]}
                                         && lcw_ok(w_desc[31:16]);
                                     remain      = hdr[58:48]; // Data Length (DW1[31:16]), max 1024
                                     if hdr[63:59] != 0 {
@@ -491,7 +542,6 @@ module Usb3RxParser (
                         State::LcBody: {
                             if i_avail >= 4 {
                                 lc_p = 1;
-                                lc_d = w_desc;
                                 lc_k = w_k != 0;
                             }
                         }
@@ -510,9 +560,7 @@ module Usb3RxParser (
                                     o_dpp_err = 1;
                                 } else {
                                     o_dpp_valid = 1;
-                                    o_dpp_data  = w_desc;
                                     o_dpp_be    = 4'b1111;
-                                    cd          = w_desc;
                                     cm          = 4;
                                     remain      = remain - 4;
                                 }
@@ -524,14 +572,12 @@ module Usb3RxParser (
                                     o_dpp_err = 1;
                                 }
                                 o_dpp_valid = remain != 0;
-                                o_dpp_data  = w_desc;
                                 o_dpp_be    = case remain[1:0] {
                                     0      : 4'b0000,
                                     1      : 4'b0001,
                                     2      : 4'b0011,
                                     default: 4'b0111,
                                 };
-                                cd = w_desc;
                                 cm = {1'b0, remain[1:0]};
                                 case remain[1:0] {
                                     0      : crc_rx[31:0] = w_desc;
@@ -571,41 +617,9 @@ module Usb3RxParser (
                         }
                         State::TsBody: {
                             if i_avail >= 4 {
-                                var ok  : logic<3>;
-                                widx = widx + 1;
-                                ok   = ts_ok;
-                                if widx == 0 {
-                                    o_ts_cfg = w_raw[15:8];
-                                    for i in 2..4 {
-                                        if w_k[i] || w_raw[i * 8+:8] != D10_2 {
-                                            ok[0] = 0;
-                                        }
-                                        if w_k[i] || w_raw[i * 8+:8] != D5_2 {
-                                            ok[1] = 0;
-                                        }
-                                        if w_k[i] || w_raw[i * 8+:8] != D21_5 {
-                                            ok[2] = 0;
-                                        }
-                                    }
-                                } else {
-                                    for i in 0..4 {
-                                        if w_k[i] || w_raw[i * 8+:8] != D10_2 {
-                                            ok[0] = 0;
-                                        }
-                                        if w_k[i] || w_raw[i * 8+:8] != D5_2 {
-                                            ok[1] = 0;
-                                        }
-                                        if w_k[i] || w_raw[i * 8+:8] != D21_5 {
-                                            ok[2] = 0;
-                                        }
-                                    }
-                                }
-                                ts_ok = ok;
-                                if widx == 2 {
-                                    o_ts_valid = ok != 0;
-                                    o_ts_type  = if ok[1] ? 2 : 1;
-                                    o_ts_inv   = ok[2];
-                                }
+                                widx  = widx + 1;
+                                tsw_v = 1;
+                                tsw_i = widx;
                             }
                         }
                     }

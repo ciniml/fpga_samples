@@ -1,0 +1,133 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file usb3_phy_eb.veryl
+ * @brief Elastic buffer of the soft USB 3.0 PHY: an asynchronous FIFO (gray
+ *        pointers, 2FF synchronised, after rtl/la LaAfifo) from the
+ *        recovered receive clock to pclk.
+ *
+ * Write side: every decoded word goes in; o_whigh tells Usb3PhyRx to remove
+ * a SKP pair (the receive clock runs faster than pclk).
+ * Read side: reading starts once HALF words are in. Below LOW it pauses for a
+ * clock: PipeRxDataValid stays 0 that clock (the receive clock runs slower,
+ * e.g. a host with spread spectrum clocking), as Gowin's PHY does; rtl/usb3
+ * takes such clocks anywhere, also inside a packet.
+ */
+module Usb3PhyEb #(
+    param DW  : u32 = 39,
+    param AW  : u32 = 4 ,
+    param HALF: u32 = 8 ,
+    param LOW : u32 = 3 ,
+    param HIGH: u32 = 12,
+) (
+    i_wclk : input  'w clock    ,
+    i_wrst : input  'w reset    ,
+    i_wv   : input  'w logic    ,
+    i_wdata: input  'w logic<DW>,
+    o_whigh: output 'w logic    ,
+
+    i_rclk : input  'r clock    ,
+    i_rrst : input  'r reset    ,
+    i_run  : input  'r logic    , // 0: drain and stay stopped (no lock / not P0)
+    o_rv   : output 'r logic    ,
+    o_rdata: output 'r logic<DW>,
+) {
+    const PW: u32 = AW + 1;
+
+    function gray2bin (
+        g: input logic<PW>,
+    ) -> logic<PW> {
+        var b        : logic<PW>;
+        b[PW - 1] = g[PW - 1];
+        for i in 1..PW {
+            b[PW - 1 - i] = b[PW - i] ^ g[PW - 1 - i];
+        }
+        return b;
+    }
+
+    function bin2gray (
+        b: input logic<PW>,
+    ) -> logic<PW> {
+        return (b >> 1) ^ b;
+    }
+
+    var mem: 'w logic<DW> [2 ** AW];
+
+    // write side
+    var wbin    : 'w logic<PW>;
+    var wgray   : 'w logic<PW>;
+    var rgray_w1: 'w logic<PW>;
+    var rgray_w2: 'w logic<PW>;
+    var wlevel  : 'w logic<PW>;
+    var whigh   : 'w logic    ;
+    assign o_whigh = whigh;
+
+    // read side
+    var rbin    : 'r logic<PW>;
+    var rgray   : 'r logic<PW>;
+    var wgray_r1: 'r logic<PW>;
+    var wgray_r2: 'r logic<PW>;
+    var rlevel  : 'r logic<PW>;
+    var running : 'r logic    ;
+    var rv      : 'r logic    ;
+    var rdata   : 'r logic<DW>;
+    assign o_rv    = rv;
+    assign o_rdata = rdata;
+    let rd_go: 'r logic = running && i_run && rlevel >: LOW;
+
+    unsafe (cdc) {
+        always_ff (i_wclk, i_wrst) {
+            if_reset {
+                wbin     = 0;
+                wgray    = 0;
+                rgray_w1 = 0;
+                rgray_w2 = 0;
+                wlevel   = 0;
+                whigh    = 0;
+            } else {
+                if i_wv {
+                    mem[wbin[AW - 1:0]] = i_wdata;
+                    wbin                = wbin + 1;
+                    wgray               = bin2gray(wbin + 1);
+                }
+                rgray_w1 = rgray;
+                rgray_w2 = rgray_w1;
+                wlevel   = wbin - gray2bin(rgray_w2);
+                whigh    = wlevel >= HIGH;
+            }
+        }
+        always_ff (i_rclk, i_rrst) {
+            if_reset {
+                rbin     = 0;
+                rgray    = 0;
+                wgray_r1 = 0;
+                wgray_r2 = 0;
+                rlevel   = 0;
+                running  = 0;
+                rv       = 0;
+                rdata    = 0;
+            } else {
+                wgray_r1 = wgray;
+                wgray_r2 = wgray_r1;
+                rlevel   = gray2bin(wgray_r2) - rbin - (if rd_go ? 1 : 0);
+                if !i_run {
+                    // drop everything that comes in while stopped
+                    rbin    = gray2bin(wgray_r2);
+                    rgray   = wgray_r2;
+                    running = 0;
+                } else if !running {
+                    running = rlevel >= HALF;
+                }
+                rv = rd_go;
+                if rd_go {
+                    rdata = mem[rbin[AW - 1:0]];
+                    rbin  = rbin + 1;
+                    rgray = bin2gray(rbin + 1);
+                }
+            }
+        }
+    }
+}

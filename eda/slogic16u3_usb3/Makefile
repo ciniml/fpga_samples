@@ -20,14 +20,32 @@ TAG ?=
 TRACE ?=
 TRACE_INVERT ?=
 export TRACE TRACE_INVERT
+# TAP=1: observe the boundary between the USB 3.0 PHY soft IP and the GTR12 quad (phy_tap.v, ER2)
+TAP ?=
+export TAP
+# TAP_UPAR=1 (with TAP=1): log the quad side of the upar arbiter instead of the IP's DRP channel
+TAP_UPAR ?=
+export TAP_UPAR
+# OWNPHY=1: our USB 3.0 PHY (usb3_softphy.v, rtl/usb3 usb3_phy_*) in place of Gowin's PHY soft IP
+OWNPHY ?=
+export OWNPHY
+# NOARB=1 (with OWNPHY=1): no upar arbiter, our PHY drives the quad's register port (GTR12_UPARA) directly
+NOARB ?=
+export NOARB
+# QCSR=1 (with NOARB=1): the quad's static configuration also written at run time from a ROM
+# (csr/gw5at15_csr.py); QCSR_STATIC: what stays in the CSR file (full / top / none ...), QCSR_ARGS: Lane fields
+QCSR ?=
+QCSR_STATIC ?=
+QCSR_ARGS ?=
+export QCSR QCSR_STATIC QCSR_ARGS
 export PLACE_OPT ROUTE_OPT PNR_EXTRA
-BUILD_SUFFIX := _$(SERDES_IP)$(if $(filter 1,$(REF)),_ref)$(if $(PLACE_OPT),_p$(PLACE_OPT))$(if $(ROUTE_OPT),_r$(ROUTE_OPT))$(if $(filter 1,$(TRACE)),_trace)$(if $(TAG),_$(TAG))
+BUILD_SUFFIX := _$(SERDES_IP)$(if $(filter 1,$(REF)),_ref)$(if $(PLACE_OPT),_p$(PLACE_OPT))$(if $(ROUTE_OPT),_r$(ROUTE_OPT))$(if $(filter 1,$(TRACE)),_trace)$(if $(filter 1,$(TAP)),_tap)$(if $(filter 1,$(TAP_UPAR)),u)$(if $(filter 1,$(OWNPHY)),_own)$(if $(filter 1,$(NOARB)),_noarb)$(if $(filter 1,$(QCSR)),_qcsr$(QCSR_STATIC))$(if $(TAG),_$(TAG))
 
-USB3_VERYL_SV := $(addprefix ../../rtl/usb3/,usb3_pkg.sv usb3_crc_pkg.sv usb3_scrambler.sv usb3_rx_fifo.sv usb3_rx_parser.sv usb3_tx_framer.sv usb3_ltssm.sv usb3_link.sv usb3_top.sv usb3_descriptor_rom.sv usb3_device.sv)
+USB3_VERYL_SV := $(addprefix ../../rtl/usb3/,usb3_pkg.sv usb3_crc_pkg.sv usb3_scrambler.sv usb3_rx_fifo.sv usb3_rx_parser.sv usb3_tx_framer.sv usb3_ltssm.sv usb3_link.sv usb3_top.sv usb3_descriptor_rom.sv usb3_device.sv usb3_phy_pkg.sv usb3_phy_tx.sv usb3_phy_rx.sv usb3_phy_eb.sv usb3_phy_ctl.sv)
 
 SRCS := $(wildcard src/$(TARGET)/*.v) $(wildcard src/$(TARGET)/*.cst) $(wildcard src/$(TARGET)/*.sdc) \
         $(wildcard src/$(TARGET)/$(SERDES_IP)/*.v) $(wildcard src/$(TARGET)/$(SERDES_IP)/*/*.v) \
-        src/$(TARGET)/$(SERDES_IP)/serdes.csr $(USB3_VERYL_SV) project.tcl maps/slogic16u3_usb3.map
+        src/$(TARGET)/$(SERDES_IP)/serdes.csr csr/gw5at15_csr.py csr/q0_ln0_base.csr $(USB3_VERYL_SV) project.tcl maps/slogic16u3_usb3.map
 
 include ../build_gowin.mk
 

@@ -44,15 +44,22 @@ module top (
     // ---------------------------------------------------------------- ref_clk, PHY reset
     // ~20 ms after configuration the PLL leaves reset (the 125 MHz oscillator settles meanwhile);
     // phy_resetn ~1 ms after its lock (as the Console design)
-    reg [20:0] seq = 21'd0;
-    always @(posedge osc) if (!seq[20]) seq <= seq + 21'd1;
+`ifdef QUAD_CSR_INIT
+    // QCSR=1: the quad is configured from the fabric (quad_drp_mux.v) right after configuration; the
+    // PHY starts ~0.65 s later (with the CSR file the quad has the seconds of the bitstream load to settle)
+    localparam SEQ_W = 25;
+`else
+    localparam SEQ_W = 21;
+`endif
+    reg [SEQ_W-1:0] seq = {SEQ_W{1'b0}};
+    always @(posedge osc) if (!seq[SEQ_W-1]) seq <= seq + 1'b1;
     wire ref_clk /* synthesis syn_keep=1 */, ref_lock;
     pll_ref125 u_pll (.lock(ref_lock), .clkout0(ref_clk), .clkin(osc));
     reg [2:0] start_s = 3'd0;
     reg [16:0] phy_rst_cnt = 17'd0;
     wire phy_resetn = phy_rst_cnt[16];
     always @(posedge ref_clk) begin
-        start_s <= {start_s[1:0], seq[20] & ref_lock};
+        start_s <= {start_s[1:0], seq[SEQ_W-1] & ref_lock};
         if (!start_s[2]) phy_rst_cnt <= 17'd0;
         else if (!phy_resetn) phy_rst_cnt <= phy_rst_cnt + 17'd1;
     end
@@ -61,7 +68,19 @@ module top (
     wire pclk /* synthesis syn_keep=1 */;
     wire [31:0] rx_data, tx_data; wire [3:0] rx_k, tx_k; wire rx_valid, rx_elecidle, phy_status, power_present;
     wire [2:0] rx_status; wire [1:0] power_down; wire tx_elecidle, tx_detectrx, rx_polarity, rx_termination;
+`ifdef PHYTAP
+    wire [322:0] tap; wire [5:0] tap_clk;   // TAP=1: boundary of the PHY soft IP (see the tap below)
+`endif
+`ifdef QUAD_XDRP
+    wire [57:0] xdrp_i; wire [33:0] xdrp_o;  // NOARB=1: host access to the quad registers (below)
+`endif
     SerDes_Top u_serdes (
+`ifdef PHYTAP
+        .TAP_o(tap), .TAP_clk_o(tap_clk),
+`endif
+`ifdef QUAD_XDRP
+        .XDRP_i(xdrp_i), .XDRP_o(xdrp_o),
+`endif
         .USB3_0_PHY_Top_pclk(pclk),
         .USB3_0_PHY_Top_PipeRxData(rx_data),
         .USB3_0_PHY_Top_PipeRxDataK(rx_k),
@@ -116,6 +135,38 @@ module top (
         .o_ltssm_state(ltssm_state), .o_in_u0(in_u0), .o_u0_entry(u0_entry), .o_hot_reset(hot_reset), .o_warm_reset(warm_reset),
         .o_configured(link_configured));
 
+`ifdef QUAD_XDRP
+    // ---- quad register access (vendor requests 0x03 write / 0x04 read, wIndex = register):
+    //   write 0 / 1: address [15:0] / [23:16], 2 / 3: data [15:0] / [31:16], 4: start (wValue 1 write, 0 read)
+    //   read 0: address, 1: write data, 2: read data, 3: {accesses done [15:0], 14'b0, init done, busy}
+    // The access runs in the quad's register clock (quad_drp_mux.v, channel x), our PHY's accesses first.
+    // host/quad_reg.py
+    wire reg_wr; wire [7:0] reg_addr; wire [15:0] reg_wdata; reg [31:0] reg_rdata;
+    reg  [23:0] xa = 24'd0; reg [31:0] xd = 32'd0; reg xreq = 1'b0, xwr = 1'b0;
+    reg  [2:0]  xdone_s = 3'd0; reg [15:0] xcnt = 16'd0;
+    wire        xbusy = xreq != xdone_s[1];
+    always @(posedge pclk) begin
+        xdone_s <= {xdone_s[1:0], xdrp_o[32]};
+        if (xdone_s[2] != xdone_s[1]) xcnt <= xcnt + 16'd1;
+        if (reg_wr && !xbusy) case (reg_addr)
+            8'd0: xa[15:0] <= reg_wdata;
+            8'd1: xa[23:16] <= reg_wdata[7:0];
+            8'd2: xd[15:0] <= reg_wdata;
+            8'd3: xd[31:16] <= reg_wdata;
+            8'd4: begin xwr <= reg_wdata[0]; xreq <= !xreq; end
+            default: ;
+        endcase
+    end
+    assign xdrp_i = {xreq, xwr, xa, xd};
+    always @* case (reg_addr)
+        8'd0: reg_rdata = {8'd0, xa};
+        8'd1: reg_rdata = xd;
+        8'd2: reg_rdata = xdrp_o[31:0];
+        8'd3: reg_rdata = {xcnt, 14'd0, xdrp_o[33], xbusy};
+        default: reg_rdata = 32'd0;
+    endcase
+`endif
+
     Usb3Device #(.STREAM_FLUSH_US(1000)) u_dev (.i_clk(pclk), .i_rst(prst),
         .i_in_u0(in_u0), .i_hot_reset(hot_reset), .i_warm_reset(warm_reset),
         .i_rx_hp_valid(rx_hp_valid), .i_rx_hp_hdr(rx_hp_hdr),
@@ -124,7 +175,11 @@ module top (
         .i_tx_hp_ready(tx_hp_ready), .i_dpp_rd(dpp_rd), .i_dpp_addr(dpp_addr), .o_dpp_data(dpp_rdata),
         .o_configured(dev_configured), .o_address(dev_address), .o_reset(dev_reset), .o_dbg_event(dbg_event), .o_dbg_strobe(dbg_strobe), .o_dbg_state(dbg_state),
         .o_vendor_reg(vendor_reg), .i_vendor_status({8'h55, 3'b0, ltssm_state, 7'b0, link_configured, 8'h03}),
+`ifdef QUAD_XDRP
+        .o_reg_wr(reg_wr), .o_reg_addr(reg_addr), .o_reg_wdata(reg_wdata), .i_reg_rdata(reg_rdata),
+`else
         .o_reg_wr(), .o_reg_addr(), .o_reg_wdata(), .i_reg_rdata(32'd0),
+`endif
         .o_rx_valid(ep_rx_valid), .o_rx_data(ep_rx_data), .i_rx_ready(ep_rx_ready),
         .i_tx_valid(ep_tx_valid), .i_tx_data(ep_tx_data), .o_tx_ready(ep_tx_ready),
         .i_txw_valid(epw_valid), .i_txw_data(epw_data), .o_txw_ready(epw_ready));
@@ -238,6 +293,7 @@ module top (
     // [43:24] pclk / 16 edges per 2^22 osc, [351:44] pclk snapshot, [383:352] uptime (2^16 osc),
     // [399:384] COM count, [415:400] decode errors, [431:416] disparity errors (pclk, sampled as is)
     wire [431:0] cap = {cnt_disp, cnt_dec, cnt_com, up, snap, pf, pads_s, phy_resetn, ref_lock, 16'h5B31};
+`ifndef PHYTAP
     // ---------------------------------------------------------------- packet trace (ER2)
     // 1024 pclk words of {RxStatus, RxValid, RxDataK, RxData, TxDataK, TxData} in a ring that runs
     // until a trigger, then 'post' more words and frozen; the write pointer is then the oldest entry.
@@ -321,8 +377,74 @@ module top (
     // [38:28] index shown, [159:39] entry, [167:160] header log write pointer / count (128 = full),
     // [169:168] trigger mode, [170] header log wrapped (ring mode: oldest = pointer), [171] header log frozen
     wire [191:0] cap2 = {20'd0, hfrz, hwrap, tmode_p, hwp, tq, tq_idx, twp, tfull, ttrig, 16'h5B33};
+    localparam integer L2 = 192;
+`else
+    // ---------------------------------------------------------------- PHY boundary tap (TAP=1, ER2)
+    // phy_tap.v: DRP / status event log and transmit data window at the boundary between the USB 3.0
+    // PHY soft IP and the GTR12 quad (SerDes_Top TAP_o, added by project.tcl), host/usb3_phytap.py.
+    // TAP_o: [99:0] the IP's DRP channel {rddata, rdvld, ready, strb, wrdata, addr, rden, wren},
+    //   [142:100] {stat_o_h[12:0], stat_o[12:0], rxfifo_aempty, tx_vld, rx_vld, pcs_rx_rst, pcs_tx_rst,
+    //   ln0_rstn, cmu_ok, rxdet_result, pma_rx_lock, rxelecidle_o_h, rxelecidle_o, astat[5:0]},
+    //   [182:143] txdata[39:0], [222:183] rxdata[39:0],
+    //   [322:223] the quad side of the upar arbiter {rddata, rdvld, ready, strb, wrdata, addr, rden, wren}
+    // TAP_clk_o: {cm_life, pcs_rx_o_fabric, pcs_tx_o_fabric, lane0_fabric_rx, lane0_fabric_tx (txdata), drp}
+    reg phy_status_t = 1'b0;           // PhyStatus is a one-pclk pulse: log it as a toggle
+    always @(posedge pclk) if (phy_status) phy_status_t <= ~phy_status_t;
+`ifdef PHYTAP_UPAR
+    wire [99:0] tap_drp = tap[322:223];
+    wire [3:0]  tap_ux = {tap[290], tap[289], tap[224], tap[223]};   // quad side {rdvld, ready, rden, wren}
+`else
+    wire [99:0] tap_drp = tap[99:0];
+    wire [3:0]  tap_ux = 4'd0;
+`endif
+    wire [63:0] tap_st = {tap_ux,                                // [63:60] (TAP_UPAR)
+        tap[142:130],                                            // [59:47] stat_o_h
+        tap[129:117],                                            // [46:34] stat_o
+        tap[116], tap[115], tap[114],                            // [33:31] rxfifo_aempty, tx_vld, rx_vld
+        tap[113], tap[112], tap[111], tap[110], tap[109], tap[108], // [30:25] pcs_rx_rst, pcs_tx_rst, ln0_rstn, cmu_ok, rxdet_result, pma_rx_lock
+        tap[107], tap[106],                                      // [24:23] rxelecidle_o_h, rxelecidle_o
+        tap[105:100],                                            // [22:17] astat
+        ltssm_state,                                             // [16:12]
+        rx_valid, rx_status,                                     // [11:8]
+        phy_status_t, rx_elecidle, rx_polarity, rx_termination, tx_detectrx, tx_elecidle, power_down}; // [7:0]
+    // ER2 write (31 bits): [30] = 1: re-arm the log with mask [15:0], start condition [21] (enable) /
+    // [20:16] (LTSSM state); [29] = 1: re-arm the window with trigger [26:24] and post count [9:0];
+    // otherwise [11:0] = entry to show ([11] = 1: window)
+    wire        w2; wire [30:0] w2_data;
+    reg  [11:0] tidx = 12'd0;
+    always @(posedge osc) if (w2 && !w2_data[30] && !w2_data[29]) tidx <= w2_data[11:0];
+    wire [103:0] lq; wire [43:0] wq;
+    wire [10:0] l_wp; wire [15:0] l_drop, l_mask;
+    wire [9:0]  w_wp; wire w_trig, w_full, l_gate; wire [2:0] w_mode;
+    phy_tap_log u_tap_log (.dclk(tap_clk[0]),
+        .wren(tap_drp[0]), .rden(tap_drp[1]), .addr(tap_drp[25:2]), .wdata(tap_drp[57:26]), .strb(tap_drp[65:58]),
+        .ready(tap_drp[66]), .rdvld(tap_drp[67]), .rdata(tap_drp[99:68]), .st(tap_st),
+        .osc(osc), .i_arm(w2 && w2_data[30]), .i_mask(w2_data[15:0]), .i_start_en(w2_data[21]),
+        .i_start_state(w2_data[20:16]), .i_ridx(tidx[9:0]),
+        .o_rq(lq), .o_gate(l_gate), .o_wp(l_wp), .o_drop(l_drop), .o_mask(l_mask));
+    phy_tap_win u_tap_win (.tclk(tap_clk[1]), .txd(tap[182:143]), .tx_vld(tap[115]),
+        .pd(power_down), .tx_elecidle(tx_elecidle), .tx_detectrx(tx_detectrx),
+        .osc(osc), .i_arm(w2 && w2_data[29] && !w2_data[30]), .i_trig(w2_data[26:24]), .i_post(w2_data[9:0]),
+        .i_ridx(tidx[9:0]), .o_rq(wq), .o_wp(w_wp), .o_trig(w_trig), .o_full(w_full), .o_mode(w_mode));
+    wire [15:0] f_cnt [0:5];
+    genvar fi;
+    generate for (fi = 0; fi < 6; fi = fi + 1) begin : g_freq
+        phy_tap_freq u_f (.clk(tap_clk[fi]), .osc(osc), .o_cnt(f_cnt[fi]));
+    end endgenerate
+    reg  [103:0] tq = 104'd0;
+    reg  [11:0]  tq_idx = 12'd0;
+    always @(posedge osc) begin tq <= tidx[11] ? {60'd0, wq} : lq; tq_idx <= tidx; end
+    // ER2 (288 bits): [15:0] magic 0x5B3A, [26:16] log write pointer (1024 = full), [38:27] index shown,
+    // [142:39] entry, [152:143] window write pointer, [153] window triggered, [154] window full,
+    // [156:155] window trigger mode [1:0], [172:157] log mask, [188:173] log events dropped,
+    // [189] window trigger mode [2], [190] log gate open, [191] 0,
+    // [287:192] clock counts (clk / 64 per 2^20 osc) of TAP_clk_o[0..5], 16 bits each
+    wire [287:0] cap2 = {f_cnt[5], f_cnt[4], f_cnt[3], f_cnt[2], f_cnt[1], f_cnt[0],
+                         1'b0, l_gate, w_mode[2], l_drop, l_mask, w_mode[1:0], w_full, w_trig, w_wp, tq, tq_idx, l_wp, 16'h5B3A};
+    localparam integer L2 = 288;
+`endif
 
-    jtag_status #(.L(432), .L2(192)) u_jtag (.tck_pad_i(tck_pad_i), .tms_pad_i(tms_pad_i), .tdi_pad_i(tdi_pad_i),
+    jtag_status #(.L(432), .L2(L2)) u_jtag (.tck_pad_i(tck_pad_i), .tms_pad_i(tms_pad_i), .tdi_pad_i(tdi_pad_i),
         .tdo_pad_o(tdo_pad_o), .osc(osc), .cap(cap), .cap2(cap2), .o_w2(w2), .o_w2_data(w2_data));
 
     assign led_r = in_u0;
