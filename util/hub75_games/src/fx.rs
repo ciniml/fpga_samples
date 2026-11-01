@@ -63,3 +63,29 @@ pub fn add(buf: &mut [Col], x: i32, y: i32, col: Col) {
         }
     }
 }
+
+/// distance from (px, py) to the segment a-b
+pub fn seg_dist(px: f32, py: f32, ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
+    let (vx, vy) = (bx - ax, by - ay);
+    let l2 = vx * vx + vy * vy;
+    let u = if l2 > 0.0 { (((px - ax) * vx + (py - ay) * vy) / l2).clamp(0.0, 1.0) } else { 0.0 };
+    let (dx, dy) = (ax + vx * u - px, ay + vy * u - py);
+    (dx * dx + dy * dy).sqrt()
+}
+
+/// a thick anti-aliased line blended over the buffer
+pub fn line(buf: &mut [Col], ax: f32, ay: f32, bx: f32, by: f32, width: f32, col: Col) {
+    let r = width / 2.0 + 1.0;
+    let (x0, x1) = ((ax.min(bx) - r).floor() as i32, (ax.max(bx) + r).ceil() as i32);
+    let (y0, y1) = ((ay.min(by) - r).floor() as i32, (ay.max(by) + r).ceil() as i32);
+    for y in y0.max(0)..=y1.min(H as i32 - 1) {
+        for x in x0.max(0)..=x1.min(W as i32 - 1) {
+            let d = seg_dist(x as f32 + 0.5, y as f32 + 0.5, ax, ay, bx, by);
+            let a = (width / 2.0 + 0.5 - d).clamp(0.0, 1.0);
+            if a > 0.0 {
+                let p = &mut buf[y as usize * W + x as usize];
+                *p = mix(*p, col, a);
+            }
+        }
+    }
+}

@@ -16,6 +16,8 @@ pub struct Showcase {
 impl Showcase {
     pub fn new(seed: u64, _hi: u64) -> Showcase {
         let demos: Vec<(&'static str, Box<dyn Game>)> = vec![
+            ("expo", Box::new(crate::expo::Expo::new(seed ^ 13, 0))),
+            ("clock", Box::new(crate::clock::Clock::new(seed ^ 14, 0))),
             ("fireworks", Box::new(crate::fireworks::Fireworks::new(seed, 0))),
             ("flame", Box::new(crate::flame::Flame::new(seed ^ 1, 0))),
             ("waterfall", Box::new(crate::waterfall::Waterfall::new(seed ^ 2, 0))),
