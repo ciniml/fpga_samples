@@ -593,6 +593,9 @@ impl crate::Game for Bricks {
     fn sound(&self) -> bool {
         true
     }
+    fn over(&self) -> bool {
+        self.scene == Scene::Over
+    }
     fn step(&mut self, mut inp: Option<&mut Input>) {
         self.tick += 1;
         for s in &mut self.sparks {

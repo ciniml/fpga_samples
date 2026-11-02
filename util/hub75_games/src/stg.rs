@@ -925,6 +925,9 @@ impl crate::Game for Stg {
     fn sound(&self) -> bool {
         true
     }
+    fn over(&self) -> bool {
+        self.scene == Scene::Over
+    }
     fn step(&mut self, inp: Option<&mut Input>) {
         let ctl = match inp {
             Some(i) => ctl_from(i),

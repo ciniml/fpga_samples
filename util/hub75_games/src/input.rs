@@ -6,6 +6,12 @@
 // presses: a key counts as held until a short while after its last press
 // (longer after the first one, which is followed by the auto-repeat delay),
 // and the opposite direction cancels it at once.
+//
+// A game controller (gamepad.rs) adds to the same keys: it reports presses
+// and releases, and the arrows repeat while held (like a keyboard's
+// auto-repeat, for the moves that step per press). Without a terminal the
+// controller alone can play (Input::pad_only).
+use crate::gamepad::Gamepad;
 use crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags,
     PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
@@ -33,11 +39,18 @@ const NKEYS: usize = 11;
 const FIRST_HOLD: Duration = Duration::from_millis(550); // > auto-repeat delay
 const REPEAT_HOLD: Duration = Duration::from_millis(120); // > auto-repeat period
 
+const PAD_DELAY: Duration = Duration::from_millis(220); // controller arrows: first repeat
+const PAD_REPEAT: Duration = Duration::from_millis(70);
+
 pub struct Input {
     pub releases: bool, // the terminal reports key releases
+    term: bool,         // reading the terminal (raw mode)
     until: [Option<Instant>; NKEYS],
     pressed: [bool; NKEYS], // pressed since the last frame
     hits: [u32; NKEYS],     // presses + auto-repeats since the last frame
+    pub pad: Gamepad,
+    pad_held: [Option<Instant>; NKEYS], // held on the controller: the next repeat
+    pad_any: bool,                      // a controller button since the last call
 }
 
 fn map(k: &KeyEvent) -> Option<Key> {
@@ -84,13 +97,68 @@ impl Input {
                 )
             )?;
         }
-        Ok(Input { releases, until: [None; NKEYS], pressed: [false; NKEYS], hits: [0; NKEYS] })
+        let mut i = Input::pad_only();
+        i.releases = releases;
+        i.term = true;
+        Ok(i)
+    }
+
+    /// the controller only (no terminal)
+    pub fn pad_only() -> Input {
+        Input {
+            releases: true,
+            term: false,
+            until: [None; NKEYS],
+            pressed: [false; NKEYS],
+            hits: [0; NKEYS],
+            pad: Gamepad::new(),
+            pad_held: [None; NKEYS],
+            pad_any: false,
+        }
+    }
+
+    /// a press as if from a key (e.g. to start a game from a menu)
+    pub fn press(&mut self, k: Key) {
+        self.pressed[k as usize] = true;
+        self.hits[k as usize] += 1;
+    }
+
+    /// any controller button pressed since the last call
+    pub fn take_any_pad(&mut self) -> bool {
+        std::mem::replace(&mut self.pad_any, false)
     }
 
     /// reads all pending events
     pub fn poll(&mut self) -> io::Result<()> {
         let now = Instant::now();
-        while event::poll(Duration::ZERO)? {
+        let (pressed, hits, held, any) = (&mut self.pressed, &mut self.hits, &mut self.pad_held, &mut self.pad_any);
+        self.pad.poll(
+            |k, down| {
+                let i = k as usize;
+                if down {
+                    pressed[i] = true;
+                    hits[i] += 1;
+                    held[i] = Some(now + PAD_DELAY);
+                    if let Some(o) = opposite(k) {
+                        held[o as usize] = None;
+                    }
+                } else {
+                    held[i] = None;
+                }
+            },
+            || *any = true,
+        );
+        // the arrows repeat while held
+        for k in [Key::Left, Key::Right, Key::Up, Key::Down] {
+            let i = k as usize;
+            if let Some(t) = self.pad_held[i] {
+                if now >= t {
+                    self.hits[i] += 1;
+                    self.pad_held[i] = Some(now + PAD_REPEAT);
+                }
+            }
+        }
+        while self.term && event::poll(Duration::ZERO)? {
             let Event::Key(k) = event::read()? else { continue };
             let Some(key) = map(&k) else { continue };
             let i = key as usize;
@@ -118,7 +186,7 @@ impl Input {
     }
 
     pub fn held(&self, k: Key) -> bool {
-        self.until[k as usize].map_or(false, |t| t > Instant::now())
+        self.pad_held[k as usize].is_some() || self.until[k as usize].map_or(false, |t| t > Instant::now())
     }
 
     /// pressed since the last call (edge)
@@ -141,6 +209,9 @@ impl Input {
 
 impl Drop for Input {
     fn drop(&mut self) {
+        if !self.term {
+            return;
+        }
         if self.releases {
             let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
         }

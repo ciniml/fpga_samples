@@ -4,6 +4,7 @@
 // for the 16-panel build, --frame 128x192 for the 6-panel build). Keys come
 // from the terminal (input.rs); --auto lets a bot play (attract mode).
 pub mod aquarium;
+pub mod arcade;
 pub mod audio;
 pub mod aurora;
 pub mod blocks;
@@ -17,6 +18,7 @@ pub mod expo;
 pub mod fireflies;
 pub mod flame;
 pub mod fx;
+pub mod gamepad;
 pub mod gfx;
 pub mod hourglass;
 pub mod input;
@@ -83,6 +85,11 @@ pub trait Game {
     }
     /// true for the demos with sound (the board's audio, UDP port 10002)
     fn sound(&self) -> bool {
+        false
+    }
+    /// games: the game-over screen is showing (the arcade goes back to the
+    /// demos a while after)
+    fn over(&self) -> bool {
         false
     }
 }
@@ -211,25 +218,28 @@ pub fn run<G: Game>(name: &str, keys: &str, make: impl FnOnce(u64, u64) -> G) ->
     }
     let mut canvas = gfx::Canvas::new();
 
-    // without a terminal (e.g. started in the background) only --auto works
-    let mut inp = if std::io::stdin().is_terminal() {
-        Some(input::Input::new()?)
-    } else if cli.auto || !game.needs_keys() {
-        None
-    } else {
-        return Err("no terminal for the keys (use --auto for the attract mode)".into());
-    };
+    // without a terminal (e.g. started in the background) a game controller
+    // can play; with neither, only --auto works
+    let mut inp = if std::io::stdin().is_terminal() { Some(input::Input::new()?) } else { Some(input::Input::pad_only()) };
+    let pad = inp.as_ref().map_or(false, |i| i.pad.connected());
+    if !std::io::stdin().is_terminal() && !pad && !cli.auto && game.needs_keys() {
+        return Err("no terminal and no game controller for the keys (use --auto for the attract mode)".into());
+    }
+    let pad_name = inp.as_ref().filter(|i| i.pad.connected()).map(|i| i.pad.name.clone());
     print!(
-        "hub75 {} -> {} ({}x{} frame)\r\nkeys: {}\r\n{}\r\n",
+        "hub75 {} -> {} ({}x{} frame)\r\nkeys: {}\r\ncontroller: {}\r\n{}\r\n",
         name,
         cli.dest,
         fw,
         fh,
         keys,
-        match &inp {
-            Some(i) if i.releases => "key releases: reported by the terminal",
-            Some(_) => "key releases: not reported (held = auto-repeat)",
-            None => "no terminal: attract mode only",
+        pad_name.as_deref().unwrap_or("none yet (looked for every 2 s)"),
+        if !std::io::stdin().is_terminal() {
+            "no terminal: the controller only"
+        } else if inp.as_ref().is_some_and(|i| i.releases) {
+            "key releases: reported by the terminal"
+        } else {
+            "key releases: not reported (held = auto-repeat)"
         }
     );
     std::io::stdout().flush()?;

@@ -28,7 +28,37 @@ cargo build --release
 ./target/release/expo                     # 動作デモ: 超エレキ万博2026
 ./target/release/explain                  # 動作デモ: このデザインのしくみ解説
 ./target/release/showcase                 # 動作デモを 40 秒ずつ順に (スペース / Enter で次へ)
+./target/release/arcade                   # 展示用: デモを流し、コントローラのボタンでゲームの選択画面へ
+./target/release/padtest                  # コントローラの確認 (押したボタンをキー名で表示)
 ```
+
+## ゲームコントローラ (PS5 DualSense など)
+
+USB (Bluetooth でも可) でつなぐと、キーボードと同じように操作できる (`gamepad.rs`、evdev の `/dev/input/eventN` を
+ノンブロッキングで読む。抜き差しにも追従)。端末がなくても (バックグラウンドで起動しても) コントローラで遊べる。
+ssh ログインなどローカルの画面がないときは読み取り権限が要るので、udev ルールを 1 度入れる:
+
+```
+echo 'SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="054c", ATTRS{idProduct}=="0ce6|0df2", MODE="0666"' | sudo tee /etc/udev/rules.d/70-dualsense.rules
+sudo udevadm control --reload && sudo udevadm trigger
+```
+
+| コントローラ | キー | stg | blocks | bricks | invaders |
+|---|---|---|---|---|---|
+| 十字キー / 左スティック | 矢印 | 移動 | 移動・ソフトドロップ (押し続けでリピート) | パドル | 砲台 |
+| × | スペース | (開始) | ハードドロップ | 発射 | 撃つ |
+| ○ / △ | X | ボム | 右回転 | — | — |
+| □ | Z | (開始) | 左回転 | — | 撃つ |
+| L1 / R1 | C | — | ホールド | — | — |
+| OPTIONS | Enter | 開始 | 開始 | 開始 | 開始 |
+| クリエイト | P | ポーズ | ポーズ | ポーズ | ポーズ |
+
+## arcade — 展示用
+
+ふだんは showcase (動作デモ) を流し、画面の下に「ボタンでゲーム開始」を点滅させる。コントローラのボタンを押すと
+ゲームの選択画面 (シューティング / 落ちものパズル / ブロックくずし / 宇宙人げきたい、それぞれのハイスコア付き)。
+十字キーで選んで × / ○ / OPTIONS で開始。ゲームオーバーから 10 秒 (続けて遊ぶならそのまま開始できる)、選択画面で
+20 秒、ゲーム中に 45 秒操作がないとデモに戻る。ハイスコアは単体で遊んだときと同じ `~/.hub75_<名前>_hi`
 
 共通: Enter で開始、P で一時停止、Q / Esc で終了。ハイスコアは `~/.hub75_<名前>_hi` (デモでは保存しない)。
 
