@@ -112,9 +112,11 @@ pub struct Cli {
     /// apply only what is left of theirs (1 = all of it here, identity table)
     #[arg(long, default_value_t = 1.5)]
     board_gamma: f32,
-    /// sound volume (demos with sound; the mix is soft clipped)
-    #[arg(long, default_value_t = 1.0)]
-    volume: f32,
+    /// sound volume 0 (mute) .. 12, 3 dB a step, 10 = full; default: the
+    /// last one set (~/.hub75_volume, also with L2 / R2 or - / + while
+    /// running; L3 / R3 or 0 mutes)
+    #[arg(long)]
+    volume: Option<i32>,
     /// no sound (leaves the board's audio to another sender)
     #[arg(long)]
     no_sound: bool,
@@ -147,6 +149,22 @@ fn apply(c: &mut gfx::Canvas, lut: &[u8; 256]) {
         for v in p.iter_mut() {
             *v = lut[*v as usize];
         }
+    }
+}
+
+/// the volume on top of the screen for a while after a change
+fn volume_bar(c: &mut gfx::Canvas, vol: i32) {
+    c.rect(4, 4, 120, 15, [0, 0, 0]);
+    if vol == 0 {
+        c.text("MUTE", 8, 8, 1, [255, 80, 80]);
+    } else {
+        c.text("VOL", 8, 8, 1, [200, 200, 200]);
+    }
+    for k in 0..audio::VOL_MAX {
+        let x = 30 + k * 7;
+        let on = k < vol;
+        let col = if !on { [40, 40, 50] } else if k >= 10 { [255, 140, 40] } else { [60, 220, 255] };
+        c.rect(x, 7, 5, 9, col);
     }
 }
 
@@ -212,9 +230,17 @@ pub fn run<G: Game>(name: &str, keys: &str, make: impl FnOnce(u64, u64) -> G) ->
     let hi = std::fs::read_to_string(&hi_path).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
     let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos() as u64;
     let mut game = make(seed, hi);
+    let vol_path = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default().join(".hub75_volume");
+    let mut vol = cli
+        .volume
+        .or_else(|| std::fs::read_to_string(&vol_path).ok().and_then(|s| s.trim().parse().ok()))
+        .unwrap_or(10)
+        .clamp(0, audio::VOL_MAX);
+    let mut unmuted = if vol > 0 { vol } else { 10 };
+    let mut vol_shown = 0u32; // ticks the volume bar stays on the screen
     if game.sound() && !cli.no_sound {
         let ip = cli.dest.parse::<std::net::SocketAddr>()?.ip();
-        audio::start(&cli.bind, ip, cli.volume, cli.record.as_deref())?;
+        audio::start(&cli.bind, ip, audio::vol_gain(vol), cli.record.as_deref())?;
     }
     let mut canvas = gfx::Canvas::new();
 
@@ -254,6 +280,25 @@ pub fn run<G: Game>(name: &str, keys: &str, make: impl FnOnce(u64, u64) -> G) ->
             if i.take(input::Key::Quit) {
                 break;
             }
+            let (down, up, mute) = (i.take(input::Key::VolDown), i.take(input::Key::VolUp), i.take(input::Key::Mute));
+            if down || up || mute {
+                vol = if mute {
+                    if vol > 0 {
+                        unmuted = vol;
+                        0
+                    } else {
+                        unmuted
+                    }
+                } else {
+                    (vol + up as i32 - down as i32).clamp(0, audio::VOL_MAX)
+                };
+                if vol > 0 {
+                    unmuted = vol;
+                }
+                audio::set_gain(audio::vol_gain(vol));
+                let _ = std::fs::write(&vol_path, vol.to_string());
+                vol_shown = 120;
+            }
         }
         match inp.as_mut() {
             Some(i) if !cli.auto => game.step(Some(i)),
@@ -262,6 +307,10 @@ pub fn run<G: Game>(name: &str, keys: &str, make: impl FnOnce(u64, u64) -> G) ->
         game.draw(&mut canvas);
         if game.needs_keys() {
             apply(&mut canvas, &inverse);
+        }
+        if vol_shown > 0 && game.sound() {
+            vol_shown -= 1;
+            volume_bar(&mut canvas, vol);
         }
         panel.send(&canvas)?;
         frames += 1;

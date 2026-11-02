@@ -39,6 +39,17 @@ pub fn play(v: impl Voice + 'static) {
     }
 }
 
+/// the volume steps: 0 = muted, 10 = 1.0, 3 dB a step (up to 12 = +6 dB)
+pub const VOL_MAX: i32 = 12;
+pub fn vol_gain(level: i32) -> f32 {
+    if level <= 0 { 0.0 } else { 10f32.powf((level - 10) as f32 * 3.0 / 20.0) }
+}
+
+/// sets the overall gain (the volume)
+pub fn set_gain(g: f32) {
+    *GAIN.lock().unwrap() = g;
+}
+
 /// showcase: a new demo is on; the sounds of the last one stop (its
 /// background sounds start again when it comes back, see Keep)
 pub fn new_scene() {

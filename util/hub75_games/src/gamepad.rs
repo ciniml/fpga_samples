@@ -10,7 +10,8 @@
 //
 // Buttons as keys: d-pad / left stick = arrows, cross = Space, circle and
 // triangle = B, square = A, L1 / R1 = Hold, options = Start, create = Pause,
-// PS = Home.
+// PS = Home, L2 / R2 = volume down / up, L3 / R3 = mute. The volume
+// buttons do not count as "any button" (the arcade's call to play).
 use crate::input::{Key, NKEYS};
 use std::fs::File;
 use std::io::{ErrorKind, Read};
@@ -32,6 +33,9 @@ fn button(code: u16) -> Option<Key> {
         0x13a => Key::Pause,           // create
         0x13b => Key::Start,           // options
         0x13c => Key::Home,            // PS
+        0x138 => Key::VolDown,         // L2
+        0x139 => Key::VolUp,           // R2
+        0x13d | 0x13e => Key::Mute,    // L3, R3
         _ => return None,
     })
 }
@@ -137,7 +141,7 @@ impl Gamepad {
                         self.buttons.retain(|&b| b != code);
                         if v != 0 {
                             self.buttons.push(code);
-                            if v == 1 {
+                            if v == 1 && !matches!(button(code), Some(Key::VolDown | Key::VolUp | Key::Mute)) {
                                 any();
                             }
                         }
@@ -188,7 +192,7 @@ impl Gamepad {
 }
 
 const KEYS: [Key; NKEYS] =
-    [Key::Left, Key::Right, Key::Up, Key::Down, Key::A, Key::B, Key::Space, Key::Hold, Key::Start, Key::Pause, Key::Quit, Key::Home];
+    [Key::Left, Key::Right, Key::Up, Key::Down, Key::A, Key::B, Key::Space, Key::Hold, Key::Start, Key::Pause, Key::Quit, Key::Home, Key::VolDown, Key::VolUp, Key::Mute];
 
 /// a stick axis (0..255, 128 centre) to -1 / 0 / 1, with hysteresis
 fn axis(old: i32, v: i32) -> i32 {
