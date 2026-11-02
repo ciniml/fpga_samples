@@ -29,6 +29,22 @@ impl Panel {
         Ok(Panel { sock, dest, fw, buf: vec![0; fw * fh * 2], pkt: Vec::with_capacity(1026), acks: 0 })
     }
 
+    /// loads the board's colour tables (UDP port 10005) with gamma g, 8-bit
+    /// values (a 6- or 7-bit build keeps the top bits): R / B indexed by the
+    /// 5-bit RGB565 value, G by the 6-bit one
+    pub fn send_gamma(&self, g: f32) -> io::Result<()> {
+        let port = SocketAddr::new(self.dest.ip(), 10005);
+        for (mask, n) in [(1u8, 32), (2, 64), (4, 32)] {
+            let mut p = vec![mask];
+            for i in 0..64usize {
+                let x = i.min(n - 1) as f32 / (n - 1) as f32;
+                p.push((x.powf(g) * 255.0).round() as u8);
+            }
+            self.sock.send_to(&p, port)?;
+        }
+        Ok(())
+    }
+
     pub fn send(&mut self, c: &Canvas) -> io::Result<()> {
         for y in 0..H {
             for x in 0..W {

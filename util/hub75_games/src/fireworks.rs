@@ -408,6 +408,7 @@ impl Fireworks {
 
     fn render(&self, c: &mut Canvas) {
         let t = self.tick as f32;
+        let e = crate::fx::gamma(1.6);
         for y in 0..H {
             // night sky: deep blue on top, a little lighter at the horizon
             let k = y as f32 / HF;
@@ -417,24 +418,28 @@ impl Fireworks {
                 let mut p = [0u8; 3];
                 for i in 0..3 {
                     let v = sky[i] + self.flash[i] * (0.3 + 0.7 * k) + g[i];
-                    p[i] = (v.min(1.0).powf(1.6) * 255.0) as u8;
+                    p[i] = (v.min(1.0).powf(e) * 255.0) as u8;
                 }
                 c.px[y * W + x] = p;
             }
         }
+        // the stars and the city are drawn straight in panel colours: undo
+        // the board's gamma for them
+        let k = 1.0 / crate::fx::board_gamma();
+        let u = |v: f32| ((v / 255.0).clamp(0.0, 1.0).powf(k) * 255.0) as u8;
         for &(x, y, ph) in &self.sky_stars {
             let b = (0.35 + 0.25 * (t * 0.05 + ph).sin()).max(0.0);
-            let v = (b * 255.0) as u8 / 2;
+            let v = u(b * 127.5);
             c.padd(x, y, [v, v, v]);
         }
         // the skyline in front, lit a little by the bursts
         let lit = self.flash.iter().sum::<f32>() / 3.0;
         for b in &self.city {
-            let col = [(6.0 + 60.0 * lit) as u8, (6.0 + 50.0 * lit) as u8, (10.0 + 60.0 * lit) as u8];
+            let col = [u(6.0 + 60.0 * lit), u(6.0 + 50.0 * lit), u(10.0 + 60.0 * lit)];
             c.rect(b.x, H as i32 - b.h, b.w, b.h, col);
             for &(wx, wy, wb) in &b.windows {
                 let v = wb * (0.85 + 0.15 * (t * 0.01 + wx as f32).sin());
-                c.rect(wx, wy, 2, 2, [(200.0 * v) as u8, (150.0 * v) as u8, (60.0 * v) as u8]);
+                c.rect(wx, wy, 2, 2, [u(200.0 * v), u(150.0 * v), u(60.0 * v)]);
             }
         }
     }

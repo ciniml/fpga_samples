@@ -341,9 +341,10 @@ impl crate::Game for Flame {
             self.render_candles(&mut buf);
         }
         let fade = (self.scene_t.min(SCENE_LEN - self.scene_t) as f32 / FADE as f32).min(1.0);
+        let e = crate::fx::gamma(1.8);
         for (p, b) in c.px.iter_mut().zip(&buf) {
             for i in 0..3 {
-                p[i] = ((b[i] * fade).clamp(0.0, 1.0).powf(1.8) * 255.0) as u8;
+                p[i] = ((b[i] * fade).clamp(0.0, 1.0).powf(e) * 255.0) as u8;
             }
         }
     }

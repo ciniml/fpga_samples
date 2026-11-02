@@ -1,7 +1,25 @@
 // Helpers for the demos: smooth noise, blending, and a float frame buffer
 // that goes to the canvas through a gamma curve (LEDs look washed out
-// with linear values).
+// with linear values). Most of the curve is the board's colour table
+// (--board-gamma, 8-bit steps there instead of RGB565's 5 bits here); a
+// demo asks for its overall gamma and gamma() leaves the rest.
 use crate::gfx::{Canvas, H, W};
+use std::sync::atomic::{AtomicU32, Ordering};
+
+static BOARD_GAMMA: AtomicU32 = AtomicU32::new(0x3f80_0000); // 1.0
+
+pub fn set_board_gamma(g: f32) {
+    BOARD_GAMMA.store(g.to_bits(), Ordering::Relaxed);
+}
+
+pub fn board_gamma() -> f32 {
+    f32::from_bits(BOARD_GAMMA.load(Ordering::Relaxed))
+}
+
+/// the exponent to apply here for an overall gamma g (the board does the rest)
+pub fn gamma(g: f32) -> f32 {
+    g / board_gamma()
+}
 
 pub type Col = [f32; 3];
 
@@ -41,11 +59,12 @@ pub fn mix(a: Col, b: Col, t: f32) -> Col {
     [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
 }
 
-/// a frame of 0..1 colours (more is clipped)
-pub fn to_canvas(buf: &[Col], c: &mut Canvas, gain: f32, gamma: f32) {
+/// a frame of 0..1 colours (more is clipped), overall gamma g
+pub fn to_canvas(buf: &[Col], c: &mut Canvas, gain: f32, g: f32) {
+    let e = gamma(g);
     for (p, b) in c.px.iter_mut().zip(buf) {
         for i in 0..3 {
-            p[i] = ((b[i] * gain).clamp(0.0, 1.0).powf(gamma) * 255.0) as u8;
+            p[i] = ((b[i] * gain).clamp(0.0, 1.0).powf(e) * 255.0) as u8;
         }
     }
 }

@@ -96,6 +96,10 @@ pub struct Cli {
     /// frames (and game ticks) per second
     #[arg(long, default_value_t = 60)]
     fps: u32,
+    /// gamma loaded into the board's colour tables at start; the demos
+    /// apply only what is left of theirs (1 = all of it here, identity table)
+    #[arg(long, default_value_t = 1.5)]
+    board_gamma: f32,
     /// the bot plays (attract mode; keys other than Q are ignored)
     #[arg(long)]
     auto: bool,
@@ -111,13 +115,34 @@ pub struct Cli {
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+/// 0..255 through x^e (games: their colours are as meant on the panel, so
+/// they get the inverse of the board's gamma)
+fn curve(e: f32) -> [u8; 256] {
+    std::array::from_fn(|v| ((v as f32 / 255.0).powf(e) * 255.0).round() as u8)
+}
+
+fn apply(c: &mut gfx::Canvas, lut: &[u8; 256]) {
+    for p in &mut c.px {
+        for v in p.iter_mut() {
+            *v = lut[*v as usize];
+        }
+    }
+}
+
+/// the snapshots show the panel: what is sent, then the board's gamma
 fn snapshots<G: Game>(mut game: G, dir: &std::path::Path, ticks: u64, every: u64) -> Result<()> {
     std::fs::create_dir_all(dir)?;
     let mut canvas = gfx::Canvas::new();
+    let inverse = curve(1.0 / fx::board_gamma());
+    let board = curve(fx::board_gamma());
     for t in 0..ticks {
         game.step(None);
         if t % every == every - 1 {
             game.draw(&mut canvas);
+            if game.needs_keys() {
+                apply(&mut canvas, &inverse);
+            }
+            apply(&mut canvas, &board);
             let mut f = Vec::from(format!("P6\n{} {}\n255\n", gfx::W, gfx::H).as_bytes());
             canvas.px.iter().for_each(|p| f.extend_from_slice(p));
             std::fs::write(dir.join(format!("frame{:05}.ppm", t + 1)), f)?;
@@ -131,6 +156,7 @@ fn snapshots<G: Game>(mut game: G, dir: &std::path::Path, ticks: u64, every: u64
 /// `make(seed, hi)` builds it, `keys` is the help line
 pub fn run<G: Game>(name: &str, keys: &str, make: impl FnOnce(u64, u64) -> G) -> Result<()> {
     let cli = Cli::parse();
+    fx::set_board_gamma(cli.board_gamma);
     if let Some(dir) = &cli.snapshots {
         return snapshots(make(12345, 0), dir, cli.ticks, cli.every);
     }
@@ -140,6 +166,8 @@ pub fn run<G: Game>(name: &str, keys: &str, make: impl FnOnce(u64, u64) -> G) ->
         .and_then(|(a, b)| Some((a.parse::<usize>().ok()?, b.parse::<usize>().ok()?)))
         .ok_or("--frame: WxH")?;
     let mut panel = net::Panel::new(&cli.bind, &cli.dest, fw, fh)?;
+    panel.send_gamma(cli.board_gamma)?;
+    let inverse = curve(1.0 / cli.board_gamma);
     let hi_path = std::env::var_os("HOME")
         .map(std::path::PathBuf::from)
         .unwrap_or_default()
@@ -188,6 +216,9 @@ pub fn run<G: Game>(name: &str, keys: &str, make: impl FnOnce(u64, u64) -> G) ->
             _ => game.step(None),
         }
         game.draw(&mut canvas);
+        if game.needs_keys() {
+            apply(&mut canvas, &inverse);
+        }
         panel.send(&canvas)?;
         frames += 1;
         if stat_t.elapsed() >= Duration::from_secs(1) {
