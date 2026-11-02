@@ -17,6 +17,8 @@ set CONN_ID       [lindex $argv 13]
 set COLOR_BITS    [lindex $argv 14]
 set BASE_OE       [lindex $argv 15]
 set PANEL_COLS    [lindex $argv 16]
+set AUDIO         [lindex $argv 17]
+if {$AUDIO == ""} { set AUDIO 0 }
 
 set_option -output_base_name ${PROJECT_NAME}
 set_device -name $DEVICE_FAMILY $DEVICE_PART
@@ -58,6 +60,7 @@ puts $fp "    localparam int unsigned RX_DELAY = ${RX_DELAY};"
 puts $fp "    localparam int unsigned PANEL_COLS = ${PANEL_COLS};"
 puts $fp "    localparam int unsigned PANEL_ROWS = ${PANEL_ROWS};"
 puts $fp "    localparam bit CONN_ID = 1'b${CONN_ID};"
+puts $fp "    localparam bit AUDIO = 1'b${AUDIO};"
 puts $fp "    localparam int unsigned COMPONENT_BITS = ${COLOR_BITS};"
 puts $fp "    localparam int unsigned BASE_OE_CYCLES = ${BASE_OE};"
 puts $fp "    localparam bit TXC_SHIFTED = 1'b${TXC_SHIFTED};"

@@ -35,6 +35,8 @@ module EthernetHub75Core #(
     param LUT_PORT      : bit<16> = 16'd10005                                ,
     param STAT_PORT     : bit<16> = 16'd10006                                , // status replies (i_status), 0: off
     param CTRL_PORT     : bit<16> = 16'd10007                                , // control stream (o_ctrl_*), 0: off
+    param AUDIO_PORT    : bit<16> = 16'd0                                    , // audio stream to I2S (AudioI2s, o_i2s_*), 0: off
+    param SYS_CLK_HZ    : u32     = 125_000_000                              , // i_clk (audio sample clock)
     param WIDTH         : u32     = 128                                      , // display width (power of two)
     param HEIGHT        : u32     = 128                                      , // display height (multiple of SCAN_ROWS)
     param LANE_WIDTH    : u32     = WIDTH                                    , // chain length of a lane (power of two)
@@ -113,6 +115,13 @@ module EthernetHub75Core #(
     o_bist_parity : output 'm logic<32>                    ,
     i_bist_restart: input  'm logic                = 1'b0  ,
     o_overflow    : output 's logic                        , // pulse: a video word was dropped
+
+    // ---- I2S audio out (AUDIO_PORT, system domain) ----
+    o_i2s_bclk   : output 's logic    ,
+    o_i2s_lrck   : output 's logic    ,
+    o_i2s_dout   : output 's logic    ,
+    o_aud_playing: output 's logic    ,
+    o_aud_level  : output 's logic<16>,
 ) {
     const LANE_BITS: u32 = if NUM_LANES >: 1 ? $clog2(NUM_LANES) : 1;
     const ADDR_BITS: u32 = $clog2(SCAN_ROWS) + $clog2(LANE_WIDTH);
@@ -196,6 +205,10 @@ module EthernetHub75Core #(
     var ack_req   : 's logic    ;
     var ev_arp    : 's logic    ;
     var ev_icmp   : 's logic    ;
+    var aud_start : 's logic    ;
+    var aud_valid : 's logic    ;
+    var aud_level : 's logic<16>;
+    var aud_report: 's logic    ;
 
     inst service: EthService #(
         MAC_ADDR  : MAC_ADDR         ,
@@ -204,6 +217,7 @@ module EthernetHub75Core #(
         LUT_PORT  : LUT_PORT         ,
         STAT_PORT : STAT_PORT        ,
         CTRL_PORT : CTRL_PORT        ,
+        AUDIO_PORT: AUDIO_PORT       ,
         WSPACE_W  : TX_DEPTH_LOG2 + 1,
     ) (
         i_clk       : i_clk       ,
@@ -230,6 +244,10 @@ module EthernetHub75Core #(
         o_lut_data  : lut_data    ,
         o_ctrl_start: o_ctrl_start,
         o_ctrl_valid: o_ctrl_valid,
+        o_aud_start : aud_start   ,
+        o_aud_valid : aud_valid   ,
+        i_aud_level : aud_level   ,
+        i_aud_req   : aud_report  ,
         i_ack_req   : ack_req     ,
         i_status    : i_status    ,
         o_ev_arp    : ev_arp      ,
@@ -237,6 +255,33 @@ module EthernetHub75Core #(
         o_ev_video  : o_ev_video  ,
         o_ev_drop   : o_ev_drop   ,
     );
+
+    // ---- audio ----
+    if AUDIO_PORT != 16'd0 :g_audio {
+        inst audio: AudioI2s #(
+            CLK_HZ: SYS_CLK_HZ,
+        ) (
+            i_clk    : i_clk        ,
+            i_rst    : i_rst        ,
+            i_start  : aud_start    ,
+            i_valid  : aud_valid    ,
+            i_data   : lut_data     ,
+            o_level  : aud_level    ,
+            o_report : aud_report   ,
+            o_playing: o_aud_playing,
+            o_bclk   : o_i2s_bclk   ,
+            o_lrck   : o_i2s_lrck   ,
+            o_dout   : o_i2s_dout   ,
+        );
+    } else :g_no_audio {
+        assign aud_level     = 16'd0;
+        assign aud_report    = 1'b0;
+        assign o_aud_playing = 1'b0;
+        assign o_i2s_bclk    = 1'b0;
+        assign o_i2s_lrck    = 1'b0;
+        assign o_i2s_dout    = 1'b0;
+    }
+    assign o_aud_level = aud_level;
 
     // ---- frame buffer writer (HUB75_IMPL 0 / 1) ----
     var fb_we    : 's logic           ;

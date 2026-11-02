@@ -6,6 +6,7 @@ package ethernet_hub75_cfg;
     localparam int unsigned PANEL_COLS = 2;
     localparam int unsigned PANEL_ROWS = 3;
     localparam bit CONN_ID = 1'b0;
+    localparam bit AUDIO = 1'b0;
     localparam int unsigned COMPONENT_BITS = 6;
     localparam int unsigned BASE_OE_CYCLES = 16;
     localparam bit TXC_SHIFTED = 1'b0;

@@ -44,6 +44,9 @@ module tb;
     // 1: the top's TXC_SHIFTED build (TXD 2 ns before TXC); the PHY model
     // then samples at the TXC edges instead of 2 ns after (its TX delay)
     parameter bit TXS = 0;
+    // 1: the AUDIO build (UDP 10002 -> I2S on J19 pins 1..3); checked at the
+    // end with an I2S receiver model
+    parameter bit AUD = 0;
     localparam realtime TX_SAMPLE = TXS ? 0.5 : 2.0;
 
     logic clk50 = 0;
@@ -68,7 +71,7 @@ module tb;
     tri   [15:0] ddr_dq;
     tri   [1:0]  ddr_dqs;
 
-    DkLedRxcardTop #(.HUB75_IMPL(IMPL), .PANEL_COLS(PCOLS), .PANEL_ROWS(PROWS), .COMPONENT_BITS(BITS), .BASE_OE_CYCLES(BASE_OE), .TXC_SHIFTED(TXS), .PHY_RST_LOG2(8), .PHY_WAIT_LOG2(8),
+    DkLedRxcardTop #(.HUB75_IMPL(IMPL), .PANEL_COLS(PCOLS), .PANEL_ROWS(PROWS), .COMPONENT_BITS(BITS), .BASE_OE_CYCLES(BASE_OE), .TXC_SHIFTED(TXS), .AUDIO(AUD), .PHY_RST_LOG2(8), .PHY_WAIT_LOG2(8),
                      .DDR_T_INIT_PS(20_000_000), .BIST_BURSTS(4096)) dut (
         .clk50(clk50), .key_n(1'b1), .led(led),
         .phy_rst_n(rstn), .phy_mdc(mdc), .phy_mdio(mdio),
@@ -396,7 +399,7 @@ module tb;
         lat_d  <= lat;
         if (!oe) oe_len++;
         if (hclk && !hclk_d) begin
-            for (int k = NPAN; k < 16; k++)
+            for (int k = NPAN; k < (AUD ? 15 : 16); k++)
                 if (j[k] !== 6'd0) begin
                     $display("[%0t] ERROR: unused connector J%0d = %b", $time, 4 + k, j[k]);
                     errors++;
@@ -618,6 +621,93 @@ module tb;
         $display("[%0t] status reply ok (RD_LAT %0d, RD_SEL %0d / %0d)", $time, rxq[q][44], rxq[q][45] & 15, rxq[q][45] >> 4);
     endtask
 
+    // ------------------------------------------------------------------
+    // audio: UDP 10002 (s16le stereo) -> I2S on J19 R1 / G1 / B1 = BCLK,
+    // LRCK, DATA (Philips, MSB one BCLK after LRCK changes, mono (L + R) / 2)
+    // ------------------------------------------------------------------
+    logic [15:0] i2s_out [$];   // the left-slot samples received
+    logic [15:0] i2s_sr = 0;
+    int          i2s_cnt = 0;
+    logic        i2s_ws_d = 1;
+    if (AUD) begin : g_i2s_rx
+        always @(posedge j[15][0]) begin
+            if (j[15][1] != i2s_ws_d) begin
+                if (i2s_ws_d == 1'b0) i2s_out.push_back(i2s_sr);   // a left slot ended
+                i2s_cnt = 0;
+            end else begin
+                i2s_cnt++;
+                if (i2s_cnt <= 16) i2s_sr = {i2s_sr[14:0], j[15][2]};
+            end
+            i2s_ws_d = j[15][1];
+        end
+    end
+
+    localparam int AUD_PKTS = 6, AUD_FRAMES = AUD_PKTS * 256;
+    logic [15:0] aud_l [AUD_FRAMES], aud_r [AUD_FRAMES];
+    task automatic test_audio();
+        int q;
+        realtime t0;
+        for (int f = 0; f < AUD_FRAMES; f++) begin
+            aud_l[f] = 16'($urandom);
+            aud_r[f] = 16'($urandom);
+        end
+        for (int p = 0; p < AUD_PKTS; p++) begin
+            for (int f = 0; f < 256; f++) begin
+                txf[42 + f * 4]     = aud_l[p * 256 + f][7:0];
+                txf[42 + f * 4 + 1] = aud_l[p * 256 + f][15:8];
+                txf[42 + f * 4 + 2] = aud_r[p * 256 + f][7:0];
+                txf[42 + f * 4 + 3] = aud_r[p * 256 + f][15:8];
+            end
+            build_udp(40002, 10002, 1024);
+            send_frame();
+            // the level reply after each packet (before playback starts at
+            // 1024 frames the level is the frames sent so far)
+            wait_rx(200, q);
+            if (q < 0) begin
+                $display("[%0t] ERROR: no audio level reply", $time); errors++;
+                continue;
+            end
+            expect_eq("audio ip csum", rx_csum(q, 14, 20), 16'hFFFF);
+            expect_eq("audio ip len", rx16(q, 16), 16'd33);
+            expect_eq("audio sport", rx16(q, 34), 16'd10002);
+            expect_eq("audio dport", rx16(q, 36), 16'd40002);
+            expect_eq("audio udp len", rx16(q, 38), 16'd13);
+            expect_eq("audio reply size", rxq[q][42], 8'd5);
+            if (p < 3) expect_eq("audio level", rx16(q, 43), 16'((p + 1) * 256));
+            expect_eq("audio max", rx16(q, 45), 16'd2048);
+        end
+        // all frames played (32 ms) plus a margin
+        t0 = $realtime;
+        while (dut.u_core.g_audio.audio.playing !== 1'b0 || $realtime - t0 < 1ms) #100us;
+        begin
+            int first = -1, bad = 0;
+            for (int i = 0; i < i2s_out.size(); i++) if (i2s_out[i] != 0) begin first = i; break; end
+            if (first < 0) begin
+                $display("[%0t] ERROR: no audio on I2S", $time); errors++;
+            end else begin
+                for (int f = 0; f < AUD_FRAMES; f++) begin
+                    automatic logic [16:0] sum = {aud_l[f][15], aud_l[f]} + {aud_r[f][15], aud_r[f]};
+                    automatic int i = first + f;
+                    // the first frame may be 0 by chance; align on frame 0
+                    if (i >= i2s_out.size() || i2s_out[i] != sum[16:1]) bad++;
+                end
+                expect_eq("audio frames wrong", bad, 0);
+                $display("[%0t] audio: %0d frames out of I2S in order (mono)", $time, AUD_FRAMES);
+            end
+        end
+        // the periodic level reports while playing (every 256 frames)
+        begin
+            int n = 0;
+            do begin
+                wait_rx(1, q);
+                if (q >= 0 && rx16(q, 34) == 16'd10002) n++;
+            end while (q >= 0);
+            if (n < 3) begin
+                $display("[%0t] ERROR: %0d periodic audio level reports", $time, n); errors++;
+            end
+        end
+    endtask
+
     initial begin
         int q;
         if ($test$plusargs("vcd")) begin
@@ -739,6 +829,8 @@ module tb;
         expect_eq("speed 100", dut.speed, 1);
         test_arp();
         test_icmp(64);
+
+        if (AUD) test_audio();
 
         $display("panel refresh: %0.1f Hz (%0.3f ms per frame)", 1.0e9 / frame_period, frame_period / 1.0e6);
         if (errors == 0) $display("PASS");

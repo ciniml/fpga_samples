@@ -99,6 +99,12 @@ endif
 endif
 # CONN_ID=1: wiring check, J4..J11 show one colour each (see top.veryl)
 CONN_ID ?= 0
+# DK_LED-RXCARD AUDIO=1 (default): UDP 10002 audio to I2S on J19 pins 1..3
+# (that connector shows no panel); AUDIO=0 adds the suffix _noaud
+AUDIO ?= 1
+ifeq ($(TARGET)$(AUDIO),dk_led_rxcard_gw3a200)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_noaud
+endif
 ifneq ($(CONN_ID),0)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_connid
 endif
@@ -132,7 +138,7 @@ VERYL_SRCS := Veryl.toml $(wildcard src/common/*.veryl) $(wildcard src/*/*.veryl
               $(wildcard $(RTL_DIR)/eth_mac/*.veryl) $(wildcard $(RTL_DIR)/hub75/*.veryl) \
               $(wildcard $(RTL_DIR)/ddr2/*.veryl)
 
-PROJECT_ADDITIONAL_ARGS := $(FILELIST) $(TOP_MODULE) $(HUB75_IMPL_NUM) $(PHY_DELAY_HEX) $(TXC_SHIFTED) $(RX_DELAY) $(PANEL_ROWS) $(CONN_ID) $(COLOR_BITS) $(BASE_OE) $(PANEL_COLS)
+PROJECT_ADDITIONAL_ARGS := $(FILELIST) $(TOP_MODULE) $(HUB75_IMPL_NUM) $(PHY_DELAY_HEX) $(TXC_SHIFTED) $(RX_DELAY) $(PANEL_ROWS) $(CONN_ID) $(COLOR_BITS) $(BASE_OE) $(PANEL_COLS) $(AUDIO)
 
 SRCS := project.tcl $(wildcard src/$(TARGET)/*.cst) $(wildcard src/$(TARGET)/*.sdc) $(wildcard src/$(TARGET)/ip/*.v) $(FILELIST)
 

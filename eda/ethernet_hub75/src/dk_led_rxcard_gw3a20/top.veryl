@@ -18,6 +18,9 @@
 //   c (R2). Unused connectors output 0. More than 6 panels need the DDR2
 //   frame buffer (HUB75_IMPL >= 2); the video frame is then over 64 KB and
 //   the packet offsets count 2-byte units (UdpVideoWriter).
+//   AUDIO: UDP 10002 (16-bit stereo, 48 kHz) to I2S on J19 pins 1 / 2 / 3
+//   (R1 / G1 / B1: BCLK, LRCK, DATA; pin 4 GND) for an NS4168 (M5Stack
+//   Atom SPK base); J19 then shows no panel.
 //   DDR2 U46 (W9725G6KB, 16M x 16, banks 2 / 3 at 1.8 V; DM not wired):
 //   the frame buffer for HUB75_IMPL 2 / 3 (Ddr2Ctrl + Ddr2PhyGw3a), held idle
 //   (CKE low) otherwise.
@@ -71,6 +74,7 @@ module DkLedRxcardTop #(
     param RX_DELAY      : u32     = $sv::ethernet_hub75_cfg::RX_DELAY      , // IODELAY steps (12.5 ps) on RXD / RX_CTL
     param TXC_SHIFTED   : bit     = $sv::ethernet_hub75_cfg::TXC_SHIFTED   , // 1: TXD 6 ns late = TXC 2 ns after TXD (PHY TX delay off)
     param PHY_DELAY_BITS: bit<16> = $sv::ethernet_hub75_cfg::PHY_DELAY_BITS, // RTL8211E ext 0xa4 reg 0x1c bits 13:11
+    param AUDIO         : bit     = $sv::ethernet_hub75_cfg::AUDIO         , // 1: UDP 10002 audio to I2S on J19
     param PHY_RST_LOG2  : u32     = 21                                     , // PHY reset 2^N system clocks (17 ms)
     param PHY_WAIT_LOG2 : u32     = 24                                     , // MDIO set-up after 2^N clocks (134 ms)
     param DDR_T_INIT_PS : u32     = 200_000_000                            , // DDR2 power-up wait (shortened in simulation)
@@ -583,21 +587,25 @@ module DkLedRxcardTop #(
     var ev_net  : 's logic           ;
     var ev_drop : 's logic           ;
     var ev_flip : 's logic           ;
+    var i2s_bclk: 's logic           ;
+    var i2s_lrck: 's logic           ;
+    var i2s_dout: 's logic           ;
 
     unsafe (cdc) {
         inst u_core: EthernetHub75Core #(
             WIDTH         : 64 * PANEL_COLS,
             HEIGHT        : 64 * PANEL_ROWS,
-            LANE_WIDTH    : 64             ,
-            SCAN_ROWS     : 32             ,
-            COMPONENT_BITS: COMPONENT_BITS ,
-            BASE_OE_CYCLES: BASE_OE_CYCLES ,
-            CLOCK_DIVIDER : CLOCK_DIVIDER  ,
-            CLK_LOW_EXTRA : CLK_LOW_EXTRA  ,
-            CHAIN_REVERSE : CHAIN_REVERSE  ,
-            HUB75_IMPL    : HUB75_IMPL     ,
-            MEM_ADDR_BITS : MEM_ADDR_BITS  ,
-            BIST_BURSTS   : BIST_BURSTS    ,
+            LANE_WIDTH    : 64                          ,
+            SCAN_ROWS     : 32                          ,
+            COMPONENT_BITS: COMPONENT_BITS              ,
+            BASE_OE_CYCLES: BASE_OE_CYCLES              ,
+            CLOCK_DIVIDER : CLOCK_DIVIDER               ,
+            CLK_LOW_EXTRA : CLK_LOW_EXTRA               ,
+            CHAIN_REVERSE : CHAIN_REVERSE               ,
+            HUB75_IMPL    : HUB75_IMPL                  ,
+            MEM_ADDR_BITS : MEM_ADDR_BITS               ,
+            BIST_BURSTS   : BIST_BURSTS                 ,
+            AUDIO_PORT    : if AUDIO ? 16'd10002 : 16'd0,
         ) (
             i_clk         : sys_clk   ,
             i_rst         : sys_rst   ,
@@ -648,6 +656,11 @@ module DkLedRxcardTop #(
             o_ctrl_start  : ctrl_start,
             o_ctrl_valid  : ctrl_valid,
             o_ctrl_data   : ctrl_data ,
+            o_i2s_bclk    : i2s_bclk  ,
+            o_i2s_lrck    : i2s_lrck  ,
+            o_i2s_dout    : i2s_dout  ,
+            o_aud_playing : _         ,
+            o_aud_level   : _         ,
         );
     }
 
@@ -776,22 +789,26 @@ module DkLedRxcardTop #(
         }
     }
     let group_b: 'd logic = CONN_ID || NUM_PANELS >: 8;
-    assign hub75_j4   = jout[0];
-    assign hub75_j5   = jout[1];
-    assign hub75_j6   = jout[2];
-    assign hub75_j7   = jout[3];
-    assign hub75_j8   = jout[4];
-    assign hub75_j9   = jout[5];
-    assign hub75_j10  = jout[6];
-    assign hub75_j11  = jout[7];
-    assign hub75_j12  = jout[8];
-    assign hub75_j13  = jout[9];
-    assign hub75_j14  = jout[10];
-    assign hub75_j15  = jout[11];
-    assign hub75_j16  = jout[12];
-    assign hub75_j17  = jout[13];
-    assign hub75_j18  = jout[14];
-    assign hub75_j19  = jout[15];
+    assign hub75_j4  = jout[0];
+    assign hub75_j5  = jout[1];
+    assign hub75_j6  = jout[2];
+    assign hub75_j7  = jout[3];
+    assign hub75_j8  = jout[4];
+    assign hub75_j9  = jout[5];
+    assign hub75_j10 = jout[6];
+    assign hub75_j11 = jout[7];
+    assign hub75_j12 = jout[8];
+    assign hub75_j13 = jout[9];
+    assign hub75_j14 = jout[10];
+    assign hub75_j15 = jout[11];
+    assign hub75_j16 = jout[12];
+    assign hub75_j17 = jout[13];
+    assign hub75_j18 = jout[14];
+    // J19 R1 / G1 / B1 carry I2S with AUDIO (system clock registers, no
+    // relation to the display clock needed)
+    unsafe (cdc) {
+        assign hub75_j19  = if AUDIO ? {3'b0, i2s_dout, i2s_lrck, i2s_bclk} : jout[15];
+    }
     assign hub75a_row = row;
     assign hub75a_clk = hclk;
     assign hub75a_lat = lat;
