@@ -20,8 +20,8 @@ use crate::input::{Input, Key};
 use crate::Rng;
 
 const CLOUD_BASE: f32 = 52.0;
-// the rain sound (off: on the small speaker it covered the thunder)
-const RAIN_SOUND: bool = false;
+// the rain sound
+const RAIN_SOUND: bool = true;
 const HF: f32 = H as f32;
 const WF: f32 = W as f32;
 // brightness of a strike over time (ticks): stroke, dark, re-strokes
@@ -426,10 +426,10 @@ impl Voice for Rain {
         let swell = 1.0 + 0.3 * noise(self.t as f32 / audio::RATE * 0.4, 61);
         // a drop now and then: a short click
         if self.noise.next() > 0.9985 {
-            self.tick = 0.01 + 0.02 * self.noise.next().abs();
+            self.tick = 0.03 + 0.06 * self.noise.next().abs();
         }
         self.tick *= 0.995;
         let click = self.tick_lp.run(w * self.tick);
-        Some(0.006 * swell * band + click)
+        Some(0.025 * swell * band + click)
     }
 }
