@@ -9,9 +9,10 @@
 // house with a lit window stand on the hill.
 //
 // Sound (the board's I2S output, audio.rs): rain all along, and thunder
-// after each flash, later and duller the farther away it is (0.2 to 2.2 s
-// after the light): a crack for close strikes, one per return stroke, then
-// a rumble of several rolls of low noise.
+// with each flash: a close strike cracks at once, one crack per return
+// stroke, then rumbles in several rolls of low noise; farther thunder only
+// rumbles, later and duller the farther away it is (0.9 to 2.2 s after the
+// light).
 use crate::audio::{self, Lp, Noise, Voice};
 use crate::fx::{add, new_buf, noise, noise2, smooth, to_canvas, Col};
 use crate::gfx::{Canvas, H, W};
@@ -327,6 +328,9 @@ impl crate::Game for Storm {
     }
 }
 
+// thunder closer than this cracks (and is heard with the flash)
+const CLOSE: f32 = 0.35;
+
 struct Thunder {
     t: usize,
     delay: usize,
@@ -346,14 +350,15 @@ impl Thunder {
         let end = rolls.iter().map(|r| r.0 + 4.0 * r.2).fold(0.0, f32::max);
         Thunder {
             t: 0,
-            delay: ((0.2 + 2.0 * dist) * audio::RATE) as usize,
+            // a close strike cracks with the flash; farther ones come later
+            delay: if dist < CLOSE { 0 } else { ((0.2 + 2.0 * dist) * audio::RATE) as usize },
             len: (end * audio::RATE) as usize,
             noise: Noise(seed),
             lo: [Lp::new(120.0), Lp::new(160.0)],
             mid: [Lp::new(250.0), Lp::new(900.0 - 500.0 * dist)],
             crack_lp: Lp::new(1500.0),
             rolls,
-            crack: (1.0 - dist / 0.35).max(0.0),
+            crack: (1.0 - dist / CLOSE).max(0.0),
             loud: 1.0 - 0.55 * dist,
             dull: dist,
         }
