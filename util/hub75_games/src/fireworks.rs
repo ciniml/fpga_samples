@@ -9,7 +9,7 @@
 // every tick, which gives the streaks. A burst lights the sky; about every
 // 45 s a finale fires many shells at once. Space / Enter: a finale now.
 //
-// Sound: a rocket whistles or hisses up, a burst booms (higher ones a
+// Sound: a rocket whistles or hisses up (falling in pitch as it slows), a burst booms (higher ones a
 // little softer), chrysanthemum, willow and strobe shells crackle as their
 // stars burn, crossette stars pop when they split.
 use crate::audio::{self, Burst, Crackle, Tone};
@@ -163,11 +163,12 @@ impl Fireworks {
         let up = -vy / G / 60.0;
         let soft = if self.finale > 0 { 0.5 } else { 1.0 };
         if self.rng.chance(0.4) {
-            let f = self.rng.range(800.0, 1300.0);
-            audio::play(Tone::new(f, 0.12 * soft, 10.0).glide(f * 2.2).attack(0.1).harm(0.3).len(up));
+            // the whistle falls as the rocket climbs and slows
+            let f = self.rng.range(2000.0, 2800.0);
+            audio::play(Tone::new(f, 0.12 * soft, 10.0).glide(f * 0.45).attack(0.1).harm(0.3).len(up));
         } else {
             let seed = self.rng.next() as u32;
-            audio::play(Burst::new(seed, 2500.0, 1.0, 0.12 * soft, up * 0.4).sweep(4000.0).attack(up * 0.3));
+            audio::play(Burst::new(seed, 4000.0, 1.0, 0.12 * soft, up * 0.4).sweep(2000.0).attack(up * 0.3));
         }
         self.rockets.push(Rocket { x, y: HF, vx, vy, shell, col, col2 });
     }
