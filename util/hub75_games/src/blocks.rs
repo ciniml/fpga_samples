@@ -685,7 +685,8 @@ impl crate::Game for Blocks {
         self.sparks.retain(|s| s.life > 0);
         let bot = inp.is_none();
         let start = match inp.as_deref_mut() {
-            Some(i) => i.take(Key::Start) | i.take(Key::Space),
+            // (Space drops the piece in play: a start only on the title / end screens)
+            Some(i) => i.take(Key::Start) | (self.scene != Scene::Play && i.take(Key::Space)),
             None => self.tick % 150 == 0 && self.scene == Scene::Title, // (the end screen: 5 s)
         };
         match self.scene {
