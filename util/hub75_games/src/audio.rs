@@ -280,10 +280,11 @@ pub struct Tone {
     attack: f32,
     decay: f32,
     harm: f32,
+    sq: bool,
 }
 impl Tone {
     pub fn new(f: f32, amp: f32, decay: f32) -> Tone {
-        Tone { t: 0, len: secs(decay * 6.0), delay: 0, ph: 0.0, f0: f, f1: f, amp, attack: 0.004, decay, harm: 0.0 }
+        Tone { t: 0, len: secs(decay * 6.0), delay: 0, ph: 0.0, f0: f, f1: f, amp, attack: 0.004, decay, harm: 0.0, sq: false }
     }
     pub fn glide(mut self, f1: f32) -> Tone {
         self.f1 = f1;
@@ -295,6 +296,11 @@ impl Tone {
     }
     pub fn harm(mut self, h: f32) -> Tone {
         self.harm = h;
+        self
+    }
+    /// a square wave (odd harmonics up to the 7th: the old game sound)
+    pub fn square(mut self) -> Tone {
+        self.sq = true;
         self
     }
     pub fn len(mut self, s: f32) -> Tone {
@@ -322,7 +328,12 @@ impl Voice for Tone {
         self.t += 1;
         let env = (s / self.attack).min(1.0) * (-s / self.decay).exp() * (1.0 - u).min(20.0 * (1.0 - u)).min(1.0);
         let tau = std::f32::consts::TAU;
-        let x = (tau * self.ph).sin() + self.harm * (0.5 * (2.0 * tau * self.ph).sin() + 0.25 * (3.0 * tau * self.ph).sin());
+        let x = if self.sq {
+            let p = tau * self.ph;
+            p.sin() + (3.0 * p).sin() / 3.0 + (5.0 * p).sin() / 5.0 + (7.0 * p).sin() / 7.0
+        } else {
+            (tau * self.ph).sin() + self.harm * (0.5 * (2.0 * tau * self.ph).sin() + 0.25 * (3.0 * tau * self.ph).sin())
+        };
         Some(self.amp * env * x)
     }
 }
@@ -642,5 +653,89 @@ impl Voice for Wind {
         self.t = self.t.wrapping_add(1);
         let norm = 0.5 / (0.0048 * (f * self.q).sqrt());
         Some(self.amp * norm * self.level.next() * self.bp.run(self.noise.next()))
+    }
+}
+
+/// sound effects for the games (short, in the style of old game machines)
+pub mod sfx {
+    use super::{play, Burst, Crackle, Tone};
+
+    fn seed() -> u32 {
+        static S: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(12345);
+        S.fetch_add(0x9e37_79b9, std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// notes one after another, `step` s apart: (Hz, amp)
+    pub fn notes(list: &[(f32, f32)], step: f32, len: f32) {
+        for (i, &(f, a)) in list.iter().enumerate() {
+            if f > 0.0 {
+                play(Tone::new(f, a, 10.0).square().len(len).after(i as f32 * step));
+            }
+        }
+    }
+    /// the player's shot (often: soft)
+    pub fn shot() {
+        play(Tone::new(1400.0, 0.025, 10.0).glide(700.0).square().len(0.04));
+    }
+    /// something takes a hit but survives
+    pub fn hit() {
+        play(Burst::new(seed(), 2200.0, 3.0, 0.08, 0.004));
+    }
+    /// an explosion, size 0 (small) .. 1 (big)
+    pub fn explode(size: f32) {
+        let s = seed();
+        play(Burst::new(s, 900.0, 0.7, 0.2 + 0.3 * size, 0.06 + 0.25 * size).sweep(150.0));
+        if size > 0.5 {
+            play(Crackle::new(s ^ 5, 60.0, 0.4 * size, 0.4 + 0.6 * size).click_ms(3.0));
+        }
+    }
+    /// a bomb going off
+    pub fn bomb() {
+        play(Burst::new(seed(), 300.0, 0.7, 0.35, 0.25).sweep(2500.0).attack(0.15));
+        explode(1.0);
+    }
+    /// an item picked up
+    pub fn pickup() {
+        notes(&[(1046.5, 0.05), (1318.5, 0.05), (1568.0, 0.05), (2093.0, 0.05)], 0.05, 0.05);
+    }
+    /// an extra life
+    pub fn extend() {
+        notes(&[(1318.5, 0.05), (1568.0, 0.05), (2637.0, 0.05), (2093.0, 0.05), (2349.3, 0.05), (3136.0, 0.05)], 0.08, 0.08);
+    }
+    /// the player is lost
+    pub fn die() {
+        play(Tone::new(900.0, 0.07, 10.0).glide(90.0).square().len(0.7));
+        explode(0.8);
+    }
+    /// a boss is coming
+    pub fn warning() {
+        for k in 0..4 {
+            play(Tone::new(660.0, 0.06, 10.0).glide(990.0).square().len(0.25).after(k as f32 * 0.6));
+            play(Tone::new(990.0, 0.06, 10.0).glide(660.0).square().len(0.25).after(k as f32 * 0.6 + 0.3));
+        }
+    }
+    /// a game starts
+    pub fn start() {
+        notes(&[(523.3, 0.06), (659.3, 0.06), (784.0, 0.06), (1046.5, 0.07)], 0.07, 0.1);
+    }
+    /// a stage cleared
+    pub fn clear() {
+        notes(&[(784.0, 0.06), (0.0, 0.0), (784.0, 0.06), (1046.5, 0.06), (1318.5, 0.06), (1568.0, 0.07), (0.0, 0.0), (2093.0, 0.07)], 0.1, 0.12);
+    }
+    /// the game is over
+    pub fn game_over() {
+        notes(&[(784.0, 0.06), (659.3, 0.06), (523.3, 0.06), (392.0, 0.07)], 0.25, 0.3);
+    }
+    /// all cleared: a longer fanfare
+    pub fn fanfare() {
+        notes(
+            &[(523.3, 0.06), (523.3, 0.06), (523.3, 0.06), (523.3, 0.07), (415.3, 0.06), (466.2, 0.06), (523.3, 0.06), (0.0, 0.0), (466.2, 0.05), (523.3, 0.08)],
+            0.13,
+            0.15,
+        );
+    }
+    /// a bounce or a blip at f Hz
+    pub fn blip(f: f32, amp: f32) {
+        play(Tone::new(f, amp, 10.0).square().len(0.035));
     }
 }

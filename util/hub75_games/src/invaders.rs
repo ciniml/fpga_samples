@@ -7,6 +7,7 @@
 // ends when the cannons run out or the aliens reach the ground, or with
 // ALL CLEAR (and a bonus for the cannons left) after the third wave, so a
 // game takes about 3 minutes.
+use crate::audio::{self, sfx, Tone};
 use crate::gfx::{scale, Canvas, Rgb, Sprite, W};
 use crate::input::{Input, Key};
 use crate::Rng;
@@ -115,6 +116,7 @@ pub struct Invaders {
     shields: [[[bool; SHW]; SHH]; 4],
     ufo: Option<(f32, f32)>, // x, vx
     ufo_cd: i32,
+    march: usize,
     ufo_msg: Option<(f32, u64, i32)>, // x, points, ticks
     wave: u32,
     score: u64,
@@ -149,6 +151,7 @@ impl Invaders {
             shields: [[[false; SHW]; SHH]; 4],
             ufo: None,
             ufo_cd: 1200,
+            march: 0,
             ufo_msg: None,
             wave: 1,
             score: 0,
@@ -173,6 +176,7 @@ impl Invaders {
         *self = Invaders::new(seed, hi);
         self.scene = Scene::Play;
         self.wave_t = 90;
+        sfx::start();
     }
 
     fn new_wave(&mut self) {
@@ -333,6 +337,7 @@ impl Invaders {
                 if self.lives < 0 {
                     self.scene = Scene::Over;
                     self.over_t = 0;
+                    sfx::game_over();
                     return;
                 }
                 self.px = 64.0;
@@ -342,6 +347,7 @@ impl Invaders {
         self.px = (self.px + dx * 1.4).clamp(7.0, WF - 7.0);
         if fire && self.shot.is_none() {
             self.shot = Some((self.px, PLAYER_Y - 4.0));
+            audio::play(Tone::new(1800.0, 0.035, 10.0).glide(500.0).square().len(0.09));
         }
         // ---- formation ----
         let n = self.count();
@@ -349,6 +355,10 @@ impl Invaders {
         if self.step_cd <= 0 {
             self.step_cd = self.step_period(n);
             self.frame ^= 1;
+            // the march: four falling bass notes, one a step
+            const MARCH: [f32; 4] = [196.0, 174.6, 155.6, 146.8];
+            self.march = (self.march + 1) % 4;
+            audio::play(Tone::new(MARCH[self.march], 0.09, 10.0).square().len(0.07));
             let (mut minx, mut maxx) = (f32::MAX, f32::MIN);
             for r in 0..ROWS {
                 for c in 0..COLS {
@@ -384,6 +394,7 @@ impl Invaders {
             }
         }
         if landed {
+            sfx::die();
             self.burst(self.px, PLAYER_Y, [80, 255, 80], 40);
             self.lives = -1;
             self.dead = 90;
@@ -411,6 +422,7 @@ impl Invaders {
                 gone = true;
             }
             if !gone && (x - self.px).abs() < 5.5 && y + 2.0 >= PLAYER_Y - 2.0 && y <= PLAYER_Y + 3.0 {
+                sfx::die();
                 self.burst(self.px, PLAYER_Y, [80, 255, 80], 40);
                 self.lives -= 1;
                 self.dead = 90;
@@ -439,6 +451,7 @@ impl Invaders {
                 if let Some(j) = self.bombs.iter().position(|b| (b.x - sx).abs() < 2.0 && (b.y - ny).abs() < 4.0) {
                     self.bombs.swap_remove(j);
                     self.burst(sx, ny, [255, 255, 255], 5);
+                    sfx::hit();
                     hit = true;
                 }
             }
@@ -452,6 +465,7 @@ impl Invaders {
                                 self.score += [30, 20, 20, 10, 10][r];
                                 let col = [[255, 40, 200], [40, 230, 60], [0, 220, 255]][row_type(r)];
                                 self.burst(x, y, col, 14);
+                                sfx::explode(0.15);
                                 hit = true;
                                 break 'f;
                             }
@@ -467,6 +481,8 @@ impl Invaders {
                         self.burst(ux, 18.0, [255, 60, 60], 30);
                         self.ufo_msg = Some((ux, pts, 90));
                         self.ufo = None;
+                        sfx::explode(0.6);
+                        sfx::pickup();
                         hit = true;
                     }
                 }
@@ -476,6 +492,12 @@ impl Invaders {
         // ---- UFO ----
         match self.ufo {
             Some((x, vx)) => {
+                // the UFO's warble
+                if self.tick % 8 == 0 {
+                    let up = self.tick % 16 == 0;
+                    let (a, b) = if up { (900.0, 1300.0) } else { (1300.0, 900.0) };
+                    audio::play(Tone::new(a, 0.03, 10.0).glide(b).len(0.13));
+                }
                 let nx = x + vx;
                 self.ufo = if nx < -10.0 || nx > WF + 10.0 { None } else { Some((nx, vx)) };
             }
@@ -490,6 +512,7 @@ impl Invaders {
         if !self.extra && self.score >= 1500 {
             self.extra = true;
             self.lives += 1;
+            sfx::extend();
         }
         if self.count() == 0 && self.wave == WAVES {
             self.bonus = 500 * (self.lives.max(0) as u64 + 1);
@@ -497,7 +520,9 @@ impl Invaders {
             self.all_clear = true;
             self.scene = Scene::Over;
             self.over_t = 0;
+            sfx::fanfare();
         } else if self.count() == 0 {
+            sfx::clear();
             self.wave += 1;
             self.new_wave();
             self.wave_t = 120;
@@ -609,6 +634,9 @@ impl Invaders {
 }
 
 impl crate::Game for Invaders {
+    fn sound(&self) -> bool {
+        true
+    }
     fn step(&mut self, mut inp: Option<&mut Input>) {
         self.tick += 1;
         for s in &mut self.sparks {

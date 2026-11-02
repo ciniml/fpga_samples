@@ -5,6 +5,7 @@
 // change with its health; it leaves after 25 s. After the third boss: ALL
 // CLEAR and a bonus for the ships and bombs left (a game is ~3 minutes). The ship fires by itself; power items widen the
 // shot (3 levels), a bomb clears the bullets and hurts every enemy.
+use crate::audio::sfx;
 use crate::gfx::{scale, Canvas, Rgb, Sprite, H, W};
 use crate::input::{Input, Key};
 
@@ -277,6 +278,7 @@ impl Stg {
         *self = Stg::new(seed, hi);
         self.scene = Scene::Play;
         self.invuln = 120;
+        sfx::start();
     }
 
     /// one tick
@@ -387,6 +389,7 @@ impl Stg {
                     self.scene = Scene::Over;
                     self.over = 0;
                     self.hi = self.hi.max(self.score);
+                    sfx::game_over();
                 } else {
                     self.px = 64.0;
                     self.py = 170.0;
@@ -405,6 +408,7 @@ impl Stg {
             self.shot_cd -= 1;
             if self.shot_cd <= 0 {
                 self.shot_cd = 5;
+                sfx::shot();
                 let (x, y) = (self.px, self.py - 5.0);
                 self.shots.push(Shot { x: x - 2.0, y, vx: 0.0 });
                 self.shots.push(Shot { x: x + 2.0, y, vx: 0.0 });
@@ -420,6 +424,7 @@ impl Stg {
             if ctl.bomb && self.bombs > 0 {
                 self.bombs -= 1;
                 self.flash = 24;
+                sfx::bomb();
                 self.invuln = self.invuln.max(90);
                 let bl: Vec<(f32, f32)> = self.bullets.iter().map(|b| (b.x, b.y)).collect();
                 for (x, y) in bl {
@@ -446,6 +451,7 @@ impl Stg {
                 self.all_clear = true;
                 self.scene = Scene::Over;
                 self.over = 0;
+                sfx::fanfare();
             } else if self.clear == 0 {
                 self.stage += 1;
                 self.t = 0;
@@ -461,6 +467,7 @@ impl Stg {
             }
         } else if self.t == STAGE_LEN {
             self.warning = 150;
+            sfx::warning();
         } else if self.warning > 0 {
             self.warning -= 1;
             if self.warning == 0 {
@@ -477,6 +484,7 @@ impl Stg {
             self.boss_on = false; // it flew away: the stage ends without its points
             self.escaped = true;
             self.clear = 240;
+            sfx::clear();
         }
     }
 
@@ -663,6 +671,9 @@ impl Stg {
                 let (hw, hh) = e.half();
                 if e.hp > 0 && e.y > -4.0 && (s.x - e.x).abs() < hw + 1.0 && (s.y - e.y).abs() < hh + 2.0 {
                     e.hp -= 1;
+                    if e.hp > 0 && (e.kind != Kind::Boss || e.t % 6 == 0) {
+                        sfx::hit();
+                    }
                     if e.kind != Kind::Boss || e.t % 8 == 0 {
                         e.flash = 2; // the boss is hit all the time: blink now and then
                     }
@@ -685,9 +696,13 @@ impl Stg {
             let e = self.enemies.remove(i);
             self.score += e.score(self.stage);
             match e.kind {
-                Kind::Zako | Kind::Diver => self.explode(e.x, e.y, 10, 1.5),
+                Kind::Zako | Kind::Diver => {
+                    self.explode(e.x, e.y, 10, 1.5);
+                    sfx::explode(0.2);
+                }
                 Kind::Turret => {
                     self.explode(e.x, e.y, 30, 2.0);
+                    sfx::explode(0.5);
                     let kind = if self.rng.chance(0.25) { ItemKind::Bomb } else { ItemKind::Power };
                     self.items.push(Item { x: e.x, y: e.y, kind });
                 }
@@ -697,6 +712,8 @@ impl Stg {
                         self.explode(e.x + dx, e.y + dy, 30, 2.5);
                     }
                     self.flash = 30;
+                    sfx::explode(1.0);
+                    sfx::clear();
                     for b in std::mem::take(&mut self.bullets) {
                         self.parts.push(Particle { x: b.x, y: b.y, vx: 0.0, vy: -0.6, life: 25, max: 25, c: [255, 230, 0] });
                         self.score += 50;
@@ -723,6 +740,7 @@ impl Stg {
             !hit
         });
         for k in got {
+            sfx::pickup();
             match k {
                 ItemKind::Power if self.power < 3 => self.power += 1,
                 ItemKind::Bomb if self.bombs < 5 => self.bombs += 1,
@@ -742,6 +760,7 @@ impl Stg {
             (e.x - px).abs() < hw - 1.0 && (e.y - py).abs() < hh - 1.0
         });
         if hit_b || hit_e {
+            sfx::die();
             self.explode(px, py, 50, 2.5);
             self.flash = 12;
             self.lives -= 1;
@@ -903,6 +922,9 @@ fn ctl_from(inp: &mut Input) -> Ctl {
 }
 
 impl crate::Game for Stg {
+    fn sound(&self) -> bool {
+        true
+    }
     fn step(&mut self, inp: Option<&mut Input>) {
         let ctl = match inp {
             Some(i) => ctl_from(i),

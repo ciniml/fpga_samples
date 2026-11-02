@@ -8,6 +8,7 @@
 // A game lasts at most 3 minutes (TIME UP), the clock is top right.
 // Moves follow the key events (each press or auto-repeat is one step), so
 // they work the same in every terminal.
+use crate::audio::{self, sfx, Burst};
 use crate::gfx::{scale, Canvas, Rgb, W};
 use crate::input::{Input, Key};
 use crate::{mmss, TIME_LIMIT};
@@ -208,6 +209,7 @@ impl Blocks {
         self.scene = Scene::Play;
         self.next = self.draw_bag();
         self.spawn(None);
+        sfx::start();
     }
 
     /// next piece (or `k` from the hold); false: it does not fit
@@ -226,6 +228,7 @@ impl Blocks {
             self.scene = Scene::Over;
             self.over_t = 0;
             self.hi = self.hi.max(self.score);
+            sfx::game_over();
             return false;
         }
         true
@@ -267,6 +270,7 @@ impl Blocks {
             if fits(&self.board, &p) {
                 self.cur = p;
                 self.moved();
+                sfx::blip(900.0, 0.025);
                 return;
             }
         }
@@ -297,9 +301,17 @@ impl Blocks {
         }
         self.hold_used = false;
         self.clearing = (0..BH).filter(|&y| self.board[y].iter().all(|&c| c != 0)).collect();
+        audio::play(Burst::new(self.rng.next() as u32, 350.0, 2.0, 0.15, 0.03));
         if self.clearing.is_empty() {
             self.spawn(None);
         } else {
+            // 1..4 lines: more notes, a four-line clear a run up
+            let n = self.clearing.len();
+            let run: Vec<(f32, f32)> = [523.3, 659.3, 784.0, 1046.5, 1318.5, 1568.0, 2093.0][..n + 1 + if n == 4 { 2 } else { 0 }]
+                .iter()
+                .map(|&f| (f, 0.05))
+                .collect();
+            sfx::notes(&run, 0.06, 0.08);
             self.clear_t = CLEAR_TICKS;
             let n = self.clearing.len();
             self.last_clear = n;
@@ -325,6 +337,9 @@ impl Blocks {
         }
         self.board.copy_from_slice(&rows);
         self.lines += self.clearing.len() as u32;
+        if 1 + self.lines / 10 > self.level {
+            sfx::extend();
+        }
         self.level = 1 + self.lines / 10;
         self.clearing.clear();
         self.spawn(None);
@@ -338,7 +353,11 @@ impl Blocks {
                 self.over_t = 0;
                 self.time_up = true;
                 self.hi = self.hi.max(self.score);
+                sfx::game_over();
                 return;
+            }
+            if self.time_left <= 600 && self.time_left % 60 == 0 {
+                sfx::blip(1568.0, 0.04);
             }
         }
         if self.clear_t > 0 {
@@ -385,6 +404,7 @@ impl Blocks {
             let k = self.cur.k;
             let from = self.hold.replace(k);
             self.hold_used = true;
+            sfx::blip(1200.0, 0.03);
             if !self.spawn(from) {
                 return;
             }
@@ -396,10 +416,14 @@ impl Blocks {
             self.rotate(false);
         }
         for _ in 0..left {
-            self.try_move(-1, 0);
+            if self.try_move(-1, 0) {
+                sfx::blip(500.0, 0.02);
+            }
         }
         for _ in 0..right {
-            self.try_move(1, 0);
+            if self.try_move(1, 0) {
+                sfx::blip(500.0, 0.02);
+            }
         }
         for _ in 0..down {
             if self.try_move(0, 1) {
@@ -420,6 +444,7 @@ impl Blocks {
                 }
             }
             self.cur.y = y;
+            audio::play(Burst::new(self.rng.next() as u32, 200.0, 1.5, 0.3, 0.05));
             self.lock_piece();
             return;
         }
@@ -643,6 +668,9 @@ fn best_move(b: &Board, k: usize) -> (usize, i32) {
 }
 
 impl crate::Game for Blocks {
+    fn sound(&self) -> bool {
+        true
+    }
     fn step(&mut self, mut inp: Option<&mut Input>) {
         self.tick += 1;
         for s in &mut self.sparks {

@@ -7,6 +7,7 @@
 // splits in three), S slow ball, 1UP. Silver bricks take several hits.
 // Stages cycle through four layouts. A game lasts at most 3 minutes
 // (TIME UP), the clock is in the middle of the top line.
+use crate::audio::sfx;
 use crate::gfx::{scale, Canvas, Rgb, H, W};
 use crate::input::{Input, Key};
 use crate::{mmss, Rng, TIME_LIMIT};
@@ -141,6 +142,7 @@ impl Bricks {
         self.scene = Scene::Play;
         self.serve();
         self.msg_t = 120;
+        sfx::start();
     }
 
     fn base_speed(&self) -> f32 {
@@ -212,6 +214,9 @@ impl Bricks {
             let b = &mut self.balls[i];
             b.x += b.vx / n as f32;
             b.y += b.vy / n as f32;
+            if b.x < LEFT + R && b.vx < 0.0 || b.x > RIGHT - R && b.vx > 0.0 || b.y < TOP + R && b.vy < 0.0 {
+                sfx::blip(700.0, 0.03);
+            }
             if b.x < LEFT + R {
                 b.x = LEFT + R;
                 b.vx = b.vx.abs();
@@ -232,6 +237,7 @@ impl Bricks {
                 b.vx = speed * a.sin();
                 b.vy = -speed * a.cos();
                 b.y = PADDLE_Y - R;
+                sfx::blip(440.0, 0.07);
                 continue;
             }
             if b.y > HF + 4.0 {
@@ -273,8 +279,11 @@ impl Bricks {
         if br.hp > 0 {
             self.grid[r][c] = Some(br);
             self.burst(x, y, [255, 255, 255], 3);
+            sfx::blip(2093.0, 0.04);
             return;
         }
+        // higher rows ring higher
+        sfx::blip(880.0 * 2f32.powf((ROWS - r) as f32 / 12.0 * 2.0), 0.07);
         self.grid[r][c] = None;
         self.score += if br.silver { 50 * self.stage as u64 } else { 10 + 10 * (ROWS - r) as u64 };
         self.burst(x, y, br.c, 8);
@@ -371,7 +380,11 @@ impl Bricks {
             self.scene = Scene::Over;
             self.over_t = 0;
             self.time_up = true;
+            sfx::game_over();
             return;
+        }
+        if self.time_left <= 600 && self.time_left % 60 == 0 {
+            sfx::blip(1568.0, 0.04);
         }
         self.msg_t = (self.msg_t - 1).max(0);
         if self.clear_t > 0 {
@@ -393,6 +406,7 @@ impl Bricks {
             self.balls[0].y = PADDLE_Y - R - 0.5;
             if launch {
                 self.held = false;
+                sfx::blip(660.0, 0.05);
                 let a = -20f32.to_radians();
                 self.balls[0].vx = self.speed * a.sin();
                 self.balls[0].vy = -self.speed * a.cos();
@@ -409,9 +423,11 @@ impl Bricks {
             if self.balls.is_empty() {
                 self.lives -= 1;
                 self.burst(self.px, PADDLE_Y, [255, 80, 80], 30);
+                sfx::die();
                 if self.lives < 0 {
                     self.scene = Scene::Over;
                     self.over_t = 0;
+                    sfx::game_over();
                     return;
                 }
                 self.caps.clear();
@@ -431,6 +447,11 @@ impl Bricks {
         });
         for k in got {
             self.score += 100;
+            if k == Cap::Life {
+                sfx::extend();
+            } else {
+                sfx::pickup();
+            }
             match k {
                 Cap::Wide => self.wide = 900,
                 Cap::Slow => {
@@ -460,6 +481,7 @@ impl Bricks {
         if self.grid.iter().all(|r| r.iter().all(|b| b.is_none())) {
             self.clear_t = 150;
             self.score += 1000 * self.stage as u64;
+            sfx::clear();
             self.caps.clear();
         }
     }
@@ -568,6 +590,9 @@ impl Bricks {
 }
 
 impl crate::Game for Bricks {
+    fn sound(&self) -> bool {
+        true
+    }
     fn step(&mut self, mut inp: Option<&mut Input>) {
         self.tick += 1;
         for s in &mut self.sparks {

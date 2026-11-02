@@ -12,6 +12,14 @@
 // 5. the seven halls, scrolling up like credits (this booth marked)
 // 6. a countdown to the close (18:00) with a bar for the day, thanks after
 //    (EXPO_NOW="2026-11-03 15:00:00" pretends a time, for a rehearsal)
+//
+// Sound: keys clicking as the boot log types, a rising beep for every 10 %
+// of LOADING, a two-note "ready" and digital noise for the glitch; a chime
+// as each later scene comes in; zaps with the title's sparks; on the scope
+// the chords of the Lissajous figures (1:1, 1:2, 3:2) and then a heartbeat
+// with the heart; a music box under the halls; a soft tick every second of
+// the countdown.
+use crate::audio::{self, Bell, Burst, Crackle, Tone};
 use crate::fx::{add, mix, new_buf, smooth, to_canvas, Col};
 use crate::gfx::{Canvas, H, W};
 use crate::input::{Input, Key};
@@ -75,6 +83,7 @@ pub struct Expo {
     pulses: Vec<(usize, f32, f32)>, // trace, position, speed
     scope: Vec<f32>,              // phosphor of the oscilloscope
     sparks: Vec<Vec<(f32, f32)>>,
+    last_sec: i64,
 }
 
 impl Expo {
@@ -119,7 +128,7 @@ impl Expo {
             }
             traces.push(path);
         }
-        Expo { rng, tick: 0, scene: 0, t: 0, traces, board, pulses: Vec::new(), scope: vec![0.0; W * H], sparks: Vec::new() }
+        Expo { rng, tick: 0, scene: 0, t: 0, traces, board, pulses: Vec::new(), scope: vec![0.0; W * H], sparks: Vec::new(), last_sec: 0 }
     }
 
     fn update(&mut self, next: bool) {
@@ -133,7 +142,12 @@ impl Expo {
             self.t = 0;
             self.scene = (self.scene + 1) % SCENES.len();
             self.scope.fill(0.0);
+            if self.scene != 0 {
+                audio::play(Bell::new(1046.5, 0.07, 0.6));
+                audio::play(Bell::new(1568.0, 0.05, 0.6).after(0.1));
+            }
         }
+        self.sound();
         // pulses running along the traces
         if self.rng.chance(0.25) {
             let i = (self.rng.next() % self.traces.len() as u64) as usize;
@@ -189,6 +203,93 @@ impl Expo {
         }
         if self.tick % 3 == 0 {
             self.sparks.clear();
+        }
+    }
+
+    /// boot log typing at tick t: (line, characters shown, typing now)
+    fn boot_at(t: i32) -> Option<(usize, usize, bool)> {
+        let mut start = 10;
+        let mut last = None;
+        for (i, line) in BOOT.iter().enumerate() {
+            if t < start {
+                break;
+            }
+            let n = ((t - start) as usize).min(line.len());
+            last = Some((i, n, i != 6 && ((t - start) as usize) < line.len()));
+            start += if i == 6 { 140 } else { line.len() as i32 + 8 };
+        }
+        last
+    }
+
+    fn sound(&mut self) {
+        let t = self.t as i32;
+        let seed = self.rng.next() as u32;
+        match self.scene {
+            0 => {
+                let len = SCENES[0] as i32;
+                if t + 30 > len {
+                    if t + 30 == len + 1 {
+                        audio::play(Crackle::new(seed, 400.0, 0.4, 0.5).click_ms(2.0));
+                        audio::play(Burst::new(seed ^ 1, 3000.0, 1.0, 0.15, 0.2).sweep(300.0));
+                    }
+                } else if let Some((i, _, typing)) = Self::boot_at(t) {
+                    if typing && self.rng.chance(0.8) {
+                        audio::play(Burst::new(seed, self.rng.range(2500.0, 3500.0), 3.0, 0.12, 0.004));
+                    }
+                    // LOADING: a beep every 10 %, rising
+                    if i == 6 {
+                        let mut start = 10;
+                        for l in BOOT.iter().take(6) {
+                            start += l.len() as i32 + 8;
+                        }
+                        let k = t - start;
+                        if k >= 0 && k <= 130 && k % 13 == 0 {
+                            audio::play(Tone::new(600.0 * 2f32.powf(k as f32 / 130.0), 0.05, 0.04).harm(0.5).len(0.08));
+                        }
+                    }
+                    if i == 8 && Self::boot_at(t - 1).map(|b| b.0) == Some(7) {
+                        audio::play(Tone::new(880.0, 0.07, 0.1).harm(0.5).len(0.12));
+                        audio::play(Tone::new(1318.5, 0.07, 0.2).harm(0.5).after(0.13).len(0.35));
+                    }
+                }
+            }
+            1 if !self.sparks.is_empty() && self.tick % 3 == 1 && self.rng.chance(0.4) => {
+                audio::play(Crackle::new(seed, 2500.0, 0.25, 0.05).click_ms(0.3));
+            }
+            3 => {
+                let stage = (self.t as f32 / SCENES[3] as f32 * 4.0).min(3.999) as usize;
+                let at = |k: u64| self.t == k * SCENES[3] / 4 + 1;
+                // each figure's frequencies, as a soft chord for its quarter
+                const RATIOS: [(f32, f32); 3] = [(1.0, 1.0), (1.0, 2.0), (3.0, 2.0)];
+                if stage < 3 && at(stage as u64) {
+                    let (a, b) = RATIOS[stage];
+                    let len = SCENES[3] as f32 / 4.0 / 60.0;
+                    for f in [220.0 * a, 220.0 * b * if a == b { 1.005 } else { 1.0 }] {
+                        audio::play(Tone::new(f, 0.035, 10.0).attack(0.3).harm(0.3).len(len));
+                    }
+                }
+                // the heart beats: sin(tick * 0.25) rising through 0
+                if stage == 3 {
+                    let ph = (self.tick as f32 * 0.25) % TAU;
+                    if ph < 0.25 {
+                        audio::play(Burst::new(seed, 120.0, 2.0, 0.5, 0.06));
+                        audio::play(Burst::new(seed ^ 3, 100.0, 2.0, 0.35, 0.06).after(0.18));
+                    }
+                }
+            }
+            4 if self.t % 30 == 1 => {
+                // a music box: C major arpeggio up and down
+                const NOTES: [f32; 8] = [1046.5, 1318.5, 1568.0, 2093.0, 1568.0, 1318.5, 1174.7, 1568.0];
+                audio::play(Bell::new(NOTES[(self.t / 30) as usize % 8], 0.04, 0.5));
+            }
+            5 => {
+                let sec = Local::now().timestamp();
+                if sec != self.last_sec {
+                    audio::play(Burst::new(seed, 2000.0, 4.0, 0.06, 0.004));
+                }
+                self.last_sec = sec;
+            }
+            _ => {}
         }
     }
 
@@ -488,5 +589,8 @@ impl crate::Game for Expo {
     }
     fn needs_keys(&self) -> bool {
         false
+    }
+    fn sound(&self) -> bool {
+        true
     }
 }
