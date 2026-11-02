@@ -9,6 +9,15 @@
 // 5. the corner turn: pixel values → bit planes (the GMT block of GW3A)
 // 6. the recap: the five steps again, each with a small moving picture
 // 7. the specs
+//
+// Sound: a chime as each scene comes in. Packets leaving the PC blip, the
+// ack answers with a two-note "got it", the MAC drops the broken packet
+// with a buzz and the pages swap with a click. The scan and BCM scenes
+// play their own timing: a click for every row lit (every bit plane
+// switched) that runs faster with the animation until it turns into a
+// tone, the way the blinking turns into a steady picture. The recap and
+// the specs ring a bell for each line.
+use crate::audio::{self, Bell, Burst, Hp, Keep, Param, Smooth, Tone, Voice};
 use crate::fx::{mix, new_buf, smooth, to_canvas, Col};
 use crate::gfx::{Canvas, H, W};
 use crate::input::{Input, Key};
@@ -110,11 +119,92 @@ pub struct Explain {
     bu: f32,        // BCM scene: where in the cycle (0..63 LSB units)
     bspeed: f32,    // LSB units a tick
     beye: [f32; 4], // how bright each LED looks
+    keep: Keep,
+    click_rate: Param,  // the scan / BCM clicks a second
+    click_level: Param,
 }
 
 impl Explain {
     pub fn new(_seed: u64, _hi: u64) -> Explain {
-        Explain { tick: 0, scene: 0, t: 0, row: 0.0, speed: 0.0, eye: [0.0; 32], bu: 0.0, bspeed: 0.0, beye: [0.0; 4] }
+        Explain {
+            tick: 0,
+            scene: 0,
+            t: 0,
+            row: 0.0,
+            speed: 0.0,
+            eye: [0.0; 32],
+            bu: 0.0,
+            bspeed: 0.0,
+            beye: [0.0; 4],
+            keep: Keep::default(),
+            click_rate: Param::default(),
+            click_level: Param::default(),
+        }
+    }
+
+    fn sound(&mut self) {
+        if self.keep.start() {
+            audio::play(Clicks::new(&self.click_rate, &self.click_level));
+        }
+        let t = self.t;
+        let seed = (self.tick as u32).wrapping_mul(2654435761);
+        if t == 1 {
+            audio::play(Bell::new(1046.5, 0.06, 0.6));
+            audio::play(Bell::new(1568.0, 0.045, 0.6).after(0.1));
+        }
+        let len = SCENES[self.scene];
+        let fade = (t.min(len - t) as f32 / FADE as f32).min(1.0);
+        // rows lit a second (scan), bit planes switched a second (BCM: 6 a cycle of 63 units)
+        let (rate, level) = match self.scene {
+            3 => (self.speed * 60.0, fade),
+            4 => (self.bspeed * 60.0 * 6.0 / 63.0, fade),
+            _ => (0.0, 0.0),
+        };
+        self.click_rate.set(rate);
+        self.click_level.set(level);
+        match self.scene {
+            1 => {
+                let ft = t % 300;
+                if ft % 4 == 0 && ft < 48 * 4 {
+                    audio::play(Tone::new(1000.0 + ft as f32 * 4.0, 0.03, 10.0).len(0.03));
+                }
+                if ft == 48 * 4 + 30 {
+                    audio::play(Tone::new(1318.5, 0.06, 10.0).harm(0.4).len(0.08));
+                    audio::play(Tone::new(1760.0, 0.06, 0.15).harm(0.4).after(0.09).len(0.3));
+                }
+            }
+            2 => {
+                let ft = t % 280;
+                if ft % 4 == 0 && ft < 48 * 4 {
+                    audio::play(Burst::new(seed, 3000.0, 3.0, 0.06, 0.003));
+                }
+                if ft == 100 + 14 {
+                    audio::play(Tone::new(140.0, 0.07, 10.0).square().len(0.25));
+                }
+                if ft == 230 {
+                    audio::play(Burst::new(seed, 1200.0, 2.0, 0.25, 0.02));
+                    audio::play(Tone::new(1318.5, 0.05, 10.0).harm(0.4).after(0.1).len(0.08));
+                    audio::play(Tone::new(1760.0, 0.05, 0.15).harm(0.4).after(0.19).len(0.3));
+                }
+            }
+            6 => {
+                const NOTES: [f32; 5] = [1046.5, 1174.7, 1318.5, 1568.0, 1760.0];
+                for (k, f) in NOTES.iter().enumerate() {
+                    if t == 30 + k as u64 * 70 {
+                        audio::play(Bell::new(*f, 0.06, 0.6));
+                    }
+                }
+            }
+            7 => {
+                const NOTES: [f32; 5] = [784.0, 880.0, 1046.5, 1174.7, 1318.5];
+                for (k, f) in NOTES.iter().enumerate() {
+                    if t == 45 + k as u64 * 60 {
+                        audio::play(Bell::new(*f, 0.06, 0.6));
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     fn update(&mut self, next: bool) {
@@ -132,6 +222,7 @@ impl Explain {
             self.bu = 0.0;
             self.beye = [0.0; 4];
         }
+        self.sound();
         if self.scene == 4 {
             // a cycle every 200 ticks for 6 s, then doubling every 50 ticks
             // up to two cycles a tick; each LED looks as bright as the share
@@ -676,5 +767,40 @@ impl crate::Game for Explain {
     }
     fn needs_keys(&self) -> bool {
         false
+    }
+    fn sound(&self) -> bool {
+        true
+    }
+}
+
+/// a click `rate` times a second (a Param), as loud as `level`: slow, the
+/// clicks are heard one by one; fast, they run together into a tone
+struct Clicks {
+    rate: Smooth,
+    level: Smooth,
+    ph: f32,
+    click: f32,
+    hp: Hp,
+}
+
+impl Clicks {
+    fn new(rate: &Param, level: &Param) -> Clicks {
+        Clicks { rate: Smooth::new(rate), level: Smooth::new(level), ph: 0.0, click: 0.0, hp: Hp::new(300.0) }
+    }
+}
+
+impl Voice for Clicks {
+    fn next(&mut self) -> Option<f32> {
+        let rate = self.rate.next().min(4000.0);
+        let level = self.level.next();
+        self.ph += rate / audio::RATE;
+        if self.ph >= 1.0 {
+            self.ph -= self.ph.floor();
+            self.click = 1.0;
+        }
+        self.click *= 0.95; // about 0.4 ms
+        // many clicks a second add up: keep the sum about as loud
+        let amp = 0.35 / (1.0 + rate / 150.0).sqrt();
+        Some(self.hp.run(self.click) * amp * level)
     }
 }
