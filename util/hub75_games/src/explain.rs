@@ -15,7 +15,8 @@
 // with a buzz and the pages swap with a click. The scan and BCM scenes
 // play their own timing: a click for every row lit (every bit plane
 // switched) that runs faster with the animation until it turns into a
-// tone, the way the blinking turns into a steady picture. The recap and
+// tone, the way the blinking turns into a steady picture (held for a
+// second at full speed, then quiet). The recap and
 // the specs ring a bell for each line.
 use crate::audio::{self, Bell, Burst, Hp, Keep, Param, Smooth, Tone, Voice};
 use crate::fx::{mix, new_buf, smooth, to_canvas, Col};
@@ -122,6 +123,7 @@ pub struct Explain {
     keep: Keep,
     click_rate: Param,  // the scan / BCM clicks a second
     click_level: Param,
+    at_top: u32, // ticks at full speed (scan / BCM)
 }
 
 impl Explain {
@@ -139,6 +141,7 @@ impl Explain {
             keep: Keep::default(),
             click_rate: Param::default(),
             click_level: Param::default(),
+            at_top: 0,
         }
     }
 
@@ -155,9 +158,17 @@ impl Explain {
         let len = SCENES[self.scene];
         let fade = (t.min(len - t) as f32 / FADE as f32).min(1.0);
         // rows lit a second (scan), bit planes switched a second (BCM: 6 a cycle of 63 units)
+        // at full speed the tone holds about a second, then fades out
+        let top = match self.scene {
+            3 => self.speed >= 64.0,
+            4 => self.bspeed >= BCM_MAX,
+            _ => false,
+        };
+        self.at_top = if top { self.at_top + 1 } else { 0 };
+        let hold = 1.0 - ((self.at_top as f32 - 60.0) / 15.0).clamp(0.0, 1.0);
         let (rate, level) = match self.scene {
-            3 => (self.speed * 60.0, fade),
-            4 => (self.bspeed * 60.0 * 6.0 / 63.0, fade),
+            3 => (self.speed * 60.0, fade * hold),
+            4 => (self.bspeed * 60.0 * 6.0 / 63.0, fade * hold),
             _ => (0.0, 0.0),
         };
         self.click_rate.set(rate);
