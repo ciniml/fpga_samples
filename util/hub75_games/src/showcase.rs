@@ -59,6 +59,12 @@ impl Showcase {
         crate::audio::new_scene();
     }
 
+    /// a demo of the rotation picked at random (`r` a random number)
+    pub fn random(&mut self, r: u64) {
+        let list: Vec<usize> = (0..self.demos.len()).filter(|&i| self.demos[i].2 && i != self.idx).collect();
+        self.select(list[(r % list.len() as u64) as usize]);
+    }
+
     /// the next (d = 1) or previous (d = -1) demo now
     pub fn shift(&mut self, d: i32) {
         let n = self.demos.len() as i32;

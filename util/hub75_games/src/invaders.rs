@@ -122,6 +122,8 @@ pub struct Invaders {
     score: u64,
     hi: u64,
     lives: i32,
+    time_left: i32, // ticks of the 3 minutes
+    time_up: bool,
     extra: bool,
     dead: i32,
     wave_t: i32, // pause before the next wave
@@ -157,6 +159,8 @@ impl Invaders {
             score: 0,
             hi,
             lives: 2,
+            time_left: crate::TIME_LIMIT,
+            time_up: false,
             extra: false,
             dead: 0,
             wave_t: 0,
@@ -319,6 +323,19 @@ impl Invaders {
         };
         if self.paused {
             return;
+        }
+        // the 3-minute limit
+        self.time_left -= 1;
+        if self.time_left <= 0 {
+            self.time_up = true;
+            self.scene = Scene::Over;
+            self.over_t = 0;
+            self.hi = self.hi.max(self.score);
+            sfx::game_over();
+            return;
+        }
+        if self.time_left <= 600 && self.time_left % 60 == 0 {
+            sfx::blip(1568.0, 0.04);
         }
         if self.wave_t > 0 {
             self.wave_t -= 1;
@@ -580,6 +597,9 @@ impl Invaders {
         // HUD
         c.text(&format!("{:05}", self.score), 1, 1, 1, [255, 255, 255]);
         c.text(&format!("HI{:05}", self.hi), 86, 1, 1, [255, 230, 0]);
+        let tc = if self.time_left > 600 { [255, 255, 255] } else if self.tick / 15 % 2 == 0 { [255, 40, 40] } else { [120, 0, 0] };
+        c.text(&crate::mmss(self.time_left), 48, 1, 1, tc);
+
         for i in 0..self.lives.clamp(0, 5) {
             c.rect(3 + 8 * i, GROUND + 4, 6, 3, [40, 230, 60]);
         }
@@ -601,8 +621,9 @@ impl Invaders {
             c.text_centre(&format!("BONUS {}", self.bonus), mid + 42, 1, [255, 255, 255]);
         } else if self.scene == Scene::Over {
             c.rect(14, mid - 14, 100, 66, [0, 0, 0]);
-            c.text_centre("GAME", mid - 10, 3, [255, 60, 60]);
-            c.text_centre("OVER", mid + 14, 3, [255, 60, 60]);
+            let (a, b, col) = if self.time_up { ("TIME", "UP", [255, 230, 0]) } else { ("GAME", "OVER", [255, 60, 60]) };
+            c.text_centre(a, mid - 10, 3, col);
+            c.text_centre(b, mid + 14, 3, col);
             if self.over_t > 60 && self.tick / 30 % 2 == 0 {
                 c.text_centre("ENTER: RETRY", mid + 42, 1, [255, 255, 255]);
             }

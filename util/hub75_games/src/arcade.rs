@@ -4,9 +4,9 @@
 // cross / circle / options to go; the PS button goes back: from a game to
 // the menu, from the menu to the demos). A demo picked by hand stays on
 // (left / right: the others) until PS or 5 min without a press. A game
-// runs to its own end (3 minutes, or the stages); back to the demos 10 s
-// after it is over (unless it is started again), or after 20 s without a
-// press in a menu. The high scores
+// runs to its own end (3 minutes, or all the stages); 6 s after it is
+// over (its end screen, no retry) a demo picked at random comes on. Back
+// to the demos also after 20 s without a press in a menu. The high scores
 // are kept in ~/.hub75_<game>_hi as when the games run alone. Volume: L2 /
 // R2, mute: L3 / R3 (lib.rs, everywhere).
 use crate::audio;
@@ -18,7 +18,7 @@ use crate::showcase::Showcase;
 use crate::Game;
 
 const MENU_IDLE: u32 = 20 * 60;
-const OVER_WAIT: u32 = 10 * 60;
+const OVER_WAIT: u32 = 6 * 60;
 const DEMO_IDLE: u32 = 5 * 60 * 60;
 const HINT: u32 = 240; // ticks the hint stays at the bottom
 const DEMOS_ITEM: usize = 4; // the menu entry after the games
@@ -49,6 +49,7 @@ pub struct Arcade {
     tick: u64,
     seed: u64,
     hi: [u64; 4],
+    still: Input, // no keys: a game's end screen
 }
 
 fn hi_path(name: &str) -> std::path::PathBuf {
@@ -84,7 +85,7 @@ impl Arcade {
         let hi = GAMES.map(|(n, _)| std::fs::read_to_string(hi_path(n)).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0));
         let show = Showcase::new(seed, 0);
         let names = show.names();
-        Arcade { show, names, mode: Mode::Attract, sel: 0, dsel: 0, game: None, idle: 0, over: 0, mode_t: 0, tick: 0, seed, hi }
+        Arcade { show, names, mode: Mode::Attract, sel: 0, dsel: 0, game: None, idle: 0, over: 0, mode_t: 0, tick: 0, seed, hi, still: Input::none() }
     }
 
     fn make(&mut self, k: usize) -> Box<dyn Game> {
@@ -213,10 +214,17 @@ impl Game for Arcade {
                     return;
                 }
                 let g = self.game.as_mut().unwrap();
-                g.step(Some(inp));
-                self.over = if g.over() { self.over + 1 } else { 0 };
+                if g.over() {
+                    // the end screen stays without keys (no retry)
+                    g.step(Some(&mut self.still));
+                    self.over += 1;
+                } else {
+                    g.step(Some(inp));
+                }
                 if self.over > OVER_WAIT {
                     self.to(Mode::Attract);
+                    self.seed = self.seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                    self.show.random(self.seed >> 33);
                 }
             }
         }

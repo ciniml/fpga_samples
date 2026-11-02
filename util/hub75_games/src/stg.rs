@@ -204,6 +204,8 @@ pub struct Stg {
     pub score: u64,
     pub hi: u64,
     lives: i32,
+    time_left: i32, // ticks of the 3 minutes
+    time_up: bool,
     bombs: i32,
     power: u32,
     px: f32,
@@ -245,6 +247,8 @@ impl Stg {
             score: 0,
             hi,
             lives: 2,
+            time_left: crate::TIME_LIMIT,
+            time_up: false,
             bombs: 3,
             power: 1,
             px: 64.0,
@@ -381,6 +385,20 @@ impl Stg {
 
     fn play(&mut self, ctl: &Ctl) {
         self.t += 1;
+        // the 3-minute limit
+        self.time_left -= 1;
+        if self.time_left <= 0 {
+            self.time_up = true;
+            self.scene = Scene::Over;
+            self.over = 0;
+            self.hi = self.hi.max(self.score);
+            sfx::game_over();
+            return;
+        }
+        if self.time_left <= 600 && self.time_left % 60 == 0 {
+            sfx::blip(1568.0, 0.04);
+        }
+
         // ---- ship ----
         if self.dead > 0 {
             self.dead -= 1;
@@ -859,6 +877,9 @@ impl Stg {
         c.rect(0, 0, W as i32, 9, [0, 0, 0]);
         c.text(&format!("{:07}", self.score), 1, 1, 1, [255, 255, 255]);
         c.text(&format!("HI{:07}", self.hi), 74, 1, 1, [255, 230, 0]);
+        let tc = if self.time_left > 600 { [255, 255, 255] } else if self.tick / 15 % 2 == 0 { [255, 40, 40] } else { [120, 0, 0] };
+        c.text(&crate::mmss(self.time_left), 48, 1, 1, tc);
+
         if let Some(b) = self.enemies.iter().find(|e| e.kind == Kind::Boss) {
             let w = (b.hp.max(0) as f32 / b.max_hp as f32 * 120.0) as i32;
             c.rect(4, 10, 120, 3, [60, 0, 0]);
@@ -898,6 +919,12 @@ impl Stg {
             c.text_centre(&format!("BONUS {}", self.bonus), mid + 40, 1, [255, 255, 255]);
             if self.over > 180 && self.tick / 30 % 2 == 0 {
                 c.text_centre("ENTER: AGAIN", mid + 54, 1, [255, 255, 255]);
+            }
+        } else if self.scene == Scene::Over && self.time_up {
+            c.text_centre("TIME", mid - 10, 3, [255, 230, 0]);
+            c.text_centre("UP", mid + 14, 3, [255, 230, 0]);
+            if self.over > 60 && self.tick / 30 % 2 == 0 {
+                c.text_centre("ENTER: RETRY", mid + 46, 1, [255, 255, 255]);
             }
         } else if self.scene == Scene::Over {
             c.text_centre("GAME", mid - 10, 3, [255, 60, 60]);
@@ -939,7 +966,7 @@ impl crate::Game for Stg {
         self.render(c);
     }
     fn status(&self) -> String {
-        format!("stage {}  score {:07}", self.stage, self.score)
+        format!("stage {}  score {:07}  time {}", self.stage, self.score, crate::mmss(self.time_left))
     }
     fn hi(&self) -> u64 {
         self.hi

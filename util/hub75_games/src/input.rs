@@ -127,6 +127,13 @@ impl Input {
         }
     }
 
+    /// no keys at all (a game left on its end screen)
+    pub fn none() -> Input {
+        let mut i = Input::pad_only();
+        i.pad = Gamepad::none();
+        i
+    }
+
     /// a press as if from a key (e.g. to start a game from a menu)
     pub fn press(&mut self, k: Key) {
         self.pressed[k as usize] = true;

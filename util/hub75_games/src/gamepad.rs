@@ -94,6 +94,19 @@ impl Gamepad {
         g
     }
 
+    /// never looks for a controller (an input that stays still)
+    pub fn none() -> Gamepad {
+        Gamepad {
+            dev: None,
+            name: String::new(),
+            next_scan: Instant::now() + Duration::from_secs(10 * 365 * 86400),
+            hat: (0, 0),
+            stick: (0, 0),
+            buttons: Vec::new(),
+            keys: [false; NKEYS],
+        }
+    }
+
     pub fn connected(&self) -> bool {
         self.dev.is_some()
     }
