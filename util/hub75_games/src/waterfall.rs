@@ -200,7 +200,7 @@ impl Waterfall {
 impl crate::Game for Waterfall {
     fn step(&mut self, _inp: Option<&mut Input>) {
         if self.keep.start() {
-            audio::play(Water::new(self.rng.next() as u32, 1800.0, 0.05, 3.0));
+            audio::play(Water::new(self.rng.next() as u32, 1800.0, 0.025, 3.0));
         }
         self.update();
     }
