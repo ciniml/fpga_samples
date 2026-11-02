@@ -1,6 +1,7 @@
 // The booth's arcade: the demos run (showcase) until someone presses a
 // button on the game controller; then a menu of the four games (up / down
-// to choose, cross / circle / options to play). Back to the demos 10 s
+// to choose, cross / circle / options to play; the PS button leaves a
+// game for the menu, and the menu for the demos). Back to the demos 10 s
 // after a game is over (unless it is started again), or after 20 s
 // without a press in the menu / 45 s in a game. The high scores are kept
 // in ~/.hub75_<game>_hi as when the games run alone.
@@ -34,6 +35,7 @@ pub struct Arcade {
     game: Option<Box<dyn Game>>,
     idle: u32,
     over: u32,
+    play_t: u32, // ticks since the game started
     tick: u64,
     seed: u64,
     hi: [u64; 4],
@@ -46,7 +48,7 @@ fn hi_path(name: &str) -> std::path::PathBuf {
 impl Arcade {
     pub fn new(seed: u64, _hi: u64) -> Arcade {
         let hi = GAMES.map(|(n, _)| std::fs::read_to_string(hi_path(n)).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0));
-        Arcade { show: Showcase::new(seed, 0), mode: Mode::Attract, sel: 0, game: None, idle: 0, over: 0, tick: 0, seed, hi }
+        Arcade { show: Showcase::new(seed, 0), mode: Mode::Attract, sel: 0, game: None, idle: 0, over: 0, play_t: 0, tick: 0, seed, hi }
     }
 
     fn make(&mut self, k: usize) -> Box<dyn Game> {
@@ -74,6 +76,7 @@ impl Arcade {
         self.mode = m;
         self.idle = 0;
         self.over = 0;
+        self.play_t = 0;
         audio::new_scene();
         audio::set_fade(1.0);
     }
@@ -99,6 +102,15 @@ impl Game for Arcade {
                     self.show.step(None);
                 }
             }
+            Mode::Menu if inp.take(Key::Home) => {
+                self.to(Mode::Attract);
+                audio::sfx::blip(523.3, 0.05);
+            }
+            Mode::Play if inp.take(Key::Home) => {
+                inp.flush();
+                self.to(Mode::Menu);
+                audio::sfx::blip(523.3, 0.05);
+            }
             Mode::Menu => {
                 let (up, down) = (inp.hits(Key::Up), inp.hits(Key::Down));
                 if up + down > 0 {
@@ -118,6 +130,7 @@ impl Game for Arcade {
             Mode::Play => {
                 let g = self.game.as_mut().unwrap();
                 g.step(Some(inp));
+                self.play_t += 1;
                 self.over = if g.over() { self.over + 1 } else { 0 };
                 if self.over > OVER_WAIT || self.idle > PLAY_IDLE {
                     self.to(Mode::Attract);
@@ -163,10 +176,25 @@ impl Game for Arcade {
                     let hi = format!("ハイスコア {}", self.hi[k]);
                     jp::draw(&mut buf, Font::S12, &hi, 8, y + 17, if on { [0.8, 0.9, 1.0] } else { [0.35, 0.4, 0.5] });
                 }
-                jp::draw_centre(&mut buf, Font::S12, "十字 選択  × 決定", 176, [0.4, 0.9, 1.0]);
+                jp::draw_centre(&mut buf, Font::S12, "十字 選択  × 決定", 166, [0.4, 0.9, 1.0]);
+                jp::draw_centre(&mut buf, Font::S12, "PSボタン ゲーム終了", 180, [0.4, 0.5, 0.6]);
                 to_canvas(&buf, c, 1.0, 1.4);
             }
-            Mode::Play => self.game.as_ref().unwrap().draw(c),
+            Mode::Play => {
+                self.game.as_ref().unwrap().draw(c);
+                // the first seconds: how to leave
+                if self.play_t < 240 && self.tick / 30 % 4 != 3 {
+                    let mut buf: Vec<Col> = new_buf();
+                    jp::draw_centre(&mut buf, Font::S12, "PSボタン ゲーム終了", 178, [0.9, 0.9, 1.0]);
+                    for y in 175..191 {
+                        for x in 0..W {
+                            let b = buf[y * W + x];
+                            let p = &mut c.px[y * W + x];
+                            *p = if b[0] > 0.0 { [(b[0] * 255.0) as u8, (b[1] * 255.0) as u8, (b[2] * 255.0) as u8] } else { [p[0] / 4, p[1] / 4, p[2] / 4] };
+                        }
+                    }
+                }
+            }
         }
     }
 

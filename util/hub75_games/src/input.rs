@@ -33,8 +33,9 @@ pub enum Key {
     Start,
     Pause,
     Quit,
+    Home, // m / the controller's PS button: the arcade leaves the game
 }
-const NKEYS: usize = 11;
+pub const NKEYS: usize = 12;
 
 const FIRST_HOLD: Duration = Duration::from_millis(550); // > auto-repeat delay
 const REPEAT_HOLD: Duration = Duration::from_millis(120); // > auto-repeat period
@@ -69,6 +70,7 @@ fn map(k: &KeyEvent) -> Option<Key> {
         KeyCode::Enter => Key::Start,
         KeyCode::Char('p') => Key::Pause,
         KeyCode::Char('q') | KeyCode::Esc => Key::Quit,
+        KeyCode::Char('m') => Key::Home,
         _ => return None,
     })
 }

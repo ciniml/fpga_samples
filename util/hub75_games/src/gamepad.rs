@@ -9,8 +9,9 @@
 // anyway).
 //
 // Buttons as keys: d-pad / left stick = arrows, cross = Space, circle and
-// triangle = B, square = A, L1 / R1 = Hold, options = Start, create = Pause.
-use crate::input::Key;
+// triangle = B, square = A, L1 / R1 = Hold, options = Start, create = Pause,
+// PS = Home.
+use crate::input::{Key, NKEYS};
 use std::fs::File;
 use std::io::{ErrorKind, Read};
 use std::os::unix::fs::OpenOptionsExt;
@@ -20,7 +21,6 @@ const O_NONBLOCK: i32 = 0o4000;
 const EV_KEY: u16 = 1;
 const EV_ABS: u16 = 3;
 const BTN_SOUTH: u16 = 0x130;
-const NKEYS: usize = 11;
 
 /// the key of a button (evdev code)
 fn button(code: u16) -> Option<Key> {
@@ -31,6 +31,7 @@ fn button(code: u16) -> Option<Key> {
         0x136 | 0x137 => Key::Hold,    // L1, R1
         0x13a => Key::Pause,           // create
         0x13b => Key::Start,           // options
+        0x13c => Key::Home,            // PS
         _ => return None,
     })
 }
@@ -187,7 +188,7 @@ impl Gamepad {
 }
 
 const KEYS: [Key; NKEYS] =
-    [Key::Left, Key::Right, Key::Up, Key::Down, Key::A, Key::B, Key::Space, Key::Hold, Key::Start, Key::Pause, Key::Quit];
+    [Key::Left, Key::Right, Key::Up, Key::Down, Key::A, Key::B, Key::Space, Key::Hold, Key::Start, Key::Pause, Key::Quit, Key::Home];
 
 /// a stick axis (0..255, 128 centre) to -1 / 0 / 1, with hysteresis
 fn axis(old: i32, v: i32) -> i32 {
