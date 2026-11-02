@@ -15,12 +15,15 @@ use crate::input::{Input, Key};
 use crate::jp::{self, Font};
 use std::f32::consts::{PI, TAU};
 
-const SCENES: [u64; 8] = [720, 900, 900, 1000, 900, 900, 780, 720];
+const SCENES: [u64; 8] = [720, 900, 900, 1000, 1100, 900, 780, 720];
 const FADE: u64 = 20;
 const WHITE: Col = [0.95, 0.95, 1.0];
 const CYAN: Col = [0.3, 0.85, 1.0];
 const GOLD: Col = [1.0, 0.85, 0.2];
 const DIM: Col = [0.55, 0.6, 0.7];
+const BCM_VALUES: [u32; 4] = [63, 45, 20, 7];
+const BCM_COLOR: Col = [1.0, 0.3, 0.15];
+const BCM_MAX: f32 = 128.0; // BCM scene: top speed, units of the LSB a tick
 
 fn hue(h: f32) -> Col {
     let c = |o: f32| 0.5 + 0.5 * (TAU * (h - o)).cos();
@@ -104,11 +107,14 @@ pub struct Explain {
     row: f32,       // scan scene: the row being lit (0..32, wraps)
     speed: f32,     // rows a tick
     eye: [f32; 32], // how bright each scan row still looks (persistence)
+    bu: f32,        // BCM scene: where in the cycle (0..63 LSB units)
+    bspeed: f32,    // LSB units a tick
+    beye: [f32; 4], // how bright each LED looks
 }
 
 impl Explain {
     pub fn new(_seed: u64, _hi: u64) -> Explain {
-        Explain { tick: 0, scene: 0, t: 0, row: 0.0, speed: 0.0, eye: [0.0; 32] }
+        Explain { tick: 0, scene: 0, t: 0, row: 0.0, speed: 0.0, eye: [0.0; 32], bu: 0.0, bspeed: 0.0, beye: [0.0; 4] }
     }
 
     fn update(&mut self, next: bool) {
@@ -123,6 +129,35 @@ impl Explain {
             self.scene = (self.scene + 1) % SCENES.len();
             self.row = 0.0;
             self.eye = [0.0; 32];
+            self.bu = 0.0;
+            self.beye = [0.0; 4];
+        }
+        if self.scene == 4 {
+            // a cycle every 200 ticks for 6 s, then doubling every 50 ticks
+            // up to two cycles a tick; each LED looks as bright as the share
+            // of the tick it was on, smoothed (the eye)
+            let t = self.t as f32;
+            self.bspeed = if t < 360.0 { 63.0 / 200.0 } else { (63.0 / 200.0 * 2f32.powf((t - 360.0) / 50.0)).min(BCM_MAX) };
+            let n = ((self.bspeed * 4.0).ceil() as usize).clamp(1, 512);
+            for (k, &v) in BCM_VALUES.iter().enumerate() {
+                let mut on = 0;
+                for i in 0..n {
+                    let u = (self.bu + self.bspeed * i as f32 / n as f32) % 63.0;
+                    // MSB first: bit 5 covers 0..32, bit 4 32..48, ...
+                    let mut start = 0.0;
+                    for b in (0..6).rev() {
+                        let len = (1 << b) as f32;
+                        if u < start + len {
+                            on += (v >> b & 1) as usize;
+                            break;
+                        }
+                        start += len;
+                    }
+                }
+                let frac = on as f32 / n as f32;
+                self.beye[k] = self.beye[k] * 0.55 + frac * 0.45;
+            }
+            self.bu = (self.bu + self.bspeed) % 63.0;
         }
         if self.scene == 3 {
             // a row every 12 ticks for 4 s, then doubling every 55 ticks up
@@ -395,59 +430,58 @@ impl Explain {
 
     fn bcm(&self, buf: &mut [Col]) {
         header(buf, "④ 明るさは時間");
-        const SWEEP: u64 = 210;
-        const VALUES: [u32; 4] = [45, 20, 58, 7];
         let t = self.t;
-        let idx = ((t / SWEEP) as usize).min(3);
-        let v = VALUES[idx];
-        let col = hue(0.02 + idx as f32 * 0.27);
-        let u = (t % SWEEP) as f32 / SWEEP as f32 * 63.0; // the cursor, in units of the LSB
-        // the bit (MSB first, 32 units long) the cursor is in
-        let (mut start, mut bit) = (0.0, 5);
-        for b in (0..6).rev() {
-            let len = (1 << b) as f32;
-            if u < start + len {
-                bit = b;
-                break;
-            }
-            start += len;
-        }
-        let on = t < 4 * SWEEP && v >> bit & 1 != 0;
+        let slow = self.bspeed < 2.0;
         jp::draw_centre(buf, Font::S12, "LEDは点くか消えるか", 28, WHITE);
-        // now / how it looks
-        disc(buf, 36.0, 62.0, 15.0, if on { col } else { [0.04, 0.04, 0.05] });
-        let avg = v as f32 / 63.0;
-        disc(buf, 92.0, 62.0, 15.0, [col[0] * avg, col[1] * avg, col[2] * avg]);
-        frame(buf, 20, 46, 33, 33, [0.0; 3]);
-        jp::draw(buf, Font::S12, "いま", 24, 80, DIM);
-        jp::draw(buf, Font::S12, "見た目", 74, 80, DIM);
-        // the value and its bits
-        let s = format!("明るさ {} = ", v);
-        jp::draw_centre(buf, Font::S12, &s, 98, WHITE);
-        for b in 0..6 {
-            let x = 13 + (5 - b) * 17;
-            let set = v >> b & 1 != 0;
-            let c = if set { col } else { [0.06, 0.06, 0.08] };
-            fill(buf, x, 114, 16, 14, c);
-            jp::draw(buf, Font::S12, if set { "1" } else { "0" }, x + 5, 115, if set { [0.0; 3] } else { DIM });
-            let w = format!("{}", 1 << b);
-            jp::draw(buf, Font::S12, &w, x + 8 - jp::width(Font::S12, &w) / 2, 129, DIM);
+        // the LEDs as the eye sees them, and their values
+        for (k, &v) in BCM_VALUES.iter().enumerate() {
+            let x = 20.0 + k as f32 * 29.0;
+            let c = BCM_COLOR;
+            let e = self.beye[k];
+            disc(buf, x, 56.0, 11.0, [0.04 + c[0] * e, 0.04 + c[1] * e, 0.05 + c[2] * e]);
+            let s = format!("{}", v);
+            jp::draw(buf, Font::S12, &s, x as i32 - jp::width(Font::S12, &s) / 2, 70, DIM);
         }
-        // the time line: a segment per bit, as long as its weight
+        // a time line per LED: a segment per bit (MSB first) as long as its weight
         let sx = 114.0 / 63.0;
-        let mut a = 0.0;
-        for b in (0..6).rev() {
-            let len = (1 << b) as f32;
-            let (x1, x2) = ((7.0 + a * sx) as i32, (7.0 + (a + len) * sx) as i32 - 1);
-            let set = v >> b & 1 != 0;
-            fill(buf, x1, 148, (x2 - x1).max(1), 10, if set { col } else { [0.08, 0.08, 0.1] });
-            a += len;
+        for (k, &v) in BCM_VALUES.iter().enumerate() {
+            let y = 88 + k as i32 * 10;
+            let mut a = 0.0;
+            for b in (0..6).rev() {
+                let len = (1 << b) as f32;
+                let (x1, x2) = ((7.0 + a * sx) as i32, (7.0 + (a + len) * sx) as i32 - 1);
+                let set = v >> b & 1 != 0;
+                fill(buf, x1, y, (x2 - x1).max(1), 7, if set { BCM_COLOR } else { [0.08, 0.08, 0.1] });
+                a += len;
+            }
         }
-        if t < 4 * SWEEP {
-            fill(buf, (7.0 + u * sx) as i32, 145, 1, 16, WHITE);
+        for b in 0..6 {
+            let a = 63 - (2 << b) + 1; // where bit b starts
+            let w = format!("{}", 1 << b);
+            if b >= 2 {
+                let x = 7.0 + (a as f32 + (1 << b) as f32 / 2.0) * sx;
+                jp::draw(buf, Font::S12, &w, x as i32 - jp::width(Font::S12, &w) / 2, 128, DIM);
+            }
         }
-        jp::draw(buf, Font::S12, "時間", 7, 160, DIM);
-        line_in(buf, t, 60, Font::S12, "点ける時間で明るさ", 176, CYAN);
+        if slow {
+            fill(buf, (7.0 + self.bu * sx) as i32, 85, 1, 42, WHITE);
+        }
+        let hz = self.bspeed * 60.0 / 63.0;
+        if self.bspeed < BCM_MAX {
+            let s = format!("{:.1} 周/秒", hz);
+            jp::draw_centre(buf, Font::B16, &s, 142, CYAN);
+        } else {
+            line_in(buf, t, 860, Font::S12, "本物は1秒に488周", 146, GOLD);
+        }
+        if t < 360 {
+            line_in(buf, t, 40, Font::S12, "重み32:16:8:4:2:1の", 164, WHITE);
+            line_in(buf, t, 60, Font::S12, "時間だけ点ける", 178, WHITE);
+        } else if self.bspeed < BCM_MAX {
+            line_in(buf, t, 360, Font::S12, "1周を速くすると...", 164, WHITE);
+        } else {
+            line_in(buf, t, 830, Font::S12, "点滅が消えて", 164, GOLD);
+            line_in(buf, t, 850, Font::S12, "明るさの違いに見える", 178, GOLD);
+        }
     }
 
     fn transpose(&self, buf: &mut [Col]) {
