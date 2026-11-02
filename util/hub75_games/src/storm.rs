@@ -19,6 +19,8 @@ use crate::input::{Input, Key};
 use crate::Rng;
 
 const CLOUD_BASE: f32 = 52.0;
+// the rain sound (off: on the small speaker it covered the thunder)
+const RAIN_SOUND: bool = false;
 const HF: f32 = H as f32;
 const WF: f32 = W as f32;
 // brightness of a strike over time (ticks): stroke, dark, re-strokes
@@ -131,7 +133,7 @@ impl Storm {
     }
 
     fn update(&mut self, now: bool) {
-        if self.tick == 0 {
+        if self.tick == 0 && RAIN_SOUND {
             audio::play(Rain::new(self.rng.next() as u32 | 1));
         }
         self.tick += 1;
@@ -389,7 +391,7 @@ impl Voice for Thunder {
         let l0 = self.lo[0].run(w);
         let lo = self.lo[1].run(l0) * 14.0;
         let m1 = self.mid[0].run(w);
-        let mid = (self.mid[1].run(w) - m1) * 4.0 * (1.0 - 0.6 * self.dull);
+        let mid = (self.mid[1].run(w) - m1) * 7.0 * (1.0 - 0.6 * self.dull);
         out += self.loud * env * (lo + mid);
         Some(out)
     }
@@ -407,7 +409,7 @@ struct Rain {
 
 impl Rain {
     fn new(seed: u32) -> Rain {
-        Rain { noise: Noise(seed), hp: Lp::new(800.0), lp: Lp::new(6000.0), tick_lp: Lp::new(3000.0), t: 0, tick: 0.0 }
+        Rain { noise: Noise(seed), hp: Lp::new(800.0), lp: Lp::new(3500.0), tick_lp: Lp::new(3000.0), t: 0, tick: 0.0 }
     }
 }
 
@@ -419,10 +421,10 @@ impl Voice for Rain {
         let swell = 1.0 + 0.3 * noise(self.t as f32 / audio::RATE * 0.4, 61);
         // a drop now and then: a short click
         if self.noise.next() > 0.9985 {
-            self.tick = 0.1 + 0.2 * self.noise.next().abs();
+            self.tick = 0.01 + 0.02 * self.noise.next().abs();
         }
         self.tick *= 0.995;
         let click = self.tick_lp.run(w * self.tick);
-        Some(0.07 * swell * band + click)
+        Some(0.006 * swell * band + click)
     }
 }
