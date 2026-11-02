@@ -623,20 +623,26 @@ module tb;
 
     // ------------------------------------------------------------------
     // audio: UDP 10002 (s16le stereo) -> I2S on J19 R1 / G1 / B1 = BCLK,
-    // LRCK, DATA (Philips, MSB one BCLK after LRCK changes, mono (L + R) / 2)
+    // LRCK, DATA (Philips, MSB one BCLK after LRCK changes, 16-bit slots, mono (L + R) / 2)
     // ------------------------------------------------------------------
     logic [15:0] i2s_out [$];   // the left-slot samples received
     logic [15:0] i2s_sr = 0;
     int          i2s_cnt = 0;
     logic        i2s_ws_d = 1;
     if (AUD) begin : g_i2s_rx
+        // 16-bit slots (BCLK = 32 fs): the bit taken where LRCK has changed
+        // is the LSB of the slot that ended
         always @(posedge j[15][0]) begin
+            i2s_sr = {i2s_sr[14:0], j[15][2]};
+            i2s_cnt++;
             if (j[15][1] != i2s_ws_d) begin
-                if (i2s_ws_d == 1'b0) i2s_out.push_back(i2s_sr);   // a left slot ended
+                if (i2s_ws_d == 1'b0) begin   // a left slot ended
+                    if (i2s_cnt != 16 && i2s_out.size() > 0) begin
+                        $display("[%0t] ERROR: I2S slot of %0d bits", $time, i2s_cnt); errors++;
+                    end
+                    i2s_out.push_back(i2s_sr);
+                end
                 i2s_cnt = 0;
-            end else begin
-                i2s_cnt++;
-                if (i2s_cnt <= 16) i2s_sr = {i2s_sr[14:0], j[15][2]};
             end
             i2s_ws_d = j[15][1];
         end

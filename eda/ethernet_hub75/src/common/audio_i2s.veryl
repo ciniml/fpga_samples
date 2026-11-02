@@ -13,11 +13,14 @@
 //   - o_level is the number of frames buffered; o_report pulses every
 //     REPORT_EVERY frames played, for the level replies that pace the
 //     sender (it sends while the level leaves room for a packet).
-//   - I2S (Philips): BCLK = 64 fs from a phase accumulator on i_clk (edges
+//   - I2S (Philips): BCLK = 32 fs from a phase accumulator on i_clk (edges
 //     on i_clk, jitter one i_clk period), LRCK low for the left slot and
-//     changing one BCLK before the MSB, 16-bit samples in 32-bit slots,
-//     data changing on the falling edge of BCLK. MONO sends (L + R) / 2
-//     in both slots (the NS4168 plays one slot).
+//     changing one BCLK before the MSB, 16-bit slots (the LSB goes out
+//     with the LRCK change), data changing on the falling edge of BCLK.
+//     16-bit slots like an ESP32 sends: with 32-bit slots and the sample
+//     at the front the NS4168 played everything at full volume (it seems
+//     to take the end of a long slot). MONO sends (L + R) / 2 in both
+//     slots (the NS4168 plays one slot).
 module AudioI2s #(
     param CLK_HZ      : u32 = 125_000_000,
     param RATE        : u32 = 48000      ,
@@ -42,7 +45,7 @@ module AudioI2s #(
     o_dout: output logic,
 ) {
     // BCLK edges (2 per BCLK period) as an accumulator carry
-    const INC: u64 = (128 * RATE * 64'h1_0000_0000) / CLK_HZ;
+    const INC: u64 = (64 * RATE * 64'h1_0000_0000) / CLK_HZ;
     const AW : u32 = DEPTH_LOG2;
 
     // ---- bytes to frames, into the FIFO ----
@@ -66,7 +69,7 @@ module AudioI2s #(
     // ---- I2S ----
     var acc    : logic<32>;
     var bclk   : logic    ;
-    var bit_cnt: logic<6> ; // BCLK periods in the frame, counted at falling edges
+    var bit_cnt: logic<5> ; // BCLK periods in the frame, counted at falling edges
     var lrck   : logic    ;
     var dout   : logic    ;
     var cur    : logic<32>; // {R, L} being sent
@@ -78,9 +81,11 @@ module AudioI2s #(
 
     let sum   : logic<33> = {1'b0, acc} + {1'b0, INC[31:0]};
     let fall  : logic     = sum[32] && bclk;
-    let nb    : logic<6>  = bit_cnt + 6'd1;
-    let slot  : logic<16> = if nb[5] ? cur[31:16] : cur[15:0];
-    let pos   : logic<5>  = nb[4:0];
+    let nb    : logic<5>  = bit_cnt + 5'd1;
+    // the bit that goes out: m = nb - 1 counts the frame's 32 data bits
+    // (the right LSB at nb = 0 is still of the frame in cur)
+    let m     : logic<5>  = bit_cnt;
+    let slot  : logic<16> = if m[4] ? cur[31:16] : cur[15:0];
     let mono_s: logic<17> = {cur[15], cur[15:0]} + {cur[31], cur[31:16]};
     let mono  : logic<16> = mono_s[16:1];
     let sample: logic<16> = if MONO ? mono : slot;
@@ -100,7 +105,7 @@ module AudioI2s #(
             rptr    = '0;
             acc     = 32'd0;
             bclk    = 1'b0;
-            bit_cnt = 6'd63;
+            bit_cnt = 5'd31;
             lrck    = 1'b1;
             dout    = 1'b0;
             cur     = 32'd0;
@@ -136,15 +141,15 @@ module AudioI2s #(
             }
             if fall {
                 bit_cnt = nb;
-                lrck    = nb[5];
-                if nb == 6'd0 {
-                    // a new frame: the one fetched at bit 40 (silence if none)
+                lrck    = nb[4];
+                if nb == 5'd0 {
+                    // a new frame: the one fetched at bit 20 (silence if none)
                     cur = nxt;
                     nxt = 32'd0;
                 }
                 // MSB first, one BCLK after LRCK changes
-                dout = if pos >= 5'd1 && pos <= 5'd16 ? sample[5'd16 - pos] : 1'b0;
-                if nb == 6'd40 {
+                dout = sample[4'd15 - m[3:0]];
+                if nb == 5'd20 {
                     if playing && level != '0 {
                         rptr  = rptr + 1;
                         pop_d = 1'b1;
