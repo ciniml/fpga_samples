@@ -59,7 +59,53 @@ pub fn start_offline() {
 }
 
 /// the sender thread: `bind` the PC's address (any port), `dest` the board
-pub fn start(bind: &str, dest: std::net::IpAddr, gain: f32) -> std::io::Result<()> {
+/// 16-bit mono 48 kHz WAV header for `frames` samples
+pub fn wav_header(frames: usize) -> Vec<u8> {
+    let n = frames as u32 * 2;
+    let mut f = Vec::new();
+    f.extend_from_slice(b"RIFF");
+    f.extend_from_slice(&(36 + n).to_le_bytes());
+    f.extend_from_slice(b"WAVEfmt ");
+    for v in [16u32, 0x0001_0001, 48000, 96000, 0x0010_0002] {
+        f.extend_from_slice(&v.to_le_bytes());
+    }
+    f.extend_from_slice(b"data");
+    f.extend_from_slice(&n.to_le_bytes());
+    f
+}
+
+/// what is sent, also written to a WAV file (the header is brought up to
+/// date every second, so a killed demo leaves a playable file)
+struct Recorder {
+    f: std::fs::File,
+    frames: usize,
+}
+
+impl Recorder {
+    fn add(&mut self, s: &[f32]) -> std::io::Result<()> {
+        use std::io::{Seek, SeekFrom, Write};
+        let b: Vec<u8> = s.iter().flat_map(|v| ((v * 32767.0) as i16).to_le_bytes()).collect();
+        self.f.write_all(&b)?;
+        let before = self.frames;
+        self.frames += s.len();
+        if self.frames / 48000 != before / 48000 {
+            self.f.seek(SeekFrom::Start(0))?;
+            self.f.write_all(&wav_header(self.frames))?;
+            self.f.seek(SeekFrom::End(0))?;
+        }
+        Ok(())
+    }
+}
+
+pub fn start(bind: &str, dest: std::net::IpAddr, gain: f32, record: Option<&std::path::Path>) -> std::io::Result<()> {
+    let mut rec = match record {
+        Some(p) => {
+            let mut f = std::fs::File::create(p)?;
+            std::io::Write::write_all(&mut f, &wav_header(0))?;
+            Some(Recorder { f, frames: 0 })
+        }
+        None => None,
+    };
     let ip = bind.rsplit_once(':').map_or(bind, |(a, _)| a);
     let sock = UdpSocket::bind((ip, 0))?;
     sock.set_read_timeout(Some(Duration::from_millis(5)))?;
@@ -86,7 +132,14 @@ pub fn start(bind: &str, dest: std::net::IpAddr, gain: f32) -> std::io::Result<(
             };
             if room {
                 pkt.clear();
-                for s in render(PKT) {
+                let mix = render(PKT);
+                if let Some(r) = rec.as_mut() {
+                    if let Err(e) = r.add(&mix) {
+                        eprintln!("\r\nrecording stopped: {}\r", e);
+                        rec = None;
+                    }
+                }
+                for s in mix {
                     let v = ((s * 32767.0) as i16).to_le_bytes();
                     pkt.extend_from_slice(&v);
                     pkt.extend_from_slice(&v);

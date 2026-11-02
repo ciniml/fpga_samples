@@ -111,6 +111,9 @@ pub struct Cli {
     /// no sound (leaves the board's audio to another sender)
     #[arg(long)]
     no_sound: bool,
+    /// also write the sound sent to the board to a WAV file (16-bit mono 48 kHz)
+    #[arg(long, value_name = "FILE")]
+    record: Option<std::path::PathBuf>,
     /// the bot plays (attract mode; keys other than Q are ignored)
     #[arg(long)]
     auto: bool,
@@ -142,16 +145,7 @@ fn apply(c: &mut gfx::Canvas, lut: &[u8; 256]) {
 
 /// 16-bit mono WAV
 fn write_wav(path: &std::path::Path, s: &[f32]) -> std::io::Result<()> {
-    let n = s.len() as u32 * 2;
-    let mut f = Vec::new();
-    f.extend_from_slice(b"RIFF");
-    f.extend_from_slice(&(36 + n).to_le_bytes());
-    f.extend_from_slice(b"WAVEfmt ");
-    for v in [16u32, 0x0001_0001, 48000, 96000, 0x0010_0002] {
-        f.extend_from_slice(&v.to_le_bytes());
-    }
-    f.extend_from_slice(b"data");
-    f.extend_from_slice(&n.to_le_bytes());
+    let mut f = audio::wav_header(s.len());
     s.iter().for_each(|v| f.extend_from_slice(&((v * 32767.0) as i16).to_le_bytes()));
     std::fs::write(path, f)
 }
@@ -213,7 +207,7 @@ pub fn run<G: Game>(name: &str, keys: &str, make: impl FnOnce(u64, u64) -> G) ->
     let mut game = make(seed, hi);
     if game.sound() && !cli.no_sound {
         let ip = cli.dest.parse::<std::net::SocketAddr>()?.ip();
-        audio::start(&cli.bind, ip, cli.volume)?;
+        audio::start(&cli.bind, ip, cli.volume, cli.record.as_deref())?;
     }
     let mut canvas = gfx::Canvas::new();
 
