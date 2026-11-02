@@ -355,8 +355,8 @@ impl Invaders {
         if self.step_cd <= 0 {
             self.step_cd = self.step_period(n);
             self.frame ^= 1;
-            // the march: four falling bass notes, one a step
-            const MARCH: [f32; 4] = [196.0, 174.6, 155.6, 146.8];
+            // the march: four rising bass notes (C D E G), one a step
+            const MARCH: [f32; 4] = [130.8, 146.8, 164.8, 196.0];
             self.march = (self.march + 1) % 4;
             audio::play(Tone::new(MARCH[self.march], 0.09, 10.0).square().len(0.07));
             let (mut minx, mut maxx) = (f32::MAX, f32::MIN);
@@ -492,11 +492,9 @@ impl Invaders {
         // ---- UFO ----
         match self.ufo {
             Some((x, vx)) => {
-                // the UFO's warble
-                if self.tick % 8 == 0 {
-                    let up = self.tick % 16 == 0;
-                    let (a, b) = if up { (900.0, 1300.0) } else { (1300.0, 900.0) };
-                    audio::play(Tone::new(a, 0.03, 10.0).glide(b).len(0.13));
+                // the UFO: short rising chirps
+                if self.tick % 10 == 0 {
+                    audio::play(Tone::new(700.0, 0.03, 10.0).glide(1500.0).harm(0.3).len(0.1));
                 }
                 let nx = x + vx;
                 self.ufo = if nx < -10.0 || nx > WF + 10.0 { None } else { Some((nx, vx)) };
