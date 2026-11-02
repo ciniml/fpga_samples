@@ -452,8 +452,10 @@ DDR2 + GMT 版と同じ構成で、`GmtCornerTurn` の GMT_DB だけをファブ
 ソフト版 / GMT 版は 8 bit だと 6 枚に入らないので 4 枚 (`PANEL_ROWS=2`) で比べた (make はその組み合わせをエラーにする)。
 シミュレーションは 4 方式とも全画素一致で PASS、リフレッシュは 6 bit の 489 Hz に対し 432.8 Hz (シフトのプレーン数が増える分)。
 **実機 (2026-11-02):** 16 枚・プレーン形式・GMT の 8 bit (`build/dk_led_rxcard_gw3a20_ddrplane_16p_c8`) で、メモリテスト 0、
-表示 OK。暗い部分の階調が 6 bit より目に見えて滑らかなので、DDR2 版の既定を 8 bit にした。udpvideosend の実測は 418.7 fps
-(シミュレーションの 431.9 Hz より約 3 % 低い。原因は未調査)。ガンマは色テーブルで 8 bit の値を引く形にすると効く
+表示 OK。暗い部分の階調が 6 bit より目に見えて滑らかなので、DDR2 版の既定を 8 bit にした。udpvideosend の実測は 431.8 fps
+(シミュレーションの 431.9 Hz どおり。SRAM に書き込んだ直後の 1 回目は 418.7 fps だったが、フラッシュから起動し直した後は
+この値)。フラッシュへは `make TARGET=dk_led_rxcard_gw3a20 HUB75_IMPL=ddrplane PANEL_COLS=4 PANEL_ROWS=4 deploy`
+(外付け SPI フラッシュ、programmer_cli の操作 9。ftdi_sio が掴んでいるときは先に外す)。ガンマは色テーブルで 8 bit の値を引く形にすると効く
 (`util/hub75_games` は起動時にガンマ 1.5 のテーブルを送る)。
 
 配置配線 (同じソース、place option 2。DDR2 + GMT の 8 bit だけ option 1 — option 2 で sys が 0.03 ns 足りなかった):

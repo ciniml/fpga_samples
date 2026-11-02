@@ -10,3 +10,6 @@ USE_OPENFPGA_LOADER ?= 0
 GOWIN_GW3A_HOME ?= $(HOME)/gowin/1.9.12.03
 GW_SH := env LD_LIBRARY_PATH=$(GOWIN_GW3A_HOME)/IDE/lib QT_QPA_PLATFORM=offscreen $(GOWIN_GW3A_HOME)/IDE/bin/gw_sh
 PROGRAMMER_CLI_DIR := $(GOWIN_GW3A_HOME)/Programmer/bin/
+# no embedded flash on GW3A: make deploy writes the external SPI flash
+# (exFlash Erase,Program,Verify; the board boots from it)
+PROGRAMMER_FLASH_OP_INDEX := 9
