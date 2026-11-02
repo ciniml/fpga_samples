@@ -21,6 +21,9 @@ pub trait Voice: Send {
 static ON: AtomicBool = AtomicBool::new(false);
 static VOICES: Mutex<Vec<Box<dyn Voice>>> = Mutex::new(Vec::new());
 static GAIN: Mutex<f32> = Mutex::new(1.0);
+// showcase: the fade of the current demo, and a count of demo switches
+static FADE: Mutex<f32> = Mutex::new(1.0);
+static SCENE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 // the board's buffer level from its last reply (0xffff: no replies)
 static LEVEL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0xffff);
 
@@ -36,9 +39,34 @@ pub fn play(v: impl Voice + 'static) {
     }
 }
 
+/// showcase: a new demo is on; the sounds of the last one stop (its
+/// background sounds start again when it comes back, see Keep)
+pub fn new_scene() {
+    SCENE.fetch_add(1, Ordering::Relaxed);
+    VOICES.lock().unwrap().clear();
+}
+
+/// showcase: the volume follows the picture's fade (0..1)
+pub fn set_fade(f: f32) {
+    *FADE.lock().unwrap() = f;
+}
+
+/// a demo's background sound (rain, water, ...): start() is true when it
+/// has to be started, at first and again after the showcase came back
+#[derive(Default)]
+pub struct Keep(Option<u32>);
+impl Keep {
+    pub fn start(&mut self) -> bool {
+        let s = SCENE.load(Ordering::Relaxed);
+        let first = self.0 != Some(s);
+        self.0 = Some(s);
+        first
+    }
+}
+
 /// the next n samples of the mix, soft clipped
 pub fn render(n: usize) -> Vec<f32> {
-    let gain = *GAIN.lock().unwrap();
+    let gain = *GAIN.lock().unwrap() * *FADE.lock().unwrap();
     let mut out = vec![0.0; n];
     let mut voices = VOICES.lock().unwrap();
     voices.retain_mut(|v| {
@@ -195,5 +223,424 @@ impl Lp {
     pub fn run(&mut self, x: f32) -> f32 {
         self.y += self.a * (x - self.y);
         self.y
+    }
+}
+
+/// a one-pole high-pass filter at `hz`
+pub struct Hp(Lp);
+impl Hp {
+    pub fn new(hz: f32) -> Hp {
+        Hp(Lp::new(hz))
+    }
+    pub fn run(&mut self, x: f32) -> f32 {
+        x - self.0.run(x)
+    }
+}
+
+/// a two-pole resonant band-pass (state variable filter) at `hz`, q 0.5..20
+pub struct Bp {
+    f: f32,
+    q: f32,
+    lo: f32,
+    band: f32,
+}
+impl Bp {
+    pub fn new(hz: f32, q: f32) -> Bp {
+        let mut b = Bp { f: 0.0, q: 1.0 / q, lo: 0.0, band: 0.0 };
+        b.tune(hz);
+        b
+    }
+    pub fn tune(&mut self, hz: f32) {
+        self.f = 2.0 * (std::f32::consts::PI * hz.min(RATE / 6.0) / RATE).sin();
+    }
+    pub fn run(&mut self, x: f32) -> f32 {
+        self.lo += self.f * self.band;
+        let hi = x - self.lo - self.q * self.band;
+        self.band += self.f * hi;
+        self.band
+    }
+}
+
+/// seconds to samples
+pub fn secs(s: f32) -> usize {
+    (s * RATE) as usize
+}
+
+/// a tone: sine (plus `harm` of its octave and twelfth for a brighter sound
+/// on a small speaker) gliding from f0 to f1 over its length, with a linear
+/// attack and an exponential decay (time constant `decay` s)
+pub struct Tone {
+    t: usize,
+    len: usize,
+    delay: usize,
+    ph: f32,
+    f0: f32,
+    f1: f32,
+    amp: f32,
+    attack: f32,
+    decay: f32,
+    harm: f32,
+}
+impl Tone {
+    pub fn new(f: f32, amp: f32, decay: f32) -> Tone {
+        Tone { t: 0, len: secs(decay * 6.0), delay: 0, ph: 0.0, f0: f, f1: f, amp, attack: 0.004, decay, harm: 0.0 }
+    }
+    pub fn glide(mut self, f1: f32) -> Tone {
+        self.f1 = f1;
+        self
+    }
+    pub fn attack(mut self, s: f32) -> Tone {
+        self.attack = s;
+        self
+    }
+    pub fn harm(mut self, h: f32) -> Tone {
+        self.harm = h;
+        self
+    }
+    pub fn len(mut self, s: f32) -> Tone {
+        self.len = secs(s);
+        self
+    }
+    pub fn after(mut self, s: f32) -> Tone {
+        self.delay = secs(s);
+        self
+    }
+}
+impl Voice for Tone {
+    fn next(&mut self) -> Option<f32> {
+        if self.delay > 0 {
+            self.delay -= 1;
+            return Some(0.0);
+        }
+        if self.t >= self.len {
+            return None;
+        }
+        let s = self.t as f32 / RATE;
+        let u = self.t as f32 / self.len as f32;
+        let f = self.f0 * (self.f1 / self.f0).powf(u);
+        self.ph = (self.ph + f / RATE).fract();
+        self.t += 1;
+        let env = (s / self.attack).min(1.0) * (-s / self.decay).exp() * (1.0 - u).min(20.0 * (1.0 - u)).min(1.0);
+        let tau = std::f32::consts::TAU;
+        let x = (tau * self.ph).sin() + self.harm * (0.5 * (2.0 * tau * self.ph).sin() + 0.25 * (3.0 * tau * self.ph).sin());
+        Some(self.amp * env * x)
+    }
+}
+
+/// a bell: inharmonic partials, the high ones dying first
+pub struct Bell {
+    t: usize,
+    len: usize,
+    delay: usize,
+    f: f32,
+    amp: f32,
+    decay: f32,
+}
+const BELL: [(f32, f32, f32); 5] = [(1.0, 1.0, 1.0), (2.0, 0.6, 0.6), (2.76, 0.45, 0.45), (5.4, 0.3, 0.25), (8.93, 0.2, 0.15)];
+impl Bell {
+    pub fn new(f: f32, amp: f32, decay: f32) -> Bell {
+        Bell { t: 0, len: secs(decay * 5.0), delay: 0, f, amp, decay }
+    }
+    pub fn after(mut self, s: f32) -> Bell {
+        self.delay = secs(s);
+        self
+    }
+}
+impl Voice for Bell {
+    fn next(&mut self) -> Option<f32> {
+        if self.delay > 0 {
+            self.delay -= 1;
+            return Some(0.0);
+        }
+        if self.t >= self.len {
+            return None;
+        }
+        let s = self.t as f32 / RATE;
+        self.t += 1;
+        let tau = std::f32::consts::TAU;
+        let mut x = 0.0;
+        for (r, a, d) in BELL {
+            let f = self.f * r;
+            if f < RATE / 2.5 {
+                x += a * (tau * f * s).sin() * (-s / (self.decay * d)).exp();
+            }
+        }
+        Some(self.amp * x * (s / 0.002).min(1.0))
+    }
+}
+
+/// a burst of noise through a band-pass, attack then exponential decay
+/// (thumps, pops, splashes, clicks); amp 1 is about 0.5 rms at the peak
+pub struct Burst {
+    t: usize,
+    len: usize,
+    delay: usize,
+    noise: Noise,
+    bp: Bp,
+    f0: f32,
+    f1: f32,
+    amp: f32,
+    attack: f32,
+    decay: f32,
+}
+impl Burst {
+    pub fn new(seed: u32, hz: f32, q: f32, amp: f32, decay: f32) -> Burst {
+        // the band-pass passes about 0.0048 sqrt(hz q) rms of this noise
+        let amp = amp * 0.5 / (0.0048 * (hz * q).sqrt());
+        Burst { t: 0, len: secs(decay * 6.0), delay: 0, noise: Noise(seed | 1), bp: Bp::new(hz, q), f0: hz, f1: hz, amp, attack: 0.001, decay }
+    }
+    /// the band moves from hz to f1 over the sound
+    pub fn sweep(mut self, f1: f32) -> Burst {
+        self.f1 = f1;
+        self
+    }
+    pub fn attack(mut self, s: f32) -> Burst {
+        self.attack = s;
+        self.len += secs(s);
+        self
+    }
+    pub fn after(mut self, s: f32) -> Burst {
+        self.delay = secs(s);
+        self
+    }
+}
+impl Voice for Burst {
+    fn next(&mut self) -> Option<f32> {
+        if self.delay > 0 {
+            self.delay -= 1;
+            return Some(0.0);
+        }
+        if self.t >= self.len {
+            return None;
+        }
+        let s = self.t as f32 / RATE;
+        let u = self.t as f32 / self.len as f32;
+        if self.f1 != self.f0 && self.t % 32 == 0 {
+            self.bp.tune(self.f0 * (self.f1 / self.f0).powf(u));
+        }
+        self.t += 1;
+        let env = if s < self.attack { s / self.attack } else { (-(s - self.attack) / self.decay).exp() };
+        Some(self.amp * env * self.bp.run(self.noise.next()))
+    }
+}
+
+/// crackling: random short clicks, `rate` a second, for `len` s fading out
+/// (`len` 0: forever, for a fire)
+pub struct Crackle {
+    t: usize,
+    len: usize,
+    delay: usize,
+    noise: Noise,
+    hp: Hp,
+    rate: f32,
+    amp: f32,
+    click: f32,
+    fall: f32,
+}
+impl Crackle {
+    pub fn new(seed: u32, rate: f32, amp: f32, len: f32) -> Crackle {
+        Crackle { t: 0, len: secs(len), delay: 0, noise: Noise(seed | 1), hp: Hp::new(1500.0), rate, amp, click: 0.0, fall: 0.992 }
+    }
+    /// clicks of about `ms` (longer: duller pops)
+    pub fn click_ms(mut self, ms: f32) -> Crackle {
+        self.fall = (-1.0 / (ms * 0.001 * RATE)).exp();
+        self
+    }
+    pub fn after(mut self, s: f32) -> Crackle {
+        self.delay = secs(s);
+        self
+    }
+}
+impl Voice for Crackle {
+    fn next(&mut self) -> Option<f32> {
+        if self.delay > 0 {
+            self.delay -= 1;
+            return Some(0.0);
+        }
+        if self.len > 0 && self.t >= self.len {
+            return None;
+        }
+        let env = if self.len > 0 { 1.0 - self.t as f32 / self.len as f32 } else { 1.0 };
+        self.t += 1;
+        if (self.noise.next() * 0.5 + 0.5) < self.rate / RATE {
+            self.click = self.amp * env * (0.3 + 0.7 * self.noise.next().abs());
+        }
+        self.click *= self.fall;
+        Some(self.hp.run(self.click * self.noise.next()))
+    }
+}
+
+/// a value a demo sets every tick and its background sound follows
+#[derive(Clone, Default)]
+pub struct Param(std::sync::Arc<std::sync::atomic::AtomicU32>);
+impl Param {
+    pub fn set(&self, v: f32) {
+        self.0.store(v.to_bits(), Ordering::Relaxed);
+    }
+    pub fn get(&self) -> f32 {
+        f32::from_bits(self.0.load(Ordering::Relaxed))
+    }
+}
+
+/// a Param smoothed for the samples (no zipper noise at the tick steps)
+pub struct Smooth {
+    p: Param,
+    v: f32,
+}
+impl Smooth {
+    pub fn new(p: &Param) -> Smooth {
+        Smooth { p: p.clone(), v: p.get() }
+    }
+    /// call once a sample
+    pub fn next(&mut self) -> f32 {
+        self.v += (self.p.get() - self.v) * 0.0008;
+        self.v
+    }
+}
+
+/// running water: band-limited noise that surges slowly, with drops that
+/// plip (short rising chirps) now and then; `level` scales it
+pub struct Water {
+    noise: Noise,
+    lp: Lp,
+    lp2: Lp,
+    hp: Hp,
+    amp: f32,
+    level: Option<Smooth>,
+    plip_rate: f32,
+    plips: Vec<(usize, usize, f32, f32, f32, f32)>, // t, len, phase, f0, f1, amp
+    t: u32,
+    seed: u32,
+}
+impl Water {
+    /// `bright`: the upper end of the band (Hz), `amp`: about the rms
+    pub fn new(seed: u32, bright: f32, amp: f32, plip_rate: f32) -> Water {
+        Water {
+            noise: Noise(seed | 1),
+            lp: Lp::new(bright),
+            lp2: Lp::new(bright * 1.5),
+            hp: Hp::new(250.0),
+            // the filters keep about sqrt(hz) / 320 rms of this noise
+            amp: amp * 320.0 / bright.sqrt(),
+            level: None,
+            plip_rate,
+            plips: Vec::new(),
+            t: 0,
+            seed,
+        }
+    }
+    pub fn level(mut self, p: &Param) -> Water {
+        self.level = Some(Smooth::new(p));
+        self
+    }
+}
+impl Voice for Water {
+    fn next(&mut self) -> Option<f32> {
+        self.t = self.t.wrapping_add(1);
+        let lvl = self.level.as_mut().map_or(1.0, |l| l.next());
+        let w = self.noise.next();
+        let s = self.t as f32 / RATE;
+        let surge = 1.0 + 0.25 * crate::fx::noise(s * 0.7, self.seed) + 0.15 * crate::fx::noise(s * 3.0, self.seed + 1);
+        let mut out = self.hp.run(self.lp2.run(self.lp.run(w))) * self.amp * surge;
+        if (self.noise.next() * 0.5 + 0.5) < self.plip_rate * lvl / RATE {
+            let f0 = 600.0 + 1400.0 * (self.noise.next() * 0.5 + 0.5);
+            let len = secs(0.02 + 0.03 * self.noise.next().abs());
+            let a = 0.03 + 0.05 * self.noise.next().abs();
+            self.plips.push((0, len, 0.0, f0, f0 * 1.8, a));
+        }
+        for p in self.plips.iter_mut() {
+            let u = p.0 as f32 / p.1 as f32;
+            p.2 = (p.2 + p.3 * (p.4 / p.3).powf(u) / RATE).fract();
+            out += p.5 * (std::f32::consts::TAU * p.2).sin() * (1.0 - u) * (u * 20.0).min(1.0);
+            p.0 += 1;
+        }
+        self.plips.retain(|p| p.0 < p.1);
+        Some(out * lvl)
+    }
+}
+
+/// a soft pad: slightly detuned sines that move through `chords` (Hz),
+/// `hold` s each, the notes fading in and out slowly; `shine` (a Param,
+/// 0..1) adds the octave above for a brighter sound
+pub struct Pad {
+    notes: Vec<f32>,
+    chords: Vec<Vec<usize>>,
+    hold: usize,
+    t: usize,
+    ph: Vec<[f32; 3]>,
+    gain: Vec<f32>,
+    amp: f32,
+    shine: Option<Smooth>,
+}
+impl Pad {
+    pub fn new(chords: &[&[f32]], hold: f32, amp: f32) -> Pad {
+        let mut notes: Vec<f32> = Vec::new();
+        for c in chords {
+            for &f in c.iter() {
+                if !notes.iter().any(|&n| (n - f).abs() < 0.01) {
+                    notes.push(f);
+                }
+            }
+        }
+        let chords = chords.iter().map(|c| c.iter().map(|&f| notes.iter().position(|&n| (n - f).abs() < 0.01).unwrap()).collect()).collect();
+        let n = notes.len();
+        Pad { notes, chords, hold: secs(hold), t: 0, ph: vec![[0.0; 3]; n], gain: vec![0.0; n], amp, shine: None }
+    }
+    pub fn shine(mut self, p: &Param) -> Pad {
+        self.shine = Some(Smooth::new(p));
+        self
+    }
+}
+impl Voice for Pad {
+    fn next(&mut self) -> Option<f32> {
+        let chord = &self.chords[(self.t / self.hold) % self.chords.len()];
+        self.t += 1;
+        let shine = self.shine.as_mut().map_or(0.0, |s| s.next());
+        let tau = std::f32::consts::TAU;
+        let mut out = 0.0;
+        let k = chord.len() as f32;
+        for (i, &f) in self.notes.iter().enumerate() {
+            let target = if chord.contains(&i) { 1.0 / k.sqrt() } else { 0.0 };
+            self.gain[i] += (target - self.gain[i]) * (1.0 / (1.5 * RATE));
+            if self.gain[i] < 1e-4 {
+                continue;
+            }
+            let p = &mut self.ph[i];
+            for (j, d) in [0.998f32, 1.002, 2.0].iter().enumerate() {
+                p[j] = (p[j] + f * d / RATE).fract();
+            }
+            out += self.gain[i] * (0.5 * (tau * p[0]).sin() + 0.5 * (tau * p[1]).sin() + 0.35 * shine * (tau * p[2]).sin());
+        }
+        Some(self.amp * out)
+    }
+}
+
+/// wind: noise through a resonant band-pass whose pitch (Hz) and level
+/// follow two Params
+pub struct Wind {
+    noise: Noise,
+    bp: Bp,
+    q: f32,
+    hz: Smooth,
+    level: Smooth,
+    amp: f32,
+    t: u32,
+}
+impl Wind {
+    pub fn new(seed: u32, hz: &Param, level: &Param, q: f32, amp: f32) -> Wind {
+        let hz = Smooth::new(hz);
+        let f = hz.v.max(50.0);
+        Wind { noise: Noise(seed | 1), bp: Bp::new(f, q), q, hz, level: Smooth::new(level), amp, t: 0 }
+    }
+}
+impl Voice for Wind {
+    fn next(&mut self) -> Option<f32> {
+        let f = self.hz.next().max(50.0);
+        if self.t % 32 == 0 {
+            self.bp.tune(f);
+        }
+        self.t = self.t.wrapping_add(1);
+        let norm = 0.5 / (0.0048 * (f * self.q).sqrt());
+        Some(self.amp * norm * self.level.next() * self.bp.run(self.noise.next()))
     }
 }

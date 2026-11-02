@@ -8,6 +8,11 @@
 // as trails. When the board has settled (the population hardly changes for
 // a while) or after 75 s, it is seeded again: a random soup, or a
 // few patterns (glider guns, R-pentominoes, acorns) on an empty board.
+//
+// Sound: every fourth generation the cells born play a soft marimba note,
+// its pitch (a pentatonic scale) from where they were born (low on the
+// left, high on the right), louder for more of them; a reseed whooshes.
+use crate::audio::{self, Burst, Tone};
 use crate::fx::{mix, new_buf, to_canvas, Col};
 use crate::gfx::{Canvas, H, W};
 use crate::input::{Input, Key};
@@ -40,11 +45,12 @@ pub struct Life {
     gens: u32,
     pops: Vec<usize>,
     fade: f32, // for the reseed
+    born: (u32, u32), // cells born since the last note, sum of their x
 }
 
 impl Life {
     pub fn new(seed: u64, _hi: u64) -> Life {
-        let mut g = Life { rng: Rng::new(seed), tick: 0, age: vec![0; GW * GH], glow: vec![0.0; GW * GH], gens: 0, pops: Vec::new(), fade: 1.0 };
+        let mut g = Life { rng: Rng::new(seed), tick: 0, age: vec![0; GW * GH], glow: vec![0.0; GW * GH], gens: 0, pops: Vec::new(), fade: 1.0, born: (0, 0) };
         g.seed();
         g
     }
@@ -112,6 +118,10 @@ impl Life {
                 if a != 0 && next[i] == 0 {
                     self.glow[i] = 1.0;
                 }
+                if a == 0 && next[i] != 0 {
+                    self.born.0 += 1;
+                    self.born.1 += x as u32;
+                }
                 pop += (next[i] != 0) as usize;
             }
         }
@@ -147,9 +157,19 @@ impl Life {
         }
         if self.tick % EVERY == 0 {
             self.generation();
+            if self.gens % 4 == 0 && self.born.0 > 0 {
+                // C major pentatonic, C5 up two octaves
+                const STEPS: [f32; 5] = [0.0, 2.0, 4.0, 7.0, 9.0];
+                let k = (self.born.1 / self.born.0) as usize * 10 / GW;
+                let f = 523.25 * 2f32.powf((12.0 * (k / 5) as f32 + STEPS[k % 5]) / 12.0);
+                let amp = 0.03 + 0.09 * (self.born.0 as f32 / 300.0).min(1.0);
+                audio::play(Tone::new(f, amp, 0.12).harm(0.4));
+                self.born = (0, 0);
+            }
         }
         if reseed || self.settled() || self.gens >= MAX_GENS {
             self.fade = 0.999;
+            audio::play(Burst::new(self.rng.next() as u32, 500.0, 1.0, 0.12, 0.25).sweep(3000.0).attack(0.3));
         }
     }
 
@@ -195,5 +215,8 @@ impl crate::Game for Life {
     }
     fn needs_keys(&self) -> bool {
         false
+    }
+    fn sound(&self) -> bool {
+        true
     }
 }

@@ -6,6 +6,10 @@
 // along it. Where a fold turns the curtain edge-on it looks brighter. Now
 // and then a burst brightens everything for a while. The lake mirrors the
 // sky with a ripple; a shooting star crosses now and then.
+//
+// Sound: a quiet pad drifting through four chords, brighter while a burst
+// lasts; a shooting star sings a short falling note.
+use crate::audio::{self, Keep, Pad, Param, Tone};
 use crate::fx::{add, mix, new_buf, noise, noise2, smooth, to_canvas, Col};
 use crate::gfx::{Canvas, H, W};
 use crate::input::Input;
@@ -30,6 +34,8 @@ pub struct Aurora {
     curtains: Vec<Curtain>,
     burst: f32,
     meteor: Option<(f32, f32, f32, f32, i32)>, // x, y, vx, vy, life
+    keep: Keep,
+    shine: Param,
 }
 
 /// mountain ridge height above the lake at column x (0 = horizon)
@@ -56,10 +62,17 @@ impl Aurora {
             Curtain { y: 118.0, amp: 12.0, len: 35.0, speed: -0.4, seed: 2, gain: 0.7 },
             Curtain { y: 58.0, amp: 10.0, len: 40.0, speed: 0.3, seed: 3, gain: 0.45 },
         ];
-        Aurora { rng, tick: 0, stars, curtains, burst: 0.0, meteor: None }
+        Aurora { rng, tick: 0, stars, curtains, burst: 0.0, meteor: None, keep: Keep::default(), shine: Param::default() }
     }
 
     fn update(&mut self) {
+        if self.keep.start() {
+            // Am9, Fmaj7, Cmaj7, G6 (A3 .. E5)
+            let chords: [&[f32]; 4] =
+                [&[220.0, 329.6, 392.0, 493.9], &[174.6, 261.6, 329.6, 440.0], &[261.6, 329.6, 392.0, 493.9], &[196.0, 293.7, 329.6, 392.0]];
+            audio::play(Pad::new(&chords, 9.0, 0.08).shine(&self.shine));
+        }
+        self.shine.set(self.burst.sin().max(0.0));
         self.tick += 1;
         // a burst now and then: brighter and faster for a while
         if self.burst <= 0.0 && self.rng.chance(1.0 / 1500.0) {
@@ -76,6 +89,7 @@ impl Aurora {
         } else if self.rng.chance(1.0 / 700.0) {
             let x = self.rng.range(10.0, 118.0);
             let dir = if x < 64.0 { 1.0 } else { -1.0 };
+            audio::play(Tone::new(2600.0, 0.05, 0.25).glide(1300.0).attack(0.08).harm(0.3).len(0.6));
             self.meteor = Some((x, self.rng.range(5.0, 50.0), dir * self.rng.range(1.5, 2.5), self.rng.range(0.6, 1.2), 30));
         }
     }
@@ -201,5 +215,8 @@ impl crate::Game for Aurora {
     }
     fn needs_keys(&self) -> bool {
         false
+    }
+    fn sound(&self) -> bool {
+        true
     }
 }

@@ -4,6 +4,11 @@
 // fade. Glyphs change now and then, faster near the heads. The glyphs are
 // made up at random (symmetric 3x5 bitmaps), which reads like a code
 // nobody knows. Now and then a word shows up in the rain.
+//
+// Sound: some of the streams blip as their head comes in at the top, a note
+// of a minor pentatonic scale by the column (low on the left, high on the
+// right); a word arrives with a rising arpeggio of soft bells.
+use crate::audio::{self, Bell, Tone};
 use crate::fx::{new_buf, to_canvas, Col};
 use crate::gfx::{Canvas, W};
 use crate::input::Input;
@@ -100,6 +105,13 @@ impl Matrix {
         for (k, s) in self.streams.iter_mut().enumerate() {
             let before = s.y as i32;
             s.y += s.v;
+            if before < 0 && s.y as i32 >= 0 && self.rng.chance(0.6) {
+                // A minor pentatonic from A4, two octaves over the columns
+                const STEPS: [f32; 5] = [0.0, 3.0, 5.0, 7.0, 10.0];
+                let k = s.col * 10 / COLS;
+                let f = 440.0 * 2f32.powf((12.0 * (k / 5) as f32 + STEPS[k % 5]) / 12.0);
+                audio::play(Tone::new(f, 0.08, 0.07).harm(0.6));
+            }
             for r in before + 1..=s.y as i32 {
                 if r >= 0 && (r as usize) < ROWS {
                     let i = r as usize * COLS + s.col;
@@ -154,6 +166,9 @@ impl Matrix {
                 let col = (self.rng.next() % (COLS - 1) as u64) as usize;
                 let row = (self.rng.next() % (ROWS - s.len()) as u64) as usize;
                 self.word = Some((col, row, s, 240));
+                for (i, f) in [880.0, 1046.5, 1318.5, 1760.0].iter().enumerate() {
+                    audio::play(Bell::new(*f, 0.07, 0.5).after(i as f32 * 0.12));
+                }
             }
             None => {}
         }
@@ -206,5 +221,8 @@ impl crate::Game for Matrix {
     }
     fn needs_keys(&self) -> bool {
         false
+    }
+    fn sound(&self) -> bool {
+        true
     }
 }

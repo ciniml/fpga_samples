@@ -10,6 +10,12 @@
 //   mesh covers the glass, and a new digit fades in as the old one fades out.
 // - 7-segment LEDs: big slanted red digits for hours and minutes, a blinking
 //   colon, the date on top and a bar of 60 dots for the seconds.
+//
+// Sound: the analog face ticks and tocks every second, the nixie tubes
+// click softly, the LEDs are silent; every quarter hour the Westminster
+// chimes ring (one to four phrases), and on the hour the bell strikes the
+// hours.
+use crate::audio::{self, Bell, Burst};
 use crate::fx::{line, new_buf, seg_dist, smooth, to_canvas, Col};
 use crate::gfx::{Canvas, H, W};
 use crate::input::{Input, Key};
@@ -72,11 +78,12 @@ pub struct Clock {
     face: u32,
     t: u64,
     nixie: Vec<Vec<Vec<(f32, f32)>>>,
+    last_sec: Option<u32>,
 }
 
 impl Clock {
     pub fn new(_seed: u64, _hi: u64) -> Clock {
-        Clock { tick: 0, face: 0, t: 0, nixie: (0..10).map(nixie_digit).collect() }
+        Clock { tick: 0, face: 0, t: 0, nixie: (0..10).map(nixie_digit).collect(), last_sec: None }
     }
 
     fn date(now: &NaiveDateTime) -> String {
@@ -270,6 +277,44 @@ impl Clock {
     }
 }
 
+impl Clock {
+    fn sound_second(&self, h: u32, m: u32, s: u32) {
+        let seed = (self.tick as u32).wrapping_mul(2654435761);
+        match self.face {
+            0 => audio::play(Burst::new(seed, if s % 2 == 0 { 2600.0 } else { 2100.0 }, 6.0, 0.25, 0.005)),
+            1 => audio::play(Burst::new(seed, 1400.0, 2.0, 0.08, 0.003)),
+            _ => {}
+        }
+        if s != 0 || m % 15 != 0 {
+            return;
+        }
+        // Westminster: phrases of four notes (E major, G#4 F#4 E4 B3)
+        const N: [f32; 4] = [415.3, 370.0, 329.6, 246.9];
+        const PHRASES: [[usize; 4]; 5] = [[0, 1, 2, 3], [2, 0, 1, 3], [2, 1, 0, 2], [0, 2, 1, 3], [3, 1, 0, 2]];
+        let list: &[usize] = match m {
+            15 => &[0],
+            30 => &[1, 2],
+            45 => &[3, 4, 0],
+            _ => &[1, 2, 3, 4],
+        };
+        let mut at = 0.0;
+        for &p in list {
+            for (k, &n) in PHRASES[p].iter().enumerate() {
+                let long = if k == 3 { 1.0 } else { 0.0 };
+                audio::play(Bell::new(N[n], 0.12, 1.2).after(at));
+                at += 0.6 + 0.6 * long;
+            }
+        }
+        if m == 0 {
+            at += 0.8;
+            for _ in 0..(h + 11) % 12 + 1 {
+                audio::play(Bell::new(164.8, 0.2, 2.0).after(at));
+                at += 1.8;
+            }
+        }
+    }
+}
+
 impl crate::Game for Clock {
     fn step(&mut self, inp: Option<&mut Input>) {
         self.tick += 1;
@@ -285,6 +330,12 @@ impl crate::Game for Clock {
             self.t = 0;
             self.face = (self.face + 1) % 3;
         }
+        let now = Local::now();
+        let sec = now.second();
+        if self.last_sec.is_some_and(|l| l != sec) {
+            self.sound_second(now.hour(), now.minute(), sec);
+        }
+        self.last_sec = Some(sec);
     }
     fn draw(&self, c: &mut Canvas) {
         let now = Local::now().naive_local();
@@ -305,5 +356,8 @@ impl crate::Game for Clock {
     }
     fn needs_keys(&self) -> bool {
         false
+    }
+    fn sound(&self) -> bool {
+        true
     }
 }

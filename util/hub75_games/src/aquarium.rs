@@ -7,6 +7,11 @@
 // fan, fins, stripes, an eye. They cruise, drift up and down, and turn
 // round (squeezing to edge-on and back) at the glass or when they feel like
 // it. Kinds: clownfish, a school of neon tetras, angelfish, yellow tangs.
+//
+// Sound: the soft murmur of the filter, each bubble leaving the air stone
+// with a little rising bloop (smaller ones higher) and popping at the
+// surface.
+use crate::audio::{self, Burst, Keep, Tone, Water};
 use crate::fx::{add, mix, new_buf, noise, noise2, smooth, to_canvas, Col};
 use crate::gfx::{Canvas, H, W};
 use crate::input::Input;
@@ -42,6 +47,7 @@ pub struct Aquarium {
     fish: Vec<Fish>,
     bubbles: Vec<(f32, f32, f32, f32)>, // x, y, r, phase
     weeds: Vec<(f32, f32, f32, Col)>,   // root x, height, phase, colour
+    keep: Keep,
 }
 
 impl Aquarium {
@@ -79,7 +85,7 @@ impl Aquarium {
                 (x, rng.range(30.0, 75.0), rng.range(0.0, 6.28), if red { [0.6, 0.15, 0.2] } else { [0.15, 0.55, 0.15] })
             })
             .collect();
-        Aquarium { rng, tick: 0, fish, bubbles: Vec::new(), weeds }
+        Aquarium { rng, tick: 0, fish, bubbles: Vec::new(), weeds, keep: Keep::default() }
     }
 
     fn update(&mut self) {
@@ -111,9 +117,14 @@ impl Aquarium {
             f.y += 0.25 * noise(t * 0.006, f.seed + 3);
             f.y = f.y.clamp(22.0, SAND - f.len * 1.6);
         }
+        if self.keep.start() {
+            audio::play(Water::new(self.rng.next() as u32, 900.0, 0.025, 0.0));
+        }
         // bubbles from the air stone
         if self.tick % 9 == 0 {
             let r = self.rng.range(0.8, 2.0);
+            let f = 1800.0 / r;
+            audio::play(Tone::new(f, 0.05, 0.03).glide(f * 1.6).len(0.06));
             let ph = self.rng.range(0.0, 6.28);
             self.bubbles.push((104.0 + self.rng.range(-1.5, 1.5), SAND - 2.0, r, ph));
         }
@@ -121,6 +132,10 @@ impl Aquarium {
             b.1 -= 0.5 + 0.25 * b.2;
             b.0 += 0.25 * (t * 0.15 + b.3).sin();
             b.2 += 0.004;
+        }
+        for b in self.bubbles.iter().filter(|b| b.1 <= 8.0) {
+            let seed = (b.3 * 1e4) as u32;
+            audio::play(Burst::new(seed, 3500.0 / b.2, 3.0, 0.08, 0.006));
         }
         self.bubbles.retain(|b| b.1 > 8.0);
     }
@@ -335,5 +350,8 @@ impl crate::Game for Aquarium {
     }
     fn needs_keys(&self) -> bool {
         false
+    }
+    fn sound(&self) -> bool {
+        true
     }
 }

@@ -9,6 +9,11 @@
 // whole picture rotates, shrinking a little so the corners fit) and runs
 // again. The glass is symmetric under a half turn, so after the turn the
 // grid is simply rotated by 180 degrees. Space / Enter: turn it now.
+//
+// Sound: the sand hisses softly as much of it moves, a small bell rings
+// when the top bulb has run out, and the hourglass knocks on the table
+// when the turn is done.
+use crate::audio::{self, Bell, Bp, Burst, Keep, Noise, Param, Smooth, Voice};
 use crate::fx::{new_buf, noise, noise2, smooth, to_canvas, Col};
 use crate::gfx::{Canvas, H, W};
 use crate::input::{Input, Key};
@@ -65,6 +70,8 @@ pub struct Hourglass {
     state: State,
     still: u32, // ticks without a move
     turns: u32,
+    keep: Keep,
+    sand: Param,
 }
 
 impl Hourglass {
@@ -82,7 +89,7 @@ impl Hourglass {
             let layer = (k * LAYERS.len() / n).min(LAYERS.len() - 1);
             grid[i] = 1 + (layer * 4) as u8 + (rng.next() % 4) as u8;
         }
-        Hourglass { rng, tick: 0, grid, mask, state: State::Run, still: 0, turns: 0 }
+        Hourglass { rng, tick: 0, grid, mask, state: State::Run, still: 0, turns: 0, keep: Keep::default(), sand: Param::default() }
     }
 
     fn free(&self, x: i32, y: i32) -> bool {
@@ -132,12 +139,20 @@ impl Hourglass {
     }
 
     fn update(&mut self, now: bool) {
+        if self.keep.start() {
+            audio::play(SandSound::new(self.rng.next() as u32, &self.sand));
+        }
         self.tick += 1;
+        self.sand.set(0.0);
         match self.state {
             State::Run => {
                 let m = self.settle();
+                self.sand.set((m as f32 / 150.0).min(1.0));
                 self.still = if m == 0 { self.still + 1 } else { 0 };
                 if now || (self.still > 30 && self.top_grains() == 0) {
+                    if !now {
+                        audio::play(Bell::new(1318.5, 0.12, 0.8));
+                    }
                     self.state = State::Wait(if now { 0 } else { 90 });
                 }
             }
@@ -146,6 +161,9 @@ impl Hourglass {
             }
             State::Turn(n) => {
                 if n + 1 >= TURN {
+                    let seed = self.rng.next() as u32;
+                    audio::play(Burst::new(seed, 220.0, 2.0, 0.6, 0.06));
+                    audio::play(Burst::new(seed ^ 3, 1100.0, 4.0, 0.25, 0.03));
                     self.grid.reverse(); // the half turn
                     self.turns += 1;
                     self.still = 0;
@@ -276,5 +294,34 @@ impl crate::Game for Hourglass {
     }
     fn needs_keys(&self) -> bool {
         false
+    }
+    fn sound(&self) -> bool {
+        true
+    }
+}
+
+/// a soft high hiss with tiny ticks of grains, as loud as the sand moves
+struct SandSound {
+    noise: Noise,
+    bp: Bp,
+    level: Smooth,
+    tick: f32,
+}
+
+impl SandSound {
+    fn new(seed: u32, p: &Param) -> SandSound {
+        SandSound { noise: Noise(seed | 1), bp: Bp::new(5000.0, 0.8), level: Smooth::new(p), tick: 0.0 }
+    }
+}
+
+impl Voice for SandSound {
+    fn next(&mut self) -> Option<f32> {
+        let l = self.level.next();
+        let w = self.noise.next();
+        if (self.noise.next() * 0.5 + 0.5) < 300.0 * l / audio::RATE {
+            self.tick = 0.05 * self.noise.next();
+        }
+        self.tick *= 0.9;
+        Some(self.bp.run(w) * 0.06 * l + self.tick)
     }
 }

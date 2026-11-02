@@ -6,6 +6,10 @@
 // blobs, inside where it is above 1), so blobs merge and pinch apart. The
 // shading follows the field (bright, glowing centres), the liquid lights up
 // near the bulb, and the colours of wax and liquid change slowly.
+//
+// Sound: a quiet warm hum, and a soft bloop when a blob lets go of the
+// bottom (lower for a bigger blob).
+use crate::audio::{self, Keep, Pad, Tone};
 use crate::fx::{mix, new_buf, noise, smooth, to_canvas, Col};
 use crate::gfx::{Canvas, H, W};
 use crate::input::Input;
@@ -36,11 +40,13 @@ struct Blob {
     vy: f32,
     r: f32,
     heat: f32, // 0 cold .. 1 hot
+    down: bool, // resting on the bottom
 }
 
 pub struct LavaLamp {
     tick: u64,
     blobs: Vec<Blob>,
+    keep: Keep,
 }
 
 impl LavaLamp {
@@ -54,12 +60,17 @@ impl LavaLamp {
                 vy: 0.0,
                 r: if i < 3 { rng.range(8.0, 10.0) } else { rng.range(4.5, 7.0) },
                 heat: rng.f(),
+                down: false,
             })
             .collect();
-        LavaLamp { tick: 0, blobs }
+        LavaLamp { tick: 0, blobs, keep: Keep::default() }
     }
 
     fn update(&mut self) {
+        if self.keep.start() {
+            let chords: [&[f32]; 2] = [&[220.0, 261.6, 329.6], &[196.0, 246.9, 293.7]];
+            audio::play(Pad::new(&chords, 12.0, 0.04));
+        }
         self.tick += 1;
         let t = self.tick as f32;
         let n = self.blobs.len();
@@ -103,6 +114,11 @@ impl LavaLamp {
             if b.y > BOT - b.r * 0.4 {
                 b.y = BOT - b.r * 0.4;
                 b.vy = b.vy.min(0.0);
+                b.down = true;
+            } else if b.down && b.y < BOT - b.r * 0.4 - 3.0 {
+                b.down = false;
+                let f = 1400.0 / b.r;
+                audio::play(Tone::new(f, 0.12, 0.08).glide(f * 2.0).attack(0.01).harm(0.8).len(0.25));
             }
             if b.y < TOP + b.r * 0.4 {
                 b.y = TOP + b.r * 0.4;
@@ -209,5 +225,8 @@ impl crate::Game for LavaLamp {
     }
     fn needs_keys(&self) -> bool {
         false
+    }
+    fn sound(&self) -> bool {
+        true
     }
 }

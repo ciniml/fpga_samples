@@ -49,7 +49,9 @@ impl Game for Showcase {
         if self.t >= LEN {
             self.t = 0;
             self.idx = (self.idx + 1) % self.demos.len();
+            crate::audio::new_scene();
         }
+        crate::audio::set_fade((self.t.min(LEN - self.t) as f32 / FADE as f32).min(1.0));
         self.demos[self.idx].1.step(None);
     }
     fn draw(&self, c: &mut Canvas) {
@@ -72,5 +74,8 @@ impl Game for Showcase {
     }
     fn needs_keys(&self) -> bool {
         false
+    }
+    fn sound(&self) -> bool {
+        true
     }
 }

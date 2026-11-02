@@ -7,6 +7,10 @@
 // as some real fireflies do; every two minutes they are shaken up again.
 // Grass sways in front, trees stand dark against a deep blue sky with
 // stars and a thin moon.
+//
+// Sound: a few crickets chirp; every flash tinkles a tiny high bell, louder
+// when many flash together, so the meadow rings in time as it synchronises.
+use crate::audio::{self, Bell, Keep, Voice};
 use crate::fx::{add, new_buf, noise, noise2, smooth, to_canvas, Col};
 use crate::gfx::{Canvas, H, W};
 use crate::input::Input;
@@ -34,6 +38,7 @@ pub struct Fireflies {
     flies: Vec<Fly>,
     stars: Vec<(i32, i32, f32)>,
     blades: Vec<(f32, f32, f32, f32)>, // root x, height, lean, phase
+    keep: Keep,
 }
 
 /// brightness over the phase: quick rise, slower fall
@@ -75,10 +80,15 @@ impl Fireflies {
             .collect();
         let stars = (0..50).map(|_| ((rng.next() % W as u64) as i32, (rng.next() % 110) as i32, rng.range(0.0, 6.28))).collect();
         let blades = (0..160).map(|_| (rng.range(-2.0, WF + 2.0), rng.range(8.0, 26.0), rng.range(-0.4, 0.4), rng.range(0.0, 6.28))).collect();
-        Fireflies { rng, tick: 0, flies, stars, blades }
+        Fireflies { rng, tick: 0, flies, stars, blades, keep: Keep::default() }
     }
 
     fn update(&mut self) {
+        if self.keep.start() {
+            for k in 0..3 {
+                audio::play(Cricket::new(self.rng.next() as u32, 4300.0 + 400.0 * k as f32, self.rng.range(1.6, 2.4)));
+            }
+        }
         self.tick += 1;
         let t = self.tick as f32;
         if self.tick % RESET == 0 {
@@ -102,6 +112,12 @@ impl Fireflies {
             f.y += (125.0 - f.y) * 0.002;
             f.x = f.x.clamp(2.0, WF - 2.0);
             f.y = f.y.clamp(60.0, 182.0);
+        }
+        if !fired.is_empty() {
+            // C major pentatonic, C6 up
+            const NOTES: [f32; 5] = [1046.5, 1174.7, 1318.5, 1568.0, 1760.0];
+            let f = NOTES[(self.rng.next() % 5) as usize];
+            audio::play(Bell::new(f, (0.012 * (fired.len() as f32).powf(0.8)).min(0.15), 0.35));
         }
         // pulse coupling: a flash nearby pulls a dark firefly's phase forward
         for f in &mut self.flies {
@@ -206,5 +222,46 @@ impl crate::Game for Fireflies {
     }
     fn needs_keys(&self) -> bool {
         false
+    }
+    fn sound(&self) -> bool {
+        true
+    }
+}
+
+/// a cricket: trills of three pulses of a high tone, `rate` trills a
+/// second, now and then a pause
+struct Cricket {
+    f: f32,
+    rate: f32,
+    t: usize,
+    ph: f32,
+    rest: f32,
+    rng: crate::Rng,
+}
+
+impl Cricket {
+    fn new(seed: u32, f: f32, rate: f32) -> Cricket {
+        Cricket { f, rate, t: 0, ph: 0.0, rest: 0.0, rng: crate::Rng::new(seed as u64 + 1) }
+    }
+}
+
+impl Voice for Cricket {
+    fn next(&mut self) -> Option<f32> {
+        self.t += 1;
+        let s = self.t as f32 / audio::RATE;
+        // a pause of a few seconds now and then
+        if self.t % 4800 == 0 && self.rest <= s && self.rng.chance(0.01) {
+            self.rest = s + self.rng.range(2.0, 6.0);
+        }
+        if s < self.rest {
+            return Some(0.0);
+        }
+        self.ph = (self.ph + self.f / audio::RATE).fract();
+        // three 25 ms pulses at the start of each trill
+        let u = (s * self.rate).fract() / self.rate;
+        let k = (u / 0.04) as i32;
+        let p = (u - 0.04 * k as f32) / 0.025;
+        let v = if k < 3 && p < 1.0 { (std::f32::consts::PI * p).sin() } else { 0.0 };
+        Some(0.012 * v * (std::f32::consts::TAU * self.ph).sin())
     }
 }

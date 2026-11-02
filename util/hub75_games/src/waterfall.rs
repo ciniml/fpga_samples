@@ -6,6 +6,10 @@
 // streaks stretch as the water speeds up. Edges fray, the bottom churns
 // white; the pool has foam spreading from the impact, moonlit glints, mist
 // drifting up and spray drops. Moon and stars above, mossy rock around.
+//
+// Sound: the steady rush of the fall, surging a little, with spray drops
+// plipping now and then.
+use crate::audio::{self, Keep, Water};
 use crate::fx::{add, mix, new_buf, noise, noise2, smooth, to_canvas, Col};
 use crate::gfx::{Canvas, H, W};
 use crate::input::Input;
@@ -32,6 +36,7 @@ pub struct Waterfall {
     tick: u64,
     drops: Vec<Drop>,
     stars: Vec<(i32, i32, f32)>,
+    keep: Keep,
 }
 
 /// left / right edge of the falling sheet at height y
@@ -59,7 +64,7 @@ impl Waterfall {
         let stars = (0..30)
             .map(|_| ((rng.next() % W as u64) as i32, (rng.next() % 30) as i32, rng.range(0.0, 6.28)))
             .collect();
-        Waterfall { rng, tick: 0, drops: Vec::new(), stars }
+        Waterfall { rng, tick: 0, drops: Vec::new(), stars, keep: Keep::default() }
     }
 
     fn update(&mut self) {
@@ -194,6 +199,9 @@ impl Waterfall {
 
 impl crate::Game for Waterfall {
     fn step(&mut self, _inp: Option<&mut Input>) {
+        if self.keep.start() {
+            audio::play(Water::new(self.rng.next() as u32, 1800.0, 0.05, 3.0));
+        }
         self.update();
     }
     fn draw(&self, c: &mut Canvas) {
@@ -209,5 +217,8 @@ impl crate::Game for Waterfall {
     }
     fn needs_keys(&self) -> bool {
         false
+    }
+    fn sound(&self) -> bool {
+        true
     }
 }

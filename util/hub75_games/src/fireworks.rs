@@ -8,6 +8,11 @@
 // redden as they die. They are drawn into a glow buffer that fades a little
 // every tick, which gives the streaks. A burst lights the sky; about every
 // 45 s a finale fires many shells at once. Space / Enter: a finale now.
+//
+// Sound: a rocket whistles or hisses up, a burst booms (higher ones a
+// little softer), chrysanthemum, willow and strobe shells crackle as their
+// stars burn, crossette stars pop when they split.
+use crate::audio::{self, Burst, Crackle, Tone};
 use crate::gfx::{Canvas, H, W};
 use crate::input::{Input, Key};
 use crate::Rng;
@@ -154,6 +159,16 @@ impl Fireworks {
         let vx = (self.rng.range(25.0, WF - 25.0) - x) / (-vy / G) * 0.6;
         let col = self.colour();
         let col2 = if self.rng.chance(0.4) { self.colour() } else { col };
+        // up for -vy / G ticks
+        let up = -vy / G / 60.0;
+        let soft = if self.finale > 0 { 0.5 } else { 1.0 };
+        if self.rng.chance(0.4) {
+            let f = self.rng.range(800.0, 1300.0);
+            audio::play(Tone::new(f, 0.12 * soft, 10.0).glide(f * 2.2).attack(0.1).harm(0.3).len(up));
+        } else {
+            let seed = self.rng.next() as u32;
+            audio::play(Burst::new(seed, 2500.0, 1.0, 0.12 * soft, up * 0.4).sweep(4000.0).attack(up * 0.3));
+        }
         self.rockets.push(Rocket { x, y: HF, vx, vy, shell, col, col2 });
     }
 
@@ -165,6 +180,16 @@ impl Fireworks {
     fn burst(&mut self, r: &Rocket) {
         self.bursts += 1;
         let (x, y) = (r.x, r.y);
+        let loud = (0.7 + 0.3 * (y / 85.0).min(1.0)) * if self.finale > 0 { 0.6 } else { 1.0 };
+        let seed = self.rng.next() as u32;
+        audio::play(Burst::new(seed, 150.0, 1.5, 0.6 * loud, 0.3).sweep(80.0));
+        audio::play(Burst::new(seed ^ 7, 500.0, 0.8, 0.35 * loud, 0.12));
+        match r.shell {
+            Shell::Chrysanthemum | Shell::Willow => audio::play(Crackle::new(seed ^ 9, 90.0, 0.25 * loud, 1.6).after(0.3)),
+            Shell::Strobe => audio::play(Crackle::new(seed ^ 9, 40.0, 0.35 * loud, 1.8).click_ms(3.0).after(0.4)),
+            Shell::Crossette => audio::play(Crackle::new(seed ^ 9, 25.0, 0.5 * loud, 0.35).click_ms(6.0).after(0.4)),
+            _ => {}
+        }
         let mut add: Vec<Star> = Vec::new();
         // a random point of a sphere seen from the side
         let sphere = |rng: &mut Rng| {
@@ -464,5 +489,8 @@ impl crate::Game for Fireworks {
     }
     fn needs_keys(&self) -> bool {
         false
+    }
+    fn sound(&self) -> bool {
+        true
     }
 }

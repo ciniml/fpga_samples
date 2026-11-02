@@ -55,6 +55,7 @@ pub struct Storm {
     next: i32,
     cloud_flash: Option<(f32, f32, i32)>, // x, y, ticks
     wind: f32,
+    keep: audio::Keep,
 }
 
 impl Storm {
@@ -63,7 +64,7 @@ impl Storm {
         let drops = (0..260)
             .map(|_| Drop { x: rng.range(-20.0, WF + 20.0), y: rng.range(30.0, HF), v: rng.range(3.0, 4.5) })
             .collect();
-        Storm { rng, tick: 0, drops, splashes: Vec::new(), bolt: None, next: 90, cloud_flash: None, wind: -0.9 }
+        Storm { rng, tick: 0, drops, splashes: Vec::new(), bolt: None, next: 90, cloud_flash: None, wind: -0.9, keep: audio::Keep::default() }
     }
 
     /// a jagged channel from (x, y) going down until `stop`; branches split off
@@ -134,7 +135,7 @@ impl Storm {
     }
 
     fn update(&mut self, now: bool) {
-        if self.tick == 0 && RAIN_SOUND {
+        if self.keep.start() && RAIN_SOUND {
             audio::play(Rain::new(self.rng.next() as u32 | 1));
         }
         self.tick += 1;

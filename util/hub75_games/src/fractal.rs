@@ -7,6 +7,10 @@
 // cosine palette that keeps cycling.
 // The iteration limit grows with the zoom. Rows are spread over threads;
 // points in the main cardioid / bulb or with a periodic orbit stop early.
+//
+// Sound: a quiet pad, a new chord for each spot, and a breathy wind whose
+// pitch climbs as the zoom goes deeper.
+use crate::audio::{self, Keep, Pad, Param, Wind};
 use crate::fx::{new_buf, to_canvas, Col};
 use crate::gfx::{Canvas, H, W};
 use crate::input::{Input, Key};
@@ -28,11 +32,14 @@ pub struct Fractal {
     tick: u64,
     spot: usize,
     t: u64,
+    keep: Keep,
+    wind_hz: Param,
+    wind: Param,
 }
 
 impl Fractal {
     pub fn new(seed: u64, _hi: u64) -> Fractal {
-        Fractal { tick: 0, spot: (seed % SPOTS.len() as u64) as usize, t: 0 }
+        Fractal { tick: 0, spot: (seed % SPOTS.len() as u64) as usize, t: 0, keep: Keep::default(), wind_hz: Param::default(), wind: Param::default() }
     }
 
     fn view(&self) -> (f64, f64, f64, u32) {
@@ -130,6 +137,17 @@ impl crate::Game for Fractal {
             self.t = 0;
             self.spot = (self.spot + 1) % SPOTS.len();
         }
+        let p = self.t as f32 / DIVE as f32;
+        let fade = (self.t.min(DIVE - self.t) as f32 / FADE as f32).min(1.0);
+        self.wind_hz.set(250.0 * 12f32.powf(p));
+        self.wind.set(fade * (0.4 + 0.6 * p));
+        if self.keep.start() {
+            // Dm9, Bbmaj7, Gm9, A7sus (one per spot, 30 s each)
+            let chords: [&[f32]; 4] =
+                [&[293.7, 349.2, 440.0, 523.3], &[233.1, 293.7, 349.2, 440.0], &[196.0, 233.1, 293.7, 440.0], &[220.0, 293.7, 329.6, 392.0]];
+            audio::play(Pad::new(&chords, DIVE as f32 / 60.0, 0.06));
+            audio::play(Wind::new(self.tick as u32, &self.wind_hz, &self.wind, 4.0, 0.05));
+        }
     }
     fn draw(&self, c: &mut Canvas) {
         let mut buf = new_buf();
@@ -143,6 +161,9 @@ impl crate::Game for Fractal {
     }
     fn hi(&self) -> u64 {
         0
+    }
+    fn sound(&self) -> bool {
+        true
     }
     fn needs_keys(&self) -> bool {
         false

@@ -7,6 +7,12 @@
 // lights colour each jet and change colour with the scenes. Drops are
 // drawn into a glow buffer that fades a little each tick, so the jets read
 // as streams. The basin surface ripples and reflects the light.
+//
+// Sound: the music the fountain dances to, 120 beats a minute in step with
+// the jets (a scene is four bars, C - Am - F - G): a bass on beats 1 and 3
+// and a marimba arpeggio in eighths, its pattern changing with the scene;
+// under it the water splashing as much as falls back into the basin.
+use crate::audio::{self, Keep, Param, Tone, Water};
 use crate::fx::{add, mix, new_buf, noise, noise2, smooth, to_canvas, Col};
 use crate::gfx::{Canvas, H, W};
 use crate::input::{Input, Key};
@@ -44,6 +50,8 @@ pub struct Fountain {
     splashes: Vec<(f32, f32, f32, f32, i32, Col)>,
     scene: usize,
     t: u64,
+    keep: Keep,
+    splash: Param,
 }
 
 fn nozzle_x(i: usize) -> f32 {
@@ -52,7 +60,7 @@ fn nozzle_x(i: usize) -> f32 {
 
 impl Fountain {
     pub fn new(seed: u64, _hi: u64) -> Fountain {
-        Fountain { rng: Rng::new(seed), tick: 0, glow: vec![[0.0; 3]; W * H], drops: Vec::new(), splashes: Vec::new(), scene: 0, t: 0 }
+        Fountain { rng: Rng::new(seed), tick: 0, glow: vec![[0.0; 3]; W * H], drops: Vec::new(), splashes: Vec::new(), scene: 0, t: 0, keep: Keep::default(), splash: Param::default() }
     }
 
     /// (launch height in px or 0 = off, sideways angle) of nozzle i now
@@ -83,6 +91,29 @@ impl Fountain {
             }
         };
         (h * ramp, a)
+    }
+
+    /// a note of the music on every eighth (15 ticks at 120 bpm)
+    fn music(&mut self) {
+        if self.keep.start() {
+            audio::play(Water::new(self.rng.next() as u32, 3000.0, 0.06, 6.0).level(&self.splash));
+        }
+        if self.t % 15 != 0 {
+            return;
+        }
+        // C, Am, F, G (root, third, fifth, octave, in semitones from C4)
+        const CHORDS: [[i32; 4]; 4] = [[0, 4, 7, 12], [-3, 0, 4, 9], [-7, -3, 0, 5], [-5, -1, 2, 7]];
+        const PATTERNS: [[usize; 8]; 3] = [[0, 1, 2, 3, 2, 1, 2, 3], [0, 2, 1, 3, 0, 2, 1, 3], [3, 2, 1, 0, 1, 2, 3, 2]];
+        let eighth = (self.t / 15) as usize; // 0..31 in the scene
+        let chord = CHORDS[(eighth / 8) % 4];
+        let semis = |n: i32| 261.63 * 2f32.powf(n as f32 / 12.0);
+        let pat = PATTERNS[self.scene % 3];
+        let up = if self.scene % 2 == 1 { 12 } else { 0 };
+        let accent = if eighth % 2 == 0 { 1.0 } else { 0.7 };
+        audio::play(Tone::new(semis(chord[pat[eighth % 8]] + up), 0.07 * accent, 0.15).harm(0.35));
+        if eighth % 4 == 0 {
+            audio::play(Tone::new(semis(chord[0] - 12), 0.12, 0.3).harm(0.9));
+        }
     }
 
     fn colour(&self, i: usize) -> Col {
@@ -132,6 +163,8 @@ impl Fountain {
             }
             alive && d.x > -4.0 && d.x < W as f32 + 4.0
         });
+        self.splash.set((sp.len() as f32 / 12.0).min(1.0));
+        self.music();
         for (x, col) in sp {
             if self.rng.chance(0.3) {
                 let a = self.rng.range(PI * 1.15, PI * 1.85);
@@ -240,5 +273,8 @@ impl crate::Game for Fountain {
     }
     fn needs_keys(&self) -> bool {
         false
+    }
+    fn sound(&self) -> bool {
+        true
     }
 }
