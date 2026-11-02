@@ -12,10 +12,9 @@
 //   wobbles with smooth noise, white-yellow inside, orange outside, blue at
 //   the root, with a halo; gusts now and then make all of them flicker.
 //
-// Sound: the bonfire roars softly with its brightness and crackles, with a
-// louder pop now and then; the candles are quiet but for the breath of the
-// gusts.
-use crate::audio::{self, Bp, Crackle, Keep, Noise, Param, Smooth, Voice};
+// Sound: the bonfire crackles with its brightness, with a louder pop now
+// and then; the candles are silent.
+use crate::audio::{self, Crackle, Keep, Param, Smooth, Voice};
 use crate::gfx::{Canvas, H, W};
 use crate::input::{Input, Key};
 use crate::fx::{mix, noise, noise2, smooth, Col};
@@ -79,7 +78,6 @@ pub struct Flame {
     candles: [Candle; 3],
     keep: Keep,
     fire_snd: Param,
-    gust_snd: Param,
 }
 
 impl Flame {
@@ -120,7 +118,6 @@ impl Flame {
             ],
             keep: Keep::default(),
             fire_snd: Param::default(),
-            gust_snd: Param::default(),
         }
     }
 
@@ -345,12 +342,10 @@ impl crate::Game for Flame {
         self.step_fire();
         if self.keep.start() {
             let seed = self.rng.next() as u32;
-            audio::play(FireSound::new(seed, &self.fire_snd, &self.gust_snd));
+            audio::play(FireSound::new(seed, &self.fire_snd));
         }
         let fade = (self.scene_t.min(SCENE_LEN - self.scene_t) as f32 / FADE as f32).min(1.0);
-        let gust = smooth(0.55, 0.9, noise(self.tick as f32 * 0.004, 40));
         self.fire_snd.set(if self.scene == 0 { fade * self.bright } else { 0.0 });
-        self.gust_snd.set(if self.scene == 1 { fade * gust } else { 0.0 });
     }
     fn draw(&self, c: &mut Canvas) {
         let mut buf = vec![[0.0f32; 3]; W * H];
@@ -381,42 +376,26 @@ impl crate::Game for Flame {
     }
 }
 
-/// a soft roar and crackles that follow the fire, a breath for the gusts
+/// crackles and now and then a louder pop, as much as the fire burns
 struct FireSound {
-    noise: Noise,
-    roar: Bp,
-    breath: Bp,
     fire: Smooth,
-    gust: Smooth,
     crackle: Crackle,
     pops: Crackle,
-    t: u32,
 }
 
 impl FireSound {
-    fn new(seed: u32, fire: &Param, gust: &Param) -> FireSound {
+    fn new(seed: u32, fire: &Param) -> FireSound {
         FireSound {
-            noise: Noise(seed | 1),
-            roar: Bp::new(350.0, 0.7),
-            breath: Bp::new(900.0, 0.6),
             fire: Smooth::new(fire),
-            gust: Smooth::new(gust),
             crackle: Crackle::new(seed ^ 3, 14.0, 0.35, 0.0).click_ms(1.0),
             pops: Crackle::new(seed ^ 5, 1.2, 0.8, 0.0).click_ms(4.0),
-            t: 0,
         }
     }
 }
 
 impl Voice for FireSound {
     fn next(&mut self) -> Option<f32> {
-        self.t = self.t.wrapping_add(1);
-        let (fire, gust) = (self.fire.next(), self.gust.next());
-        let w = self.noise.next();
-        let swell = 1.0 + 0.4 * noise(self.t as f32 / audio::RATE * 1.5, 41);
-        let roar = self.roar.run(w) * 0.7 * swell * fire;
-        let breath = self.breath.run(w) * 0.25 * gust;
-        let cr = (self.crackle.next().unwrap_or(0.0) + self.pops.next().unwrap_or(0.0)) * fire;
-        Some(roar + breath + cr)
+        let fire = self.fire.next();
+        Some((self.crackle.next().unwrap_or(0.0) + self.pops.next().unwrap_or(0.0)) * fire)
     }
 }
