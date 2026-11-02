@@ -37,7 +37,7 @@ impl Showcase {
             ("fractal", "フラクタル", true, Box::new(crate::fractal::Fractal::new(seed ^ 10, 0))),
             ("fountain", "噴水ショー", true, Box::new(crate::fountain::Fountain::new(seed ^ 11, 0))),
             ("aquarium", "水槽", true, Box::new(crate::aquarium::Aquarium::new(seed ^ 12, 0))),
-            // 100 s of its own: by hand only
+            // about 2 minutes of its own: by hand only
             ("explain", "しくみ解説", false, Box::new(crate::explain::Explain::new(seed ^ 15, 0))),
         ];
         Showcase { demos, idx: 0, t: 0, hold: false }

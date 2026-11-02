@@ -1,4 +1,4 @@
-// How these panels work, for the booth: seven animated scenes (about 100 s
+// How these panels work, for the booth: ten animated scenes (about 140 s
 // in all) that explain the design of eda/ethernet_hub75.
 //
 // 0. the whole path: PC → LAN cable → FPGA (+ DDR2) → HUB75 panels
@@ -7,8 +7,10 @@
 // 3. scanning: two rows lit at a time, sped up until the picture looks whole
 // 4. BCM: LEDs are on or off, brightness is on-time weighted 32:16:...:1
 // 5. the corner turn: pixel values → bit planes (the GMT block of GW3A)
-// 6. the recap: the five steps again, each with a small moving picture
-// 7. the specs
+// 6. what the GMT saves: GMT vs the same turn in the fabric (16 panels)
+// 7. how fast: 432 refreshes a second, GbE at wire rate, DDR2 bandwidth
+// 8. the recap: the five steps again, each with a small moving picture
+// 9. the specs
 //
 // Sound: a chime as each scene comes in. Packets leaving the PC blip, the
 // ack answers with a two-note "got it", the MAC drops the broken packet
@@ -25,7 +27,7 @@ use crate::input::{Input, Key};
 use crate::jp::{self, Font};
 use std::f32::consts::{PI, TAU};
 
-const SCENES: [u64; 8] = [720, 900, 900, 1000, 1100, 900, 780, 720];
+const SCENES: [u64; 10] = [720, 900, 900, 1000, 1100, 900, 840, 840, 780, 720];
 const FADE: u64 = 20;
 const WHITE: Col = [0.95, 0.95, 1.0];
 const CYAN: Col = [0.3, 0.85, 1.0];
@@ -34,6 +36,15 @@ const DIM: Col = [0.55, 0.6, 0.7];
 const BCM_VALUES: [u32; 4] = [63, 45, 20, 7];
 const BCM_COLOR: Col = [1.0, 0.3, 0.15];
 const BCM_MAX: f32 = 128.0; // BCM scene: top speed, units of the LSB a tick
+const SOFT: Col = [1.0, 0.45, 0.2];
+/// GMT vs the corner turn in the fabric, 16 panels 6 bit (README of
+/// eda/ethernet_hub75): name, GMT, fabric, the difference shown
+const GMT_CMP: [(&str, f32, f32, &str); 3] = [
+    ("LUT", 7256.0, 8215.0, "-12%"),
+    ("FF", 4938.0, 6122.0, "-19%"),
+    ("表示の速さ MHz", 133.5, 103.5, "+29%"),
+];
+const REFRESH: u32 = 432; // 8 bit, the build in the flash
 
 fn hue(h: f32) -> Col {
     let c = |o: f32| 0.5 + 0.5 * (TAU * (h - o)).cos();
@@ -199,6 +210,28 @@ impl Explain {
                 }
             }
             6 => {
+                // each comparison: a bell as the bars grow, the fifth with the difference
+                for k in 0..GMT_CMP.len() as u64 {
+                    if t == 140 + k * 90 {
+                        audio::play(Bell::new(1046.5, 0.05, 0.5));
+                    }
+                    if t == 180 + k * 90 {
+                        audio::play(Bell::new(1568.0, 0.05, 0.6));
+                    }
+                }
+            }
+            7 => {
+                // the refreshes in 1/60 s tick in, the TV's lower
+                if t == 60 {
+                    audio::play(Tone::new(880.0, 0.05, 10.0).harm(0.3).len(0.06));
+                }
+                for k in 0..8 {
+                    if t == 90 + k * 12 {
+                        audio::play(Tone::new(1760.0, 0.04, 10.0).harm(0.3).len(0.03));
+                    }
+                }
+            }
+            8 => {
                 // C D E G C: up to the octave
                 const NOTES: [f32; 5] = [1046.5, 1174.7, 1318.5, 1568.0, 2093.0];
                 for (k, f) in NOTES.iter().enumerate() {
@@ -207,7 +240,7 @@ impl Explain {
                     }
                 }
             }
-            7 => {
+            9 => {
                 // G A B D G: up to the octave
                 const NOTES: [f32; 5] = [784.0, 880.0, 987.8, 1174.7, 1568.0];
                 for (k, f) in NOTES.iter().enumerate() {
@@ -527,7 +560,7 @@ impl Explain {
             jp::draw_centre(buf, Font::B16, &s, 138, CYAN);
         } else {
             line_in(buf, t, 830, Font::S12, "本物は1秒に", 134, WHITE);
-            line_in(buf, t, 850, Font::B16, "488回", 148, GOLD);
+            line_in(buf, t, 850, Font::B16, &format!("{}回", REFRESH), 148, GOLD);
         }
         jp::draw_centre(buf, Font::S12, "1/32スキャン", 176, DIM);
     }
@@ -575,7 +608,7 @@ impl Explain {
             let s = format!("{:.1} 周/秒", hz);
             jp::draw_centre(buf, Font::B16, &s, 142, CYAN);
         } else {
-            line_in(buf, t, 860, Font::S12, "本物は1秒に488周", 146, GOLD);
+            line_in(buf, t, 860, Font::S12, &format!("本物は1秒に{}周", REFRESH), 146, GOLD);
         }
         if t < 360 {
             line_in(buf, t, 40, Font::S12, "重み32:16:8:4:2:1の", 164, WHITE);
@@ -631,6 +664,96 @@ impl Explain {
             line_in(buf, self.t, 470, Font::S12, "GW3Aの転置ハード", 160, CYAN);
             line_in(buf, self.t, 490, Font::S12, "GMTで32×32を一気に", 174, CYAN);
         }
+    }
+
+    fn gmt(&self, buf: &mut [Col]) {
+        header(buf, "⑥ GMTで省資源");
+        let t = self.t as f32;
+        line_in(buf, self.t, 20, Font::S12, "16枚構成で比べると", 28, WHITE);
+        let k = smooth(60.0, 80.0, t);
+        if k > 0.0 {
+            let sc = |c: Col| [c[0] * k, c[1] * k, c[2] * k];
+            fill(buf, 14, 46, 7, 7, sc(CYAN));
+            jp::draw(buf, Font::S12, "GMT", 24, 43, sc(WHITE));
+            fill(buf, 62, 46, 7, 7, sc(SOFT));
+            jp::draw(buf, Font::S12, "ソフト", 72, 43, sc(WHITE));
+        }
+        // a pair of bars a comparison, growing in turn; the difference after
+        for (i, (name, g, f, d)) in GMT_CMP.iter().enumerate() {
+            let y = 60 + i as i32 * 34;
+            let at = 140.0 + i as f32 * 90.0;
+            let a = smooth(at - 20.0, at, t);
+            if a <= 0.0 {
+                continue;
+            }
+            let sc = |c: Col| [c[0] * a, c[1] * a, c[2] * a];
+            jp::draw(buf, Font::S12, name, 4, y, sc(DIM));
+            let grow = smooth(at, at + 40.0, t);
+            let top = g.max(*f);
+            for (j, (v, c)) in [(*g, CYAN), (*f, SOFT)].iter().enumerate() {
+                let w = (v / top * 84.0 * grow) as i32;
+                let yy = y + 14 + j as i32 * 9;
+                fill(buf, 4, yy, w.max(1), 7, sc(*c));
+                if grow >= 1.0 {
+                    let s = if *v < 1000.0 { format!("{:.1}", v) } else { format!("{}", *v as u32) };
+                    jp::draw(buf, Font::S12, &s, 4 + w + 3, yy - 3, sc(WHITE));
+                }
+            }
+            let kd = smooth(at + 40.0, at + 60.0, t);
+            if kd > 0.0 {
+                jp::draw(buf, Font::S12, d, 124 - jp::width(Font::S12, d), y, [GOLD[0] * kd, GOLD[1] * kd, GOLD[2] * kd]);
+            }
+        }
+        line_in(buf, self.t, 480, Font::S12, "転置はGMTが肩代わり", 164, CYAN);
+        line_in(buf, self.t, 520, Font::S12, "回路が小さく速くなる", 178, WHITE);
+    }
+
+    fn speed(&self, buf: &mut [Col]) {
+        header(buf, "⑦ 速さ");
+        let t = self.t;
+        line_in(buf, t, 20, Font::S12, "1/60秒のあいだに", 28, WHITE);
+        // a timeline of 1/60 s: the TV shows one picture, the panels 7.2
+        let (x0, w) = (44, 80);
+        let per = REFRESH as f32 / 60.0;
+        let sweep = if t > 200 { ((t - 200) % 120) as f32 / 120.0 } else { -1.0 };
+        for (row, (name, n, at, gap)) in [("テレビ", 1, 60u64, 0u64), ("パネル", 8, 90, 12)].iter().enumerate() {
+            let y = 46 + row as i32 * 18;
+            let k = smooth(*at as f32 - 20.0, *at as f32, t as f32);
+            if k <= 0.0 {
+                continue;
+            }
+            jp::draw(buf, Font::S12, name, 2, y - 2, [DIM[0] * k, DIM[1] * k, DIM[2] * k]);
+            frame(buf, x0 - 1, y - 1, w + 2, 10, [0.25 * k, 0.28 * k, 0.4 * k]);
+            let step = if row == 0 { w as f32 } else { w as f32 / per };
+            for i in 0..*n {
+                if t < at + i as u64 * gap {
+                    break;
+                }
+                let x = x0 + (i as f32 * step) as i32;
+                // the sweep lights a refresh as it passes, dim before
+                let lit = sweep < 0.0 || (x - x0) as f32 <= sweep * w as f32;
+                let c = if row == 0 { GOLD } else { CYAN };
+                let f = if lit { 1.0 } else { 0.3 };
+                fill(buf, x, y, 3, 8, [c[0] * f, c[1] * f, c[2] * f]);
+            }
+            if sweep >= 0.0 {
+                fill(buf, x0 + (sweep * w as f32) as i32, y - 2, 1, 12, WHITE);
+            }
+        }
+        line_in(buf, t, 200, Font::B16, &format!("{}回/秒", REFRESH), 82, GOLD);
+        line_in(buf, t, 240, Font::S12, "カメラで撮っても", 102, WHITE);
+        line_in(buf, t, 260, Font::S12, "ちらつきにくい", 115, WHITE);
+        line_in(buf, t, 360, Font::S12, "LAN 1000Mbpsを", 136, DIM);
+        line_in(buf, t, 380, Font::S12, "125MHzで1バイトずつ", 149, WHITE);
+        // the DDR2's share of its bandwidth
+        let k = smooth(480.0, 500.0, t as f32);
+        if k > 0.0 {
+            jp::draw(buf, Font::S12, "DDR2", 4, 163, [DIM[0] * k, DIM[1] * k, DIM[2] * k]);
+            frame(buf, x0 - 1, 165, w + 2, 9, [0.25 * k, 0.28 * k, 0.4 * k]);
+            let used = (0.31 * w as f32 * smooth(500.0, 560.0, t as f32)) as i32;
+            fill(buf, x0, 166, used.max(1), 7, [CYAN[0] * k, CYAN[1] * k, CYAN[2] * k]);
+        }
+        line_in(buf, t, 560, Font::S12, "帯域の約3割で足りる", 178, WHITE);
     }
 
     fn recap(&self, buf: &mut [Col]) {
@@ -732,7 +855,7 @@ impl Explain {
     fn specs(&self, buf: &mut [Col]) {
         header(buf, "仕様");
         let rows = [
-            ("パネルの書き換え", "488回/秒"),
+            ("パネルの書き換え", "432回/秒"),
             ("映像の入力", "1000BASE-T"),
             ("パネル", "最大16枚"),
             ("RTL (回路)", "すべてVeryl"),
@@ -764,7 +887,9 @@ impl crate::Game for Explain {
             3 => self.scan(&mut buf),
             4 => self.bcm(&mut buf),
             5 => self.transpose(&mut buf),
-            6 => self.recap(&mut buf),
+            6 => self.gmt(&mut buf),
+            7 => self.speed(&mut buf),
+            8 => self.recap(&mut buf),
             _ => self.specs(&mut buf),
         }
         let len = SCENES[self.scene];
@@ -772,7 +897,7 @@ impl crate::Game for Explain {
         to_canvas(&buf, c, fade, 1.4);
     }
     fn status(&self) -> String {
-        let names = ["overview", "packets", "receive", "scan", "bcm", "transpose", "recap", "specs"];
+        let names = ["overview", "packets", "receive", "scan", "bcm", "transpose", "gmt", "speed", "recap", "specs"];
         format!("scene {}", names[self.scene])
     }
     fn hi(&self) -> u64 {
@@ -815,5 +940,29 @@ impl Voice for Clicks {
         // many clicks a second add up: keep the sum about as loud
         let amp = 0.35 / (1.0 + rate / 150.0).sqrt();
         Some(self.hp.run(self.click) * amp * level)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Game;
+
+    /// every scene draws (HUB75_SNAP=dir: the end of each, as PPM files)
+    #[test]
+    fn scenes() {
+        let mut e = Explain::new(1, 0);
+        for s in 0..SCENES.len() {
+            while e.scene != s || e.t < SCENES[s] - FADE - 1 {
+                e.update(false);
+            }
+            let mut c = Canvas::new();
+            e.draw(&mut c);
+            if let Some(dir) = std::env::var_os("HUB75_SNAP") {
+                let mut f = Vec::from(format!("P6\n{} {}\n255\n", W, H).as_bytes());
+                c.px.iter().for_each(|p| f.extend_from_slice(p));
+                std::fs::write(std::path::Path::new(&dir).join(format!("explain{}.ppm", s)), f).unwrap();
+            }
+        }
     }
 }
