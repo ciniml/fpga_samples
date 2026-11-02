@@ -3,9 +3,10 @@
 // then a menu of the four games and "pick a demo" (up / down to choose,
 // cross / circle / options to go; the PS button goes back: from a game to
 // the menu, from the menu to the demos). A demo picked by hand stays on
-// (left / right: the others) until PS or 5 min without a press. Back to
-// the demos 10 s after a game is over (unless it is started again), or
-// after 20 s without a press in a menu / 45 s in a game. The high scores
+// (left / right: the others) until PS or 5 min without a press. A game
+// runs to its own end (3 minutes, or the stages); back to the demos 10 s
+// after it is over (unless it is started again), or after 20 s without a
+// press in a menu. The high scores
 // are kept in ~/.hub75_<game>_hi as when the games run alone. Volume: L2 /
 // R2, mute: L3 / R3 (lib.rs, everywhere).
 use crate::audio;
@@ -17,7 +18,6 @@ use crate::showcase::Showcase;
 use crate::Game;
 
 const MENU_IDLE: u32 = 20 * 60;
-const PLAY_IDLE: u32 = 45 * 60;
 const OVER_WAIT: u32 = 10 * 60;
 const DEMO_IDLE: u32 = 5 * 60 * 60;
 const HINT: u32 = 240; // ticks the hint stays at the bottom
@@ -149,7 +149,7 @@ impl Game for Arcade {
             return;
         };
         let any = inp.take_any_pad();
-        self.idle = if any { 0 } else { self.idle + 1 };
+        self.idle = if inp.take_active() { 0 } else { self.idle + 1 };
         let home = inp.take(Key::Home);
         match self.mode {
             Mode::Attract => {
@@ -215,7 +215,7 @@ impl Game for Arcade {
                 let g = self.game.as_mut().unwrap();
                 g.step(Some(inp));
                 self.over = if g.over() { self.over + 1 } else { 0 };
-                if self.over > OVER_WAIT || self.idle > PLAY_IDLE {
+                if self.over > OVER_WAIT {
                     self.to(Mode::Attract);
                 }
             }

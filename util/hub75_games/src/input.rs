@@ -55,6 +55,7 @@ pub struct Input {
     pub pad: Gamepad,
     pad_held: [Option<Instant>; NKEYS], // held on the controller: the next repeat
     pad_any: bool,                      // a controller button since the last call
+    pad_active: bool,                   // any controller press, the arrows too
 }
 
 fn map(k: &KeyEvent) -> Option<Key> {
@@ -122,6 +123,7 @@ impl Input {
             pad: Gamepad::new(),
             pad_held: [None; NKEYS],
             pad_any: false,
+            pad_active: false,
         }
     }
 
@@ -136,14 +138,20 @@ impl Input {
         std::mem::replace(&mut self.pad_any, false)
     }
 
+    /// anything done on the controller (buttons, d-pad, stick) since the last call
+    pub fn take_active(&mut self) -> bool {
+        std::mem::replace(&mut self.pad_active, false)
+    }
+
     /// reads all pending events
     pub fn poll(&mut self) -> io::Result<()> {
         let now = Instant::now();
-        let (pressed, hits, held, any) = (&mut self.pressed, &mut self.hits, &mut self.pad_held, &mut self.pad_any);
+        let (pressed, hits, held, any, active) = (&mut self.pressed, &mut self.hits, &mut self.pad_held, &mut self.pad_any, &mut self.pad_active);
         self.pad.poll(
             |k, down| {
                 let i = k as usize;
                 if down {
+                    *active = true;
                     pressed[i] = true;
                     hits[i] += 1;
                     held[i] = Some(now + PAD_DELAY);
