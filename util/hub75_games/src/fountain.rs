@@ -110,9 +110,9 @@ impl Fountain {
         let pat = PATTERNS[self.scene % 3];
         let up = if self.scene % 2 == 1 { 12 } else { 0 };
         let accent = if eighth % 2 == 0 { 1.0 } else { 0.7 };
-        audio::play(Tone::new(semis(chord[pat[eighth % 8]] + up), 0.07 * accent, 0.15).harm(0.35));
+        audio::play(Tone::new(semis(chord[pat[eighth % 8]] + up), 0.04 * accent, 0.15).harm(0.35));
         if eighth % 4 == 0 {
-            audio::play(Tone::new(semis(chord[0] - 12), 0.12, 0.3).harm(0.9));
+            audio::play(Tone::new(semis(chord[0] - 12), 0.07, 0.3).harm(0.9));
         }
     }
 

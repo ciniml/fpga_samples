@@ -145,7 +145,7 @@ impl crate::Game for Fractal {
             // Dm9, Bbmaj7, Gm9, A7sus (one per spot, 30 s each)
             let chords: [&[f32]; 4] =
                 [&[293.7, 349.2, 440.0, 523.3], &[233.1, 293.7, 349.2, 440.0], &[196.0, 233.1, 293.7, 440.0], &[220.0, 293.7, 329.6, 392.0]];
-            audio::play(Pad::new(&chords, DIVE as f32 / 60.0, 0.06));
+            audio::play(Pad::new(&chords, DIVE as f32 / 60.0, 0.035));
             audio::play(Wind::new(self.tick as u32, &self.wind_hz, &self.wind, 4.0, 0.05));
         }
     }

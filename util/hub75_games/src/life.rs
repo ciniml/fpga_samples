@@ -162,7 +162,7 @@ impl Life {
                 const STEPS: [f32; 5] = [0.0, 2.0, 4.0, 7.0, 9.0];
                 let k = (self.born.1 / self.born.0) as usize * 10 / GW;
                 let f = 523.25 * 2f32.powf((12.0 * (k / 5) as f32 + STEPS[k % 5]) / 12.0);
-                let amp = 0.03 + 0.09 * (self.born.0 as f32 / 300.0).min(1.0);
+                let amp = 0.02 + 0.05 * (self.born.0 as f32 / 300.0).min(1.0);
                 audio::play(Tone::new(f, amp, 0.12).harm(0.4));
                 self.born = (0, 0);
             }

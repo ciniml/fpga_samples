@@ -69,7 +69,7 @@ impl LavaLamp {
     fn update(&mut self) {
         if self.keep.start() {
             let chords: [&[f32]; 2] = [&[220.0, 261.6, 329.6], &[196.0, 246.9, 293.7]];
-            audio::play(Pad::new(&chords, 12.0, 0.04));
+            audio::play(Pad::new(&chords, 12.0, 0.025));
         }
         self.tick += 1;
         let t = self.tick as f32;

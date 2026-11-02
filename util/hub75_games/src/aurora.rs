@@ -70,7 +70,7 @@ impl Aurora {
             // Am9, Fmaj7, Cmaj7, G6 (A3 .. E5)
             let chords: [&[f32]; 4] =
                 [&[220.0, 329.6, 392.0, 493.9], &[174.6, 261.6, 329.6, 440.0], &[261.6, 329.6, 392.0, 493.9], &[196.0, 293.7, 329.6, 392.0]];
-            audio::play(Pad::new(&chords, 9.0, 0.08).shine(&self.shine));
+            audio::play(Pad::new(&chords, 9.0, 0.045).shine(&self.shine));
         }
         self.shine.set(self.burst.sin().max(0.0));
         self.tick += 1;
