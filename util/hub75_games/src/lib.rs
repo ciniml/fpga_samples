@@ -4,6 +4,7 @@
 // for the 16-panel build, --frame 128x192 for the 6-panel build). Keys come
 // from the terminal (input.rs); --auto lets a bot play (attract mode).
 pub mod aquarium;
+pub mod audio;
 pub mod aurora;
 pub mod blocks;
 pub mod bricks;
@@ -80,6 +81,10 @@ pub trait Game {
     fn needs_keys(&self) -> bool {
         true
     }
+    /// true for the demos with sound (the board's audio, UDP port 10002)
+    fn sound(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Parser)]
@@ -100,6 +105,12 @@ pub struct Cli {
     /// apply only what is left of theirs (1 = all of it here, identity table)
     #[arg(long, default_value_t = 1.5)]
     board_gamma: f32,
+    /// sound volume (demos with sound; the mix is soft clipped)
+    #[arg(long, default_value_t = 1.0)]
+    volume: f32,
+    /// no sound (leaves the board's audio to another sender)
+    #[arg(long)]
+    no_sound: bool,
     /// the bot plays (attract mode; keys other than Q are ignored)
     #[arg(long)]
     auto: bool,
@@ -129,14 +140,35 @@ fn apply(c: &mut gfx::Canvas, lut: &[u8; 256]) {
     }
 }
 
+/// 16-bit mono WAV
+fn write_wav(path: &std::path::Path, s: &[f32]) -> std::io::Result<()> {
+    let n = s.len() as u32 * 2;
+    let mut f = Vec::new();
+    f.extend_from_slice(b"RIFF");
+    f.extend_from_slice(&(36 + n).to_le_bytes());
+    f.extend_from_slice(b"WAVEfmt ");
+    for v in [16u32, 0x0001_0001, 48000, 96000, 0x0010_0002] {
+        f.extend_from_slice(&v.to_le_bytes());
+    }
+    f.extend_from_slice(b"data");
+    f.extend_from_slice(&n.to_le_bytes());
+    s.iter().for_each(|v| f.extend_from_slice(&((v * 32767.0) as i16).to_le_bytes()));
+    std::fs::write(path, f)
+}
+
 /// the snapshots show the panel: what is sent, then the board's gamma
+/// (and the sound goes to DIR/sound.wav)
 fn snapshots<G: Game>(mut game: G, dir: &std::path::Path, ticks: u64, every: u64) -> Result<()> {
     std::fs::create_dir_all(dir)?;
+    let mut wav = Vec::new();
     let mut canvas = gfx::Canvas::new();
     let inverse = curve(1.0 / fx::board_gamma());
     let board = curve(fx::board_gamma());
     for t in 0..ticks {
         game.step(None);
+        if game.sound() {
+            wav.extend(audio::render(800));
+        }
         if t % every == every - 1 {
             game.draw(&mut canvas);
             if game.needs_keys() {
@@ -149,6 +181,9 @@ fn snapshots<G: Game>(mut game: G, dir: &std::path::Path, ticks: u64, every: u64
             println!("tick {:5}: {}", t + 1, game.status());
         }
     }
+    if !wav.is_empty() {
+        write_wav(&dir.join("sound.wav"), &wav)?;
+    }
     Ok(())
 }
 
@@ -158,6 +193,7 @@ pub fn run<G: Game>(name: &str, keys: &str, make: impl FnOnce(u64, u64) -> G) ->
     let cli = Cli::parse();
     fx::set_board_gamma(cli.board_gamma);
     if let Some(dir) = &cli.snapshots {
+        audio::start_offline();
         return snapshots(make(12345, 0), dir, cli.ticks, cli.every);
     }
     let (fw, fh) = cli
@@ -175,6 +211,10 @@ pub fn run<G: Game>(name: &str, keys: &str, make: impl FnOnce(u64, u64) -> G) ->
     let hi = std::fs::read_to_string(&hi_path).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
     let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos() as u64;
     let mut game = make(seed, hi);
+    if game.sound() && !cli.no_sound {
+        let ip = cli.dest.parse::<std::net::SocketAddr>()?.ip();
+        audio::start(&cli.bind, ip, cli.volume)?;
+    }
     let mut canvas = gfx::Canvas::new();
 
     // without a terminal (e.g. started in the background) only --auto works
@@ -222,7 +262,12 @@ pub fn run<G: Game>(name: &str, keys: &str, make: impl FnOnce(u64, u64) -> G) ->
         panel.send(&canvas)?;
         frames += 1;
         if stat_t.elapsed() >= Duration::from_secs(1) {
-            print!("\r {}  {} fps  {} acks   ", game.status(), frames, panel.acks - acks0);
+            let snd = match (game.sound() && !cli.no_sound, audio::level()) {
+                (false, _) => String::new(),
+                (true, Some(l)) => format!("  audio {}", l),
+                (true, None) => "  audio: no replies".into(),
+            };
+            print!("\r {}  {} fps  {} acks{}   ", game.status(), frames, panel.acks - acks0, snd);
             std::io::stdout().flush()?;
             frames = 0;
             acks0 = panel.acks;

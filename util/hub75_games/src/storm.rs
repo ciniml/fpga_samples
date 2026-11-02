@@ -7,6 +7,12 @@
 // lights the clouds around the bolt, the sky and the ground. In between,
 // flashes inside the clouds light them up without a bolt. A lone tree and a
 // house with a lit window stand on the hill.
+//
+// Sound (the board's I2S output, audio.rs): rain all along, and thunder
+// after each flash, later and duller the farther away it is (0.2 to 2.2 s
+// after the light): a crack for close strikes, one per return stroke, then
+// a rumble of several rolls of low noise.
+use crate::audio::{self, Lp, Noise, Voice};
 use crate::fx::{add, new_buf, noise, noise2, smooth, to_canvas, Col};
 use crate::gfx::{Canvas, H, W};
 use crate::input::{Input, Key};
@@ -86,7 +92,23 @@ impl Storm {
         }
     }
 
+    /// thunder for a flash `dist` away (0 close .. 1 far)
+    fn thunder(&mut self, dist: f32) {
+        let seed = self.rng.next() as u32 | 1;
+        let n = 2 + (self.rng.f() * 4.0) as usize;
+        let mut c = self.rng.range(0.03, 0.15);
+        let mut rolls = Vec::new();
+        for k in 0..n {
+            let amp = if k == 0 { 1.0 } else { self.rng.range(0.35, 0.9) } * (1.0 - 0.15 * k as f32);
+            rolls.push((c, self.rng.range(0.04, 0.25) * (1.0 + dist), self.rng.range(0.2, 0.6) * (1.0 + dist), amp));
+            c += self.rng.range(0.2, 0.6) * (1.0 + dist);
+        }
+        audio::play(Thunder::new(seed, dist, rolls));
+    }
+
     fn strike(&mut self) {
+        let d = self.rng.f();
+        self.thunder(d * d);
         let x0 = self.rng.range(15.0, WF - 15.0);
         let target = (x0 + self.rng.range(-30.0, 30.0)).clamp(8.0, WF - 8.0);
         let mut pts = Vec::new();
@@ -109,6 +131,9 @@ impl Storm {
     }
 
     fn update(&mut self, now: bool) {
+        if self.tick == 0 {
+            audio::play(Rain::new(self.rng.next() as u32 | 1));
+        }
         self.tick += 1;
         let t = self.tick as f32;
         self.wind = -0.9 + 0.5 * noise(t * 0.003, 53);
@@ -151,6 +176,8 @@ impl Storm {
             if now || self.rng.chance(0.65) {
                 self.strike();
             } else {
+                let d = self.rng.range(0.6, 1.0);
+                self.thunder(d);
                 let x = self.rng.range(10.0, WF - 10.0);
                 self.cloud_flash = Some((x, self.rng.range(15.0, 45.0), self.rng.range(8.0, 20.0) as i32));
             }
@@ -292,5 +319,110 @@ impl crate::Game for Storm {
     }
     fn needs_keys(&self) -> bool {
         false
+    }
+    fn sound(&self) -> bool {
+        true
+    }
+}
+
+struct Thunder {
+    t: usize,
+    delay: usize,
+    len: usize,
+    noise: Noise,
+    lo: [Lp; 2],
+    mid: [Lp; 2],
+    crack_lp: Lp,
+    rolls: Vec<(f32, f32, f32, f32)>, // centre, rise, decay (s), amplitude
+    crack: f32,
+    loud: f32,
+    dull: f32,
+}
+
+impl Thunder {
+    fn new(seed: u32, dist: f32, rolls: Vec<(f32, f32, f32, f32)>) -> Thunder {
+        let end = rolls.iter().map(|r| r.0 + 4.0 * r.2).fold(0.0, f32::max);
+        Thunder {
+            t: 0,
+            delay: ((0.2 + 2.0 * dist) * audio::RATE) as usize,
+            len: (end * audio::RATE) as usize,
+            noise: Noise(seed),
+            lo: [Lp::new(120.0), Lp::new(160.0)],
+            mid: [Lp::new(250.0), Lp::new(900.0 - 500.0 * dist)],
+            crack_lp: Lp::new(1500.0),
+            rolls,
+            crack: (1.0 - dist / 0.35).max(0.0),
+            loud: 1.0 - 0.55 * dist,
+            dull: dist,
+        }
+    }
+}
+
+impl Voice for Thunder {
+    fn next(&mut self) -> Option<f32> {
+        self.t += 1;
+        if self.t < self.delay {
+            return Some(0.0);
+        }
+        let s = (self.t - self.delay) as f32 / audio::RATE;
+        if self.t - self.delay > self.len {
+            return None;
+        }
+        let w = self.noise.next();
+        // crack: high noise, one burst per return stroke (STROKES)
+        let mut out = 0.0;
+        if self.crack > 0.0 {
+            let hi = w - self.crack_lp.run(w);
+            let e: f32 = [(0.0, 1.0), (0.1, 0.7), (0.2, 0.55)]
+                .iter()
+                .filter(|(c, _)| s >= *c)
+                .map(|(c, a)| a * (-(s - c) / 0.03).exp())
+                .sum();
+            out += 1.6 * self.crack * e * hi;
+        }
+        // rumble: low noise (the speaker is small: keep some of 250..900 Hz)
+        let env: f32 = self
+            .rolls
+            .iter()
+            .map(|&(c, r, d, a)| a * if s < c { (-((c - s) / r).powi(2)).exp() } else { (-(s - c) / d).exp() })
+            .sum();
+        let l0 = self.lo[0].run(w);
+        let lo = self.lo[1].run(l0) * 14.0;
+        let m1 = self.mid[0].run(w);
+        let mid = (self.mid[1].run(w) - m1) * 4.0 * (1.0 - 0.6 * self.dull);
+        out += self.loud * env * (lo + mid);
+        Some(out)
+    }
+}
+
+/// rain: soft band noise that swells slowly, and drops ticking on things
+struct Rain {
+    noise: Noise,
+    hp: Lp,
+    lp: Lp,
+    tick_lp: Lp,
+    t: u32,
+    tick: f32,
+}
+
+impl Rain {
+    fn new(seed: u32) -> Rain {
+        Rain { noise: Noise(seed), hp: Lp::new(800.0), lp: Lp::new(6000.0), tick_lp: Lp::new(3000.0), t: 0, tick: 0.0 }
+    }
+}
+
+impl Voice for Rain {
+    fn next(&mut self) -> Option<f32> {
+        self.t = self.t.wrapping_add(1);
+        let w = self.noise.next();
+        let band = self.lp.run(w) - self.hp.run(w);
+        let swell = 1.0 + 0.3 * noise(self.t as f32 / audio::RATE * 0.4, 61);
+        // a drop now and then: a short click
+        if self.noise.next() > 0.9985 {
+            self.tick = 0.1 + 0.2 * self.noise.next().abs();
+        }
+        self.tick *= 0.995;
+        let click = self.tick_lp.run(w * self.tick);
+        Some(0.07 * swell * band + click)
     }
 }
