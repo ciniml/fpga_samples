@@ -9,7 +9,8 @@
 Payload: byte 0 = channel mask (bit0 R, bit1 G, bit2 B), then 64 8-bit
 values from entry 0. R / B are indexed by the 5-bit RGB565 value (the first
 32 values), G by the 6-bit value. The FPGA keeps the top COMPONENT_BITS
-bits, so values are rounded to --bits (default 6) before being sent.
+bits, so values are rounded to --bits (default 8, the DDR2 builds; 6 for
+the BSRAM builds and the Tang Primer 20K) before being sent.
 """
 import argparse
 import socket
@@ -30,7 +31,7 @@ def main():
     ap.add_argument("mode", choices=["gamma", "identity", "scale"])
     ap.add_argument("values", nargs="*", type=float)
     ap.add_argument("--ch", default="rgb", help="channels to load (subset of rgb)")
-    ap.add_argument("--bits", type=int, default=6, help="COMPONENT_BITS of the build")
+    ap.add_argument("--bits", type=int, default=8, help="COMPONENT_BITS of the build")
     ap.add_argument("--dest", default="192.168.10.2")
     ap.add_argument("--port", type=int, default=10005)
     args = ap.parse_args()

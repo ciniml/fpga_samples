@@ -77,11 +77,17 @@ $(error $(NUM_PANELS) panels need a DDR2 frame buffer (HUB75_IMPL=ddr, ddrplane,
 endif
 endif
 endif
-# DK_LED-RXCARD gradation: COLOR_BITS BCM planes per colour (6 default, 7 or
-# 8; build directory suffix _c<n>). The OE unit shrinks with it (16 >> (n - 6)
-# clocks) so that brightness and refresh stay about the same. The BSRAM
-# frame buffers (soft / gmt) hold 8 bits for 4 panels only.
+# DK_LED-RXCARD gradation: COLOR_BITS BCM planes per colour (6, 7 or 8;
+# build directory suffix _c<n> unless 6). The OE unit shrinks with it
+# (16 >> (n - 6) clocks) so that brightness and refresh stay about the same.
+# Default 8 with the DDR2 frame buffers (better shadows, refresh 432 Hz
+# instead of 488), 6 with the BSRAM ones (soft / gmt hold 8 bits for 4
+# panels only) and on the Tang Primer 20K.
+ifeq ($(TARGET)$(filter ddr ddrgmt ddrsoftturn ddrplane ddrplanesoft,$(HUB75_IMPL)),dk_led_rxcard_gw3a20$(HUB75_IMPL))
+COLOR_BITS ?= 8
+else
 COLOR_BITS ?= 6
+endif
 BASE_OE := $(shell expr 16 / \( 1 \* $$(( 1 << ($(COLOR_BITS) - 6) )) \))
 ifneq ($(COLOR_BITS),6)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_c$(COLOR_BITS)

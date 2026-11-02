@@ -106,7 +106,7 @@ make run                 # openFPGALoader で SRAM に書き込み (make deploy 
 make TARGET=dk_led_rxcard_gw3a20                  # Arora III、ソフト版 6 枚 128x192 (build/dk_led_rxcard_gw3a20)
 make TARGET=dk_led_rxcard_gw3a20 PANEL_ROWS=2     # Arora III、ソフト版 上 4 枚 128x128 (build/dk_led_rxcard_gw3a20_4p)
 make TARGET=dk_led_rxcard_gw3a20 HUB75_IMPL=gmt PANEL_ROWS=2   # Arora III、GMT 版 4 枚 (build/dk_led_rxcard_gw3a20_gmt_4p)
-make TARGET=dk_led_rxcard_gw3a20 HUB75_IMPL=ddrplane PANEL_COLS=4 PANEL_ROWS=4   # 16 枚 256x256 (build/dk_led_rxcard_gw3a20_ddrplane_16p)
+make TARGET=dk_led_rxcard_gw3a20 HUB75_IMPL=ddrplane PANEL_COLS=4 PANEL_ROWS=4   # 16 枚 256x256、8 bit (build/dk_led_rxcard_gw3a20_ddrplane_16p_c8)。展示で使っている構成
 make TARGET=dk_led_rxcard_gw3a20 [...] run        # Gowin programmer_cli で SRAM に書き込み (変数はビルドと同じに)
 make TARGET=dk_led_rxcard_gw3a20 CONN_ID=1         # 配線確認用: J4〜J19 にコネクタごとの単色 (build/dk_led_rxcard_gw3a20_connid)
 make sim                 # テストベンチ (Verilator、Tang Primer 20K)
@@ -445,12 +445,16 @@ DDR2 + GMT 版と同じ構成で、`GmtCornerTurn` の GMT_DB だけをファブ
 
 ### 階調 8 bit 版 (`COLOR_BITS=8`)
 
-`COLOR_BITS` (6 / 7 / 8、既定 6) で BCM のプレーン数を変える。色テーブルの 8 bit 値の上位 `COLOR_BITS` bit を使う
+`COLOR_BITS` (6 / 7 / 8) で BCM のプレーン数を変える。既定は DDR2 版 (`ddr` / `ddrgmt` / `ddrsoftturn` / `ddrplane` /
+`ddrplanesoft`) で 8、BSRAM 版 (soft / gmt) と Tang Primer 20K で 6 (ビルドディレクトリ名は 6 以外のとき `_c<n>`)。色テーブルの 8 bit 値の上位 `COLOR_BITS` bit を使う
 (恒等テーブルは 5 / 6 bit 値のビット複製)。OE の単位 `BASE_OE_CYCLES` は 16 >> (`COLOR_BITS` − 6) にして、OE の合計
 (= 明るさ) とリフレッシュをほぼ保つ (8 bit: LSB プレーンの OE は 8 表示クロック = 160 ns)。BSRAM にフレームバッファを置く
 ソフト版 / GMT 版は 8 bit だと 6 枚に入らないので 4 枚 (`PANEL_ROWS=2`) で比べた (make はその組み合わせをエラーにする)。
 シミュレーションは 4 方式とも全画素一致で PASS、リフレッシュは 6 bit の 489 Hz に対し 432.8 Hz (シフトのプレーン数が増える分)。
-実機は未確認。
+**実機 (2026-11-02):** 16 枚・プレーン形式・GMT の 8 bit (`build/dk_led_rxcard_gw3a20_ddrplane_16p_c8`) で、メモリテスト 0、
+表示 OK。暗い部分の階調が 6 bit より目に見えて滑らかなので、DDR2 版の既定を 8 bit にした。udpvideosend の実測は 418.7 fps
+(シミュレーションの 431.9 Hz より約 3 % 低い。原因は未調査)。ガンマは色テーブルで 8 bit の値を引く形にすると効く
+(`util/hub75_games` は起動時にガンマ 1.5 のテーブルを送る)。
 
 配置配線 (同じソース、place option 2。DDR2 + GMT の 8 bit だけ option 1 — option 2 で sys が 0.03 ns 足りなかった):
 
