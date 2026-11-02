@@ -32,6 +32,21 @@ cargo build --release
 ./target/release/padtest                  # コントローラの確認 (押したボタンをキー名で表示)
 ```
 
+## 展示用 PC (deltaflyer) への導入
+
+展示用の mini PC (Ubuntu 22.04、glibc が古いので musl の静的リンクで配る) には `./deploy.sh [ホスト]` (既定
+`deltaflyer.local`) で入れる: ビルドして `~/exhibit/hub75_games/bin` にコピーし、systemd のユーザーサービス
+`hub75-arcade` (arcade、起動時に自動で開始、落ちたら 3 秒後に再起動) を再起動する。サービスは
+
+```
+systemctl --user status hub75-arcade      # 状態
+systemctl --user stop hub75-arcade        # 止める (ほかのデモを手で動かすとき)
+systemctl --user disable hub75-arcade     # 自動起動をやめる
+journalctl --user -u hub75-arcade         # ログ
+```
+
+パネル用の NIC (192.168.10.1) とコントローラの udev ルール (下) はその PC 側で設定する。
+
 ## ゲームコントローラ (PS5 DualSense など)
 
 USB (Bluetooth でも可) でつなぐと、キーボードと同じように操作できる (`gamepad.rs`、evdev の `/dev/input/eventN` を
