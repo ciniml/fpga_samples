@@ -199,7 +199,8 @@ impl Explain {
                 }
             }
             6 => {
-                const NOTES: [f32; 5] = [1046.5, 1174.7, 1318.5, 1568.0, 1760.0];
+                // C D E G C: up to the octave
+                const NOTES: [f32; 5] = [1046.5, 1174.7, 1318.5, 1568.0, 2093.0];
                 for (k, f) in NOTES.iter().enumerate() {
                     if t == 30 + k as u64 * 70 {
                         audio::play(Bell::new(*f, 0.06, 0.6));
@@ -207,7 +208,8 @@ impl Explain {
                 }
             }
             7 => {
-                const NOTES: [f32; 5] = [784.0, 880.0, 1046.5, 1174.7, 1318.5];
+                // G A B D G: up to the octave
+                const NOTES: [f32; 5] = [784.0, 880.0, 987.8, 1174.7, 1568.0];
                 for (k, f) in NOTES.iter().enumerate() {
                     if t == 45 + k as u64 * 60 {
                         audio::play(Bell::new(*f, 0.06, 0.6));
