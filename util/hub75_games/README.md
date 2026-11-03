@@ -32,11 +32,12 @@ cargo build --release
 ./target/release/padtest                  # コントローラの確認 (押したボタンをキー名で表示)
 ```
 
-## 展示用 PC (deltaflyer) への導入
+## 展示用 PC (deltaflyer / Raspberry Pi 4) への導入
 
 展示用の mini PC (Ubuntu 22.04、glibc が古いので musl の静的リンクで配る) には `./deploy.sh [ホスト]` (既定
-`deltaflyer.local`) で入れる: ビルドして `~/exhibit/hub75_games/bin` にコピーし、systemd のユーザーサービス
-`hub75-arcade` (arcade、起動時に自動で開始、落ちたら 3 秒後に再起動) を再起動する。サービスは
+`deltaflyer.local`) で入れる: ホストの CPU を ssh で調べて x86_64 / aarch64 向けにビルドし、`~/exhibit/hub75_games/bin` に
+コピーして、systemd のユーザーサービス `hub75-arcade` (arcade、起動時に自動で開始、落ちたら 3 秒後に再起動。
+`tools/hub75-arcade.service`、初回はここで登録と linger の設定もする) を再起動する。サービスは
 
 ```
 systemctl --user status hub75-arcade      # 状態
@@ -46,6 +47,20 @@ journalctl --user -u hub75-arcade         # ログ
 ```
 
 パネル用の NIC (192.168.10.1) とコントローラの udev ルール (下) はその PC 側で設定する。
+
+**Raspberry Pi 4 をホストにする場合:** 64 bit の Raspberry Pi OS (aarch64) で、`./deploy.sh <RPi のホスト名>` で同じように入る
+(`aarch64-unknown-linux-musl` の静的バイナリ。リンカは Rust 付属の `rust-lld` (`.cargo/config.toml`) なのでクロスの gcc は不要。
+初めてなら `rustup target add aarch64-unknown-linux-musl`)。32 bit の OS (armv7 のユーザーランド) では動かない。
+
+- **パネル用の NIC:** 有線 (eth0、1000BASE-T) をボード専用にして 192.168.10.1/24 を固定で振る。ssh などは Wi-Fi で入る
+  ```
+  sudo nmcli con add type ethernet ifname eth0 con-name fpga ipv4.method manual ipv4.addresses 192.168.10.1/24 ipv6.method disabled
+  ```
+  ボードの電源が落ちてリンクが切れるとアドレスが消え、arcade は終了して 3 秒ごとに起動し直す。電源が戻れば自動で表示が再開する
+- **コントローラ:** 下の udev ルールを置く (ユーザーが `input` グループならなくても読める)
+- **linger:** deploy.sh が `loginctl enable-linger` を試す。権限がないと言われたら `sudo loginctl enable-linger $USER`
+- **負荷:** ボードなしのスナップショットモード (`--snapshots`) で、x86 (Ryzen 9 3900X) は 1 秒分 (60 tick) の描画と音を
+  いちばん重い fractal でも約 9 ms、ほかは 2〜3 ms で作る。RPi4 がこの 10 倍遅くても 60 fps に余裕がある見込み (実機未確認)
 
 ## ゲームコントローラ (PS5 DualSense など)
 
