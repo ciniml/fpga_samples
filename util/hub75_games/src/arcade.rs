@@ -56,11 +56,14 @@ fn hi_path(name: &str) -> std::path::PathBuf {
     std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default().join(format!(".hub75_{}_hi", name))
 }
 
-/// a line of help at the bottom over a darkened band
-fn hint(c: &mut Canvas, s: &str) {
+/// lines of help at the bottom over a darkened band
+fn hint(c: &mut Canvas, lines: &[&str]) {
     let mut buf: Vec<Col> = new_buf();
-    jp::draw_centre(&mut buf, Font::S12, s, 178, [0.9, 0.9, 1.0]);
-    for y in 175..191 {
+    let top = 191 - 14 * lines.len();
+    for (i, s) in lines.iter().enumerate() {
+        jp::draw_centre(&mut buf, Font::S12, s, (top + 3 + 14 * i) as i32, [0.9, 0.9, 1.0]);
+    }
+    for y in top..191 {
         for x in 0..W {
             let b = buf[y * W + x];
             let p = &mut c.px[y * W + x];
@@ -202,6 +205,11 @@ impl Game for Arcade {
                     audio::sfx::blip(523.3, 0.05);
                 } else if self.idle > DEMO_IDLE {
                     self.to(Mode::Attract);
+                } else if inp.take(Key::Start) {
+                    // the demo again from its start
+                    self.show.restart();
+                    self.mode_t = 0;
+                    audio::sfx::blip(1046.5, 0.05);
                 } else {
                     self.show.step(None);
                 }
@@ -236,7 +244,7 @@ impl Game for Arcade {
             Mode::Attract => {
                 self.show.draw(c);
                 if self.tick / 40 % 3 != 2 {
-                    hint(c, "ボタンでゲーム開始");
+                    hint(c, &["ボタンでゲーム開始"]);
                 }
             }
             Mode::Menu => {
@@ -287,13 +295,13 @@ impl Game for Arcade {
             Mode::Demo => {
                 self.show.draw(c);
                 if self.mode_t < HINT && blink {
-                    hint(c, "左右 切替  PS 戻る");
+                    hint(c, &["左右 切替  PS 戻る", "OPTIONS 最初から"]);
                 }
             }
             Mode::Play => {
                 self.game.as_ref().unwrap().draw(c);
                 if self.mode_t < HINT && blink {
-                    hint(c, "PSボタン ゲーム終了");
+                    hint(c, &["PSボタン ゲーム終了"]);
                 }
             }
         }
@@ -329,7 +337,7 @@ mod tests {
     #[test]
     fn menus() {
         let mut a = Arcade::new(1, 0);
-        for (m, name) in [(Mode::Menu, "menu"), (Mode::DemoMenu, "demomenu")] {
+        for (m, name) in [(Mode::Menu, "menu"), (Mode::DemoMenu, "demomenu"), (Mode::Demo, "demo")] {
             a.mode = m;
             a.sel = 1;
             a.dsel = 12;

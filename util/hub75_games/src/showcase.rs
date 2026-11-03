@@ -8,8 +8,8 @@ use crate::Game;
 const LEN: u64 = 40 * 60;
 const FADE: u64 = 45;
 
-/// (name, name on the menu, in the rotation)
-type Entry = (&'static str, &'static str, bool, Box<dyn Game>);
+/// (name, name on the menu, in the rotation, how to make it, the demo)
+type Entry = (&'static str, &'static str, bool, fn(u64) -> Box<dyn Game>, Box<dyn Game>);
 
 pub struct Showcase {
     demos: Vec<Entry>,
@@ -17,30 +17,32 @@ pub struct Showcase {
     t: u64,
     /// stay on the current demo (no rotation)
     pub hold: bool,
+    seed: u64,
 }
 
 impl Showcase {
     pub fn new(seed: u64, _hi: u64) -> Showcase {
+        let e = |name, jp, rot, make: fn(u64) -> Box<dyn Game>| (name, jp, rot, make, make(seed));
         let demos: Vec<Entry> = vec![
-            ("expo", "超エレキ万博", true, Box::new(crate::expo::Expo::new(seed ^ 13, 0))),
-            ("clock", "時計", true, Box::new(crate::clock::Clock::new(seed ^ 14, 0))),
-            ("fireworks", "花火", true, Box::new(crate::fireworks::Fireworks::new(seed, 0))),
-            ("flame", "焚き火とろうそく", true, Box::new(crate::flame::Flame::new(seed ^ 1, 0))),
-            ("waterfall", "夜の滝", true, Box::new(crate::waterfall::Waterfall::new(seed ^ 2, 0))),
-            ("aurora", "オーロラ", true, Box::new(crate::aurora::Aurora::new(seed ^ 3, 0))),
-            ("storm", "雷雨", true, Box::new(crate::storm::Storm::new(seed ^ 4, 0))),
-            ("hourglass", "砂時計", true, Box::new(crate::hourglass::Hourglass::new(seed ^ 5, 0))),
-            ("matrix", "文字の雨", true, Box::new(crate::matrix::Matrix::new(seed ^ 6, 0))),
-            ("lavalamp", "ラバランプ", true, Box::new(crate::lavalamp::LavaLamp::new(seed ^ 7, 0))),
-            ("fireflies", "蛍", true, Box::new(crate::fireflies::Fireflies::new(seed ^ 8, 0))),
-            ("life", "ライフゲーム", true, Box::new(crate::life::Life::new(seed ^ 9, 0))),
-            ("fractal", "フラクタル", true, Box::new(crate::fractal::Fractal::new(seed ^ 10, 0))),
-            ("fountain", "噴水ショー", true, Box::new(crate::fountain::Fountain::new(seed ^ 11, 0))),
-            ("aquarium", "水槽", true, Box::new(crate::aquarium::Aquarium::new(seed ^ 12, 0))),
+            e("expo", "超エレキ万博", true, |s| Box::new(crate::expo::Expo::new(s ^ 13, 0))),
+            e("clock", "時計", true, |s| Box::new(crate::clock::Clock::new(s ^ 14, 0))),
+            e("fireworks", "花火", true, |s| Box::new(crate::fireworks::Fireworks::new(s, 0))),
+            e("flame", "焚き火とろうそく", true, |s| Box::new(crate::flame::Flame::new(s ^ 1, 0))),
+            e("waterfall", "夜の滝", true, |s| Box::new(crate::waterfall::Waterfall::new(s ^ 2, 0))),
+            e("aurora", "オーロラ", true, |s| Box::new(crate::aurora::Aurora::new(s ^ 3, 0))),
+            e("storm", "雷雨", true, |s| Box::new(crate::storm::Storm::new(s ^ 4, 0))),
+            e("hourglass", "砂時計", true, |s| Box::new(crate::hourglass::Hourglass::new(s ^ 5, 0))),
+            e("matrix", "文字の雨", true, |s| Box::new(crate::matrix::Matrix::new(s ^ 6, 0))),
+            e("lavalamp", "ラバランプ", true, |s| Box::new(crate::lavalamp::LavaLamp::new(s ^ 7, 0))),
+            e("fireflies", "蛍", true, |s| Box::new(crate::fireflies::Fireflies::new(s ^ 8, 0))),
+            e("life", "ライフゲーム", true, |s| Box::new(crate::life::Life::new(s ^ 9, 0))),
+            e("fractal", "フラクタル", true, |s| Box::new(crate::fractal::Fractal::new(s ^ 10, 0))),
+            e("fountain", "噴水ショー", true, |s| Box::new(crate::fountain::Fountain::new(s ^ 11, 0))),
+            e("aquarium", "水槽", true, |s| Box::new(crate::aquarium::Aquarium::new(s ^ 12, 0))),
             // about 2 minutes of its own: by hand only
-            ("explain", "しくみ解説", false, Box::new(crate::explain::Explain::new(seed ^ 15, 0))),
+            e("explain", "しくみ解説", false, |s| Box::new(crate::explain::Explain::new(s ^ 15, 0))),
         ];
-        Showcase { demos, idx: 0, t: 0, hold: false }
+        Showcase { demos, idx: 0, t: 0, hold: false, seed }
     }
 
     /// the names on the menu
@@ -57,6 +59,13 @@ impl Showcase {
         self.idx = i % self.demos.len();
         self.t = 0;
         crate::audio::new_scene();
+    }
+
+    /// the current demo again from its start (fading in)
+    pub fn restart(&mut self) {
+        let d = &mut self.demos[self.idx];
+        d.4 = (d.3)(self.seed);
+        self.select(self.idx);
     }
 
     /// a demo of the rotation picked at random (`r` a random number)
@@ -97,10 +106,10 @@ impl Game for Showcase {
             self.shift(1);
         }
         crate::audio::set_fade((self.t.min(LEN - self.t) as f32 / FADE as f32).min(1.0));
-        self.demos[self.idx].3.step(None);
+        self.demos[self.idx].4.step(None);
     }
     fn draw(&self, c: &mut Canvas) {
-        self.demos[self.idx].3.draw(c);
+        self.demos[self.idx].4.draw(c);
         let f = (self.t.min(LEN - self.t) as f32 / FADE as f32).min(1.0);
         if f < 1.0 {
             for p in &mut c.px {
@@ -112,7 +121,7 @@ impl Game for Showcase {
     }
     fn status(&self) -> String {
         let d = &self.demos[self.idx];
-        format!("{}: {}", d.0, d.3.status())
+        format!("{}: {}", d.0, d.4.status())
     }
     fn hi(&self) -> u64 {
         0
