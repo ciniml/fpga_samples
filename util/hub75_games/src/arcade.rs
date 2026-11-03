@@ -19,6 +19,7 @@ use crate::Game;
 
 const MENU_IDLE: u32 = 20 * 60;
 const OVER_WAIT: u32 = 6 * 60;
+const FAST: u32 = 4; // L1 / R1 held on a chosen demo: this many ticks a tick
 const DEMO_IDLE: u32 = 5 * 60 * 60;
 const HINT: u32 = 240; // ticks the hint stays at the bottom
 const DEMOS_ITEM: usize = 4; // the menu entry after the games
@@ -50,6 +51,7 @@ pub struct Arcade {
     seed: u64,
     hi: [u64; 4],
     still: Input, // no keys: a game's end screen
+    fast: bool,   // the chosen demo runs fast (L1 / R1 held)
 }
 
 fn hi_path(name: &str) -> std::path::PathBuf {
@@ -88,7 +90,7 @@ impl Arcade {
         let hi = GAMES.map(|(n, _)| std::fs::read_to_string(hi_path(n)).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0));
         let show = Showcase::new(seed, 0);
         let names = show.names();
-        Arcade { show, names, mode: Mode::Attract, sel: 0, dsel: 0, game: None, idle: 0, over: 0, mode_t: 0, tick: 0, seed, hi, still: Input::none() }
+        Arcade { show, names, mode: Mode::Attract, sel: 0, dsel: 0, game: None, idle: 0, over: 0, mode_t: 0, tick: 0, seed, hi, still: Input::none(), fast: false }
     }
 
     fn make(&mut self, k: usize) -> Box<dyn Game> {
@@ -112,6 +114,7 @@ impl Arcade {
             }
         }
         self.show.hold = m == Mode::Demo;
+        self.fast = false;
         self.mode = m;
         self.idle = 0;
         self.over = 0;
@@ -211,7 +214,14 @@ impl Game for Arcade {
                     self.mode_t = 0;
                     audio::sfx::blip(1046.5, 0.05);
                 } else {
-                    self.show.step(None);
+                    // held L1 / R1: fast forward, the sound quieter (it piles up)
+                    self.fast = inp.held(Key::Hold);
+                    for _ in 0..if self.fast { FAST } else { 1 } {
+                        self.show.step(None);
+                    }
+                    if self.fast {
+                        audio::set_fade(0.35);
+                    }
                 }
             }
             Mode::Play => {
@@ -294,8 +304,17 @@ impl Game for Arcade {
             }
             Mode::Demo => {
                 self.show.draw(c);
+                if self.fast {
+                    let mut buf: Vec<Col> = new_buf();
+                    jp::draw(&mut buf, Font::S12, &format!(">> x{}", FAST), 92, 2, [1.0, 0.85, 0.2]);
+                    for (p, b) in c.px.iter_mut().zip(&buf) {
+                        if b[0] > 0.0 {
+                            *p = [(b[0] * 255.0) as u8, (b[1] * 255.0) as u8, (b[2] * 255.0) as u8];
+                        }
+                    }
+                }
                 if self.mode_t < HINT && blink {
-                    hint(c, &["左右 切替  PS 戻る", "OPTIONS 最初から"]);
+                    hint(c, &["左右 切替  PS 戻る", "OPTIONS 最初から", "L1・R1 長押し 早送り"]);
                 }
             }
             Mode::Play => {
