@@ -201,7 +201,8 @@ pub module dds_core #(
             multiplier_latency_counter = 0;
             maxis_wave_tvalid = 0;
             maxis_wave_tdata = 0;
-            multiplier_buffer = {0, 0};
+            multiplier_buffer[0] = 0;
+            multiplier_buffer[1] = 0;
         } else {
             if maxis_wave_tvalid && maxis_wave_tready {
                 maxis_wave_tvalid = 0;

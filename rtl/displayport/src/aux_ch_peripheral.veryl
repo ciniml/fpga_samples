@@ -65,6 +65,8 @@ pub module aux_ch_peripheral #(
     var interrupt_clear : InterruptStatus;
     var operation_status: OperationStatus;
 
+    // written by the MCU (register window) and by the AUX RX path
+    #[allow(multiple_assign)]
     var buffer: logic<8>[BUFFER_SIZE];  // Buffer for AUX_CH data
     
     var rx_index: buffer_index_t;

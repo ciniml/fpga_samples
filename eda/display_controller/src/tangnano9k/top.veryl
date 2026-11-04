@@ -134,6 +134,8 @@ module top(
       SCREEN_HEIGHT,
   ) ();
 
+  // initial pattern is loaded into the block RAM at configuration time
+  #[allow(initial_assign)]
   var vram: logic<8>[SCREEN_WIDTH*SCREEN_HEIGHT];
   function set_vram_element(value: input u8, value_out: output u8) {
     value_out = value;
