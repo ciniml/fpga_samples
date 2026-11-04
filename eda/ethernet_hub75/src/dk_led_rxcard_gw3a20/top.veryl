@@ -62,19 +62,19 @@
 //   02                  override off, run the memory test
 //   03                  run the memory test (it clears the frame buffer)
 module DkLedRxcardTop #(
-    param HUB75_IMPL    : u32     = $sv::ethernet_hub75_cfg::HUB75_IMPL    ,
-    param PANEL_COLS    : u32     = $sv::ethernet_hub75_cfg::PANEL_COLS    , // 64x64 panels across (2 or 4)
-    param PANEL_ROWS    : u32     = $sv::ethernet_hub75_cfg::PANEL_ROWS    , // 64x64 panel rows (PANEL_COLS x PANEL_ROWS <= 16)
-    param CONN_ID       : bit     = $sv::ethernet_hub75_cfg::CONN_ID       , // 1: J4..J19 show fixed colours (wiring check)
+    param HUB75_IMPL    : u32     = ethernet_hub75_cfg::HUB75_IMPL    ,
+    param PANEL_COLS    : u32     = ethernet_hub75_cfg::PANEL_COLS    , // 64x64 panels across (2 or 4)
+    param PANEL_ROWS    : u32     = ethernet_hub75_cfg::PANEL_ROWS    , // 64x64 panel rows (PANEL_COLS x PANEL_ROWS <= 16)
+    param CONN_ID       : bit     = ethernet_hub75_cfg::CONN_ID       , // 1: J4..J19 show fixed colours (wiring check)
     param CHAIN_REVERSE : bit     = 0                                      ,
-    param COMPONENT_BITS: u32     = $sv::ethernet_hub75_cfg::COMPONENT_BITS, // BCM planes per colour (6..8)
-    param BASE_OE_CYCLES: u32     = $sv::ethernet_hub75_cfg::BASE_OE_CYCLES, // OE unit (LSB plane 2x this)
+    param COMPONENT_BITS: u32     = ethernet_hub75_cfg::COMPONENT_BITS, // BCM planes per colour (6..8)
+    param BASE_OE_CYCLES: u32     = ethernet_hub75_cfg::BASE_OE_CYCLES, // OE unit (LSB plane 2x this)
     param CLOCK_DIVIDER : u32     = 0                                      ,
     param CLK_LOW_EXTRA : u32     = 1                                      ,
-    param RX_DELAY      : u32     = $sv::ethernet_hub75_cfg::RX_DELAY      , // IODELAY steps (12.5 ps) on RXD / RX_CTL
-    param TXC_SHIFTED   : bit     = $sv::ethernet_hub75_cfg::TXC_SHIFTED   , // 1: TXD 6 ns late = TXC 2 ns after TXD (PHY TX delay off)
-    param PHY_DELAY_BITS: bit<16> = $sv::ethernet_hub75_cfg::PHY_DELAY_BITS, // RTL8211E ext 0xa4 reg 0x1c bits 13:11
-    param AUDIO         : bit     = $sv::ethernet_hub75_cfg::AUDIO         , // 1: UDP 10002 audio to I2S on J19
+    param RX_DELAY      : u32     = ethernet_hub75_cfg::RX_DELAY      , // IODELAY steps (12.5 ps) on RXD / RX_CTL
+    param TXC_SHIFTED   : bit     = ethernet_hub75_cfg::TXC_SHIFTED   , // 1: TXD 6 ns late = TXC 2 ns after TXD (PHY TX delay off)
+    param PHY_DELAY_BITS: bit<16> = ethernet_hub75_cfg::PHY_DELAY_BITS, // RTL8211E ext 0xa4 reg 0x1c bits 13:11
+    param AUDIO         : bit     = ethernet_hub75_cfg::AUDIO         , // 1: UDP 10002 audio to I2S on J19
     param PHY_RST_LOG2  : u32     = 21                                     , // PHY reset 2^N system clocks (17 ms)
     param PHY_WAIT_LOG2 : u32     = 24                                     , // MDIO set-up after 2^N clocks (134 ms)
     param DDR_T_INIT_PS : u32     = 200_000_000                            , // DDR2 power-up wait (shortened in simulation)
@@ -338,36 +338,40 @@ module DkLedRxcardTop #(
         }
         assign restart_c  = restart_m || t_restart;
 
-        inst u_phy: ddr2::Ddr2PhyGw3a (
-            i_pclk     : mclk     ,
-            i_fclk     : fclk     ,
-            i_rst      : mrst     ,
-            i_cke      : cke      ,
-            i_odt      : odt      ,
-            i_cs_n     : cs_n     ,
-            i_ras_n    : ras_n    ,
-            i_cas_n    : cas_n    ,
-            i_we_n     : we_n     ,
-            i_ba       : ba       ,
-            i_a        : a        ,
-            i_dq_out   : dq_out   ,
-            i_dq_oe    : dq_oe    ,
-            i_dqs_out  : dqs_out  ,
-            i_dqs_oe   : dqs_oe   ,
-            o_dq_in    : dq_in    ,
-            o_dqs_in   : dqs_in   ,
-            o_ddr_ck   : ddr_ck   ,
-            o_ddr_cke  : ddr_cke  ,
-            o_ddr_odt  : ddr_odt  ,
-            o_ddr_cs_n : ddr_cs_n ,
-            o_ddr_ras_n: ddr_ras_n,
-            o_ddr_cas_n: ddr_cas_n,
-            o_ddr_we_n : ddr_we_n ,
-            o_ddr_ba   : ddr_ba   ,
-            o_ddr_a    : ddr_a    ,
-            io_ddr_dq  : ddr_dq   ,
-            io_ddr_dqs : ddr_dqs  ,
-        );
+        // the PHY wrapper takes both clocks of the same PLL (FCLK = 4 x PCLK)
+        // in its own '_ domain; the slot vectors are pclk-domain signals
+        unsafe (cdc) {
+            inst u_phy: ddr2::Ddr2PhyGw3a (
+                i_pclk     : mclk     ,
+                i_fclk     : fclk     ,
+                i_rst      : mrst     ,
+                i_cke      : cke      ,
+                i_odt      : odt      ,
+                i_cs_n     : cs_n     ,
+                i_ras_n    : ras_n    ,
+                i_cas_n    : cas_n    ,
+                i_we_n     : we_n     ,
+                i_ba       : ba       ,
+                i_a        : a        ,
+                i_dq_out   : dq_out   ,
+                i_dq_oe    : dq_oe    ,
+                i_dqs_out  : dqs_out  ,
+                i_dqs_oe   : dqs_oe   ,
+                o_dq_in    : dq_in    ,
+                o_dqs_in   : dqs_in   ,
+                o_ddr_ck   : ddr_ck   ,
+                o_ddr_cke  : ddr_cke  ,
+                o_ddr_odt  : ddr_odt  ,
+                o_ddr_cs_n : ddr_cs_n ,
+                o_ddr_ras_n: ddr_ras_n,
+                o_ddr_cas_n: ddr_cas_n,
+                o_ddr_we_n : ddr_we_n ,
+                o_ddr_ba   : ddr_ba   ,
+                o_ddr_a    : ddr_a    ,
+                io_ddr_dq  : ddr_dq   ,
+                io_ddr_dqs : ddr_dqs  ,
+            );
+        }
     } else :g_no_ddr {
         // DDR2 idle: CKE low, deselected, data lines not driven
         assign mclk       = 1'b0;
