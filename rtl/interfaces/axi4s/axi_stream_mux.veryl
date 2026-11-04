@@ -71,13 +71,30 @@ pub module axi4s_mux::<WIDTH: u32 = 8, LAST: bbool = false, USER: u32 = 0> #(
     select: input logic<$clog2(N+1)>,
 ) {
     type select_t = logic<$clog2(N+1)>;
+    type user_t = logic<if USER == 0 ? 1 : USER>;
 
     // internal buffer.
     var data: logic<WIDTH>;
     var last: logic;
-    var user: logic<USER>;
+    var user: user_t;
     var valid: logic;
     var ready: logic;
+
+    // Input channels (an interface array element must be selected by a generate index)
+    var in_valid: logic[N];
+    var in_data: logic<WIDTH>[N];
+    var in_last: logic[N];
+    var in_user: user_t[N];
+
+    for i in 0..N: port_gen {
+        always_comb {
+            port_in[i].tready = select == i as select_t && (!valid || ready);
+            in_valid[i] = port_in[i].tvalid;
+            in_data[i] = port_in[i].tdata;
+            in_last[i] = port_in[i].tlast;
+            in_user[i] = port_in[i].tuser;
+        }
+    }
 
     always_comb {
         port_out.tvalid = valid;
@@ -85,10 +102,6 @@ pub module axi4s_mux::<WIDTH: u32 = 8, LAST: bbool = false, USER: u32 = 0> #(
         port_out.tlast = last;
         port_out.tuser = user;
         ready = port_out.tready;
-        
-        for i in 0..N {
-            port_in[i].tready = select == i as select_t && (!valid || ready);
-        }
     }
 
     always_ff(r#clock, r#reset) {
@@ -102,11 +115,13 @@ pub module axi4s_mux::<WIDTH: u32 = 8, LAST: bbool = false, USER: u32 = 0> #(
             if valid && ready {
                 valid = 0;
             }
-            if port_in[select].tvalid && (!valid || ready) {
-                valid = 1;
-                data = port_in[select].tdata;
-                last = port_in[select].tlast;
-                user = port_in[select].tuser;
+            for i in 0..N {
+                if select == i as select_t && in_valid[i] && (!valid || ready) {
+                    valid = 1;
+                    data = in_data[i];
+                    last = in_last[i];
+                    user = in_user[i];
+                }
             }
         }
     }
