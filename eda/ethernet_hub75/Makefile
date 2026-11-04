@@ -1,0 +1,153 @@
+PROJECT_NAME := ethernet_hub75
+
+# make TARGET=tangprimer20k (default) | dk_led_rxcard_gw3a20 [HUB75_IMPL=soft|gmt|ddr|ddrgmt|ddrsoftturn|ddrplane|ddrplanesoft]
+TARGET ?= tangprimer20k
+# Frame buffer / HUB75 output stage: soft (Hub75Lanes, frame in BSRAM),
+# gmt (GW3A GMT hard block + Hub75Planes, Arora III only) or ddr (frame in
+# the DDR2 of the DK_LED-RXCARD, DdrFb + Hub75RowLanes) or ddrgmt (DDR2,
+# rows turned into bit planes by the GMT, Hub75RowPlanes) or ddrsoftturn
+# (as ddrgmt with the transpose in fabric, for comparison), ddrplane (frame
+# as bit planes in the DDR2, GMT on the way in, no row buffer) or
+# ddrplanesoft (ddrplane with the transpose in fabric). Builds go to
+# build/<target>_gmt / _ddr / _ddrgmt.
+HUB75_IMPL ?= soft
+ifeq ($(HUB75_IMPL),gmt)
+BUILD_SUFFIX := _gmt
+HUB75_IMPL_NUM := 1
+else ifeq ($(HUB75_IMPL),ddr)
+BUILD_SUFFIX := _ddr
+HUB75_IMPL_NUM := 2
+ifneq ($(TARGET),dk_led_rxcard_gw3a20)
+$(error HUB75_IMPL=ddr is for TARGET=dk_led_rxcard_gw3a20 only)
+endif
+else ifeq ($(HUB75_IMPL),ddrgmt)
+BUILD_SUFFIX := _ddrgmt
+HUB75_IMPL_NUM := 3
+ifneq ($(TARGET),dk_led_rxcard_gw3a20)
+$(error HUB75_IMPL=ddrgmt is for TARGET=dk_led_rxcard_gw3a20 only)
+endif
+else ifeq ($(HUB75_IMPL),ddrsoftturn)
+BUILD_SUFFIX := _ddrsoftturn
+HUB75_IMPL_NUM := 4
+ifneq ($(TARGET),dk_led_rxcard_gw3a20)
+$(error HUB75_IMPL=ddrsoftturn is for TARGET=dk_led_rxcard_gw3a20 only)
+endif
+else ifeq ($(HUB75_IMPL),ddrplane)
+BUILD_SUFFIX := _ddrplane
+HUB75_IMPL_NUM := 5
+ifneq ($(TARGET),dk_led_rxcard_gw3a20)
+$(error HUB75_IMPL=ddrplane is for TARGET=dk_led_rxcard_gw3a20 only)
+endif
+else ifeq ($(HUB75_IMPL),ddrplanesoft)
+BUILD_SUFFIX := _ddrplanesoft
+HUB75_IMPL_NUM := 6
+ifneq ($(TARGET),dk_led_rxcard_gw3a20)
+$(error HUB75_IMPL=ddrplanesoft is for TARGET=dk_led_rxcard_gw3a20 only)
+endif
+else
+HUB75_IMPL_NUM := 0
+endif
+# DK_LED-RXCARD RGMII timing options (for bring-up; see README):
+#   PHY_DLY     on (RTL8211E RX / TX delays forced on, default) | strap
+#               (left to the strap resistors) | off (forced off) | 4 hex
+#               digits for ext 0xa4 reg 0x1c bits 13:11 (3000 / 2800: one
+#               of the two delays only)
+#   TXC_SHIFTED 1: TXD / TX_CTL from the PLL 270° output (TXC 2 ns after
+#               the data, for a PHY with its TX delay off)
+#   RX_DELAY    IODELAY steps (12.5 ps) on RXD / RX_CTL, 0..255
+# Non-default values are appended to the build directory name.
+# DK_LED-RXCARD panels: PANEL_COLS x PANEL_ROWS 64x64 panels, one per
+# connector from J4 (2 x 3 = 128x192 on J4..J9, default; 2 x 2 = 128x128 on
+# J4..J7; 4 x 4 = 256x256 on J4..J19, DDR2 frame buffers only). Other than
+# 6 panels the build directory gets the suffix _<n>p.
+PANEL_COLS ?= 2
+PANEL_ROWS ?= 3
+NUM_PANELS := $(shell expr $(PANEL_COLS) \* $(PANEL_ROWS))
+ifneq ($(NUM_PANELS),6)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_$(NUM_PANELS)p
+else ifeq ($(TARGET)$(HUB75_IMPL),dk_led_rxcard_gw3a20gmt)
+# 12 lanes × 3 colours of 768-word plane memories, each rounded up to 4
+# BSRAMs = 144 > 120: the GMT build fits up to PANEL_ROWS=2
+$(error HUB75_IMPL=gmt does not fit 6 panels (BSRAM); use PANEL_ROWS=2)
+endif
+ifeq ($(TARGET),dk_led_rxcard_gw3a20)
+ifneq ($(shell test $(NUM_PANELS) -gt 6 && echo big),)
+ifneq ($(filter soft gmt,$(HUB75_IMPL)),)
+$(error $(NUM_PANELS) panels need a DDR2 frame buffer (HUB75_IMPL=ddr, ddrplane, ...))
+endif
+endif
+endif
+# DK_LED-RXCARD gradation: COLOR_BITS BCM planes per colour (6, 7 or 8;
+# build directory suffix _c<n> unless 6). The OE unit shrinks with it
+# (16 >> (n - 6) clocks) so that brightness and refresh stay about the same.
+# Default 8 with the DDR2 frame buffers (better shadows, refresh 432 Hz
+# instead of 488), 6 with the BSRAM ones (soft / gmt hold 8 bits for 4
+# panels only) and on the Tang Primer 20K.
+ifeq ($(TARGET)$(filter ddr ddrgmt ddrsoftturn ddrplane ddrplanesoft,$(HUB75_IMPL)),dk_led_rxcard_gw3a20$(HUB75_IMPL))
+COLOR_BITS ?= 8
+else
+COLOR_BITS ?= 6
+endif
+BASE_OE := $(shell expr 16 / \( 1 \* $$(( 1 << ($(COLOR_BITS) - 6) )) \))
+ifneq ($(COLOR_BITS),6)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_c$(COLOR_BITS)
+ifeq ($(TARGET)$(NUM_PANELS),dk_led_rxcard_gw3a206)
+ifneq ($(filter soft gmt,$(HUB75_IMPL)),)
+$(error COLOR_BITS=$(COLOR_BITS) with the BSRAM frame buffer (HUB75_IMPL=$(HUB75_IMPL)) fits PANEL_ROWS=2 only)
+endif
+endif
+endif
+# CONN_ID=1: wiring check, J4..J11 show one colour each (see top.veryl)
+CONN_ID ?= 0
+# DK_LED-RXCARD AUDIO=1 (default): UDP 10002 audio to I2S on J19 pins 1..3
+# (that connector shows no panel); AUDIO=0 adds the suffix _noaud
+AUDIO ?= 1
+ifeq ($(TARGET)$(AUDIO),dk_led_rxcard_gw3a200)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_noaud
+endif
+ifneq ($(CONN_ID),0)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_connid
+endif
+PHY_DLY ?= on
+TXC_SHIFTED ?= 0
+RX_DELAY ?= 0
+PHY_DELAY_HEX_on := 3800
+PHY_DELAY_HEX_strap := 0000
+PHY_DELAY_HEX_off := 2000
+PHY_DELAY_HEX := $(or $(PHY_DELAY_HEX_$(PHY_DLY)),$(PHY_DLY))
+ifneq ($(PHY_DLY),on)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_phy$(PHY_DLY)
+endif
+ifneq ($(TXC_SHIFTED),0)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_txc90
+endif
+ifneq ($(RX_DELAY),0)
+BUILD_SUFFIX := $(BUILD_SUFFIX)_rxd$(RX_DELAY)
+endif
+ROOT_DIR ?= $(abspath ../..)
+RTL_DIR ?= $(ROOT_DIR)/rtl
+
+TOP_MODULE_tangprimer20k := TangPrimer20kTop
+TOP_MODULE_dk_led_rxcard_gw3a20 := DkLedRxcardTop
+TOP_MODULE ?= $(TOP_MODULE_$(TARGET))
+
+# Veryl: this project + rtl/eth_mac + rtl/hub75 + rtl/ddr2 (path dependencies). The
+# generated .sv are not tracked; `veryl build` writes them and the filelist.
+FILELIST := $(abspath $(PROJECT_NAME).f)
+VERYL_SRCS := Veryl.toml $(wildcard src/common/*.veryl) $(wildcard src/*/*.veryl) \
+              $(wildcard $(RTL_DIR)/eth_mac/*.veryl) $(wildcard $(RTL_DIR)/hub75/*.veryl) \
+              $(wildcard $(RTL_DIR)/ddr2/*.veryl)
+
+PROJECT_ADDITIONAL_ARGS := $(FILELIST) $(TOP_MODULE) $(HUB75_IMPL_NUM) $(PHY_DELAY_HEX) $(TXC_SHIFTED) $(RX_DELAY) $(PANEL_ROWS) $(CONN_ID) $(COLOR_BITS) $(BASE_OE) $(PANEL_COLS) $(AUDIO)
+
+SRCS := project.tcl $(wildcard src/$(TARGET)/*.cst) $(wildcard src/$(TARGET)/*.sdc) $(wildcard src/$(TARGET)/ip/*.v) $(FILELIST)
+
+include ../build_gowin.mk
+
+$(FILELIST): $(VERYL_SRCS)
+	veryl build
+	touch $@
+
+.PHONY: sim
+sim:
+	$(MAKE) -C test

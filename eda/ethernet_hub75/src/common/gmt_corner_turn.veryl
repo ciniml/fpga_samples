@@ -1,0 +1,233 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+//
+// GmtCornerTurn: pixel writes → bit-plane words for Hub75Planes, using the
+// GW3A Generic Matrix Transpose block (GMT_DB, UG311).
+//
+// GMT component 0 is a 32 × 32 bit transposer with two ping-pong buffers.
+// The 32 pixels of a word (same lane and scan row, chain_x / 32) are
+// written as matrix rows (row = chain_x % 32, data = RGB); after the last
+// one the buffer is read back by columns: column k = bit k of the 32
+// pixels = one plane word. The next group goes to the other buffer while
+// the PX_BITS columns are copied out (PX_BITS clocks, much less than the
+// 64 clocks the next 32 pixels take to arrive).
+//
+// A group is complete when its last pixel in arrival order is written
+// (chain_x % 32 == 31, or 0 with CHAIN_REVERSE); udpvideosend sends whole,
+// aligned rows, so a lost packet only leaves stale words in that frame.
+// The flip request is held back until the last group is copied out, and
+// o_busy keeps the writer from starting the next frame meanwhile.
+//
+// USE_GMT = 0 replaces GMT_DB by the same thing in fabric (two 32 x PX_BITS
+// flip-flop arrays, rows written, a column read into a register the next
+// clock), to compare the hard block with its soft equivalent.
+module GmtCornerTurn #(
+    param SCAN_ROWS     : u32 = 32                                                 ,
+    param CHAIN_LEN     : u32 = 128                                                ,
+    param NUM_LANES     : u32 = 4                                                  ,
+    param COMPONENT_BITS: u32 = 6                                                  ,
+    param CHAIN_REVERSE : bit = 0                                                  ,
+    param USE_GMT       : bit = 1                                                  , // 0: transpose in fabric
+    param PLANE_MAJOR   : bit = 0                                                  , // 1: columns out plane by plane (B, G, R of a plane in turn)
+    const ROW_BITS      : u32 = $clog2(SCAN_ROWS)                                  ,
+    const X_BITS        : u32 = $clog2(CHAIN_LEN)                                  ,
+    const XW_BITS       : u32 = X_BITS - 5                                         ,
+    const LANE_BITS     : u32 = if NUM_LANES >: 1 ? $clog2(NUM_LANES) : 1          ,
+    const PLANE_BITS    : u32 = if COMPONENT_BITS >: 1 ? $clog2(COMPONENT_BITS) : 1,
+    const PX_BITS       : u32 = 3 * COMPONENT_BITS                                 ,
+) (
+    i_clk: input clock,
+    i_rst: input logic,
+
+    // ---- pixels (UdpVideoWriter) ----
+    i_we      : input  logic                   ,
+    i_lane    : input  logic<LANE_BITS>        ,
+    i_addr    : input  logic<ROW_BITS + X_BITS>, // {scan_row, chain_x}
+    i_rgb     : input  logic<PX_BITS>          ,
+    i_flip_req: input  logic                   ,
+    o_busy    : output logic                   , // flip request held back
+
+    // ---- plane words (Hub75Planes) ----
+    o_we      : output logic                    ,
+    o_lane    : output logic<LANE_BITS>         ,
+    o_colour  : output logic<2>                 ,
+    o_plane   : output logic<PLANE_BITS>        ,
+    o_addr    : output logic<ROW_BITS + XW_BITS>,
+    o_data    : output logic<32>                ,
+    o_flip_req: output logic                    ,
+) {
+    const K_BITS: u32      = $clog2(PX_BITS);
+    const LAST_X: logic<5> = if CHAIN_REVERSE ? 5'd0 : 5'd31;
+
+    let in_x   : logic<5> = i_addr[4:0];
+    let in_last: logic    = i_we && in_x == LAST_X;
+
+    // ---- GMT ----
+    var wbuf : logic        ; // ping-pong buffer being written
+    var rdata: logic<32>    ;
+    var rbuf : logic        ;
+    var k    : logic<K_BITS>; // column being read
+    // column read: k in order (colour by colour), or with PLANE_MAJOR
+    // colour * COMPONENT_BITS + plane, the three colours of a plane in turn
+    var col  : logic<2>         ; // colour of column k
+    var pl   : logic<PLANE_BITS>; // plane of column k
+    var k_pm : logic<5>         ; // colour * COMPONENT_BITS + plane, counted (no multiplier)
+    let raddr: logic<6>          = {rbuf, if PLANE_MAJOR ? k_pm : k as 5};
+    let k_end: logic             = if PLANE_MAJOR ?
+        pl == (COMPONENT_BITS - 1) as PLANE_BITS && col == 2'd2
+    :
+        k == (PX_BITS - 1) as K_BITS
+    ;
+    let wdata: logic<32>         = {1'b0 repeat 32 - PX_BITS, i_rgb};
+
+    if USE_GMT :g_gmt {
+        inst u_gmt: $sv::GMT_DB #(
+            WADDR_REMAP_EN: 1'b0   ,
+            COMP_EN       : 4'b0001,
+        ) (
+            WCLK   : i_clk       ,
+            WCE    : 1'b1        ,
+            RCLK   : i_clk       ,
+            RCE    : 1'b1        ,
+            WEN0   : i_we        ,
+            WEN1   : 1'b0        ,
+            WEN2   : 1'b0        ,
+            WEN3   : 1'b0        ,
+            RSTN   : !i_rst      ,
+            WADDR  : {wbuf, in_x},
+            RADDR  : raddr       ,
+            WDATA0 : wdata       ,
+            WDATA1 : 32'd0       ,
+            WDATA2 : 32'd0       ,
+            WDATA3 : 32'd0       ,
+            GSRN   : 1'b1        ,
+            RDATA0 : rdata       ,
+            RDATA1 : _           ,
+            RDATA2 : _           ,
+            RDATA3 : _           ,
+            CFGRSTN: 1'b1        ,
+            MDCLK  : 1'b0        ,
+            MDWDATA: 8'd0        ,
+            MDAINC : 1'b0        ,
+            MDOPC  : 2'b00       ,
+            MD1BITM: 1'b0        ,
+            MDRDATA: _           ,
+        );
+    } else :g_soft {
+        // the transpose in fabric: rows written, column k read (registered).
+        // Kept in flip-flops: as a RAM Gowin would replicate it once per
+        // row read (32 block RAMs)
+        #[sv("syn_ramstyle=\"registers\"")]
+        var arr: logic<PX_BITS> [64];
+        always_ff {
+            if i_we {
+                arr[{wbuf, in_x}] = i_rgb;
+            }
+            for r in 0..32 {
+                rdata[r] = arr[{raddr[5], r[4:0]}][raddr[4:0]];
+            }
+        }
+    }
+
+    // ---- copy-out of the finished buffer ----
+    var active : logic                    ;
+    var j_lane : logic<LANE_BITS>         ;
+    var j_addr : logic<ROW_BITS + XW_BITS>;
+    var v1     : logic                    ; // rdata holds column k1
+    var col1   : logic<2>                 ;
+    var pl1    : logic<PLANE_BITS>        ;
+    var we_q   : logic                    ;
+    var col_q  : logic<2>                 ;
+    var pl_q   : logic<PLANE_BITS>        ;
+    var data_q : logic<32>                ;
+    var pending: logic                    ;
+    var flip_q : logic                    ;
+
+    assign o_we       = we_q;
+    assign o_lane     = j_lane;
+    assign o_colour   = col_q;
+    assign o_plane    = pl_q;
+    assign o_addr     = j_addr;
+    assign o_data     = data_q;
+    assign o_flip_req = flip_q;
+    assign o_busy     = pending || flip_q; // until Hub75Planes shows busy
+
+    always_ff {
+        if i_rst {
+            wbuf    = 1'b0;
+            rbuf    = 1'b0;
+            k       = 0 as K_BITS;
+            active  = 1'b0;
+            j_lane  = 0 as LANE_BITS;
+            j_addr  = 0 as ROW_BITS + XW_BITS;
+            col     = 2'd0;
+            pl      = 0 as PLANE_BITS;
+            k_pm    = 5'd0;
+            v1      = 1'b0;
+            col1    = 2'd0;
+            pl1     = 0 as PLANE_BITS;
+            we_q    = 1'b0;
+            col_q   = 2'd0;
+            pl_q    = 0 as PLANE_BITS;
+            data_q  = 32'd0;
+            pending = 1'b0;
+            flip_q  = 1'b0;
+        } else {
+            // stage 1: column k is addressed (GMT reads in the next clock)
+            v1   = active;
+            col1 = col;
+            pl1  = pl;
+            if active {
+                if k_end {
+                    active = 1'b0;
+                } else {
+                    k = k + (1 as K_BITS);
+                    if PLANE_MAJOR {
+                        if col == 2'd2 {
+                            col  = 2'd0;
+                            pl   = pl + (1 as PLANE_BITS);
+                            k_pm = (pl + (1 as PLANE_BITS)) as 5;
+                        } else {
+                            col  = col + 2'd1;
+                            k_pm = k_pm + COMPONENT_BITS as 5;
+                        }
+                    } else if pl == (COMPONENT_BITS - 1) as PLANE_BITS {
+                        pl   = 0 as PLANE_BITS;
+                        k_pm = 5'd0;
+                        col  = col + 2'd1;
+                    } else {
+                        pl = pl + (1 as PLANE_BITS);
+                    }
+                }
+            }
+            if in_last {
+                // the group is in: copy it out while the next one fills
+                // the other buffer
+                active = 1'b1;
+                rbuf   = wbuf;
+                wbuf   = ~wbuf;
+                k      = 0 as K_BITS;
+                col    = 2'd0;
+                pl     = 0 as PLANE_BITS;
+                k_pm   = 5'd0;
+                j_lane = i_lane;
+                j_addr = {i_addr[ROW_BITS + X_BITS - 1:X_BITS], i_addr[X_BITS - 1:5]};
+            }
+
+            // stage 2: plane word out
+            we_q   = v1;
+            col_q  = col1;
+            pl_q   = pl1;
+            data_q = rdata;
+
+            // flip once the last group has been written out
+            flip_q = 1'b0;
+            if i_flip_req {
+                pending = 1'b1;
+            } else if pending && !active && !v1 && !we_q && !i_we {
+                pending = 1'b0;
+                flip_q  = 1'b1;
+            }
+        }
+    }
+}

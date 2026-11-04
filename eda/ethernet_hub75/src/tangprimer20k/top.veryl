@@ -1,0 +1,251 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+//
+// Tang Primer 20K (Dock) top of ethernet_hub75.
+//
+//   RTL8201F (RMII, 100 Mb/s, 50 MHz reference from the PHY)
+//   HUB75: pmod_hub75 + pmod_hub75_2 (two connectors sharing CLK / LAT /
+//   OE / A..E), each a chain of two 64x64 panels = 128x64; lanes 0..3 =
+//   connector 1 R1/R2, connector 2 R1/R2 → 128x128.
+//   System and display clock: 49.5 MHz from the 27 MHz oscillator.
+//   HUB75 CLK = 49.5 / 3 = 16.5 MHz (CLOCK_DIVIDER 0, CLK_LOW_EXTRA 1).
+//
+// LEDs (active low): 0 heartbeat (panel frames), 1 video packet,
+// 2 ARP / ICMP answered, 3 bad frame, 4 new frame shown, 5 PLL lock.
+module TangPrimer20kTop #(
+    param CHAIN_REVERSE : bit = 0 ,
+    param COMPONENT_BITS: u32 = 6 ,
+    param CLOCK_DIVIDER : u32 = 0 ,
+    param CLK_LOW_EXTRA : u32 = 1 ,
+    param PHY_RST_LOG2  : u32 = 20, // PHY reset = 2^N system clocks (~21 ms); shortened in simulation
+) (
+    clk27: input 'osc clock, // 27 MHz (H11)
+
+    led: output 's logic<6>,
+
+    rmii_txclk : input  'p clock   , // 50 MHz reference (RX and TX)
+    rmii_rxd   : input  'p logic<2>,
+    rmii_crs_dv: input  'p logic   ,
+    rmii_txd   : output 'p logic<2>,
+    rmii_txen  : output 'p logic   ,
+    rmii_mdio  : input     logic   ,
+    rmii_mdc   : output    logic   ,
+    rmii_rstn  : output    logic   ,
+
+    hub75io_clk  : output logic   ,
+    hub75io_r    : output logic<2>,
+    hub75io_g    : output logic<2>,
+    hub75io_b    : output logic<2>,
+    hub75io_row_a: output logic   ,
+    hub75io_row_b: output logic   ,
+    hub75io_row_c: output logic   ,
+    hub75io_row_d: output logic   ,
+    hub75io_row_e: output logic   ,
+    hub75io_lat  : output logic   ,
+    hub75io_oe   : output logic   ,
+
+    hub75io_clk_2  : output logic   ,
+    hub75io_r_2    : output logic<2>,
+    hub75io_g_2    : output logic<2>,
+    hub75io_b_2    : output logic<2>,
+    hub75io_row_a_2: output logic   ,
+    hub75io_row_b_2: output logic   ,
+    hub75io_row_c_2: output logic   ,
+    hub75io_row_d_2: output logic   ,
+    hub75io_row_e_2: output logic   ,
+    hub75io_lat_2  : output logic   ,
+    hub75io_oe_2   : output logic   ,
+) {
+    // ---- clocks and resets ----
+    var sys_clk : 's clock;
+    var pll_lock:    logic;
+
+    unsafe (cdc) {
+        inst u_pll: $sv::rpll_hub75 (
+            clkout: sys_clk ,
+            lock  : pll_lock,
+            clkin : clk27   ,
+        );
+    }
+
+    var lock_s1: logic                  ;
+    var lock_s2: logic                  ;
+    var rst_cnt: logic<5>               ;
+    var sys_rst: logic                  ;
+    var phy_cnt: logic<PHY_RST_LOG2 + 2>; // PHY reset 2^N clocks, PHY-domain reset until 2^(N+1)
+
+    unsafe (cdc) {
+        always_ff (sys_clk) {
+            lock_s1 = pll_lock;
+            lock_s2 = lock_s1;
+            if !lock_s2 {
+                rst_cnt = 5'd0;
+                sys_rst = 1'b1;
+            } else if !rst_cnt[4] {
+                rst_cnt = rst_cnt + 5'd1;
+                sys_rst = 1'b1;
+            } else {
+                sys_rst = 1'b0;
+            }
+        }
+    }
+
+    always_ff (sys_clk) {
+        if sys_rst {
+            phy_cnt = 0 as PHY_RST_LOG2 + 2;
+        } else if !phy_cnt[PHY_RST_LOG2 + 1] {
+            phy_cnt = phy_cnt + 1;
+        }
+    }
+    // The PHY stops its reference clock while in reset, so the reset pin is
+    // driven from the system domain, never from the RMII clock domain; the
+    // RMII-domain reset outlasts it so that it is seen with the clock running.
+    assign rmii_rstn = !sys_rst && (phy_cnt[PHY_RST_LOG2] || phy_cnt[PHY_RST_LOG2 + 1]);
+    assign rmii_mdc  = 1'b0;
+    let phy_dom_rst_req: logic = sys_rst || !phy_cnt[PHY_RST_LOG2 + 1];
+
+    var prst1: 'p logic;
+    var prst : 'p logic;
+    unsafe (cdc) {
+        always_ff (rmii_txclk) {
+            prst1 = phy_dom_rst_req;
+            prst  = prst1;
+        }
+    }
+
+    // ---- RMII adapters ----
+    var rx_bvalid: 'p logic   ;
+    var rx_bdata : 'p logic<8>;
+    var rx_end   : 'p logic   ;
+    var rx_err   : 'p logic   ;
+    var tx_ce    : 'p logic   ;
+    var tx_ben   : 'p logic   ;
+    var tx_bdata : 'p logic<8>;
+
+    inst u_rmii_rx: eth_mac::RmiiRx (
+        i_clk   : rmii_txclk ,
+        i_rst   : prst       ,
+        i_rxd   : rmii_rxd   ,
+        i_crs_dv: rmii_crs_dv,
+        o_bvalid: rx_bvalid  ,
+        o_bdata : rx_bdata   ,
+        o_end   : rx_end     ,
+        o_err   : rx_err     ,
+    );
+
+    inst u_rmii_tx: eth_mac::RmiiTx (
+        i_clk  : rmii_txclk,
+        i_rst  : prst      ,
+        o_ce   : tx_ce     ,
+        i_ben  : tx_ben    ,
+        i_bdata: tx_bdata  ,
+        o_txd  : rmii_txd  ,
+        o_txen : rmii_txen ,
+    );
+
+    // ---- core ----
+    var row     : logic<5>;
+    var r       : logic<4>;
+    var g       : logic<4>;
+    var b       : logic<4>;
+    var oe      : logic   ;
+    var lat     : logic   ;
+    var hclk    : logic   ;
+    var frame   : logic   ;
+    var ev_video: logic   ;
+    var ev_net  : logic   ;
+    var ev_drop : logic   ;
+    var ev_flip : logic   ;
+
+    unsafe (cdc) {
+        inst u_core: EthernetHub75Core #(
+            WIDTH         : 128           ,
+            HEIGHT        : 128           ,
+            SCAN_ROWS     : 32            ,
+            COMPONENT_BITS: COMPONENT_BITS,
+            CLOCK_DIVIDER : CLOCK_DIVIDER ,
+            CLK_LOW_EXTRA : CLK_LOW_EXTRA ,
+            CHAIN_REVERSE : CHAIN_REVERSE ,
+        ) (
+            i_clk      : sys_clk   ,
+            i_rst      : sys_rst   ,
+            i_rx_clk   : rmii_txclk,
+            i_rx_rst   : prst      ,
+            i_rx_bvalid: rx_bvalid ,
+            i_rx_bdata : rx_bdata  ,
+            i_rx_end   : rx_end    ,
+            i_rx_err   : rx_err    ,
+            i_tx_clk   : rmii_txclk,
+            i_tx_rst   : prst      ,
+            i_tx_ce    : tx_ce     ,
+            o_tx_ben   : tx_ben    ,
+            o_tx_bdata : tx_bdata  ,
+            i_dclk     : sys_clk   ,
+            i_drst     : sys_rst   ,
+            o_row      : row       ,
+            o_r        : r         ,
+            o_g        : g         ,
+            o_b        : b         ,
+            o_oe       : oe        ,
+            o_lat      : lat       ,
+            o_hclk     : hclk      ,
+            o_frame    : frame     ,
+            o_ev_video : ev_video  ,
+            o_ev_net   : ev_net    ,
+            o_ev_drop  : ev_drop   ,
+            o_ev_flip  : ev_flip   ,
+        );
+    }
+
+    assign hub75io_clk     = hclk;
+    assign hub75io_r       = r[1:0];
+    assign hub75io_g       = g[1:0];
+    assign hub75io_b       = b[1:0];
+    assign hub75io_row_a   = row[0];
+    assign hub75io_row_b   = row[1];
+    assign hub75io_row_c   = row[2];
+    assign hub75io_row_d   = row[3];
+    assign hub75io_row_e   = row[4];
+    assign hub75io_lat     = lat;
+    assign hub75io_oe      = oe;
+    assign hub75io_clk_2   = hclk;
+    assign hub75io_r_2     = r[3:2];
+    assign hub75io_g_2     = g[3:2];
+    assign hub75io_b_2     = b[3:2];
+    assign hub75io_row_a_2 = row[0];
+    assign hub75io_row_b_2 = row[1];
+    assign hub75io_row_c_2 = row[2];
+    assign hub75io_row_d_2 = row[3];
+    assign hub75io_row_e_2 = row[4];
+    assign hub75io_lat_2   = lat;
+    assign hub75io_oe_2    = oe;
+
+    // ---- LEDs: pulse stretchers (~85 ms) ----
+    var frame_cnt: logic<8>     ;
+    var stretch  : logic<22> [4];
+    let events   : logic<4>      = {ev_flip, ev_drop, ev_net, ev_video};
+
+    always_ff (sys_clk) {
+        if sys_rst {
+            frame_cnt = 8'd0;
+            stretch   = '{22'd0, 22'd0, 22'd0, 22'd0};
+        } else {
+            if frame {
+                frame_cnt = frame_cnt + 8'd1;
+            }
+            for i in 0..4 {
+                if events[i] {
+                    stretch[i] = '1;
+                } else if stretch[i] != 22'd0 {
+                    stretch[i] = stretch[i] - 22'd1;
+                }
+            }
+        }
+    }
+
+    assign led = ~{
+        lock_s2, stretch[3] != 22'd0, stretch[2] != 22'd0, stretch[1] != 22'd0, stretch[0] != 22'd0, frame_cnt[7]
+    };
+
+    let _unused: logic = rmii_mdio;
+}

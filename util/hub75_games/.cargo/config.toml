@@ -1,0 +1,4 @@
+# Raspberry Pi 4 (64-bit OS): static binaries linked by the lld that comes
+# with Rust, no cross gcc needed (rustup target add aarch64-unknown-linux-musl)
+[target.aarch64-unknown-linux-musl]
+linker = "rust-lld"

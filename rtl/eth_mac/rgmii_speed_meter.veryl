@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+//
+// RgmiiSpeedMeter: tells the link speed from the RXC frequency (125 / 25 /
+// 2.5 MHz), so that no MDIO polling is needed.
+//
+// RXC / 16 is carried into the system clock and its edges are counted
+// over 4096 system clocks: with a 125 MHz system clock that is ~512 edges
+// at 1000 Mb/s, ~102 at 100 and ~10 at 10.
+module RgmiiSpeedMeter (
+    i_rxc  : input  'rx clock   ,
+    i_clk  : input  's clock   ,
+    i_rst  : input  's logic   ,
+    o_speed: output 's logic<2>, // 2: 1000, 1: 100, 0: 10 Mb/s (or no RXC)
+) {
+    var rx_div: 'rx logic<4> ;
+    var s1    : 's logic    ;
+    var s2    : 's logic    ;
+    var s3    : 's logic    ;
+    var win   : 's logic<12>;
+    var edges : 's logic<10>;
+    var speed : 's logic<2> ;
+
+    assign o_speed = speed;
+
+    always_ff (i_rxc) {
+        rx_div = rx_div + 4'd1;
+    }
+
+    unsafe (cdc) {
+        always_ff (i_clk) {
+            s1 = rx_div[3];
+        }
+    }
+
+    always_ff (i_clk) {
+        s2 = s1;
+        s3 = s2;
+        if i_rst {
+            win   = 12'd0;
+            edges = 10'd0;
+            speed = 2'd2;
+        } else {
+            win = win + 12'd1;
+            if win == 12'hfff {
+                speed = if edges >= 10'd256 ? 2'd2 : if edges >= 10'd32 ? 2'd1 : 2'd0;
+                edges = 10'd0;
+            } else if s2 != s3 && edges != 10'h3ff {
+                edges = edges + 10'd1;
+            }
+        }
+    }
+}

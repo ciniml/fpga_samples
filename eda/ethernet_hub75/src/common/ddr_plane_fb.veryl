@@ -1,0 +1,673 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+//
+// DdrPlaneFb: the frame buffer of ethernet_hub75 in external DRAM as bit
+// planes (no row buffer): pixels are turned into plane words when they are
+// written (GmtCornerTurn, the GW3A GMT or its fabric equivalent), and the
+// display (Hub75PlaneStream) fetches one bit plane of one scan row at a
+// time.
+//
+//   UdpVideoWriter (lane / {row, chain_x} / RGB after the colour tables, 's)
+//     ─ GmtCornerTurn (32 pixels → plane words, plane by plane) ─ bursts
+//     ─ FbAfifo ('s → 'm) ─┐
+//                          ├─ DRAM port ('m)
+//   Hub75PlaneStream ← plane buffer fill ← read FIFO ← plane fetch ─┘
+//
+// DRAM layout: one 16-byte burst holds, for one scan row r, lane l, word w
+// (= chain_x / 32) and plane p, the R, G and B words (bit i = chain_x % 32
+// == i): {32'd0, R, G, B}. Burst address = {bank, r, l, w, p}, so the
+// bursts of a 32-pixel group (all planes) are consecutive (a page, one
+// burst each), and one plane of a scan row is 2 NUM_LANES bursts 2^P apart
+// (three pages for 12 lanes). The DRAM has no data mask, which is why a
+// burst carries whole words only (a quarter is padding).
+//
+// Frame flips: GmtCornerTurn passes the writer's flip request on after the
+// last group; a flip entry goes through the FIFO behind the last bursts and
+// is taken when the display asks for the MSB plane of row 0 (the same
+// handshake as DdrFb: o_flip_busy until then).
+//
+// Plane fetch: 2 NUM_LANES reads (all issued at once: the read FIFO holds
+// a whole plane), unpacked FILL_NIBS nibbles per clock into the plane
+// buffer (8 nibbles per word, R / G / B of one lane at once): 8 /
+// FILL_NIBS clocks per burst.
+//
+// Start-up and the memory test are those of DdrFb (the clear covers both
+// banks of this layout).
+module DdrPlaneFb #(
+    param LANE_WIDTH    : u32 = 64                                                 , // chain length of a lane (power of two, >= 32)
+    param NUM_LANES     : u32 = 12                                                 ,
+    param SCAN_ROWS     : u32 = 32                                                 ,
+    param COMPONENT_BITS: u32 = 6                                                  ,
+    param CHAIN_REVERSE : bit = 0                                                  ,
+    param USE_GMT       : bit = 1                                                  , // 0: transpose in fabric
+    param MEM_ADDR_BITS : u32 = 21                                                 ,
+    param BIST_BURSTS   : u32 = 1 << 21                                            ,
+    param FIFO_AW       : u32 = 8                                                  ,
+    param FILL_NIBS     : u32 = 2                                                  , // nibbles per fill write (1, 2, 4)
+    const LANE_BITS     : u32 = if NUM_LANES >: 1 ? $clog2(NUM_LANES) : 1          ,
+    const LX_BITS       : u32 = $clog2(LANE_WIDTH)                                 ,
+    const ROW_BITS      : u32 = $clog2(SCAN_ROWS)                                  ,
+    const PLANE_BITS    : u32 = if COMPONENT_BITS >: 1 ? $clog2(COMPONENT_BITS) : 1,
+    const PX_BITS       : u32 = 3 * COMPONENT_BITS                                 ,
+    const NIB_BITS      : u32 = $clog2(FILL_NIBS)                                  ,
+) (
+    // ---- system: pixels from UdpVideoWriter ----
+    i_clk      : input  's clock                    ,
+    i_rst      : input  's logic                    ,
+    i_we       : input  's logic                    ,
+    i_lane     : input  's logic<LANE_BITS>         ,
+    i_addr     : input  's logic<ROW_BITS + LX_BITS>, // {scan_row, chain_x}
+    i_rgb      : input  's logic<PX_BITS>           ,
+    i_flip_req : input  's logic                    ,
+    o_flip_busy: output 's logic                    ,
+    o_overflow : output 's logic                    , // pulse: a burst was dropped (FIFO full)
+
+    // ---- DRAM port ----
+    i_mclk      : input  'm clock               ,
+    i_mrst      : input  'm logic               ,
+    i_mem_init  : input  'm logic               ,
+    o_mreq_valid: output 'm logic               ,
+    i_mreq_ready: input  'm logic               ,
+    o_mreq_we   : output 'm logic               ,
+    o_mreq_addr : output 'm logic<MEM_ADDR_BITS>,
+    o_mreq_wdata: output 'm logic<128>          ,
+    i_mrd_valid : input  'm logic               ,
+    i_mrd_data  : input  'm logic<128>          ,
+
+    // ---- plane buffer fill (Hub75PlaneStream, 'm) ----
+    i_fetch_req  : input  'm logic             ,
+    i_fetch_row  : input  'm logic<5>          ,
+    i_fetch_plane: input  'm logic<PLANE_BITS> ,
+    i_fetch_buf  : input  'm logic             ,
+    o_fetch_done : output 'm logic             ,
+    o_fill_we    : output 'm logic             ,
+    o_fill_lane  : output 'm logic<LANE_BITS>  ,
+    o_fill_addr  : output 'm logic<LX_BITS - 1 - NIB_BITS>, // {buffer, chain_x / (4 FILL_NIBS)}
+    o_fill_data  : output 'm logic<12 * FILL_NIBS>       , // groups of {R, G, B} nibbles
+
+    // ---- status ('m) ----
+    o_ready       : output 'm logic                      ,
+    o_bist_errors : output 'm logic<16>                  ,
+    o_bist_first  : output 'm logic<MEM_ADDR_BITS>       ,
+    o_bist_pass   : output 'm logic<48>                  ,
+    o_bist_mask   : output 'm logic<128>                 ,
+    o_bist_parity : output 'm logic<32>                  ,
+    i_bist_restart: input  'm logic                = 1'b0,
+) {
+    const XW_BITS : u32 = LX_BITS - 5;
+    const FB_SHIFT: u32 = ROW_BITS + LANE_BITS + XW_BITS + PLANE_BITS; // bank b at b << FB_SHIFT
+    const FB_BITS : u32 = FB_SHIFT + 1;
+    const DW      : u32 = 1 + FB_BITS + 128; // {flip, address, data}
+    const NREAD   : u32 = NUM_LANES << XW_BITS; // bursts per plane fetch
+    const RD_BITS : u32 = $clog2(NREAD + 1);
+    const RQ_BITS : u32 = if NREAD >: 32 ? $clog2(NREAD) : 5; // read FIFO: a whole plane
+    const RQ_DEPTH: u32 = 1 << RQ_BITS;
+    const ST_BITS : u32 = 3 - NIB_BITS; // unpack steps per burst
+
+    // ==================================================================
+    // System domain: corner turn, bursts, flip
+    // ==================================================================
+    var req_tog: 's logic;
+    var ack_s1 : 's logic;
+    var ack_s2 : 's logic;
+    var ack_tog: 'm logic; // = front bank
+
+    let wbank: 's logic = ~ack_s2;
+
+    var pw_we    : 's logic                    ;
+    var pw_lane  : 's logic<LANE_BITS>         ;
+    var pw_colour: 's logic<2>                 ;
+    var pw_plane : 's logic<PLANE_BITS>        ;
+    var pw_addr  : 's logic<ROW_BITS + XW_BITS>;
+    var pw_data  : 's logic<32>                ;
+    var pw_flip  : 's logic                    ;
+    var ct_busy  : 's logic                    ;
+
+    inst turn: GmtCornerTurn #(
+        SCAN_ROWS     : SCAN_ROWS     ,
+        CHAIN_LEN     : LANE_WIDTH    ,
+        NUM_LANES     : NUM_LANES     ,
+        COMPONENT_BITS: COMPONENT_BITS,
+        CHAIN_REVERSE : CHAIN_REVERSE ,
+        USE_GMT       : USE_GMT       ,
+        PLANE_MAJOR   : 1             ,
+    ) (
+        i_clk     : i_clk     ,
+        i_rst     : i_rst     ,
+        i_we      : i_we      ,
+        i_lane    : i_lane    ,
+        i_addr    : i_addr    ,
+        i_rgb     : i_rgb     ,
+        i_flip_req: i_flip_req,
+        o_busy    : ct_busy   ,
+        o_we      : pw_we     ,
+        o_lane    : pw_lane   ,
+        o_colour  : pw_colour ,
+        o_plane   : pw_plane  ,
+        o_addr    : pw_addr   ,
+        o_data    : pw_data   ,
+        o_flip_req: pw_flip   ,
+    );
+
+    // plane-major order: B, G, R of a plane in turn; the burst goes out
+    // with R
+    var w_b      : 's logic<32>     ;
+    var w_g      : 's logic<32>     ;
+    var push     : 's logic         ;
+    var push_flip: 's logic         ;
+    var push_addr: 's logic<FB_BITS>;
+    var push_data: 's logic<128>    ;
+    var flip_wait: 's logic         ; // flip entry still to be pushed
+    var overflow : 's logic         ;
+    var s_tready : 's logic         ;
+
+    assign o_flip_busy = ct_busy || flip_wait || push_flip || (req_tog != ack_s2);
+    assign o_overflow  = overflow;
+
+    unsafe (cdc) {
+        always_ff (i_clk) {
+            if i_rst {
+                ack_s1 = 1'b0;
+                ack_s2 = 1'b0;
+            } else {
+                ack_s1 = ack_tog;
+                ack_s2 = ack_s1;
+            }
+        }
+    }
+
+    always_ff (i_clk) {
+        if i_rst {
+            req_tog   = 1'b0;
+            w_b       = 32'd0;
+            w_g       = 32'd0;
+            push      = 1'b0;
+            push_flip = 1'b0;
+            push_addr = 0;
+            push_data = 128'd0;
+            flip_wait = 1'b0;
+            overflow  = 1'b0;
+        } else {
+            overflow = 1'b0;
+            if push && s_tready {
+                push = 1'b0;
+                if push_flip {
+                    push_flip = 1'b0;
+                    req_tog   = ~req_tog;
+                }
+            }
+            if pw_flip {
+                flip_wait = 1'b1;
+            }
+            if pw_we {
+                case pw_colour {
+                    2'd0: {
+                        w_b = pw_data;
+                    }
+                    2'd1: {
+                        w_g = pw_data;
+                    }
+                    default: {
+                        if push {
+                            overflow = 1'b1; // the previous burst is still waiting
+                        } else {
+                            push      = 1'b1;
+                            push_flip = 1'b0;
+                            // {bank, r, l, w, p}
+                            push_addr = {
+                                wbank, pw_addr[ROW_BITS + XW_BITS - 1:XW_BITS], pw_lane, pw_addr[XW_BITS - 1:0],
+                                pw_plane
+                            };
+                            push_data = {32'd0, pw_data, w_g, w_b};
+                        }
+                    }
+                }
+            } else if flip_wait && !push && !pw_flip {
+                // behind the last burst
+                flip_wait = 1'b0;
+                push      = 1'b1;
+                push_flip = 1'b1;
+            }
+        }
+    }
+
+    // ==================================================================
+    // FIFO
+    // ==================================================================
+    var f_valid: 'm logic    ;
+    var f_data : 'm logic<DW>;
+    var f_ready: 'm logic    ;
+
+    inst fifo: FbAfifo #(
+        DW: DW     ,
+        AW: FIFO_AW,
+    ) (
+        i_wclk  : i_clk                            ,
+        i_wrst  : i_rst                            ,
+        s_tvalid: push                             ,
+        s_tdata : {push_flip, push_addr, push_data},
+        s_tready: s_tready                         ,
+        o_wempty: _                                ,
+        i_rclk  : i_mclk                           ,
+        i_rrst  : i_mrst                           ,
+        m_tvalid: f_valid                          ,
+        m_tdata : f_data                           ,
+        m_tready: f_ready                          ,
+        o_rlevel: _                                ,
+    );
+
+    let f_flip: 'm logic          = f_data[DW - 1];
+    let f_addr: 'm logic<FB_BITS> = f_data[128+:FB_BITS];
+
+    // ==================================================================
+    // Memory domain
+    // ==================================================================
+    enum Mode {
+        INIT,
+        W0,
+        R0,
+        W1,
+        R1,
+        R2,
+        CLEAR,
+        RUN,
+    }
+    var mode        : 'm Mode                        ;
+    var bcnt        : 'm logic<MEM_ADDR_BITS + 1>    ;
+    var rcnt        : 'm logic<MEM_ADDR_BITS + 1>    ;
+    var errors      : 'm logic<16>                   ;
+    var first       : 'm logic<MEM_ADDR_BITS>        ;
+    var flip_pend   : 'm logic                       ;
+    var perr        : 'm logic<16>                [3];
+    var emask       : 'm logic<128>                  ;
+    var err_even    : 'm logic<16>                   ;
+    var err_odd     : 'm logic<16>                   ;
+    var restart_pend: 'm logic                       ;
+
+    assign o_ready       = mode == Mode::RUN;
+    assign o_bist_errors = errors;
+    assign o_bist_first  = first;
+    assign o_bist_pass   = {perr[0], perr[1], perr[2]};
+    assign o_bist_mask   = emask;
+    assign o_bist_parity = {err_even, err_odd};
+
+    // memory test data (as DdrFb)
+    function bist_pattern (
+        a   : input logic<MEM_ADDR_BITS>,
+        pass: input logic               ,
+    ) -> logic<128> {
+        var v : logic<128>;
+        var x : logic<32> ;
+        var bt: logic<16> ;
+        x  = a as 32;
+        for b in 0..8 {
+            bt = x[15:0] ^ {x[23:16], b[2:0], 5'b10110};
+            if pass {
+                bt = ~{bt[14:0], bt[15]};
+                bt = (bt << b[3:0]) | (bt >> (16 - b[4:0]));
+            }
+            v[16 * b+:16] = bt;
+        }
+        return v;
+    }
+
+    let pass      : 'm logic                    = mode == Mode::W1 || mode == Mode::R1 || mode == Mode::R2;
+    let bist_last : 'm logic<MEM_ADDR_BITS + 1> = (BIST_BURSTS - 1) as MEM_ADDR_BITS + 1;
+    let clear_last: 'm logic<MEM_ADDR_BITS + 1> = ((2 << FB_SHIFT) - 1) as MEM_ADDR_BITS + 1;
+    let rd_expect : 'm logic<128>               = bist_pattern(rcnt[MEM_ADDR_BITS - 1:0], pass);
+
+    // memory test compare, pipelined (as DdrFb)
+    var c1_valid: 'm logic               ;
+    var c1_data : 'm logic<128>          ;
+    var c1_exp  : 'm logic<128>          ;
+    var c1_pass : 'm logic<2>            ;
+    var c1_addr : 'm logic<MEM_ADDR_BITS>;
+    var c2_bad  : 'm logic               ;
+    var c2_diff : 'm logic<128>          ;
+    var c2_pass : 'm logic<2>            ;
+    var c2_addr : 'm logic<MEM_ADDR_BITS>;
+    var c2_even : 'm logic               ;
+    var c2_odd  : 'm logic               ;
+    let c1_diff : 'm logic<128>           = c1_data ^ c1_exp;
+    var c1_even : 'm logic               ;
+    var c1_odd  : 'm logic               ;
+    always_comb {
+        c1_even = 1'b0;
+        c1_odd  = 1'b0;
+        for b in 0..8 {
+            if c1_diff[16 * b+:16] != 16'd0 {
+                if b[0] {
+                    c1_odd = 1'b1;
+                } else {
+                    c1_even = 1'b1;
+                }
+            }
+        }
+    }
+
+    // ---- plane fetch ----
+    var fetching : 'm logic            ;
+    var f_row    : 'm logic<ROW_BITS>  ;
+    var f_plane  : 'm logic<PLANE_BITS>;
+    var f_buf    : 'm logic            ;
+    var zero_fill: 'm logic            ;
+    var iss_i    : 'm logic<RD_BITS>   ; // bursts issued
+    var rq_wptr  : 'm logic<RQ_BITS + 1>;
+    var rq_rptr  : 'm logic<RQ_BITS + 1>;
+    let rq_count : 'm logic<RQ_BITS + 1> = rq_wptr - rq_rptr;
+    let iss_more : 'm logic             = iss_i != NREAD as RD_BITS;
+    // burst iss_i = lane iss_i >> XW_BITS, word iss_i % 2^XW_BITS
+    let iss_addr: 'm logic<FB_BITS> = {ack_tog, f_row, iss_i[XW_BITS + LANE_BITS - 1:0], f_plane};
+    let do_read : 'm logic          = mode == Mode::RUN && fetching && !zero_fill && iss_more;
+
+    // ---- request mux ----
+    var req_valid: 'm logic               ;
+    var req_we   : 'm logic               ;
+    var req_addr : 'm logic<MEM_ADDR_BITS>;
+    var req_wdata: 'm logic<128>          ;
+    let req_go   : 'm logic                = req_valid && i_mreq_ready;
+    always_comb {
+        req_valid = 1'b0;
+        req_we    = 1'b0;
+        req_addr  = 0;
+        req_wdata = 128'd0;
+        f_ready   = 1'b0;
+        case mode {
+            Mode::W0, Mode::W1: {
+                req_valid = 1'b1;
+                req_we    = 1'b1;
+                req_addr  = bcnt[MEM_ADDR_BITS - 1:0];
+                req_wdata = bist_pattern(bcnt[MEM_ADDR_BITS - 1:0], pass);
+            }
+            Mode::R0, Mode::R1, Mode::R2: {
+                req_valid = bcnt <: bist_last + 1;
+                req_addr  = bcnt[MEM_ADDR_BITS - 1:0];
+            }
+            Mode::CLEAR: {
+                req_valid = 1'b1;
+                req_we    = 1'b1;
+                req_addr  = bcnt[MEM_ADDR_BITS - 1:0];
+            }
+            Mode::RUN: {
+                if f_valid && f_flip {
+                    f_ready = 1'b1; // a flip entry: no write
+                } else if do_read {
+                    req_valid = 1'b1;
+                    req_addr  = iss_addr as MEM_ADDR_BITS;
+                } else if f_valid {
+                    req_valid = 1'b1;
+                    req_we    = 1'b1;
+                    req_addr  = f_addr as MEM_ADDR_BITS;
+                    req_wdata = f_data[127:0];
+                    f_ready   = i_mreq_ready;
+                }
+            }
+            default: {}
+        }
+    }
+    assign o_mreq_valid = req_valid;
+    assign o_mreq_we    = req_we;
+    assign o_mreq_addr  = req_addr;
+    assign o_mreq_wdata = req_wdata;
+
+    let flip_pop: 'm logic = mode == Mode::RUN && f_valid && f_flip;
+
+    // ---- read FIFO (block RAM, registered read) ----
+    #[sv("ram_style=\"block\"")]
+    var rq_mem: 'm logic<128> [RQ_DEPTH];
+    var rq_q  : 'm logic<128>           ;
+    always_ff (i_mclk) {
+        if i_mrd_valid && mode == Mode::RUN {
+            rq_mem[rq_wptr[RQ_BITS - 1:0]] = i_mrd_data;
+        }
+        rq_q = rq_mem[rq_rptr[RQ_BITS - 1:0]];
+    }
+
+    // ---- unpacker: a burst = R, G, B words of one lane / word, 8 nibbles ----
+    var up_i    : 'm logic<RD_BITS>    ; // burst being unpacked
+    var up_nib  : 'm logic<ST_BITS>    ; // step: nibbles FILL_NIBS up_nib ..
+    var up_load : 'm logic             ;
+    var up_have : 'm logic             ;
+    var up_more : 'm logic             ;
+    var cur     : 'm logic<128>        ;
+    var fill_we : 'm logic             ;
+    var fill_ln : 'm logic<LANE_BITS>  ;
+    var fill_ad : 'm logic<LX_BITS - 1 - NIB_BITS>;
+    var fill_d  : 'm logic<12 * FILL_NIBS>        ;
+    var fill_end: 'm logic             ;
+    var done_q  : 'm logic             ;
+
+    assign o_fill_we    = fill_we;
+    assign o_fill_lane  = fill_ln;
+    assign o_fill_addr  = fill_ad;
+    assign o_fill_data  = fill_d;
+    assign o_fetch_done = done_q;
+
+    let up_emit: 'm logic = up_more && (up_have || zero_fill);
+    let up_end : 'm logic = up_nib == '1;
+    let up_last: 'm logic = up_end && up_i == (NREAD - 1) as RD_BITS;
+    // the nibbles of this step: group n = nibble FILL_NIBS up_nib + n
+    var up_d: 'm logic<12 * FILL_NIBS>;
+    always_comb {
+        for n in 0..FILL_NIBS {
+            up_d[12 * n+:12] = {
+                cur[64 + ((up_nib << NIB_BITS) + n) * 4+:4], cur[32 + ((up_nib << NIB_BITS) + n) * 4+:4],
+                cur[((up_nib << NIB_BITS) + n) * 4+:4]
+            };
+        }
+    }
+
+    always_ff (i_mclk) {
+        if i_mrst {
+            mode         = Mode::INIT;
+            bcnt         = 0;
+            rcnt         = 0;
+            errors       = 16'd0;
+            first        = 0;
+            perr[0]      = 16'd0;
+            perr[1]      = 16'd0;
+            perr[2]      = 16'd0;
+            emask        = 128'd0;
+            err_even     = 16'd0;
+            err_odd      = 16'd0;
+            c1_valid     = 1'b0;
+            c2_bad       = 1'b0;
+            restart_pend = 1'b0;
+            flip_pend    = 1'b0;
+            ack_tog      = 1'b0;
+            fetching     = 1'b0;
+            f_row        = 0;
+            f_plane      = 0;
+            f_buf        = 1'b0;
+            zero_fill    = 1'b0;
+            iss_i        = 0;
+            rq_wptr      = 0;
+            rq_rptr      = 0;
+            up_i         = 0;
+            up_nib       = 0;
+            up_load      = 1'b0;
+            up_have      = 1'b0;
+            up_more      = 1'b0;
+            cur          = 128'd0;
+            fill_we      = 1'b0;
+            fill_ln      = 0;
+            fill_ad      = 0;
+            fill_d       = 0;
+            fill_end     = 1'b0;
+            done_q       = 1'b0;
+        } else {
+            // ---- start-up: memory test, clear ----
+            case mode {
+                Mode::INIT: {
+                    if i_mem_init {
+                        bcnt = 0;
+                        rcnt = 0;
+                        mode = if BIST_BURSTS == 0 ? Mode::CLEAR : Mode::W0;
+                    }
+                }
+                Mode::W0, Mode::W1: {
+                    if req_go {
+                        if bcnt == bist_last {
+                            bcnt = 0;
+                            rcnt = 0;
+                            mode = if mode == Mode::W0 ? Mode::R0 : Mode::R1;
+                        } else {
+                            bcnt = bcnt + 1;
+                        }
+                    }
+                }
+                Mode::R0, Mode::R1, Mode::R2: {
+                    if req_go {
+                        bcnt = bcnt + 1;
+                    }
+                    if i_mrd_valid {
+                        if rcnt == bist_last {
+                            bcnt = 0;
+                            rcnt = 0;
+                            mode = case mode {
+                                Mode::R0: Mode::W1,
+                                Mode::R1: Mode::R2,
+                                default : Mode::CLEAR,
+                            };
+                        } else {
+                            rcnt = rcnt + 1;
+                        }
+                    }
+                }
+                Mode::CLEAR: {
+                    if req_go {
+                        if bcnt == clear_last {
+                            mode = Mode::RUN;
+                        } else {
+                            bcnt = bcnt + 1;
+                        }
+                    }
+                }
+                Mode::RUN: {
+                    if flip_pop {
+                        flip_pend = 1'b1;
+                    }
+                    if restart_pend && !fetching && !i_fetch_req && BIST_BURSTS != 0 {
+                        restart_pend = 1'b0;
+                        bcnt         = 0;
+                        rcnt         = 0;
+                        errors       = 16'd0;
+                        first        = 0;
+                        perr[0]      = 16'd0;
+                        perr[1]      = 16'd0;
+                        perr[2]      = 16'd0;
+                        emask        = 128'd0;
+                        err_even     = 16'd0;
+                        err_odd      = 16'd0;
+                        mode         = Mode::W0;
+                    }
+                }
+                default: {}
+            }
+
+            // ---- memory test compare ----
+            c1_valid = i_mrd_valid && (mode == Mode::R0 || mode == Mode::R1 || mode == Mode::R2);
+            c1_data  = i_mrd_data;
+            c1_exp   = rd_expect;
+            c1_pass  = case mode {
+                Mode::R0: 2'd0,
+                Mode::R1: 2'd1,
+                default : 2'd2,
+            };
+            c1_addr = rcnt[MEM_ADDR_BITS - 1:0];
+            c2_bad  = c1_valid && c1_diff != 128'd0;
+            c2_diff = c1_diff;
+            c2_pass = c1_pass;
+            c2_addr = c1_addr;
+            c2_even = c1_even;
+            c2_odd  = c1_odd;
+            if c2_bad {
+                if errors == 16'd0 {
+                    first = c2_addr;
+                }
+                if errors != 16'hffff {
+                    errors = errors + 16'd1;
+                }
+                if perr[c2_pass] != 16'hffff {
+                    perr[c2_pass] = perr[c2_pass] + 16'd1;
+                }
+                emask = emask | c2_diff;
+                if c2_even && err_even != 16'hffff {
+                    err_even = err_even + 16'd1;
+                }
+                if c2_odd && err_odd != 16'hffff {
+                    err_odd = err_odd + 16'd1;
+                }
+            }
+
+            if i_bist_restart {
+                restart_pend = 1'b1;
+            }
+
+            // ---- plane fetch: start ----
+            if i_fetch_req {
+                fetching  = 1'b1;
+                f_row     = i_fetch_row[ROW_BITS - 1:0];
+                f_plane   = i_fetch_plane;
+                f_buf     = i_fetch_buf;
+                zero_fill = mode != Mode::RUN;
+                iss_i     = 0;
+                up_i      = 0;
+                up_nib    = 0;
+                up_more   = 1'b1;
+                up_have   = 1'b0;
+                // the frame is chosen at the MSB plane of row 0
+                if i_fetch_row == 5'd0 && i_fetch_plane == (COMPONENT_BITS - 1) as PLANE_BITS && flip_pend
+                    && !flip_pop {
+                    flip_pend = 1'b0;
+                    ack_tog   = ~ack_tog;
+                }
+            }
+
+            // ---- plane fetch: reads ----
+            if do_read && req_go {
+                iss_i = iss_i + 1;
+            }
+            if i_mrd_valid && mode == Mode::RUN {
+                rq_wptr = rq_wptr + 1;
+            }
+
+            // ---- unpacker ----
+            // the next burst is read while the last nibble of the current
+            // one goes out (no gap: 8 / FILL_NIBS clocks per burst)
+            if up_load {
+                cur     = rq_q;
+                up_have = 1'b1;
+                up_load = 1'b0;
+                rq_rptr = rq_rptr + 1;
+            } else if up_more && !zero_fill && rq_count != 0 && (!up_have || up_nib == ((1 << ST_BITS) - 2) as ST_BITS) {
+                up_load = 1'b1;
+            }
+
+            fill_we  = 1'b0;
+            fill_end = 1'b0;
+            if up_emit {
+                fill_we  = 1'b1;
+                fill_ln  = up_i[XW_BITS + LANE_BITS - 1:XW_BITS];
+                fill_ad  = {f_buf, up_i[XW_BITS - 1:0], up_nib};
+                fill_d   = if zero_fill ? 0 : up_d;
+                fill_end = up_last;
+                if up_end {
+                    up_nib  = 0;
+                    up_have = up_load; // the next burst lands in cur this clock
+                    if up_i == (NREAD - 1) as RD_BITS {
+                        up_more = 1'b0;
+                    } else {
+                        up_i = up_i + 1;
+                    }
+                } else {
+                    up_nib = up_nib + 1;
+                }
+            }
+            done_q = fill_end;
+            if done_q {
+                fetching = 1'b0;
+            }
+        }
+    }
+}

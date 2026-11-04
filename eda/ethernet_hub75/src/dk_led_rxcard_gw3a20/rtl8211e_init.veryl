@@ -1,0 +1,179 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+//
+// Rtl8211eInit: sets the RGMII clock delays of the RTL8211E PHYs over
+// MDIO, so that the design does not depend on the RXDLY / TXDLY strap
+// resistors (not documented for the board).
+//
+// After the start-up wait it reads PHY ID 1 (register 2) at every address
+// and, for each RTL8211E found (0x001C), forces both delays on through
+// extension page 0xa4 register 0x1c (bit 13: force, 12 / 11: the delays;
+// the Linux realtek driver's definitions, which disagree with its own
+// comment about which of 12 / 11 is RX, hence both are set the same) and
+// restarts autonegotiation. Both PHYs of the board share MDC / MDIO and
+// get the same setting.
+//
+// With the delays on, TXC leaves the FPGA edge-aligned with TXD and RXC
+// arrives centred in the RXD eye.
+module Rtl8211eInit #(
+    param WAIT_LOG2 : u32     = 23      , // start-up wait 2^N clocks (67 ms at 125 MHz)
+    param DELAY_BITS: bit<16> = 16'h3800, // register 0x1c bits 13:11
+    param MDC_HALF  : u32     = 32      ,
+) (
+    i_clk  : input  clock   ,
+    i_rst  : input  logic   ,
+    o_done : output logic   ,
+    o_count: output logic<2>, // RTL8211Es configured (saturating)
+    o_mdc  : output logic   ,
+    o_mdo  : output logic   ,
+    o_mdoe : output logic   ,
+    i_mdi  : input  logic   ,
+) {
+    enum State {
+        WAIT,
+        ISSUE,
+        RUN,
+        NEXT,
+        DONE,
+    }
+
+    // step 0 reads the ID; 1..6 configure a found PHY
+    const STP_ID  : logic<3> = 3'd0;
+    const STP_LAST: logic<3> = 3'd6;
+
+    var state : State               ;
+    var wait_c: logic<WAIT_LOG2 + 1>;
+    var addr  : logic<5>            ;
+    var stp   : logic<3>            ;
+    var reg_v : logic<16>           ; // register 0x1c as read
+    var start : logic               ;
+    var issued: logic               ;
+    var count : logic<2>            ;
+
+    var busy : logic    ;
+    var rdata: logic<16>;
+
+    var op_read: logic    ;
+    var op_reg : logic<5> ;
+    var op_data: logic<16>;
+
+    always_comb {
+        op_read = 1'b0;
+        op_reg  = 5'd0;
+        op_data = 16'd0;
+        case stp {
+            3'd0: {
+                op_read = 1'b1;
+                op_reg  = 5'h02;
+            }
+            3'd1: {
+                op_reg  = 5'h1f;
+                op_data = 16'h0007; // extension page access
+            }
+            3'd2: {
+                op_reg  = 5'h1e;
+                op_data = 16'h00a4; // extension page 0xa4
+            }
+            3'd3: {
+                op_read = 1'b1;
+                op_reg  = 5'h1c;
+            }
+            3'd4: {
+                op_reg  = 5'h1c;
+                op_data = (reg_v & ~16'h3800) | DELAY_BITS;
+            }
+            3'd5: {
+                op_reg  = 5'h1f;
+                op_data = 16'h0000; // back to page 0
+            }
+            default: {
+                op_reg  = 5'h00;
+                op_data = 16'h1340; // BMCR: autoneg on + restart, 1000 full
+            }
+        }
+    }
+
+    inst u_mdio: eth_mac::MdioMaster #(
+        HALF_PERIOD: MDC_HALF,
+    ) (
+        i_clk  : i_clk  ,
+        i_rst  : i_rst  ,
+        i_start: start  ,
+        i_read : op_read,
+        i_phy  : addr   ,
+        i_reg  : op_reg ,
+        i_wdata: op_data,
+        o_busy : busy   ,
+        o_rdata: rdata  ,
+        o_mdc  : o_mdc  ,
+        o_mdo  : o_mdo  ,
+        o_mdoe : o_mdoe ,
+        i_mdi  : i_mdi  ,
+    );
+
+    assign o_done  = state == State::DONE;
+    assign o_count = count;
+
+    always_ff {
+        if i_rst {
+            state  = State::WAIT;
+            wait_c = 0 as WAIT_LOG2 + 1;
+            addr   = 5'd0;
+            stp    = STP_ID;
+            reg_v  = 16'd0;
+            start  = 1'b0;
+            issued = 1'b0;
+            count  = 2'd0;
+        } else {
+            start = 1'b0;
+            case state {
+                State::WAIT: {
+                    wait_c = wait_c + 1;
+                    if wait_c[WAIT_LOG2] {
+                        state = State::ISSUE;
+                    }
+                }
+                State::ISSUE: {
+                    start  = 1'b1;
+                    issued = 1'b0;
+                    state  = State::RUN;
+                }
+                State::RUN: {
+                    // busy rises the clock after start
+                    issued = 1'b1;
+                    if issued && !busy {
+                        if stp == STP_ID {
+                            if rdata == 16'h001c {
+                                stp   = 3'd1;
+                                state = State::ISSUE;
+                            } else {
+                                state = State::NEXT;
+                            }
+                        } else if stp == STP_LAST {
+                            if count != 2'd3 {
+                                count = count + 2'd1;
+                            }
+                            state = State::NEXT;
+                        } else {
+                            if stp == 3'd3 {
+                                reg_v = rdata;
+                            }
+                            stp   = stp + 3'd1;
+                            state = State::ISSUE;
+                        }
+                    }
+                }
+                State::NEXT: {
+                    stp = STP_ID;
+                    if addr == 5'd31 {
+                        state = State::DONE;
+                    } else {
+                        addr  = addr + 5'd1;
+                        state = State::ISSUE;
+                    }
+                }
+                default: {}
+            }
+        }
+    }
+}

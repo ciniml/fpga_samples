@@ -1,0 +1,169 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+//
+// AudioI2s: the audio stream of EthService (AUDIO_PORT) to an I2S DAC /
+// amplifier (NS4168 of the M5Stack Atom SPK base: no MCLK, it locks to
+// BCLK).
+//
+//   - Payload bytes are 16-bit stereo frames, little endian, left first
+//     (ffmpeg -f s16le -ac 2); a packet start resets the byte count.
+//   - Frames go into a FIFO of 2^DEPTH_LOG2 (block RAM); when it is full
+//     they are dropped. Playback starts once START_LEVEL frames are in
+//     and stops (silence) when the FIFO runs dry, until it refills.
+//   - o_level is the number of frames buffered; o_report pulses every
+//     REPORT_EVERY frames played, for the level replies that pace the
+//     sender (it sends while the level leaves room for a packet).
+//   - I2S (Philips): BCLK = 32 fs from a phase accumulator on i_clk (edges
+//     on i_clk, jitter one i_clk period), LRCK low for the left slot and
+//     changing one BCLK before the MSB, 16-bit slots (the LSB goes out
+//     with the LRCK change), data changing on the falling edge of BCLK.
+//     16-bit slots like an ESP32 sends: with 32-bit slots and the sample
+//     at the front the NS4168 played everything at full volume (it seems
+//     to take the end of a long slot). MONO sends (L + R) / 2 in both
+//     slots (the NS4168 plays one slot).
+module AudioI2s #(
+    param CLK_HZ      : u32 = 125_000_000,
+    param RATE        : u32 = 48000      ,
+    param DEPTH_LOG2  : u32 = 11         ,
+    param START_LEVEL : u32 = 1024       ,
+    param REPORT_EVERY: u32 = 256        ,
+    param MONO        : bit = 1          ,
+) (
+    i_clk: input clock,
+    i_rst: input logic,
+
+    i_start: input logic   , // a packet begins
+    i_valid: input logic   ,
+    i_data : input logic<8>,
+
+    o_level  : output logic<16>,
+    o_report : output logic    ,
+    o_playing: output logic    ,
+
+    o_bclk: output logic,
+    o_lrck: output logic,
+    o_dout: output logic,
+) {
+    // BCLK edges (2 per BCLK period) as an accumulator carry
+    const INC: u64 = (64 * RATE * 64'h1_0000_0000) / CLK_HZ;
+    const AW : u32 = DEPTH_LOG2;
+
+    // ---- bytes to frames, into the FIFO ----
+    var bidx : logic<2>               ;
+    var hold : logic<24>              ;
+    var mem  : logic<32>     [1 << AW];
+    var wptr : logic<AW + 1>          ;
+    var rptr : logic<AW + 1>          ;
+    var rdata: logic<32>              ;
+    let level: logic<AW + 1>           = wptr - rptr;
+    let full : logic                   = level[AW];
+    let wr   : logic                   = i_valid && bidx == 2'd3 && !full;
+
+    always_ff {
+        if wr {
+            mem[wptr[AW - 1:0]] = {i_data, hold};
+        }
+        rdata = mem[rptr[AW - 1:0]];
+    }
+
+    // ---- I2S ----
+    var acc    : logic<32>;
+    var bclk   : logic    ;
+    var bit_cnt: logic<5> ; // BCLK periods in the frame, counted at falling edges
+    var lrck   : logic    ;
+    var dout   : logic    ;
+    var cur    : logic<32>; // {R, L} being sent
+    var nxt    : logic<32>;
+    var pop_d  : logic    ;
+    var playing: logic    ;
+    var played : logic<16>;
+    var report : logic    ;
+
+    let sum   : logic<33> = {1'b0, acc} + {1'b0, INC[31:0]};
+    let fall  : logic     = sum[32] && bclk;
+    let nb    : logic<5>  = bit_cnt + 5'd1;
+    // the bit that goes out: m = nb - 1 counts the frame's 32 data bits
+    // (the right LSB at nb = 0 is still of the frame in cur)
+    let m     : logic<5>  = bit_cnt;
+    let slot  : logic<16> = if m[4] ? cur[31:16] : cur[15:0];
+    let mono_s: logic<17> = {cur[15], cur[15:0]} + {cur[31], cur[31:16]};
+    let mono  : logic<16> = mono_s[16:1];
+    let sample: logic<16> = if MONO ? mono : slot;
+
+    assign o_level   = {1'b0 repeat 15 - AW, level};
+    assign o_report  = report;
+    assign o_playing = playing;
+    assign o_bclk    = bclk;
+    assign o_lrck    = lrck;
+    assign o_dout    = dout;
+
+    always_ff {
+        if i_rst {
+            bidx    = 2'd0;
+            hold    = 24'd0;
+            wptr    = '0;
+            rptr    = '0;
+            acc     = 32'd0;
+            bclk    = 1'b0;
+            bit_cnt = 5'd31;
+            lrck    = 1'b1;
+            dout    = 1'b0;
+            cur     = 32'd0;
+            nxt     = 32'd0;
+            pop_d   = 1'b0;
+            playing = 1'b0;
+            played  = 16'd0;
+            report  = 1'b0;
+        } else {
+            report = 1'b0;
+            if i_start {
+                bidx = 2'd0;
+            } else if i_valid {
+                hold[bidx * 8+:8] = i_data;
+                bidx              = bidx + 2'd1;
+                if wr {
+                    wptr = wptr + 1;
+                }
+            }
+            if !playing && level >= START_LEVEL {
+                playing = 1'b1;
+            }
+
+            // the frame popped a clock ago (rdata was read at the old rptr)
+            pop_d = 1'b0;
+            if pop_d {
+                nxt = rdata;
+            }
+
+            acc = sum[31:0];
+            if sum[32] {
+                bclk = !bclk;
+            }
+            if fall {
+                bit_cnt = nb;
+                lrck    = nb[4];
+                if nb == 5'd0 {
+                    // a new frame: the one fetched at bit 20 (silence if none)
+                    cur = nxt;
+                    nxt = 32'd0;
+                }
+                // MSB first, one BCLK after LRCK changes
+                dout = sample[4'd15 - m[3:0]];
+                if nb == 5'd20 {
+                    if playing && level != '0 {
+                        rptr  = rptr + 1;
+                        pop_d = 1'b1;
+                        if played == REPORT_EVERY - 1 {
+                            played = 16'd0;
+                            report = 1'b1;
+                        } else {
+                            played = played + 16'd1;
+                        }
+                    } else {
+                        playing = 1'b0;
+                    }
+                }
+            }
+        }
+    }
+}

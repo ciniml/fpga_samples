@@ -1,0 +1,437 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+//
+// HUB75 controller with N colour lanes fed one bit plane at a time: no
+// row buffer, for a frame buffer kept as bit planes in external DRAM.
+//
+// The row-scan / BCM engine and the lane outputs are those of Hub75Lanes.
+// Instead of a row the engine buffers one bit plane of one scan row (all
+// lanes and colours, CHAIN_LEN bits each), ping-pong, filled from another
+// clock domain (`'f`):
+//   - Before a plane is shifted out the engine waits until it is in its
+//     buffer and asks for the next plane (the next lower one, or the MSB
+//     plane of the next row): o_fetch_req (a pulse in the fill domain)
+//     with o_fetch_row / o_fetch_plane / o_fetch_buf. The filler writes
+//     that plane of every lane to buffer o_fetch_buf and pulses
+//     i_fetch_done. The request for a plane is made when the previous one
+//     starts, so the filler has at least a plane's shift time (CHAIN_LEN
+//     HUB75 clocks). Row 0's MSB plane starts a frame (the filler flips
+//     frames there).
+//   - The buffer of a lane is a small distributed RAM of FILL_NIBS
+//     12-bit groups = 4 bits each of R, G, B: word {buffer, chain_x / (4
+//     FILL_NIBS)} holds chain_x % (4 FILL_NIBS) = 4 n + i at bit i of the
+//     nibbles of group n ({R[3:0], G[3:0], B[3:0]} at 12 n). The filler
+//     writes a word at a time, the engine reads one word per shift and
+//     picks one bit per colour.
+pub module Hub75PlaneStream #(
+    param SCAN_ROWS     : u32 = 32                                                 , // rows sharing one row address (1/SCAN_ROWS scan, <= 32)
+    param CHAIN_LEN     : u32 = 128                                                , // shift cells per row (panel width × panels in the chain)
+    param NUM_LANES     : u32 = 4                                                  ,
+    param CLOCK_DIVIDER : u32 = 0                                                  , // HUB75 clk period = (2 + CLK_LOW_EXTRA) * (N+1) clocks
+    param CLK_LOW_EXTRA : u32 = 1                                                  ,
+    param COMPONENT_BITS: u32 = 6                                                  , // BCM bit planes per colour component
+    param BASE_OE_CYCLES: u32 = 16                                                 , // OE pulse unit; LSB plane shows 2×this
+    param FILL_NIBS     : u32 = 1                                                  , // 12-bit groups per fill write (1, 2, 4)
+    const ROW_BITS      : u32 = $clog2(SCAN_ROWS)                                  ,
+    const X_BITS        : u32 = $clog2(CHAIN_LEN)                                  ,
+    const LANE_BITS     : u32 = if NUM_LANES >: 1 ? $clog2(NUM_LANES) : 1          ,
+    const PLANE_BITS    : u32 = if COMPONENT_BITS >: 1 ? $clog2(COMPONENT_BITS) : 1,
+    const NIB_BITS      : u32 = $clog2(FILL_NIBS)                                  ,
+    const WA_BITS       : u32 = X_BITS - 1 - NIB_BITS                              ,
+) (
+    // ---- fill domain ----
+    i_fclk       : input  'f clock            ,
+    i_frst       : input  'f logic            , // synchronous, active high
+    i_we         : input  'f logic            ,
+    i_wlane      : input  'f logic<LANE_BITS> ,
+    i_waddr      : input  'f logic<WA_BITS>      , // {buffer, chain_x / (4 FILL_NIBS)}
+    i_wdata      : input  'f logic<12 * FILL_NIBS>, // groups of {R, G, B} nibbles
+    o_fetch_req  : output 'f logic            , // pulse: fill plane o_fetch_plane of row o_fetch_row
+    o_fetch_row  : output 'f logic<5>         ,
+    o_fetch_plane: output 'f logic<PLANE_BITS>,
+    o_fetch_buf  : output 'f logic            , // buffer to fill
+    i_fetch_done : input  'f logic            , // pulse: the plane is in its buffer
+
+    // ---- display domain ----
+    i_clk  : input  'd clock           ,
+    i_rst  : input  'd logic           , // synchronous, active high
+    o_frame: output 'd logic           , // pulse at every panel frame boundary
+    o_row  : output 'd logic<5>        , // row address A..E
+    o_r    : output 'd logic<NUM_LANES>,
+    o_g    : output 'd logic<NUM_LANES>,
+    o_b    : output 'd logic<NUM_LANES>,
+    o_oe   : output 'd logic           , // active low
+    o_lat  : output 'd logic           ,
+    o_clk  : output 'd logic           ,
+) {
+    const DEPTH      : u32 = CHAIN_LEN / 2 / FILL_NIBS; // both plane buffers, 4 FILL_NIBS cells per word
+    const OE_MAX     : u32 = BASE_OE_CYCLES << COMPONENT_BITS;
+    const OE_BITS    : u32 = $clog2(OE_MAX + 1);
+    const CLKDIV_BITS: u32 = $clog2(CLOCK_DIVIDER + 2);
+    const LOW_BITS   : u32 = $clog2(CLK_LOW_EXTRA + 2);
+
+    const ST_RESET      : logic<4> = 4'd0;
+    const ST_INIT_BRIGHT: logic<4> = 4'd1;
+    const ST_INIT_OUTPUT: logic<4> = 4'd2;
+    const ST_START_FRAME: logic<4> = 4'd3;
+    const ST_SETUP_ROW  : logic<4> = 4'd4;
+    const ST_OUTPUT_ROW : logic<4> = 4'd5;
+    const ST_WAIT_OE    : logic<4> = 4'd6;
+    const ST_NEXT_ROW   : logic<4> = 4'd7;
+    const ST_LATCH      : logic<4> = 4'd8;
+    const ST_WAIT_FETCH : logic<4> = 4'd9;
+
+    // FM6126A init patterns.
+    const BRIGHTNESS_PATTERN: logic<16> = 16'b0000_0111_1110_0000;
+    const ENABLE_PATTERN    : logic<16> = 16'b0000_0010_0000_0000;
+
+    // ---------------------------------------------------------------
+    // Fetch handshake: a toggle each way. The row number is held from
+    // the request toggle until the next request, which comes only after
+    // the done toggle is back.
+    // ---------------------------------------------------------------
+    var req_tog  : 'd logic            ;
+    var req_row  : 'd logic<5>         ;
+    var req_plane: 'd logic<PLANE_BITS>;
+    var req_buf  : 'd logic            ;
+    var req_f1   : 'f logic            ;
+    var req_f2   : 'f logic            ;
+    var req_f3   : 'f logic            ;
+    var done_tog : 'f logic            ;
+    var done_d1  : 'd logic            ;
+    var done_d2  : 'd logic            ;
+
+    let fetch_busy: 'd logic = req_tog != done_d2;
+    assign o_fetch_req = req_f2 != req_f3;
+
+    unsafe (cdc) {
+        assign o_fetch_row   = req_row;
+        assign o_fetch_plane = req_plane;
+        assign o_fetch_buf   = req_buf;
+        always_ff (i_fclk) {
+            if i_frst {
+                req_f1   = 1'b0;
+                req_f2   = 1'b0;
+                req_f3   = 1'b0;
+                done_tog = 1'b0;
+            } else {
+                req_f1 = req_tog;
+                req_f2 = req_f1;
+                req_f3 = req_f2;
+                if i_fetch_done {
+                    done_tog = ~done_tog;
+                }
+            }
+        }
+        always_ff (i_clk) {
+            if i_rst {
+                done_d1 = 1'b0;
+                done_d2 = 1'b0;
+            } else {
+                done_d1 = done_tog;
+                done_d2 = done_d1;
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Plane buffers: one distributed RAM per lane, {buffer, chain_x / (4
+    // FILL_NIBS)}.
+    // ---------------------------------------------------------------
+    var address  : 'd logic<X_BITS>                        ; // registered chain_x
+    var read_buf : 'd logic                                ;
+    var lane_word: 'd logic<12 * FILL_NIBS>     [NUM_LANES];
+
+    for i in 0..NUM_LANES :g_lane {
+        #[sv("syn_ramstyle=\"distributed_ram\"")]
+        var mem: logic<12 * FILL_NIBS> [DEPTH];
+        always_ff (i_fclk) {
+            if i_we && i_wlane == i {
+                mem[i_waddr] = i_wdata;
+            }
+        }
+        unsafe (cdc) {
+            assign lane_word[i] = mem[{read_buf, address[X_BITS - 1:2 + NIB_BITS]}];
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // FSM registers.
+    // ---------------------------------------------------------------
+    var state        : 'd logic<4>             ;
+    var x_counter    : 'd logic<X_BITS>        ;
+    var y_counter    : 'd logic<5>             ;
+    var oe_counter   : 'd logic<OE_BITS>       ;
+    var next_oe      : 'd logic<OE_BITS>       ;
+    var output_bit   : 'd logic<COMPONENT_BITS>; // one-hot BCM plane mask, MSB→LSB
+    var plane_idx    : 'd logic<PLANE_BITS>    ; // plane being shown
+    var clk_reg      : 'd logic                ;
+    var clock_counter: 'd logic<CLKDIV_BITS>   ;
+    var out_phase    : 'd logic                ;
+    var low_wait     : 'd logic<LOW_BITS>      ;
+    var latch_line   : 'd logic                ;
+    var oe_active    : 'd logic                ;
+    var frame_q      : 'd logic                ;
+    var rgb_r        : 'd logic<NUM_LANES>     ;
+    var rgb_g        : 'd logic<NUM_LANES>     ;
+    var rgb_b        : 'd logic<NUM_LANES>     ;
+
+    var plane_r: 'd logic<NUM_LANES>;
+    var plane_g: 'd logic<NUM_LANES>;
+    var plane_b: 'd logic<NUM_LANES>;
+    // group n = chain_x / 4 % FILL_NIBS
+    let grp: 'd logic<3> = if FILL_NIBS == 1 ? 3'd0 : (address[X_BITS - 1:2] as 3) & (FILL_NIBS - 1) as 3;
+    for i in 0..NUM_LANES :g_plane {
+        var gw: 'd logic<12>;
+        always_comb {
+            gw = lane_word[i][11:0];
+            for n in 1..FILL_NIBS {
+                if grp == n {
+                    gw = lane_word[i][12 * n+:12];
+                }
+            }
+        }
+        assign plane_r[i] = gw[8 + address[1:0]];
+        assign plane_g[i] = gw[4 + address[1:0]];
+        assign plane_b[i] = gw[address[1:0]];
+    }
+
+    let clock_enable: 'd logic    = (state != ST_RESET) && (clock_counter == 0);
+    let initializing: 'd logic    = (state == ST_RESET) || (state == ST_INIT_BRIGHT) || (state == ST_INIT_OUTPUT);
+    let bright_bit  : 'd logic    = BRIGHTNESS_PATTERN[x_counter[3:0]];
+    let enable_bit  : 'd logic    = ENABLE_PATTERN[x_counter[3:0]];
+    let next_row    : 'd logic<5> = if y_counter == ((SCAN_ROWS - 1) as 5) ? 5'd0 : y_counter + 5'd1;
+    let last_plane  : 'd logic    = output_bit == (1 as COMPONENT_BITS);
+
+    assign o_frame = frame_q;
+    assign o_row   = y_counter;
+    assign o_r     = rgb_r;
+    assign o_g     = rgb_g;
+    assign o_b     = rgb_b;
+    assign o_lat   = latch_line;
+    assign o_clk   = clk_reg;
+    // OE is active-low on the panel — high while idle / blanked.
+    assign o_oe = (oe_counter == 0) || initializing;
+
+    always_ff (i_clk) {
+        if i_rst {
+            state         = ST_RESET;
+            x_counter     = 0 as X_BITS;
+            y_counter     = 5'd0;
+            oe_counter    = 0 as OE_BITS;
+            next_oe       = 0 as OE_BITS;
+            output_bit    = 0 as COMPONENT_BITS;
+            address       = 0 as X_BITS;
+            clk_reg       = 1'b0;
+            clock_counter = 0 as CLKDIV_BITS;
+            out_phase     = 1'b0;
+            low_wait      = 0 as LOW_BITS;
+            latch_line    = 1'b0;
+            oe_active     = 1'b0;
+            frame_q       = 1'b0;
+            rgb_r         = 0 as NUM_LANES;
+            rgb_g         = 0 as NUM_LANES;
+            rgb_b         = 0 as NUM_LANES;
+            read_buf      = 1'b0;
+            req_tog       = 1'b0;
+            req_row       = 5'd0;
+            req_plane     = 0 as PLANE_BITS;
+            req_buf       = 1'b0;
+            plane_idx     = 0 as PLANE_BITS;
+        } else {
+            frame_q = 1'b0;
+            if oe_counter >: 0 as OE_BITS {
+                oe_counter = oe_counter - (1 as OE_BITS);
+            }
+            if state != ST_RESET {
+                if clock_counter == 0 as CLKDIV_BITS {
+                    // free-running shift clock only for the FM6126A init
+                    if state == ST_INIT_BRIGHT || state == ST_INIT_OUTPUT {
+                        clk_reg = ~clk_reg;
+                    }
+                    clock_counter = CLOCK_DIVIDER as CLKDIV_BITS;
+                } else {
+                    clock_counter = clock_counter - (1 as CLKDIV_BITS);
+                }
+            }
+
+            case state {
+                ST_RESET: {
+                    address    = 0 as X_BITS;
+                    x_counter  = 0 as X_BITS;
+                    y_counter  = 5'd0;
+                    oe_counter = 0 as OE_BITS;
+                    latch_line = 1'b0;
+                    clk_reg    = 1'b0;
+                    out_phase  = 1'b0;
+                    rgb_r      = 0 as NUM_LANES;
+                    rgb_g      = 0 as NUM_LANES;
+                    rgb_b      = 0 as NUM_LANES;
+                    oe_active  = 1'b0;
+                    state      = ST_INIT_BRIGHT;
+                }
+
+                ST_INIT_BRIGHT: {
+                    if clock_enable {
+                        if !clk_reg && !out_phase {
+                            rgb_r      = {bright_bit repeat NUM_LANES};
+                            rgb_g      = {bright_bit repeat NUM_LANES};
+                            rgb_b      = {bright_bit repeat NUM_LANES};
+                            latch_line = x_counter >: ((CHAIN_LEN - 12) as X_BITS);
+                            out_phase  = 1'b1;
+                        } else if !clk_reg && out_phase {
+                            clk_reg = 1'b1;
+                        } else {
+                            clk_reg   = 1'b0;
+                            out_phase = 1'b0;
+                            x_counter = x_counter + (1 as X_BITS);
+                            if x_counter == ((CHAIN_LEN - 1) as X_BITS) {
+                                x_counter  = 0 as X_BITS;
+                                latch_line = 1'b0;
+                                state      = ST_INIT_OUTPUT;
+                            }
+                        }
+                    }
+                }
+
+                ST_INIT_OUTPUT: {
+                    if clock_enable {
+                        if !clk_reg && !out_phase {
+                            rgb_r      = {enable_bit repeat NUM_LANES};
+                            rgb_g      = {enable_bit repeat NUM_LANES};
+                            rgb_b      = {enable_bit repeat NUM_LANES};
+                            latch_line = x_counter >: ((CHAIN_LEN - 13) as X_BITS);
+                            out_phase  = 1'b1;
+                        } else if !clk_reg && out_phase {
+                            clk_reg = 1'b1;
+                        } else {
+                            out_phase = 1'b0;
+                            x_counter = x_counter + (1 as X_BITS);
+                            if x_counter == ((CHAIN_LEN - 1) as X_BITS) {
+                                clk_reg    = 1'b1;
+                                x_counter  = 0 as X_BITS;
+                                latch_line = 1'b0;
+                                // ask for the first plane
+                                req_row   = 5'd0;
+                                req_plane = (COMPONENT_BITS - 1) as PLANE_BITS;
+                                req_buf   = 1'b0;
+                                read_buf  = 1'b0;
+                                req_tog   = ~req_tog;
+                                state     = ST_START_FRAME;
+                            } else {
+                                clk_reg = 1'b0;
+                            }
+                        }
+                    }
+                }
+
+                ST_START_FRAME: {
+                    y_counter = 5'd0;
+                    frame_q   = 1'b1;
+                    state     = ST_SETUP_ROW;
+                }
+
+                ST_SETUP_ROW: {
+                    output_bit = (1 << (COMPONENT_BITS - 1)) as COMPONENT_BITS;
+                    plane_idx  = (COMPONENT_BITS - 1) as PLANE_BITS;
+                    next_oe    = OE_MAX as OE_BITS;
+                    state      = ST_WAIT_FETCH;
+                }
+
+                ST_WAIT_FETCH: {
+                    // plane plane_idx of row y_counter is in buffer
+                    // read_buf once the request is answered; then ask for
+                    // the next plane into the other buffer
+                    if !fetch_busy {
+                        if last_plane {
+                            req_row   = next_row;
+                            req_plane = (COMPONENT_BITS - 1) as PLANE_BITS;
+                        } else {
+                            req_row   = y_counter;
+                            req_plane = plane_idx - (1 as PLANE_BITS);
+                        }
+                        req_buf   = ~read_buf;
+                        req_tog   = ~req_tog;
+                        x_counter = 0 as X_BITS;
+                        clk_reg   = 1'b0;
+                        address   = 0 as X_BITS;
+                        out_phase = 1'b0;
+                        state     = ST_OUTPUT_ROW;
+                    }
+                }
+
+                ST_OUTPUT_ROW: {
+                    // CHAIN_LEN pulses per plane: CLK low with the plane bits
+                    // on the data lines (1 + CLK_LOW_EXTRA ticks), then CLK
+                    // high while the frame buffer address advances.
+                    if clock_enable {
+                        if !out_phase {
+                            clk_reg   = 1'b0;
+                            rgb_r     = plane_r;
+                            rgb_g     = plane_g;
+                            rgb_b     = plane_b;
+                            out_phase = 1'b1;
+                            low_wait  = CLK_LOW_EXTRA as LOW_BITS;
+                        } else if low_wait != 0 {
+                            low_wait = low_wait - (1 as LOW_BITS);
+                        } else {
+                            clk_reg   = 1'b1;
+                            out_phase = 1'b0;
+                            address   = address + (1 as X_BITS);
+                            if x_counter == ((CHAIN_LEN - 1) as X_BITS) {
+                                x_counter = 0 as X_BITS;
+                                state     = ST_LATCH;
+                            } else {
+                                x_counter = x_counter + (1 as X_BITS);
+                            }
+                        }
+                    }
+                }
+
+                ST_LATCH: {
+                    if clock_enable {
+                        if clk_reg {
+                            clk_reg = 1'b0;
+                        } else if !latch_line {
+                            latch_line = 1'b1;
+                        } else {
+                            latch_line = 1'b0;
+                            oe_counter = next_oe;
+                            oe_active  = 1'b1;
+                            state      = ST_WAIT_OE;
+                        }
+                    }
+                }
+
+                ST_WAIT_OE: {
+                    if oe_active && oe_counter == 0 as OE_BITS {
+                        oe_active = 1'b0;
+                        next_oe   = next_oe >> 1;
+                        read_buf  = ~read_buf; // the next plane is in the other buffer
+                        if last_plane {
+                            state = ST_NEXT_ROW;
+                        } else {
+                            output_bit = output_bit >> 1;
+                            plane_idx  = plane_idx - (1 as PLANE_BITS);
+                            state      = ST_WAIT_FETCH;
+                        }
+                    }
+                }
+
+                ST_NEXT_ROW: {
+                    if y_counter == ((SCAN_ROWS - 1) as 5) {
+                        state = ST_START_FRAME;
+                    } else {
+                        y_counter = y_counter + 5'd1;
+                        state     = ST_SETUP_ROW;
+                    }
+                }
+
+                default: {}
+            }
+        }
+    }
+}

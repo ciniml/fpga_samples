@@ -1,0 +1,8 @@
+build/
+dependencies/
+Veryl.lock
+*.f
+*.sv
+*.sv.map
+!test/*.sv
+.build/

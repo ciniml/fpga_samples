@@ -1,0 +1,94 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+//
+// RgmiiTx: RGMII transmit adapter for EthTxMac (10 / 100 / 1000 Mb/s),
+// run from one 125 MHz clock at every speed.
+//
+// The outputs feed output DDR registers in the board top (D0 = first half
+// of the clock, D1 = second half): o_d0 / o_d1 = {TX_CTL, TXD[3:0]} and
+// o_c0 / o_c1 = the TXC waveform, so that TXC comes out of the same kind
+// of register as the data.
+//   1000 Mb/s: a byte every clock, TXC = the clock itself (rising edge at
+//              the low nibble; the PHY adds the 2 ns TXC delay).
+//   10/100   : a nibble every 5 / 50 clocks (25 / 2.5 MHz TXC), low nibble
+//              first; TXC rises in the middle of each nibble.
+module RgmiiTx (
+    i_clk  : input  clock   , // 125 MHz
+    i_rst  : input  logic   ,
+    i_speed: input  logic<2>, // 2: 1000, 1: 100, 0: 10 Mb/s
+    o_ce   : output logic   , // to EthTxMac.i_ce
+    i_ben  : input  logic   ,
+    i_bdata: input  logic<8>,
+    o_d0   : output logic<5>,
+    o_d1   : output logic<5>,
+    o_c0   : output logic   ,
+    o_c1   : output logic   ,
+) {
+    var cnt   : logic<6>; // clock within the nibble
+    var half  : logic   ; // 0: low nibble, 1: high nibble
+    var byte_q: logic<8>;
+    var en_q  : logic   ;
+    var d0    : logic<5>;
+    var d1    : logic<5>;
+    var c0    : logic   ;
+    var c1    : logic   ;
+    var gbe_q : logic   ; // registered speed decode and byte strobe
+    var ce_q  : logic   ;
+
+    let gbe    : logic    = gbe_q;
+    let last   : logic<6> = if i_speed == 2'd1 ? 6'd4 : 6'd49; // clocks per nibble - 1
+    let nib_end: logic    = cnt == last;
+    // TXC high in the second half of the nibble: half-clock index 2*cnt
+    // (+1 for D1) at or past the nibble length (last + 1)
+    let tx_c0: logic = {cnt, 1'b0} >= ({1'b0, last} + 7'd1);
+    let tx_c1: logic = {cnt, 1'b1} >= ({1'b0, last} + 7'd1);
+
+    assign o_ce = gbe || ce_q; // ce_q = nib_end && half, precomputed
+    assign o_d0 = d0;
+    assign o_d1 = d1;
+    assign o_c0 = c0;
+    assign o_c1 = c1;
+
+    always_ff {
+        if i_rst {
+            cnt    = 6'd0;
+            half   = 1'b0;
+            byte_q = 8'd0;
+            en_q   = 1'b0;
+            d0     = 5'd0;
+            d1     = 5'd0;
+            c0     = 1'b0;
+            c1     = 1'b0;
+            gbe_q  = 1'b0;
+            ce_q   = 1'b0;
+        } else if gbe {
+            gbe_q = i_speed == 2'd2;
+            ce_q  = 1'b0;
+            cnt  = 6'd0;
+            half = 1'b0;
+            en_q = 1'b0;
+            d0   = {i_ben, i_bdata[3:0]};
+            d1   = {i_ben, i_bdata[7:4]};
+            c0   = 1'b1;
+            c1   = 1'b0;
+        } else {
+            d0 = {en_q, if half ? byte_q[7:4] : byte_q[3:0]};
+            d1 = {en_q, if half ? byte_q[7:4] : byte_q[3:0]};
+            c0    = tx_c0;
+            c1    = tx_c1;
+            gbe_q = i_speed == 2'd2;
+            // the clock before the last one of a high nibble
+            ce_q = half && cnt == last - 6'd1;
+            if nib_end {
+                cnt = 6'd0;
+                if half {
+                    byte_q = i_bdata;
+                    en_q   = i_ben;
+                }
+                half = ~half;
+            } else {
+                cnt = cnt + 6'd1;
+            }
+        }
+    }
+}

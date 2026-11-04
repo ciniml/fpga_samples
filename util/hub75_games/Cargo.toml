@@ -1,0 +1,12 @@
+[package]
+name = "hub75_games"
+version = "0.1.0"
+edition = "2021"
+
+# Games for the HUB75 panels of eda/ethernet_hub75
+# (128x192, sent over UDP in the udpvideosend format)
+
+[dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+clap = { version = "4.1.8", features = ["derive"] }
+crossterm = "0.29.0"

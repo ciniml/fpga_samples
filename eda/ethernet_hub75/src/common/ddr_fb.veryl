@@ -1,0 +1,727 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+//
+// DdrFb: the frame buffer of ethernet_hub75 in external DRAM (Ddr2Ctrl's
+// burst port), with row fetching for Hub75RowLanes.
+//
+//   EthService video / LUT stream ('s)
+//     ─ byte assembly ─ 16-byte words ─ FbAfifo ('s → 'm) ─┐
+//                                                          ├─ DRAM port ('m)
+//     Hub75RowLanes ← row buffer fill ← colour tables ← row fetch ─┘
+//
+// Frame buffer: two banks of the frame (RGB565, little endian, row major,
+// exactly the bytes of the udpvideosend protocol), bank b at burst address
+// b << FB_SHIFT. The writer fills the back bank; the last byte of a frame
+// requests a flip, which travels with the last word through the FIFO (so
+// it is in order with the writes) and is taken when the display asks for
+// row 0 of the next frame. o_flip_busy (in the system domain) is set from
+// the flip request until then, and bytes received meanwhile are dropped:
+// the same handshake as Hub75Lanes, so the ack timing does not change.
+// Writes are whole 16-byte words (the DRAM has no data mask), so a packet
+// should start at a multiple of 16 bytes (udpvideosend sends 1024-byte
+// chunks); a word is written when its 16th byte arrives.
+//
+// Row fetch: for scan row r, lane l (row major: l / LANE_COLS lane rows of
+// SCAN_ROWS display rows, l % LANE_COLS columns of LANE_WIDTH) shows
+// display row (l / LANE_COLS) SCAN_ROWS + r, x from (l % LANE_COLS)
+// LANE_WIDTH. Its LANE_WIDTH pixels are LANE_WIDTH / 8 consecutive bursts,
+// read as one group (back to back, one DRAM row) into a 32-word read
+// FIFO; the unpacker turns them into one pixel per clock through the
+// colour tables into the row buffer. Reads have priority over writes; a
+// group starts only when the FIFO has room for all of it.
+//
+// Start-up ('m): after the controller's init, a memory test writes and
+// reads back BIST_BURSTS bursts twice (address-derived data, then its
+// complement rotated; the second pattern is read twice, so that read
+// errors, which change between the reads, can be told from write errors),
+// then both frame banks are cleared to black. i_bist_restart runs it again
+// (between row fetches; diagnostics). Until
+// then row requests are answered with black without reading. The video
+// FIFO is not drained meanwhile (packets arriving then are dropped).
+module DdrFb #(
+    param WIDTH         : u32 = 128                                      , // power of two
+    param HEIGHT        : u32 = 192                                      , // multiple of SCAN_ROWS
+    param LANE_WIDTH    : u32 = 64                                       , // power of two, >= 8
+    param SCAN_ROWS     : u32 = 32                                       ,
+    param COMPONENT_BITS: u32 = 6                                        ,
+    param CHAIN_REVERSE : bit = 0                                        ,
+    param MEM_ADDR_BITS : u32 = 21                                       , // DRAM burst address width
+    param BIST_BURSTS   : u32 = 1 << 21                                  , // memory test size (bursts), 0: none
+    param FIFO_AW       : u32 = 8                                        , // video FIFO: 2^FIFO_AW words
+    const LANE_COLS     : u32 = WIDTH / LANE_WIDTH                       ,
+    const NUM_LANES     : u32 = HEIGHT / SCAN_ROWS * LANE_COLS           ,
+    const LANE_BITS     : u32 = if NUM_LANES >: 1 ? $clog2(NUM_LANES) : 1,
+    const LX_BITS       : u32 = $clog2(LANE_WIDTH)                       ,
+    const PX_BITS       : u32 = 3 * COMPONENT_BITS                       ,
+) (
+    // ---- system ----
+    i_clk      : input  's clock    ,
+    i_rst      : input  's logic    ,
+    i_start    : input  's logic    ,
+    i_offset   : input  's logic<16>,
+    i_valid    : input  's logic    ,
+    i_data     : input  's logic<8> ,
+    i_lut_start: input  's logic    ,
+    i_lut_valid: input  's logic    ,
+    i_lut_data : input  's logic<8> ,
+    o_flip_busy: output 's logic    ,
+    o_overflow : output 's logic    , // pulse: a word was dropped (FIFO full)
+
+    // ---- DRAM port ----
+    i_mclk      : input  'm clock               ,
+    i_mrst      : input  'm logic               ,
+    i_mem_init  : input  'm logic               , // controller initialised
+    o_mreq_valid: output 'm logic               ,
+    i_mreq_ready: input  'm logic               ,
+    o_mreq_we   : output 'm logic               ,
+    o_mreq_addr : output 'm logic<MEM_ADDR_BITS>,
+    o_mreq_wdata: output 'm logic<128>          ,
+    i_mrd_valid : input  'm logic               ,
+    i_mrd_data  : input  'm logic<128>          ,
+
+    // ---- row buffer fill (Hub75RowLanes, 'm) ----
+    i_fetch_req : input  'm logic             ,
+    i_fetch_row : input  'm logic<5>          ,
+    o_fetch_done: output 'm logic             ,
+    o_fill_we   : output 'm logic             ,
+    o_fill_lane : output 'm logic<LANE_BITS>  ,
+    o_fill_addr : output 'm logic<1 + LX_BITS>, // {buffer, chain_x}
+    o_fill_rgb  : output 'm logic<PX_BITS>    ,
+
+    // ---- status ('m) ----
+    o_ready       : output 'm logic                      , // memory test and clear done, frame buffer running
+    o_bist_errors : output 'm logic<16>                  , // words that read back wrong (saturating)
+    o_bist_first  : output 'm logic<MEM_ADDR_BITS>       , // burst address of the first one
+    o_bist_pass   : output 'm logic<48>                  , // words wrong per read pass {R0, R1, R2}
+    o_bist_mask   : output 'm logic<128>                 , // OR of the wrong bits (beat b = bits 16b +: 16)
+    o_bist_parity : output 'm logic<32>                  , // words with wrong even / odd beats {even, odd} (saturating)
+    i_bist_restart: input  'm logic                = 1'b0, // pulse: run the memory test (and clear) again
+) {
+    const FRAME_BYTES : u32 = WIDTH * HEIGHT * 2;
+    const FRAME_BURSTS: u32 = FRAME_BYTES / 16;
+    const FB_SHIFT    : u32 = $clog2(FRAME_BURSTS); // bank b at b << FB_SHIFT
+    const FB_BITS     : u32 = FB_SHIFT + 1;
+    const DW          : u32 = 1 + FB_BITS + 128; // {flip, address, data}
+    const GROUP       : u32 = LANE_WIDTH / 8; // bursts per lane row
+    const K_BITS      : u32 = if GROUP >: 1 ? $clog2(GROUP) : 1;
+    const ROW_BITS    : u32 = $clog2(SCAN_ROWS);
+    const RQ_DEPTH    : u32 = 32;
+    const POS_BITS    : u32 = $clog2(FRAME_BYTES) + 1;
+    const WORD_OFS    : bit = FRAME_BYTES >: 65536; // packet offsets in 2-byte units (UdpVideoWriter)
+
+    // ==================================================================
+    // System domain: byte assembly, flip request, colour tables
+    // ==================================================================
+    var req_tog: 's logic;
+    var ack_s1 : 's logic;
+    var ack_s2 : 's logic;
+    var ack_tog: 'm logic; // = front bank
+
+    let busy : 's logic = req_tog != ack_s2;
+    let wbank: 's logic = ~ack_s2;
+    assign o_flip_busy = busy;
+
+    var pos      : 's logic<POS_BITS>;
+    var wword    : 's logic<128>    ;
+    var push     : 's logic         ;
+    var push_flip: 's logic         ;
+    var push_addr: 's logic<FB_BITS>;
+    var push_data: 's logic<128>    ;
+    var overflow : 's logic         ;
+    var s_tready : 's logic         ;
+    assign o_overflow = overflow;
+
+    unsafe (cdc) {
+        always_ff (i_clk) {
+            if i_rst {
+                ack_s1 = 1'b0;
+                ack_s2 = 1'b0;
+            } else {
+                ack_s1 = ack_tog;
+                ack_s2 = ack_s1;
+            }
+        }
+    }
+
+    always_ff (i_clk) {
+        if i_rst {
+            req_tog   = 1'b0;
+            pos       = 0;
+            wword     = 128'd0;
+            push      = 1'b0;
+            push_flip = 1'b0;
+            push_addr = 0;
+            push_data = 128'd0;
+            overflow  = 1'b0;
+        } else {
+            overflow = 1'b0;
+            if push && s_tready {
+                push = 1'b0;
+                if push_flip {
+                    req_tog = ~req_tog;
+                }
+            }
+            if i_start {
+                pos = if WORD_OFS ? ({i_offset, 1'b0} as POS_BITS) : (i_offset as POS_BITS);
+            } else if i_valid {
+                if !busy && pos <: FRAME_BYTES {
+                    wword[pos[3:0] * 8+:8] = i_data;
+                    if pos[3:0] == 4'hf {
+                        if push {
+                            overflow = 1'b1; // the previous word is still waiting
+                        } else {
+                            push      = 1'b1;
+                            push_flip = pos == FRAME_BYTES - 1;
+                            push_addr = {wbank, pos[FB_SHIFT + 3:4]};
+                            push_data = {i_data, wword[119:0]};
+                        }
+                    }
+                }
+                pos = pos + 1;
+            }
+        }
+    }
+
+    // ---- colour tables (as UdpVideoWriter; read in the memory domain) ----
+    var lut_r: 's logic<COMPONENT_BITS> [32];
+    var lut_g: 's logic<COMPONENT_BITS> [64];
+    var lut_b: 's logic<COMPONENT_BITS> [32];
+
+    var init_cnt : 's logic<7>; // identity load after reset, done when bit 6 is set
+    var lut_mask : 's logic<3>;
+    var lut_idx  : 's logic<7>;
+    var lut_first: 's logic   ;
+
+    let init_busy: 's logic    = !init_cnt[6];
+    let init_i   : 's logic<6> = init_cnt[5:0];
+    let init_r8  : 's logic<8> = {init_i[4:0], init_i[4:2]};
+    let init_g8  : 's logic<8> = {init_i[5:0], init_i[5:4]};
+    let lut_store: 's logic    = i_lut_valid && !lut_first && !lut_idx[6];
+    let wr_r     : 's logic    = if init_busy ? !init_i[5] : lut_store && lut_mask[0] && !lut_idx[5];
+    let wr_g     : 's logic    = if init_busy ? 1'b1 : lut_store && lut_mask[1];
+    let wr_b     : 's logic    = if init_busy ? !init_i[5] : lut_store && lut_mask[2] && !lut_idx[5];
+    let wr_idx   : 's logic<6> = if init_busy ? init_i : lut_idx[5:0];
+    let wr_val_r : 's logic<8> = if init_busy ? init_r8 : i_lut_data;
+    let wr_val_g : 's logic<8> = if init_busy ? init_g8 : i_lut_data;
+
+    always_ff (i_clk) {
+        if wr_r {
+            lut_r[wr_idx[4:0]] = wr_val_r[7:8 - COMPONENT_BITS];
+        }
+        if wr_g {
+            lut_g[wr_idx] = wr_val_g[7:8 - COMPONENT_BITS];
+        }
+        if wr_b {
+            lut_b[wr_idx[4:0]] = wr_val_r[7:8 - COMPONENT_BITS];
+        }
+    }
+
+    always_ff (i_clk) {
+        if i_rst {
+            init_cnt  = 7'd0;
+            lut_mask  = 3'b000;
+            lut_idx   = 7'd0;
+            lut_first = 1'b0;
+        } else {
+            if init_busy {
+                init_cnt = init_cnt + 7'd1;
+            }
+            if i_lut_start {
+                lut_first = 1'b1;
+                lut_idx   = 7'd0;
+            } else if i_lut_valid {
+                if lut_first {
+                    lut_mask  = i_lut_data[2:0];
+                    lut_first = 1'b0;
+                } else if !lut_idx[6] {
+                    lut_idx = lut_idx + 7'd1;
+                }
+            }
+        }
+    }
+
+    // ==================================================================
+    // Video FIFO
+    // ==================================================================
+    var f_valid: 'm logic    ;
+    var f_data : 'm logic<DW>;
+    var f_ready: 'm logic    ;
+
+    inst fifo: FbAfifo #(
+        DW: DW     ,
+        AW: FIFO_AW,
+    ) (
+        i_wclk  : i_clk                            ,
+        i_wrst  : i_rst                            ,
+        s_tvalid: push                             ,
+        s_tdata : {push_flip, push_addr, push_data},
+        s_tready: s_tready                         ,
+        o_wempty: _                                ,
+        i_rclk  : i_mclk                           ,
+        i_rrst  : i_mrst                           ,
+        m_tvalid: f_valid                          ,
+        m_tdata : f_data                           ,
+        m_tready: f_ready                          ,
+        o_rlevel: _                                ,
+    );
+
+    let f_flip: 'm logic          = f_data[DW - 1];
+    let f_addr: 'm logic<FB_BITS> = f_data[128+:FB_BITS];
+
+    // ==================================================================
+    // Memory domain
+    // ==================================================================
+    enum Mode {
+        INIT,
+        W0,
+        R0,
+        W1,
+        R1,
+        R2,
+        CLEAR,
+        RUN,
+    }
+    var mode        : 'm Mode                        ;
+    var bcnt        : 'm logic<MEM_ADDR_BITS + 1>    ; // bursts issued in this pass
+    var rcnt        : 'm logic<MEM_ADDR_BITS + 1>    ; // reads returned in this pass
+    var errors      : 'm logic<16>                   ;
+    var first       : 'm logic<MEM_ADDR_BITS>        ;
+    var flip_pend   : 'm logic                       ;
+    var perr        : 'm logic<16>                [3]; // per read pass
+    var emask       : 'm logic<128>                  ;
+    var err_even    : 'm logic<16>                   ;
+    var err_odd     : 'm logic<16>                   ;
+    var restart_pend: 'm logic                       ;
+
+    assign o_ready       = mode == Mode::RUN;
+    assign o_bist_errors = errors;
+    assign o_bist_first  = first;
+    assign o_bist_pass   = {perr[0], perr[1], perr[2]};
+    assign o_bist_mask   = emask;
+    assign o_bist_parity = {err_even, err_odd};
+
+    // memory test data: beat b = address bits mixed with b (pass 0), the
+    // complement rotated by b + 1 (pass 1): every address and data bit
+    // toggles, and aliased addresses read back wrong
+    function bist_pattern (
+        a   : input logic<MEM_ADDR_BITS>,
+        pass: input logic               ,
+    ) -> logic<128> {
+        var v : logic<128>;
+        var x : logic<32> ;
+        var bt: logic<16> ;
+        x  = a as 32;
+        for b in 0..8 {
+            bt = x[15:0] ^ {x[23:16], b[2:0], 5'b10110};
+            if pass {
+                bt = ~{bt[14:0], bt[15]};
+                bt = (bt << b[3:0]) | (bt >> (16 - b[4:0]));
+            }
+            v[16 * b+:16] = bt;
+        }
+        return v;
+    }
+
+    let pass      : 'm logic                    = mode == Mode::W1 || mode == Mode::R1 || mode == Mode::R2;
+    let bist_last : 'm logic<MEM_ADDR_BITS + 1> = (BIST_BURSTS - 1) as MEM_ADDR_BITS + 1;
+    let clear_last: 'm logic<MEM_ADDR_BITS + 1> = ((2 << FB_SHIFT) - 1) as MEM_ADDR_BITS + 1;
+    let rd_expect : 'm logic<128>               = bist_pattern(rcnt[MEM_ADDR_BITS - 1:0], pass);
+
+    // which beats of a read are wrong (beat b = bits 16b +: 16)
+    // memory test compare, pipelined: read data / expected value
+    // registered, then their difference, then the counters (125 MHz-class
+    // paths at mclk otherwise)
+    var c1_valid: 'm logic               ;
+    var c1_data : 'm logic<128>          ;
+    var c1_exp  : 'm logic<128>          ;
+    var c1_pass : 'm logic<2>            ; // read pass 0..2
+    var c1_addr : 'm logic<MEM_ADDR_BITS>;
+    var c2_bad  : 'm logic               ;
+    var c2_diff : 'm logic<128>          ;
+    var c2_pass : 'm logic<2>            ;
+    var c2_addr : 'm logic<MEM_ADDR_BITS>;
+    var c2_even : 'm logic               ;
+    var c2_odd  : 'm logic               ;
+    let c1_diff : 'm logic<128>           = c1_data ^ c1_exp;
+    var c1_even : 'm logic               ;
+    var c1_odd  : 'm logic               ;
+    always_comb {
+        c1_even = 1'b0;
+        c1_odd  = 1'b0;
+        for b in 0..8 {
+            if c1_diff[16 * b+:16] != 16'd0 {
+                if b[0] {
+                    c1_odd = 1'b1;
+                } else {
+                    c1_even = 1'b1;
+                }
+            }
+        }
+    }
+
+    // ---- row fetch state ----
+    var fetching : 'm logic           ; // a row is being fetched
+    var f_row    : 'm logic<5>        ;
+    var zero_fill: 'm logic           ; // answering with black (not running yet)
+    var iss_lane : 'm logic<LANE_BITS>;
+    var iss_k    : 'm logic<K_BITS>   ;
+    var iss_more : 'm logic           ; // groups left to issue
+    var rq_wptr  : 'm logic<6>        ;
+    var rq_rptr  : 'm logic<6>        ;
+    var rq_issued: 'm logic<6>        ; // words requested and not yet taken by the unpacker
+    let rq_count : 'm logic<6>         = rq_wptr - rq_rptr;
+    let in_group : 'm logic            = iss_k != 0;
+    let grp_start: 'm logic            = fetching && !zero_fill && iss_more && !in_group
+        && (rq_issued <= (RQ_DEPTH - GROUP) as 6);
+    let rd_want  : 'm logic            = in_group || grp_start;
+
+    // burst address of lane iss_lane, scan row f_row, burst iss_k
+    let iss_lr  : 'm logic<16>      = (iss_lane / LANE_COLS) as 16;
+    let iss_lc  : 'm logic<16>      = (iss_lane % LANE_COLS) as 16;
+    let iss_pix : 'm logic<32>      = ((iss_lr * SCAN_ROWS + f_row[ROW_BITS - 1:0]) * WIDTH + iss_lc
+        * LANE_WIDTH) as 32;
+    let iss_addr: 'm logic<FB_BITS> = {ack_tog, (iss_pix[FB_SHIFT + 2:3] + iss_k) as FB_SHIFT};
+
+    // ---- request mux ----
+    var req_valid: 'm logic               ;
+    var req_we   : 'm logic               ;
+    var req_addr : 'm logic<MEM_ADDR_BITS>;
+    var req_wdata: 'm logic<128>          ;
+    let req_go   : 'm logic                = req_valid && i_mreq_ready;
+    let do_read  : 'm logic                = mode == Mode::RUN && rd_want;
+    always_comb {
+        req_valid = 1'b0;
+        req_we    = 1'b0;
+        req_addr  = 0;
+        req_wdata = 128'd0;
+        f_ready   = 1'b0;
+        case mode {
+            Mode::W0, Mode::W1: {
+                req_valid = 1'b1;
+                req_we    = 1'b1;
+                req_addr  = bcnt[MEM_ADDR_BITS - 1:0];
+                req_wdata = bist_pattern(bcnt[MEM_ADDR_BITS - 1:0], pass);
+            }
+            Mode::R0, Mode::R1, Mode::R2: {
+                req_valid = bcnt <: bist_last + 1;
+                req_addr  = bcnt[MEM_ADDR_BITS - 1:0];
+            }
+            Mode::CLEAR: {
+                req_valid = 1'b1;
+                req_we    = 1'b1;
+                req_addr  = bcnt[MEM_ADDR_BITS - 1:0];
+            }
+            Mode::RUN: {
+                if do_read {
+                    req_valid = 1'b1;
+                    req_addr  = iss_addr as MEM_ADDR_BITS;
+                } else if f_valid {
+                    req_valid = 1'b1;
+                    req_we    = 1'b1;
+                    req_addr  = f_addr as MEM_ADDR_BITS;
+                    req_wdata = f_data[127:0];
+                    f_ready   = i_mreq_ready;
+                }
+            }
+            default: {}
+        }
+    }
+    assign o_mreq_valid = req_valid;
+    assign o_mreq_we    = req_we;
+    assign o_mreq_addr  = req_addr;
+    assign o_mreq_wdata = req_wdata;
+
+    // ---- read FIFO (block RAM, registered read) ----
+    #[sv("ram_style=\"block\"")]
+    var rq_mem: 'm logic<128> [RQ_DEPTH];
+    var rq_q  : 'm logic<128>           ;
+    always_ff (i_mclk) {
+        if i_mrd_valid && mode == Mode::RUN {
+            rq_mem[rq_wptr[4:0]] = i_mrd_data;
+        }
+        rq_q = rq_mem[rq_rptr[4:0]];
+    }
+
+    // ---- unpacker: one pixel per clock into the row buffer ----
+    var up_lane : 'm logic<LANE_BITS>  ;
+    var up_x    : 'm logic<LX_BITS>    ;
+    var up_load : 'm logic             ; // rq_q will hold the next word next cycle
+    var up_have : 'm logic             ; // cur holds a word
+    var up_more : 'm logic             ; // pixels left
+    var cur     : 'm logic<128>        ;
+    var p1_valid: 'm logic             ;
+    var p1_px   : 'm logic<16>         ;
+    var p1_lane : 'm logic<LANE_BITS>  ;
+    var p1_x    : 'm logic<LX_BITS>    ;
+    var p1_last : 'm logic             ;
+    var fill_we : 'm logic             ;
+    var fill_ln : 'm logic<LANE_BITS>  ;
+    var fill_ad : 'm logic<1 + LX_BITS>;
+    var fill_rgb: 'm logic<PX_BITS>    ;
+    var done_q  : 'm logic             ;
+
+    assign o_fill_we    = fill_we;
+    assign o_fill_lane  = fill_ln;
+    assign o_fill_addr  = fill_ad;
+    assign o_fill_rgb   = fill_rgb;
+    assign o_fetch_done = done_q;
+
+    let up_last_px: 'm logic     = up_x == (LANE_WIDTH - 1) as LX_BITS && up_lane == (NUM_LANES - 1) as LANE_BITS;
+    let up_emit   : 'm logic     = up_more && (up_have || zero_fill);
+    let up_px     : 'm logic<16> = if zero_fill ? 16'd0 : cur[up_x[2:0] * 16+:16];
+
+    var lut_rgb: 'm logic<PX_BITS>;
+    unsafe (cdc) {
+        // the tables change only when a new table is loaded (a glitch on a
+        // pixel or two then is harmless)
+        assign lut_rgb = {lut_r[p1_px[15:11]], lut_g[p1_px[10:5]], lut_b[p1_px[4:0]]};
+    }
+
+    // the last pixel's flag, aligned with fill_we
+    var p1_last_q: 'm logic;
+    always_ff (i_mclk) {
+        if i_mrst {
+            p1_last_q = 1'b0;
+        } else {
+            p1_last_q = p1_last;
+        }
+    }
+
+    always_ff (i_mclk) {
+        if i_mrst {
+            mode         = Mode::INIT;
+            bcnt         = 0;
+            rcnt         = 0;
+            errors       = 16'd0;
+            first        = 0;
+            perr[0]      = 16'd0;
+            perr[1]      = 16'd0;
+            perr[2]      = 16'd0;
+            emask        = 128'd0;
+            err_even     = 16'd0;
+            err_odd      = 16'd0;
+            c1_valid     = 1'b0;
+            c2_bad       = 1'b0;
+            restart_pend = 1'b0;
+            flip_pend    = 1'b0;
+            ack_tog      = 1'b0;
+            fetching     = 1'b0;
+            f_row        = 5'd0;
+            zero_fill    = 1'b0;
+            iss_lane     = 0;
+            iss_k        = 0;
+            iss_more     = 1'b0;
+            rq_wptr      = 6'd0;
+            rq_rptr      = 6'd0;
+            rq_issued    = 6'd0;
+            up_lane      = 0;
+            up_x         = 0;
+            up_load      = 1'b0;
+            up_have      = 1'b0;
+            up_more      = 1'b0;
+            cur          = 128'd0;
+            p1_valid     = 1'b0;
+            p1_px        = 16'd0;
+            p1_lane      = 0;
+            p1_x         = 0;
+            p1_last      = 1'b0;
+            fill_we      = 1'b0;
+            fill_ln      = 0;
+            fill_ad      = 0;
+            fill_rgb     = 0;
+            done_q       = 1'b0;
+        } else {
+            // ---- start-up: memory test, clear ----
+            case mode {
+                Mode::INIT: {
+                    if i_mem_init {
+                        bcnt = 0;
+                        rcnt = 0;
+                        mode = if BIST_BURSTS == 0 ? Mode::CLEAR : Mode::W0;
+                    }
+                }
+                Mode::W0, Mode::W1: {
+                    if req_go {
+                        if bcnt == bist_last {
+                            bcnt = 0;
+                            rcnt = 0;
+                            mode = if mode == Mode::W0 ? Mode::R0 : Mode::R1;
+                        } else {
+                            bcnt = bcnt + 1;
+                        }
+                    }
+                }
+                Mode::R0, Mode::R1, Mode::R2: {
+                    if req_go {
+                        bcnt = bcnt + 1;
+                    }
+                    if i_mrd_valid {
+                        if rcnt == bist_last {
+                            bcnt = 0;
+                            rcnt = 0;
+                            mode = case mode {
+                                Mode::R0: Mode::W1,
+                                Mode::R1: Mode::R2,
+                                default : Mode::CLEAR,
+                            };
+                        } else {
+                            rcnt = rcnt + 1;
+                        }
+                    }
+                }
+                Mode::CLEAR: {
+                    if req_go {
+                        if bcnt == clear_last {
+                            mode = Mode::RUN;
+                        } else {
+                            bcnt = bcnt + 1;
+                        }
+                    }
+                }
+                Mode::RUN: {
+                    if f_valid && f_ready && f_flip {
+                        flip_pend = 1'b1;
+                    }
+                    // memory test again: between row fetches (no reads in
+                    // flight)
+                    if restart_pend && !fetching && !i_fetch_req && BIST_BURSTS != 0 {
+                        restart_pend = 1'b0;
+                        bcnt         = 0;
+                        rcnt         = 0;
+                        errors       = 16'd0;
+                        first        = 0;
+                        perr[0]      = 16'd0;
+                        perr[1]      = 16'd0;
+                        perr[2]      = 16'd0;
+                        emask        = 128'd0;
+                        err_even     = 16'd0;
+                        err_odd      = 16'd0;
+                        mode         = Mode::W0;
+                    }
+                }
+                default: {}
+            }
+
+            // ---- memory test compare (see c1 / c2) ----
+            c1_valid = i_mrd_valid && (mode == Mode::R0 || mode == Mode::R1 || mode == Mode::R2);
+            c1_data  = i_mrd_data;
+            c1_exp   = rd_expect;
+            c1_pass  = case mode {
+                Mode::R0: 2'd0,
+                Mode::R1: 2'd1,
+                default : 2'd2,
+            };
+            c1_addr = rcnt[MEM_ADDR_BITS - 1:0];
+            c2_bad  = c1_valid && c1_diff != 128'd0;
+            c2_diff = c1_diff;
+            c2_pass = c1_pass;
+            c2_addr = c1_addr;
+            c2_even = c1_even;
+            c2_odd  = c1_odd;
+            if c2_bad {
+                if errors == 16'd0 {
+                    first = c2_addr;
+                }
+                if errors != 16'hffff {
+                    errors = errors + 16'd1;
+                }
+                if perr[c2_pass] != 16'hffff {
+                    perr[c2_pass] = perr[c2_pass] + 16'd1;
+                }
+                emask = emask | c2_diff;
+                if c2_even && err_even != 16'hffff {
+                    err_even = err_even + 16'd1;
+                }
+                if c2_odd && err_odd != 16'hffff {
+                    err_odd = err_odd + 16'd1;
+                }
+            }
+
+            if i_bist_restart {
+                restart_pend = 1'b1;
+            }
+
+            // ---- row fetch: start ----
+            if i_fetch_req {
+                fetching  = 1'b1;
+                f_row     = i_fetch_row;
+                zero_fill = mode != Mode::RUN;
+                iss_lane  = 0;
+                iss_k     = 0;
+                iss_more  = 1'b1;
+                up_lane   = 0;
+                up_x      = 0;
+                up_more   = 1'b1;
+                up_have   = 1'b0;
+                // the frame is chosen at row 0
+                if i_fetch_row == 5'd0 && flip_pend && !(f_valid && f_ready && f_flip) {
+                    flip_pend = 1'b0;
+                    ack_tog   = ~ack_tog;
+                }
+            }
+
+            // ---- row fetch: read issue ----
+            if do_read && req_go {
+                if iss_k == (GROUP - 1) as K_BITS {
+                    iss_k = 0;
+                    if iss_lane == (NUM_LANES - 1) as LANE_BITS {
+                        iss_more = 1'b0;
+                    } else {
+                        iss_lane = iss_lane + 1;
+                    }
+                } else {
+                    iss_k = iss_k + 1;
+                }
+            }
+            if i_mrd_valid && mode == Mode::RUN {
+                rq_wptr = rq_wptr + 6'd1;
+            }
+
+            // ---- unpacker ----
+            // load: rq_rptr addresses the next word; rq_q is valid the
+            // cycle after up_load
+            rq_issued = rq_issued + (if do_read && req_go ? 6'd1 : 6'd0) - (if up_load ? 6'd1 : 6'd0);
+            if up_load {
+                cur     = rq_q;
+                up_have = 1'b1;
+                up_load = 1'b0;
+                rq_rptr = rq_rptr + 6'd1;
+            } else if up_more && !zero_fill && !up_have && rq_count != 6'd0 {
+                up_load = 1'b1;
+            }
+
+            p1_valid = 1'b0;
+            p1_last  = 1'b0;
+            if up_emit {
+                p1_valid = 1'b1;
+                p1_px    = up_px;
+                p1_lane  = up_lane;
+                p1_x     = if CHAIN_REVERSE ? ~up_x : up_x;
+                p1_last  = up_last_px;
+                if up_x[2:0] == 3'd7 {
+                    up_have = 1'b0;
+                }
+                if up_x == (LANE_WIDTH - 1) as LX_BITS {
+                    up_x = 0;
+                    if up_lane == (NUM_LANES - 1) as LANE_BITS {
+                        up_more = 1'b0;
+                    } else {
+                        up_lane = up_lane + 1;
+                    }
+                } else {
+                    up_x = up_x + 1;
+                }
+            }
+
+            fill_we  = p1_valid;
+            fill_ln  = p1_lane;
+            fill_ad  = {f_row[0], p1_x};
+            fill_rgb = lut_rgb;
+            done_q   = fill_we && p1_last_q;
+            if done_q {
+                fetching = 1'b0;
+            }
+        }
+    }
+
+}

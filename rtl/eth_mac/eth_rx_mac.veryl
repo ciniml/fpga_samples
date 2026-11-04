@@ -1,0 +1,205 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+//
+// EthRxMac: receive half of an Ethernet MAC, PHY-interface independent.
+//
+// A PHY adapter (RmiiRx, RgmiiRx, ...) hands over the bytes after the
+// SFD (`i_bvalid` / `i_bdata`) and marks the end of the frame with
+// `i_end` (on a cycle without a byte; `i_err` alongside it discards the
+// frame, e.g. a dangling nibble or RX_ER). Frames are checked (FCS,
+// length, overflow), optionally filtered by destination address, and
+// stored into a PktFifo that crosses to the system clock. Only complete
+// frames are visible to the reader; the record flag says FCS ok and the
+// record length excludes the FCS.
+//
+// The frame engine is the RX engine of riscv-veryl/src/eth_mac.veryl
+// with the RMII dibit handling moved into RmiiRx.
+module EthRxMac #(
+    param DEPTH_LOG2: u32 = 13, // RX storage = 2^DEPTH_LOG2 bytes
+    param REC_LOG2  : u32 = 3 ,
+) (
+    // ---- PHY receive domain ----
+    i_rx_clk: input  'p clock   ,
+    i_rx_rst: input  'p logic   , // synchronous, active high
+    i_bvalid: input  'p logic   ,
+    i_bdata : input  'p logic<8>,
+    i_end   : input  'p logic   ,
+    i_err   : input  'p logic   ,
+    o_rx_ok : output 'p logic   , // pulse: a frame was committed
+    o_rx_bad: output 'p logic   , // pulse: a frame was dropped (FCS is checked by the reader)
+
+    // station address filter (quasi-static, any domain): when enabled, a
+    // frame is stored only if its destination is i_mac or has the group bit
+    i_mac    : input logic<48>, // {byte5, ..., byte0}, byte 0 first on the wire
+    i_filt_en: input logic    ,
+
+    // ---- reader (system) domain ----
+    i_clk       : input  's clock    ,
+    i_rst       : input  's logic    , // synchronous, active high
+    o_rrec_valid: output 's logic    ,
+    o_rlen      : output 's logic<11>,
+    o_rflag     : output 's logic    , // FCS ok
+    o_rremain   : output 's logic<11>,
+    o_rdata     : output 's logic<32>,
+    i_rpop      : input  's logic    ,
+    i_rpop_n    : input  's logic<3> ,
+    o_rpop_cnt  : output 's logic<3> ,
+    i_rrelease  : input  's logic    ,
+) {
+    import Crc32Pkg::*;
+
+    var wvalid   : 'p logic                ;
+    var wdata    : 'p logic<8>             ;
+    var wcommit  : 'p logic                ;
+    var wlen     : 'p logic<11>            ;
+    var wflag    : 'p logic                ;
+    var wabort   : 'p logic                ;
+    var wspace   : 'p logic<DEPTH_LOG2 + 1>;
+    var wrec_full: 'p logic                ;
+    var wcount   : 'p logic<DEPTH_LOG2>    ;
+
+    inst fifo: PktFifo #(
+        DEPTH_LOG2: DEPTH_LOG2,
+        REC_LOG2  : REC_LOG2  ,
+    ) (
+        i_wclk      : i_rx_clk    ,
+        i_wrst      : i_rx_rst    ,
+        i_wvalid    : wvalid      ,
+        i_wdata     : wdata       ,
+        i_wcommit   : wcommit     ,
+        i_wlen      : wlen        ,
+        i_wflag     : wflag       ,
+        i_wabort    : wabort      ,
+        o_wspace    : wspace      ,
+        o_wrec_full : wrec_full   ,
+        o_wcount    : wcount      ,
+        i_rclk      : i_clk       ,
+        i_rrst      : i_rst       ,
+        o_rrec_valid: o_rrec_valid,
+        o_rlen      : o_rlen      ,
+        o_rflag     : o_rflag     ,
+        o_rremain   : o_rremain   ,
+        o_rdata     : o_rdata     ,
+        i_rpop      : i_rpop      ,
+        i_rpop_n    : i_rpop_n    ,
+        o_rpop_cnt  : o_rpop_cnt  ,
+        i_rrelease  : i_rrelease  ,
+    );
+
+    var len    : 'p logic<11>;
+    var crc    : 'p logic<32>;
+    var ovf    : 'p logic    ; // a byte could not be stored
+    var toolong: 'p logic    ;
+    var filt   : 'p logic    ; // destination rejected by the address filter
+    var mcast  : 'p logic    ; // destination byte 0 had the group bit set
+    var in_frm : 'p logic    ; // bytes seen since the last end
+    var ok_q   : 'p logic    ;
+    var bad_q  : 'p logic    ;
+    var room   : 'p logic    ; // registered: at least 2 bytes free a clock ago = 1 now
+
+    // station address / filter enable, 2-flop synchronised
+    var mac_p1  : 'p logic<48>;
+    var mac_p   : 'p logic<48>;
+    var filt_p1 : 'p logic    ;
+    var filt_p  : 'p logic    ;
+    let mac_byte: 'p logic<8>  = case len[2:0] {
+        3'd0   : mac_p[7:0],
+        3'd1   : mac_p[15:8],
+        3'd2   : mac_p[23:16],
+        3'd3   : mac_p[31:24],
+        3'd4   : mac_p[39:32],
+        default: mac_p[47:40],
+    };
+
+    assign o_rx_ok  = ok_q;
+    assign o_rx_bad = bad_q;
+
+    unsafe (cdc) {
+        always_ff (i_rx_clk) {
+            mac_p1  = i_mac;
+            mac_p   = mac_p1;
+            filt_p1 = i_filt_en;
+            filt_p  = filt_p1;
+        }
+    }
+
+    always_ff (i_rx_clk) {
+        if i_rx_rst {
+            len     = 11'd0;
+            crc     = CRC32_INIT;
+            ovf     = 1'b0;
+            toolong = 1'b0;
+            filt    = 1'b0;
+            mcast   = 1'b0;
+            in_frm  = 1'b0;
+            wvalid  = 1'b0;
+            wdata   = 8'b0;
+            wcommit = 1'b0;
+            wlen    = 11'd0;
+            wflag   = 1'b0;
+            wabort  = 1'b0;
+            ok_q    = 1'b0;
+            bad_q   = 1'b0;
+        } else {
+            wvalid  = 1'b0;
+            wcommit = 1'b0;
+            wabort  = 1'b0;
+            ok_q    = 1'b0;
+            bad_q   = 1'b0;
+            if i_end {
+                if filt {
+                    // not for us: discard silently
+                    wabort = 1'b1;
+                } else if in_frm && !i_err && !ovf && !toolong && len >= 11'd64 && !wrec_full {
+                    wcommit = 1'b1;
+                    wlen    = len - 11'd4; // FCS stripped from the reader's view
+                    wflag   = crc == CRC32_RESIDUE;
+                    ok_q    = 1'b1;
+                } else {
+                    wabort = 1'b1;
+                    bad_q  = in_frm;
+                }
+                len     = 11'd0;
+                crc     = CRC32_INIT;
+                ovf     = 1'b0;
+                toolong = 1'b0;
+                filt    = 1'b0;
+                in_frm  = 1'b0;
+            } else if i_bvalid {
+                in_frm = 1'b1;
+                crc    = crc32_byte(crc, i_bdata);
+                // destination filter: multicast/broadcast (byte 0 bit 0) is
+                // always accepted; otherwise all 6 bytes must match. The byte
+                // that reveals the mismatch is still stored; the frame is
+                // discarded as a whole at its end.
+                if len == 11'd0 {
+                    mcast = i_bdata[0];
+                }
+                if filt_p && len <: 11'd6 && i_bdata != mac_byte && !(if len == 11'd0 ? i_bdata[0] : mcast) {
+                    filt = 1'b1;
+                }
+                if filt {
+                    len = len + 1;
+                } else if len == 11'd1522 { // 1518 + FCS
+                    toolong = 1'b1;
+                } else if !room {
+                    ovf = 1'b1;
+                } else {
+                    wvalid = 1'b1;
+                    wdata  = i_bdata;
+                    len    = len + 1;
+                }
+            }
+        }
+    }
+
+    always_ff (i_rx_clk) {
+        if i_rx_rst {
+            room = 1'b0;
+        } else {
+            room = wspace >: 1;
+        }
+    }
+
+    let _unused: 'p logic = |wcount;
+}
