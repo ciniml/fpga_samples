@@ -1,0 +1,31 @@
+// Tang Primer 25K + Pmod USB HS Single. Template: project.tcl (USB_SL=1) fills the @...@ balls from
+// eda/targets/tangprimer25k/pmod_ports.csv for the slot given by USB_PMOD and writes pins_gen.cst.
+IO_LOC "clk_in" E2;
+IO_PORT "clk_in" PULL_MODE=NONE DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC "reset_in" H11;
+IO_PORT "reset_in" IO_TYPE=LVCMOS33 PULL_MODE=DOWN DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC "uart_txd" C3;
+IO_PORT "uart_txd" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "uart_rxd" B3;
+IO_PORT "uart_rxd" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC "led_configured" B2;
+IO_PORT "led_configured" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "led_high_speed" C2;
+IO_PORT "led_high_speed" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+
+// dx pair: one emulated-differential IOBUF (ELVDS_IOBUF), the P port constrained to both balls
+IO_LOC "usb_dp" @DX_P@,@DX_N@;
+// DRIVE: project.tcl DX_DRIVE (default 8 mA)
+IO_PORT "usb_dp" IO_TYPE=LVCMOS33D PULL_MODE=NONE DIFF_RESISTOR=OFF DRIVE=@DX_DRIVE@ BANK_VCCIO=3.3;
+// D+ comparator: D+ against VREF (board divider), TRUE LVDS input, on-chip termination off
+IO_LOC "usb_cmp_dp" @CMP_P@,@CMP_N@;
+IO_PORT "usb_cmp_dp" IO_TYPE=LVDS25 PULL_MODE=NONE DIFF_RESISTOR=OFF BANK_VCCIO=3.3;
+IO_LOC "usb_term_dp" @TERM_DP@;
+IO_PORT "usb_term_dp" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "usb_term_dn" @TERM_DN@;
+IO_PORT "usb_term_dn" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "usb_pullup" @PULLUP@;
+IO_PORT "usb_pullup" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "vbus_det" @VBUS@;
+// no internal pull-down: it would load the board's 100k / 150k divider below VIH
+IO_PORT "vbus_det" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=OFF BANK_VCCIO=3.3;

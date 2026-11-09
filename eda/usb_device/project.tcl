@@ -26,15 +26,23 @@ if {[info exists ::env(CAP_CMP)] && $::env(CAP_CMP) == "1"} { append defs "`defi
 if {[info exists ::env(BULK_IN_FULL_ONLY)] && $::env(BULK_IN_FULL_ONLY) == "1"} { append defs "`define BULK_IN_FULL_ONLY 1\n" } else { append defs "`define BULK_IN_FULL_ONLY 0\n" }
 set fh [open defines_gen.v w]; puts -nonewline $fh $defs; close $fh
 add_file -type verilog [file normalize defines_gen.v]
-add_file -type verilog [file normalize ${SRC_DIR}/top.v]
+# USB_SL=1: Pmod USB HS Single (one Pmod, usb_phy_gowin_sl CMP1=1) in slot USB_PMOD instead of the two-connector board
+set SL [expr {[info exists ::env(USB_SL)] && $::env(USB_SL) == "1"}]
+if {$SL} {
+    add_file -type verilog [file normalize ${SRC_DIR}/top_sl.v]
+    add_file -type verilog [file normalize ${SRC_DIR}/pll_hs960/pll_hs960.v]
+    add_file -type verilog [file normalize ${RTL_DIR}/usb/gowin/usb_phy_gowin_sl.v]
+} else {
+    add_file -type verilog [file normalize ${SRC_DIR}/top.v]
+    add_file -type verilog [file normalize ${SRC_DIR}/pll_usb_os/pll_usb_os.v]
+}
 add_file -type verilog [file normalize ${SRC_DIR}/pll_usb/pll_usb.v]
-add_file -type verilog [file normalize ${SRC_DIR}/pll_usb_os/pll_usb_os.v]
 # USB core (rtl/usb, Veryl output - run `veryl build` there after edits)
 foreach f {usb_pkg usb_phy_rx usb_phy_tx usb_phy usb_phy_bridge usb_sie usb_descriptor_rom usb_device} {
     add_file -type verilog [file normalize ${RTL_DIR}/usb/${f}.sv]
 }
 # PHY front end in the 120 MHz oversampler domain (the 60 MHz UTMI-FIFO variant is usb_phy_gowin.v + usb_hs_os32.v)
-add_file -type verilog [file normalize ${RTL_DIR}/usb/gowin/usb_phy_gowin_p.v]
+if {!$SL} { add_file -type verilog [file normalize ${RTL_DIR}/usb/gowin/usb_phy_gowin_p.v] }
 # HS clock/data recovery (rtl/oscdr, Veryl output)
 add_file -type verilog [file normalize ${RTL_DIR}/oscdr/os_cdr.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/oscdr/bit_gearbox.sv]
@@ -52,6 +60,20 @@ foreach line [split [read $fh] "\n"] {
 }
 close $fh
 proc ball {slot pin} { global BALL; return $BALL(${slot}_${pin}) }
+if {$SL} {
+    set PMOD [expr {[info exists ::env(USB_PMOD)] ? $::env(USB_PMOD) : "pmod1"}]
+    set fh [open ${SRC_DIR}/pins_sl.cst r]; set cst [read $fh]; close $fh
+    set cst [string map [list \
+        @DX_P@    [ball $PMOD 1]  @DX_N@    [ball $PMOD 7] \
+        @CMP_P@   [ball $PMOD 2]  @CMP_N@   [ball $PMOD 8] \
+        @TERM_DP@ [ball $PMOD 3]  @TERM_DN@ [ball $PMOD 9] \
+        @PULLUP@  [ball $PMOD 4]  @VBUS@    [ball $PMOD 10] \
+        @DX_DRIVE@ [expr {[info exists ::env(DX_DRIVE)] ? $::env(DX_DRIVE) : 8}]] $cst]   ;# 8 mA: 4.4 GB loopback without a mismatch (16 mA gave no improvement)
+    set fh [open pins_gen.cst w]; puts -nonewline $fh $cst; close $fh
+    puts "usb_device: Pmod USB HS Single on ${PMOD}"
+    add_file -type cst [file normalize pins_gen.cst]
+    add_file -type sdc [file normalize ${SRC_DIR}/timing_sl.sdc]
+} else {
 set fh [open ${SRC_DIR}/pins.cst r]; set cst [read $fh]; close $fh
 set cst [string map [list \
     @RX_DP@   [ball $PMOD_A 1]  @RX_DN@   [ball $PMOD_A 7] \
@@ -65,5 +87,7 @@ set fh [open pins_gen.cst w]; puts -nonewline $fh $cst; close $fh
 puts "usb_device: Pmod A = ${PMOD_A}, Pmod B = ${PMOD_B}"
 add_file -type cst [file normalize pins_gen.cst]
 add_file -type sdc [file normalize ${SRC_DIR}/timing.sdc]
+
+}
 
 run all

@@ -9,6 +9,13 @@ USB_PMOD_A ?= pmod2
 USB_PMOD_B ?= pmod1
 export USB_PMOD_A USB_PMOD_B
 BUILD_SUFFIX := _$(USB_PMOD_A)$(USB_PMOD_B)
+# USB_SL=1: Pmod USB HS Single (eda/pmod_usb_hs/hw/Pmod_USB_HS_Single, one Pmod) in slot USB_PMOD
+ifeq ($(USB_SL),1)
+USB_PMOD ?= pmod1
+export USB_SL USB_PMOD
+BUILD_SUFFIX := _sl_$(USB_PMOD)$(if $(DX_DRIVE),_d$(DX_DRIVE))
+export DX_DRIVE
+endif
 # USB_FS_ONLY=1: full-speed only (HS_CAPABLE=0)
 ifeq ($(USB_FS_ONLY),1)
 BUILD_SUFFIX := $(BUILD_SUFFIX)_fs
@@ -19,7 +26,7 @@ USB_VERYL_SV := $(addprefix ../../rtl/usb/,usb_pkg.sv usb_phy_rx.sv usb_phy_tx.s
 
 SRCS := src/$(TARGET)/pins.cst $(wildcard src/$(TARGET)/*.sdc) \
         $(wildcard src/$(TARGET)/*.v) $(wildcard src/$(TARGET)/*/*.v) \
-        $(USB_VERYL_SV) ../../rtl/oscdr/os_cdr.sv ../../rtl/oscdr/bit_gearbox.sv ../../rtl/usb/gowin/usb_phy_gowin_p.v ../../rtl/uart/uart_tx.sv ../../rtl/uart/uart_rx.sv project.tcl
+        $(USB_VERYL_SV) ../../rtl/oscdr/os_cdr.sv ../../rtl/oscdr/bit_gearbox.sv ../../rtl/usb/gowin/usb_phy_gowin_p.v ../../rtl/usb/gowin/usb_phy_gowin_sl.v ../../rtl/uart/uart_tx.sv ../../rtl/uart/uart_rx.sv project.tcl
 
 include ../build_gowin.mk
 
