@@ -92,20 +92,23 @@ module usb_phy_gowin_sl #(
     input  wire        usb_term_dp_i,   // term pin inputs (pad readback, LVCMOS33; used with CMP1 only)
     input  wire        usb_term_dn_i
 );
-    // ---- clocking / reset (as usb_hs_os32.v / eda/easycdr_bert oscdr_phy_gw5a.v) ----
+    // ---- clocking / reset ----
+    // Start-up order: with the FCLKs held off by the DHCEs, release the CLKDIVs and the IDES16 / OSER16
+    // resets, then let the FCLKs through, so that the dividers and the deserialisers' internal word
+    // counters all start from the same FCLK edge. (Releasing the IOLOGIC reset from the pclk domain
+    // after the clocks run, as usb_hs_os32.v does, left the IDES16 word boundary in a load-dependent
+    // relation to PCLK: on Tang Primer 25K about one load in three latched the last samples of each
+    // word one word late - glitches at samples 12..15, receive errors, ~18% of the SOFs lost.)
     reg [3:0] delay_cnt;
-    reg       resetn_div;
+    reg       resetn_div, iol_rst, cen;
     always @(posedge clk_ref_i or negedge rstn_ref_i) begin
-        if (!rstn_ref_i) begin delay_cnt <= 4'd0; resetn_div <= 1'b0; end
-        else if (!pll_lock_i) begin delay_cnt <= 4'd0; resetn_div <= 1'b0; end
-        else if (&delay_cnt) resetn_div <= 1'b1;
-        else delay_cnt <= delay_cnt + 1'b1;
-    end
-    reg cen;
-    always @(posedge clk_ref_i or negedge rstn_ref_i) begin
-        if (!rstn_ref_i)          cen <= 1'b1;
-        else if (!pll_lock_i)     cen <= 1'b1;
-        else if (delay_cnt >= 4'd7) cen <= 1'b0;
+        if (!rstn_ref_i)      begin delay_cnt <= 4'd0; resetn_div <= 1'b0; iol_rst <= 1'b1; cen <= 1'b1; end
+        else if (!pll_lock_i) begin delay_cnt <= 4'd0; resetn_div <= 1'b0; iol_rst <= 1'b1; cen <= 1'b1; end
+        else begin
+            if (!(&delay_cnt)) delay_cnt <= delay_cnt + 1'b1;
+            if (delay_cnt == 4'd4) begin resetn_div <= 1'b1; iol_rst <= 1'b0; end   // clocks still stopped
+            if (delay_cnt == 4'd10) cen <= 1'b0;                                   // then start them
+        end
     end
     wire fclk, fclk480, pclk, clk60;
     DHCE u_dhce    (.CLKIN(fclk_i),    .CEN(cen), .CLKOUT(fclk));
@@ -154,18 +157,18 @@ module usb_phy_gowin_sl #(
     wire tx_dx_q; reg tx_dx_oen = 1'b1;
     ELVDS_IOBUF u_iobuf_dx (.O(rx_dd_ib), .IO(usb_dxp_io), .IOB(usb_dxn_io), .I(tx_dx_q), .OEN(tx_dx_oen));
     TLVDS_IBUF u_ibuf_dp (.I(usb_rxdp_p_i), .IB(usb_rxdp_n_i), .O(rx_dp_ib));
-    IDES16 u_ides_dx(.D(rx_dd_ib), .FCLK(fclk), .PCLK(pclk), .CALIB(1'b0), .RESET(prst),
+    IDES16 u_ides_dx(.D(rx_dd_ib), .FCLK(fclk), .PCLK(pclk), .CALIB(1'b0), .RESET(iol_rst),
         .Q0(samples[0]), .Q1(samples[1]), .Q2(samples[2]), .Q3(samples[3]), .Q4(samples[4]), .Q5(samples[5]),
         .Q6(samples[6]), .Q7(samples[7]), .Q8(samples[8]), .Q9(samples[9]), .Q10(samples[10]), .Q11(samples[11]),
         .Q12(samples[12]), .Q13(samples[13]), .Q14(samples[14]), .Q15(samples[15]));
-    IDES16 u_ides_dp(.D(rx_dp_ib), .FCLK(fclk), .PCLK(pclk), .CALIB(1'b0), .RESET(prst),
+    IDES16 u_ides_dp(.D(rx_dp_ib), .FCLK(fclk), .PCLK(pclk), .CALIB(1'b0), .RESET(iol_rst),
         .Q0(cdp[0]), .Q1(cdp[1]), .Q2(cdp[2]), .Q3(cdp[3]), .Q4(cdp[4]), .Q5(cdp[5]), .Q6(cdp[6]), .Q7(cdp[7]),
         .Q8(cdp[8]), .Q9(cdp[9]), .Q10(cdp[10]), .Q11(cdp[11]), .Q12(cdp[12]), .Q13(cdp[13]), .Q14(cdp[14]), .Q15(cdp[15]));
     generate if (CMP1) begin : g_no_dn
         assign rx_dn_ib = 1'b0; assign cdn = 16'h0;
     end else begin : g_dn
         TLVDS_IBUF u_ibuf_dn (.I(usb_rxdn_p_i), .IB(usb_rxdn_n_i), .O(rx_dn_ib));
-        IDES16 u_ides_dn(.D(rx_dn_ib), .FCLK(fclk), .PCLK(pclk), .CALIB(1'b0), .RESET(prst),
+        IDES16 u_ides_dn(.D(rx_dn_ib), .FCLK(fclk), .PCLK(pclk), .CALIB(1'b0), .RESET(iol_rst),
             .Q0(cdn[0]), .Q1(cdn[1]), .Q2(cdn[2]), .Q3(cdn[3]), .Q4(cdn[4]), .Q5(cdn[5]), .Q6(cdn[6]), .Q7(cdn[7]),
             .Q8(cdn[8]), .Q9(cdn[9]), .Q10(cdn[10]), .Q11(cdn[11]), .Q12(cdn[12]), .Q13(cdn[13]), .Q14(cdn[14]), .Q15(cdn[15]));
     end endgenerate
@@ -383,7 +386,7 @@ module usb_phy_gowin_sl #(
         .D4(ser_bits[1]), .D5(ser_bits[1]), .D6(ser_bits[1]), .D7(ser_bits[1]),
         .D8(ser_bits[2]), .D9(ser_bits[2]), .D10(ser_bits[2]), .D11(ser_bits[2]),
         .D12(ser_bits[3]), .D13(ser_bits[3]), .D14(ser_bits[3]), .D15(ser_bits[3]),
-        .FCLK(fclk), .PCLK(pclk), .RESET(prst), .Q(tx_dx_q));
+        .FCLK(fclk), .PCLK(pclk), .RESET(iol_rst), .Q(tx_dx_q));
 
     // ---- terminations / pull-up ----
     assign usb_pullup_en_o = pullup_dp_en;
