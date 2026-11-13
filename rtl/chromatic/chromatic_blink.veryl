@@ -1,0 +1,110 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file chromatic_blink.veryl
+ * @brief Template demo for the ModRetro Chromatic: the RGB status LED
+ *        blinks green at 1 Hz; held buttons pick the colour instead
+ *        (A = red, B = blue, Start = green, Select = white, D-pad = mix,
+ *        Menu = fast white blink).
+ *
+ * Button inputs are "pressed = 1" (A/B/Start/Select/D-pad pins are
+ * active High on the board, the Menu pin is active Low: invert it before
+ * this module). LED outputs are "on = 1" (the pins are active Low).
+ */
+pub module ChromaticBlink #(
+    param CLK_HZ: u32 = 33_554_432,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_btn_a    : input logic,
+    i_btn_b    : input logic,
+    i_btn_start: input logic,
+    i_btn_sel  : input logic,
+    i_btn_up   : input logic,
+    i_btn_down : input logic,
+    i_btn_left : input logic,
+    i_btn_right: input logic,
+    i_btn_menu : input logic,
+
+    o_led_r: output logic,
+    o_led_g: output logic,
+    o_led_b: output logic,
+) {
+    // ~1 ms sampling tick for the button debouncer
+    const TICK_DIV: u32 = CLK_HZ / 1000;
+
+    var tick_cnt: logic<16>;
+    var tick    : logic    ;
+    var blink   : logic<32>;
+    var raw_sync: logic<9> ;
+    var raw_q   : logic<9> ;
+    var btn     : logic<9> ;
+    var stable  : logic<4> ;
+
+    always_ff {
+        if_reset {
+            tick_cnt = 0;
+            tick     = 0;
+            blink    = 0;
+            raw_sync = 0;
+            raw_q    = 0;
+            btn      = 0;
+            stable   = 0;
+        } else {
+            raw_sync = {i_btn_menu, i_btn_right, i_btn_left, i_btn_down, i_btn_up, i_btn_sel, i_btn_start, i_btn_b, i_btn_a};
+            blink    = blink + 1;
+            tick     = 0;
+            if tick_cnt == TICK_DIV - 1 {
+                tick_cnt = 0;
+                tick     = 1;
+            } else {
+                tick_cnt = tick_cnt + 16'd1;
+            }
+            // accept a new button state after it held for 8 ticks
+            if tick {
+                if raw_sync != raw_q {
+                    raw_q  = raw_sync;
+                    stable = 0;
+                } else if stable != 4'd8 {
+                    stable = stable + 4'd1;
+                    if stable == 4'd7 {
+                        btn = raw_q;
+                    }
+                }
+            }
+        }
+    }
+
+    // bit 24 of a 2^25 Hz counter toggles at 1 Hz
+    let slow: logic = blink[24];
+    let fast: logic = blink[21];
+
+    var r: logic;
+    var g: logic;
+    var b: logic;
+
+    always_comb {
+        r = 0;
+        g = 0;
+        b = 0;
+        if btn[8] {
+            r = fast;
+            g = fast;
+            b = fast;
+        } else if btn[7:0] != 0 {
+            r = btn[0] | btn[3] | btn[5] | btn[6];
+            g = btn[2] | btn[3] | btn[4] | btn[6];
+            b = btn[1] | btn[3] | btn[4] | btn[5] | btn[7];
+        } else {
+            g = slow;
+        }
+    }
+
+    assign o_led_r = r;
+    assign o_led_g = g;
+    assign o_led_b = b;
+}
