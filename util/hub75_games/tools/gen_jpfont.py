@@ -125,6 +125,9 @@ for name, path, size, index, thr in FONTS:
         # 110 fills the strokes of dense kanji in at 16 px, and 160 thins
         # the rest (①②...)
         cut = 160 if name == "B16" and "\u4e00" <= ch <= "\u9fff" else thr
+        # the thin rings of ①②... break up unless cut low
+        if "\u2460" <= ch <= "\u2473":
+            cut = {"B16": 40, "S12": 70}.get(name, thr)
         im = im.point(lambda v: 255 if v > cut else 0)
         bbox = im.getbbox()
         if bbox and bbox[2] > w:
