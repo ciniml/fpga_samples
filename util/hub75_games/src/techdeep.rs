@@ -91,7 +91,7 @@ impl TechDeep {
         jp::glow_text(buf, &[(Font::B16, "技術解説", 18)], |_, _| sc(GOLD, k), sc([0.4, 0.25, 0.0], k));
         line_in(buf, t, 40, Font::S12, "Ethernet → HUB75", 42, CYAN);
         line_in(buf, t, 60, Font::S12, "FPGA 1チップで", 56, WHITE);
-        let ch = ["① システム構成", "② UDPプロトコル", "③ 1000Mbps受信", "④ DDR2バッファ", "⑤ HUB75駆動", "⑥ Veryl", "⑦ リソース"];
+        let ch = ["① システム構成", "② UDPプロトコル", "③ 1000Mbps受信", "④ DDR2バッファ", "⑤ HUB75出力", "⑥ Veryl", "⑦ リソース"];
         for (i, s) in ch.iter().enumerate() {
             let at = 120 + i as u64 * 30;
             line_in(buf, t, at, Font::S12, s, 80 + i as i32 * 15, if i % 2 == 0 { WHITE } else { DIM });
@@ -107,31 +107,31 @@ impl TechDeep {
     fn system(&self, buf: &mut [Col], t: u64) {
         header(buf, "① 構成");
         let tk = self.tick;
-        block(buf, t, 20, 26, 26, 76, 14, "PC (UDP送信)", WHITE);
-        flow(buf, t, 40, tk, 64, 40, 44, CYAN);
-        block(buf, t, 50, 22, 44, 84, 14, "PHY RTL8211E", CYAN);
-        flow(buf, t, 70, tk, 64, 58, 76, CYAN);
+        block(buf, t, 20, 22, 26, 84, 15, "PC (UDP送信)", WHITE);
+        flow(buf, t, 40, tk, 64, 41, 44, CYAN);
+        block(buf, t, 50, 22, 44, 84, 15, "PHY RTL8211E", CYAN);
+        flow(buf, t, 70, tk, 64, 59, 76, CYAN);
         // the FPGA: what is inside
         let k = smooth(80.0, 100.0, t as f32);
         if k > 0.0 {
-            frame(buf, 4, 62, 120, 104, sc(GOLD, k * 0.8));
+            frame(buf, 4, 62, 120, 101, sc(GOLD, k * 0.8));
             jp::draw(buf, Font::S12, "GW3A", 7, 63, sc(GOLD, k));
         }
-        block(buf, t, 110, 30, 76, 68, 14, "MAC・CRC", CYAN);
-        flow(buf, t, 130, tk, 64, 90, 94, CYAN);
-        block(buf, t, 140, 30, 94, 68, 14, "UDP 振り分け", CYAN);
+        block(buf, t, 110, 26, 76, 76, 15, "MAC・CRC", CYAN);
+        flow(buf, t, 130, tk, 64, 91, 93, CYAN);
+        block(buf, t, 140, 22, 93, 76, 15, "UDP振り分け", CYAN);
         // sound to the side
         let ka = smooth(160.0, 180.0, t as f32);
         if ka > 0.0 {
-            fill(buf, 98, 101, 6, 1, sc(LINE, ka));
+            fill(buf, 98, 100, 2, 1, sc(LINE, ka));
         }
-        block(buf, t, 160, 104, 94, 20, 14, "I2S", PINK);
-        flow(buf, t, 170, tk, 64, 108, 112, GREEN);
-        block(buf, t, 180, 18, 112, 92, 14, "DDR2 2面 128KB", GREEN);
-        flow(buf, t, 200, tk, 64, 126, 130, GREEN);
-        block(buf, t, 210, 18, 130, 92, 14, "ビットプレーン", GOLD);
-        flow(buf, t, 230, tk, 64, 144, 148, GOLD);
-        block(buf, t, 240, 18, 148, 92, 14, "HUB75 ×16レーン", GOLD);
+        block(buf, t, 160, 100, 93, 22, 15, "I2S", PINK);
+        flow(buf, t, 170, tk, 64, 108, 110, GREEN);
+        block(buf, t, 180, 12, 110, 104, 15, "DDR2 2面 128KB", GREEN);
+        flow(buf, t, 200, tk, 64, 125, 127, GREEN);
+        block(buf, t, 210, 12, 127, 104, 15, "ビットプレーン", GOLD);
+        flow(buf, t, 230, tk, 64, 142, 144, GOLD);
+        block(buf, t, 240, 12, 144, 104, 15, "HUB75 ×16レーン", GOLD);
         // the link and the clock domains
         line_in(buf, t, 300, Font::S12, "1000BASE-T / RGMII", 168, DIM);
         line_in(buf, t, 360, Font::S12, "125/83.3/50 MHz", 181, DIM);
@@ -141,13 +141,13 @@ impl TechDeep {
         header(buf, "② UDP");
         // a packet: the headers, the offset, the pixels (widths not to scale
         // for the headers)
-        let parts: [(&str, i32, Col); 5] = [("Eth", 20, DIM), ("IP", 14, DIM), ("UDP", 20, DIM), ("ofs", 20, GOLD), ("RGB565", 50, CYAN)];
+        let parts: [(&str, i32, Col); 5] = [("Eth", 22, DIM), ("IP", 16, DIM), ("UDP", 22, DIM), ("ofs", 22, GOLD), ("RGB565", 42, CYAN)];
         let mut x = 2;
         for (i, (s, w, c)) in parts.iter().enumerate() {
             let at = 20 + i as u64 * 20;
             let k = smooth(at as f32, at as f32 + 20.0, t as f32);
             if k > 0.0 {
-                fill(buf, x, 30, w - 1, 12, sc(*c, 0.35 * k));
+                fill(buf, x, 29, w - 1, 14, sc(*c, 0.35 * k));
                 let tw = jp::width(Font::S12, s);
                 if tw <= *w {
                     jp::draw(buf, Font::S12, s, x + (w - tw) / 2, 30, sc(WHITE, k));
@@ -196,7 +196,7 @@ impl TechDeep {
         if k > 0.0 {
             let sh = ((self.tick / 3) % 16) as i32;
             jp::draw(buf, Font::S12, "RXC", 2, 52, sc(DIM, k));
-            jp::draw(buf, Font::S12, "RXD", 2, 72, sc(DIM, k));
+            jp::draw(buf, Font::S12, "RXD", 2, 71, sc(DIM, k));
             for x in 26..126 {
                 let p = (x + sh) % 16;
                 let hi = p < 8;
@@ -208,10 +208,10 @@ impl TechDeep {
                 // a nibble per half period, changing between the edges
                 let q = (x + sh + 4) % 8;
                 if q == 0 {
-                    fill(buf, x, 72, 1, 10, sc(GOLD, k));
+                    fill(buf, x, 70, 1, 14, sc(GOLD, k));
                 } else {
-                    fill(buf, x, 72, 1, 1, sc(GOLD, k));
-                    fill(buf, x, 81, 1, 1, sc(GOLD, k));
+                    fill(buf, x, 70, 1, 1, sc(GOLD, k));
+                    fill(buf, x, 83, 1, 1, sc(GOLD, k));
                 }
                 let n = (x + sh + 4) / 8;
                 if q == 4 {
@@ -308,8 +308,8 @@ impl TechDeep {
             ("  param RATE: u32", WHITE),
             ("        = 48000,", GOLD),
             (") (", WHITE),
-            (" i_clk : input clock,", CYAN),
-            (" o_bclk: output logic", CYAN),
+            ("i_clk : input clock,", CYAN),
+            ("o_bclk: output logic", CYAN),
             (") {", WHITE),
             ("  var acc: logic<32>;", WHITE),
             ("  always_ff {", PINK),

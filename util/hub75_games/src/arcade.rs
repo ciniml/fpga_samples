@@ -272,7 +272,7 @@ impl Game for Arcade {
                     } else {
                         jp::draw(&mut buf, Font::B16, GAMES[k].1, 8, y, col);
                         let hi = format!("ハイスコア {}", self.hi[k]);
-                        jp::draw(&mut buf, Font::S12, &hi, 8, y + 17, if on { [0.8, 0.9, 1.0] } else { [0.35, 0.4, 0.5] });
+                        jp::draw(&mut buf, Font::S12, &hi, 8, y + 16, if on { [0.8, 0.9, 1.0] } else { [0.35, 0.4, 0.5] });
                     }
                 }
                 jp::draw_centre(&mut buf, Font::S12, "× 決定  PS デモへ", 177, [0.4, 0.9, 1.0]);

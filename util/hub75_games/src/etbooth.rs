@@ -129,6 +129,8 @@ impl EtBooth {
         let blink = 0.55 + 0.45 * (self.tick as f32 * 0.12).sin().abs();
         if t > 60 {
             disc(buf, cx, cy, 2.6, sc(CYAN, blink));
+            // on a dark patch so the booths behind do not show through
+            fill(buf, cx as i32 - 13, cy as i32 - 16, 26, 13, [0.0, 0.0, 0.0]);
             jp::draw(buf, Font::S12, "ここ", cx as i32 - 12, cy as i32 - 15, CYAN);
         }
         if t > 120 {
@@ -180,7 +182,7 @@ impl EtBooth {
         line_in(buf, t, 50, Font::B16, "GOWIN GW3A", 42, GOLD);
         line_in(buf, t, 70, Font::S12, "(Arora III) 1チップ", 60, DIM);
         line_in(buf, t, 120, Font::S12, "Ethernet受信から", 77, WHITE);
-        line_in(buf, t, 140, Font::S12, "LEDの駆動まで", 90, WHITE);
+        line_in(buf, t, 140, Font::S12, "LEDの点灯まで", 90, WHITE);
         line_in(buf, t, 260, Font::S12, "GOWINの展示は", 110, WHITE);
         line_in(buf, t, 280, Font::B16, "丸文 BG-05", 124, MARU);
         line_in(buf, t, 300, Font::S12, "ホールB", 143, DIM);

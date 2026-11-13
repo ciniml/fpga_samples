@@ -6,9 +6,12 @@
 # S12: IPAGothic 12 px (thin, made for small sizes), B16 / B24: Noto Sans
 # CJK JP Bold 16 / 24 px (headings). IPAGothic loses stems of Latin
 # letters at 12 px (M, N, W...), so the ASCII of S12 comes from the X11
-# bitmap font 6x12 (same advance and baseline).
+# bitmap font 6x12 (same advance and baseline), and thresholding breaks
+# dense kanji (籍, 駆...), so the rest comes from the X11 bitmap font
+# 12x13ja (made for 12 px; its kana are thinner than IPAGothic's, so only
+# the kanji, and not 槽 or 駆, filled in at 12 px).
 from PIL import Image, ImageDraw, ImageFont, PcfFontFile
-import gzip, io, os, tempfile
+import gzip, io, os, struct, tempfile
 
 TEXT = """
 超エレキ万博 ELEKI EXPO 2026 先進テクノロジの祭典 エンジニアを技術で癒す！
@@ -38,6 +41,52 @@ def x11_font(path):
         return ImageFont.load(os.path.join(d, "f.pil"))
 
 
+def pcf_unicode(path):
+    """{char: (image, ascent)} of a Unicode-encoded X11 .pcf.gz bitmap font
+    (PIL reads only 8-bit ones)"""
+    d = gzip.open(path).read()
+    toc = {}
+    for i in range(struct.unpack_from("<I", d, 4)[0]):
+        typ, _, _, off = struct.unpack_from("<IIII", d, 8 + i * 16)
+        toc[typ] = off
+
+    def table(typ):
+        off = toc[typ]
+        fmt = struct.unpack_from("<I", d, off)[0]
+        return off + 4, fmt, ">" if fmt & 4 else "<"
+
+    off, fmt, e = table(4)  # metrics: lsb, rsb, width, ascent, descent
+    if fmt & 0x100:
+        n = struct.unpack_from(e + "H", d, off)[0]
+        met = [[b - 0x80 for b in d[off + 2 + i * 5:off + 7 + i * 5]] for i in range(n)]
+    else:
+        n = struct.unpack_from(e + "I", d, off)[0]
+        met = [struct.unpack_from(e + "5h", d, off + 4 + i * 12) for i in range(n)]
+    off, fmt, e = table(8)  # bitmaps
+    n = struct.unpack_from(e + "I", d, off)[0]
+    offs = struct.unpack_from(e + "%dI" % n, d, off + 4)
+    pad, msbit, data = 1 << (fmt & 3), fmt & 8, off + 4 + n * 4 + 16
+    off, fmt, e = table(32)  # encodings
+    b2lo, b2hi, b1lo, b1hi, _ = struct.unpack_from(e + "5H", d, off)
+    out = {}
+    for b1 in range(b1lo, b1hi + 1):
+        for b2 in range(b2lo, b2hi + 1):
+            gi = struct.unpack_from(e + "H", d, off + 10 + ((b1 - b1lo) * (b2hi - b2lo + 1) + b2 - b2lo) * 2)[0]
+            if gi == 0xFFFF:
+                continue
+            lsb, rsb, wid, asc, desc = met[gi]
+            stride = ((rsb - lsb + 7) // 8 + pad - 1) // pad * pad
+            im = Image.new("L", (max(wid, 1), max(asc + desc, 1)), 0)
+            for y in range(asc + desc):
+                for x in range(rsb - lsb):
+                    byte = d[data + offs[gi] + y * stride + x // 8]
+                    if (byte >> (7 - x % 8) if msbit else byte >> (x % 8)) & 1 and 0 <= lsb + x < wid:
+                        im.putpixel((lsb + x, y), 255)
+            out[chr(b1 << 8 | b2)] = (im, asc)
+    return out
+
+
+KANJI_S12 = pcf_unicode("/usr/share/fonts/X11/misc/12x13ja.pcf.gz")
 ASCII_S12 = x11_font("/usr/share/fonts/X11/misc/6x12-ISO8859-1.pcf.gz")
 
 chars = sorted(set(chr(c) for c in range(32, 127)) | set(TEXT) - set("\n"))
@@ -63,12 +112,20 @@ for name, path, size, index, thr in FONTS:
             adv = w = 6
             im = Image.new("L", (w + 4, h), 0)
             ImageDraw.Draw(im).text((0, 0), ch, font=ASCII_S12, fill=255)
+        elif name == "S12" and "\u4e00" <= ch <= "\u9fff" and ch in KANJI_S12 and ch not in "槽駆":
+            g, gasc = KANJI_S12[ch]
+            adv = w = g.width
+            im = Image.new("L", (w + 4, h + 2), 0)
+            im.paste(g, (0, asc - gasc))
         else:
             adv = round(f.getlength(ch))
             w = max(adv, 1)
             im = Image.new("L", (w + 4, h), 0)
             ImageDraw.Draw(im).text((0, 0), ch, font=f, fill=255)
-        im = im.point(lambda v: 255 if v > thr else 0)
+        # 110 fills the strokes of dense kanji in at 16 px, and 160 thins
+        # the rest (①②...)
+        cut = 160 if name == "B16" and "\u4e00" <= ch <= "\u9fff" else thr
+        im = im.point(lambda v: 255 if v > cut else 0)
         bbox = im.getbbox()
         if bbox and bbox[2] > w:
             w = min(bbox[2], 32)
