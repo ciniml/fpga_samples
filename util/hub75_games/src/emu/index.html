@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HUB75 エミュレータ</title>
+<style>
+  :root { --bg: #0b0d12; --fg: #d8deea; --dim: #7c8799; --acc: #4cc3ff; --warn: #ff7a59; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+    font: 14px/1.4 system-ui, "Segoe UI", "Yu Gothic UI", sans-serif; }
+  body { display: flex; flex-direction: column; }
+  header { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; padding: 8px 16px;
+    border-bottom: 1px solid #1d2330; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  .stat { color: var(--dim); font-variant-numeric: tabular-nums; }
+  .stat b { color: var(--fg); font-weight: 500; }
+  .bad { color: var(--warn) !important; }
+  label { color: var(--dim); display: inline-flex; gap: 4px; align-items: center; }
+  button, select { background: #161b26; color: var(--fg); border: 1px solid #2a3243; border-radius: 4px;
+    padding: 3px 10px; font: inherit; }
+  button.on { border-color: var(--acc); color: var(--acc); }
+  main { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 12px; }
+  canvas { image-rendering: pixelated; }
+</style>
+</head>
+<body>
+<header>
+  <h1>HUB75 エミュレータ</h1>
+  <span class="stat" id="conn">接続中…</span>
+  <span class="stat">映像 <b id="fps">-</b> fps</span>
+  <span class="stat">送信元 <b id="src">-</b></span>
+  <span class="stat">音声 <b id="audio">-</b></span>
+  <span style="flex:1"></span>
+  <label>表示 <select id="mode"><option value="dot">LED ドット</option><option value="flat">ベタ</option></select></label>
+  <label>拡大 <select id="zoom"><option value="0">自動</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>8</option></select></label>
+  <label><input type="checkbox" id="labels" checked> コネクタ名</label>
+  <button id="snd">音を出す</button>
+  <label>音量 <input type="range" id="vol" min="0" max="100" value="70" style="width:80px"></label>
+</header>
+<main><canvas id="cv"></canvas></main>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const cv = $("cv"), ctx = cv.getContext("2d");
+let cfg = { fw: 256, fh: 256, cols: 2, rows: 3, labels: [] };
+let lut = new Uint8Array(192);
+let frame = null, fw = 0, fh = 0, dirty = false;
+const store = (k, v) => { try { localStorage.setItem("hub75emu." + k, v); } catch (e) {} };
+const load = k => { try { return localStorage.getItem("hub75emu." + k); } catch (e) { return null; } };
+for (const k of ["mode", "zoom"]) { const v = load(k); if (v !== null) $(k).value = v; }
+if (load("labels") !== null) $("labels").checked = load("labels") === "1";
+for (const k of ["mode", "zoom"]) $(k).onchange = () => { store(k, $(k).value); layout(); };
+$("labels").onchange = () => { store("labels", $("labels").checked ? "1" : "0"); layout(); };
+
+// LEDs are lit by on-time (linear); the screen wants sRGB
+const toSrgb = new Uint8Array(256);
+for (let i = 0; i < 256; i++) {
+  const l = i / 255;
+  toSrgb[i] = Math.round(255 * (l <= 0.0031308 ? 12.92 * l : 1.055 * Math.pow(l, 1 / 2.4) - 0.055));
+}
+
+let s = 4, gap = 4, img = null, px32 = null, mask = null, W = 0, H = 0;
+function layout() {
+  const pw = cfg.cols * 64, ph = cfg.rows * 64;
+  const z = +$("zoom").value;
+  const main = document.querySelector("main");
+  const aw = main.clientWidth - 24, ah = main.clientHeight - 24;
+  s = z || Math.max(1, Math.floor(Math.min(aw / (pw + (cfg.cols - 1) * 0.75), ah / (ph + (cfg.rows - 1) * 0.75))));
+  gap = Math.max(2, Math.round(s * 0.75));
+  W = pw * s + (cfg.cols - 1) * gap; H = ph * s + (cfg.rows - 1) * gap;
+  cv.width = W; cv.height = H;
+  img = ctx.createImageData(W, H);
+  px32 = new Uint32Array(img.data.buffer);
+  // a round LED in its cell (anti-aliased edge); flat: the whole cell
+  mask = new Float32Array(s * s);
+  const flat = $("mode").value === "flat" || s < 3;
+  const r = s * 0.42;
+  for (let y = 0; y < s; y++) for (let x = 0; x < s; x++) {
+    const d = Math.hypot(x + 0.5 - s / 2, y + 0.5 - s / 2);
+    mask[y * s + x] = flat ? 1 : Math.max(0, Math.min(1, r - d + 0.5));
+  }
+  px32.fill(0xff0d0a08); // the gaps between the panels
+  dirty = true;
+}
+window.addEventListener("resize", layout);
+
+function draw() {
+  if (!dirty || !img) return;
+  dirty = false;
+  const pw = cfg.cols * 64, ph = cfg.rows * 64;
+  const flat = $("mode").value === "flat" || s < 3;
+  const off = flat ? [0, 0, 0] : [16, 17, 20]; // an unlit LED is dark grey
+  for (let y = 0; y < ph; y++) {
+    const oy = y * s + Math.floor(y / 64) * gap;
+    for (let x = 0; x < pw; x++) {
+      let r = 0, g = 0, b = 0;
+      if (frame && x < fw && y < fh) {
+        const i = (y * fw + x) * 2;
+        const v = frame[i] | frame[i + 1] << 8;
+        r = toSrgb[lut[v >> 11]]; g = toSrgb[lut[64 + (v >> 5 & 63)]]; b = toSrgb[lut[128 + (v & 31)]];
+      }
+      const ox = x * s + Math.floor(x / 64) * gap;
+      const lit = r | g | b;
+      for (let yy = 0; yy < s; yy++) {
+        let p = (oy + yy) * W + ox;
+        for (let xx = 0; xx < s; xx++, p++) {
+          const m = mask[yy * s + xx];
+          if (m === 0) { px32[p] = 0xff000000; continue; }
+          const rr = lit ? r * m : off[0] * m, gg = lit ? g * m : off[1] * m, bb = lit ? b * m : off[2] * m;
+          px32[p] = 0xff000000 | (bb << 16) | (gg << 8) | rr;
+        }
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  if ($("labels").checked) {
+    ctx.font = `${Math.max(10, s * 3)}px system-ui, sans-serif`;
+    ctx.textBaseline = "top";
+    for (let r = 0; r < cfg.rows; r++) for (let c = 0; c < cfg.cols; c++) {
+      const t = cfg.labels[r * cfg.cols + c] || "";
+      const x = c * (64 * s + gap) + 4, y = r * (64 * s + gap) + 4;
+      ctx.fillStyle = "rgba(0,0,0,0.55)";
+      ctx.fillRect(x - 2, y - 2, ctx.measureText(t).width + 4, Math.max(10, s * 3) + 4);
+      ctx.fillStyle = "#9fb3cc";
+      ctx.fillText(t, x, y);
+    }
+  }
+}
+function tick() { draw(); requestAnimationFrame(tick); }
+requestAnimationFrame(tick);
+
+// ---- sound: the 48 kHz chunks queued a little ahead of the clock ----
+let ac = null, gain = null, at = 0;
+$("snd").onclick = () => {
+  if (!ac) {
+    ac = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+    gain = ac.createGain(); gain.connect(ac.destination);
+  }
+  if (ac.state === "running" && $("snd").classList.contains("on")) {
+    ac.suspend(); $("snd").classList.remove("on"); $("snd").textContent = "音を出す";
+  } else {
+    ac.resume(); at = 0; $("snd").classList.add("on"); $("snd").textContent = "音を止める";
+  }
+  setVol();
+};
+const setVol = () => { if (gain) gain.gain.value = Math.pow($("vol").value / 100, 2); };
+$("vol").oninput = setVol;
+function play(samples) {
+  if (!ac || ac.state !== "running") return;
+  const b = ac.createBuffer(1, samples.length, 48000);
+  const d = b.getChannelData(0);
+  for (let i = 0; i < samples.length; i++) d[i] = samples[i] / 32768;
+  const now = ac.currentTime;
+  if (at < now + 0.02 || at > now + 0.4) at = now + 0.08; // start / resync
+  const n = ac.createBufferSource();
+  n.buffer = b; n.connect(gain); n.start(at);
+  at += b.duration;
+}
+
+// ---- the link ----
+function connect() {
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => { $("conn").textContent = "接続"; $("conn").classList.remove("bad"); };
+  ws.onclose = () => { $("conn").textContent = "切断 (再接続中)"; $("conn").classList.add("bad"); setTimeout(connect, 1000); };
+  ws.onmessage = e => {
+    if (typeof e.data === "string") {
+      const m = JSON.parse(e.data);
+      if (m.type === "config") { cfg = m; frame = null; layout(); document.title = `HUB75 エミュレータ ${m.cols}x${m.rows}`; }
+      if (m.type === "stat") {
+        $("fps").textContent = m.fps;
+        $("fps").classList.toggle("bad", m.fps === 0);
+        $("src").textContent = m.src || "-";
+        $("audio").textContent = m.audio === null ? "なし" : `バッファ ${m.audio}`;
+      }
+      return;
+    }
+    const u8 = new Uint8Array(e.data);
+    if (u8[0] === 1) {
+      fw = u8[1] | u8[2] << 8; fh = u8[3] | u8[4] << 8;
+      frame = u8.subarray(5); dirty = true;
+    } else if (u8[0] === 2) {
+      play(new Int16Array(e.data.slice(1)));
+    } else if (u8[0] === 3) {
+      lut = u8.slice(1, 193); dirty = true;
+    }
+  };
+}
+layout();
+connect();
+</script>
+</body>
+</html>

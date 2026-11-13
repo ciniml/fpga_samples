@@ -13,6 +13,7 @@ pub mod clock;
 pub mod fireworks;
 pub mod fountain;
 pub mod fractal;
+pub mod etbooth;
 pub mod explain;
 pub mod expo;
 pub mod fireflies;
@@ -32,6 +33,7 @@ pub mod net;
 pub mod showcase;
 pub mod stg;
 pub mod storm;
+pub mod techdeep;
 pub mod waterfall;
 
 /// xorshift64 (games need no more)
@@ -102,6 +104,19 @@ pub struct Cli {
     /// local address (the PC's port on the panel network)
     #[arg(long, default_value = "192.168.10.1:0")]
     bind: String,
+    /// only the emulator on this PC (hub75emu): --dest 127.0.0.1:10004 --bind 127.0.0.1:0
+    #[arg(long)]
+    emu: bool,
+    /// also send everything (video, colour tables, sound) to an emulator
+    /// there, HOST[:PORT] (port 10004; may be given more than once). With
+    /// the board: the board paces, the copies are not answered
+    #[arg(long, value_name = "HOST[:PORT]")]
+    mirror: Vec<String>,
+    /// the demo rotation (showcase / arcade): expo (ELEKI EXPO, the
+    /// default), edgetech (EdgeTech+ at the CQ booth) or a file of lines
+    /// "<demo> <seconds> [start]" (start: from its beginning each time)
+    #[arg(long, default_value = "expo")]
+    playlist: String,
     /// display size WxH: 256x256 (16-panel build) or 128x192 (6 panels)
     #[arg(long, default_value = "256x256")]
     frame: String,
@@ -211,6 +226,7 @@ fn snapshots<G: Game>(mut game: G, dir: &std::path::Path, ticks: u64, every: u64
 pub fn run<G: Game>(name: &str, keys: &str, make: impl FnOnce(u64, u64) -> G) -> Result<()> {
     let cli = Cli::parse();
     fx::set_board_gamma(cli.board_gamma);
+    showcase::set_playlist(&cli.playlist)?;
     if let Some(dir) = &cli.snapshots {
         audio::start_offline();
         return snapshots(make(12345, 0), dir, cli.ticks, cli.every);
@@ -220,7 +236,14 @@ pub fn run<G: Game>(name: &str, keys: &str, make: impl FnOnce(u64, u64) -> G) ->
         .split_once('x')
         .and_then(|(a, b)| Some((a.parse::<usize>().ok()?, b.parse::<usize>().ok()?)))
         .ok_or("--frame: WxH")?;
-    let mut panel = net::Panel::new(&cli.bind, &cli.dest, fw, fh)?;
+    let (dest, bind) = if cli.emu { ("127.0.0.1:10004".to_string(), "127.0.0.1:0".to_string()) } else { (cli.dest.clone(), cli.bind.clone()) };
+    let mut mirrors = Vec::new();
+    for m in &cli.mirror {
+        let m = if m.contains(':') { m.clone() } else { format!("{}:10004", m) };
+        let a = std::net::ToSocketAddrs::to_socket_addrs(&m)?.find(|a| a.is_ipv4()).ok_or("--mirror: no IPv4 address")?;
+        mirrors.push(a);
+    }
+    let mut panel = net::Panel::new(&bind, &dest, &mirrors, fw, fh)?;
     panel.send_gamma(cli.board_gamma)?;
     let inverse = curve(1.0 / cli.board_gamma);
     let hi_path = std::env::var_os("HOME")
@@ -239,8 +262,9 @@ pub fn run<G: Game>(name: &str, keys: &str, make: impl FnOnce(u64, u64) -> G) ->
     let mut unmuted = if vol > 0 { vol } else { 10 };
     let mut vol_shown = 0u32; // ticks the volume bar stays on the screen
     if game.sound() && !cli.no_sound {
-        let ip = cli.dest.parse::<std::net::SocketAddr>()?.ip();
-        audio::start(&cli.bind, ip, audio::vol_gain(vol), cli.record.as_deref())?;
+        let ip = dest.parse::<std::net::SocketAddr>()?.ip();
+        let mips: Vec<_> = mirrors.iter().map(|a| a.ip()).collect();
+        audio::start(&bind, ip, &mips, audio::vol_gain(vol), cli.record.as_deref())?;
     }
     let mut canvas = gfx::Canvas::new();
 
@@ -253,9 +277,10 @@ pub fn run<G: Game>(name: &str, keys: &str, make: impl FnOnce(u64, u64) -> G) ->
     }
     let pad_name = inp.as_ref().filter(|i| i.pad.connected()).map(|i| i.pad.name.clone());
     print!(
-        "hub75 {} -> {} ({}x{} frame)\r\nkeys: {}\r\ncontroller: {}\r\n{}\r\n",
+        "hub75 {} -> {}{} ({}x{} frame)\r\nkeys: {}\r\ncontroller: {}\r\n{}\r\n",
         name,
-        cli.dest,
+        dest,
+        mirrors.iter().map(|m| format!(" + {}", m)).collect::<String>(),
         fw,
         fh,
         keys,

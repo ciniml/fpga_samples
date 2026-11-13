@@ -28,11 +28,11 @@ use crate::jp::{self, Font};
 use std::f32::consts::{PI, TAU};
 
 const SCENES: [u64; 10] = [720, 900, 900, 1000, 1100, 900, 840, 840, 780, 720];
-const FADE: u64 = 20;
-const WHITE: Col = [0.95, 0.95, 1.0];
-const CYAN: Col = [0.3, 0.85, 1.0];
-const GOLD: Col = [1.0, 0.85, 0.2];
-const DIM: Col = [0.55, 0.6, 0.7];
+pub(crate) const FADE: u64 = 20;
+pub(crate) const WHITE: Col = [0.95, 0.95, 1.0];
+pub(crate) const CYAN: Col = [0.3, 0.85, 1.0];
+pub(crate) const GOLD: Col = [1.0, 0.85, 0.2];
+pub(crate) const DIM: Col = [0.55, 0.6, 0.7];
 const BCM_VALUES: [u32; 4] = [63, 45, 20, 7];
 const BCM_COLOR: Col = [1.0, 0.3, 0.15];
 const BCM_MAX: f32 = 128.0; // BCM scene: top speed, units of the LSB a tick
@@ -46,13 +46,13 @@ const GMT_CMP: [(&str, f32, f32, &str); 3] = [
 ];
 const REFRESH: u32 = 432; // 8 bit, the build in the flash
 
-fn hue(h: f32) -> Col {
+pub(crate) fn hue(h: f32) -> Col {
     let c = |o: f32| 0.5 + 0.5 * (TAU * (h - o)).cos();
     [c(0.0), c(1.0 / 3.0), c(2.0 / 3.0)]
 }
 
 /// the picture the scenes send around: a heart on rainbow stripes (u, v in 0..1)
-fn pic(u: f32, v: f32, ph: f32) -> Col {
+pub(crate) fn pic(u: f32, v: f32, ph: f32) -> Col {
     let bg = hue(u * 0.6 + v * 0.4 + ph);
     let (x, y) = ((u - 0.5) * 2.8, (0.42 - v) * 2.8);
     let a = x * x + y * y - 1.0;
@@ -64,13 +64,13 @@ fn pic(u: f32, v: f32, ph: f32) -> Col {
     }
 }
 
-fn put(buf: &mut [Col], x: i32, y: i32, c: Col) {
+pub(crate) fn put(buf: &mut [Col], x: i32, y: i32, c: Col) {
     if x >= 0 && y >= 0 && (x as usize) < W && (y as usize) < H {
         buf[y as usize * W + x as usize] = c;
     }
 }
 
-fn fill(buf: &mut [Col], x: i32, y: i32, w: i32, h: i32, c: Col) {
+pub(crate) fn fill(buf: &mut [Col], x: i32, y: i32, w: i32, h: i32, c: Col) {
     for yy in y..y + h {
         for xx in x..x + w {
             put(buf, xx, yy, c);
@@ -78,14 +78,14 @@ fn fill(buf: &mut [Col], x: i32, y: i32, w: i32, h: i32, c: Col) {
     }
 }
 
-fn frame(buf: &mut [Col], x: i32, y: i32, w: i32, h: i32, c: Col) {
+pub(crate) fn frame(buf: &mut [Col], x: i32, y: i32, w: i32, h: i32, c: Col) {
     fill(buf, x, y, w, 1, c);
     fill(buf, x, y + h - 1, w, 1, c);
     fill(buf, x, y, 1, h, c);
     fill(buf, x + w - 1, y, 1, h, c);
 }
 
-fn disc(buf: &mut [Col], cx: f32, cy: f32, r: f32, c: Col) {
+pub(crate) fn disc(buf: &mut [Col], cx: f32, cy: f32, r: f32, c: Col) {
     for y in (cy - r - 1.0) as i32..=(cy + r + 1.0) as i32 {
         for x in (cx - r - 1.0) as i32..=(cx + r + 1.0) as i32 {
             let d = ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
@@ -99,7 +99,7 @@ fn disc(buf: &mut [Col], cx: f32, cy: f32, r: f32, c: Col) {
 }
 
 /// the picture scaled into a box
-fn thumb(buf: &mut [Col], x0: i32, y0: i32, w: i32, h: i32, ph: f32) {
+pub(crate) fn thumb(buf: &mut [Col], x0: i32, y0: i32, w: i32, h: i32, ph: f32) {
     for y in 0..h {
         for x in 0..w {
             put(buf, x0 + x, y0 + y, pic((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / h as f32, ph));
@@ -107,14 +107,14 @@ fn thumb(buf: &mut [Col], x0: i32, y0: i32, w: i32, h: i32, ph: f32) {
     }
 }
 
-fn header(buf: &mut [Col], s: &str) {
+pub(crate) fn header(buf: &mut [Col], s: &str) {
     fill(buf, 0, 0, W as i32, 23, [0.04, 0.06, 0.15]);
     fill(buf, 0, 23, W as i32, 1, [0.2, 0.4, 0.8]);
     jp::draw_centre(buf, Font::B16, s, 2, GOLD);
 }
 
 /// a line of text that fades in from tick `at` of the scene
-fn line_in(buf: &mut [Col], t: u64, at: u64, f: Font, s: &str, y: i32, c: Col) {
+pub(crate) fn line_in(buf: &mut [Col], t: u64, at: u64, f: Font, s: &str, y: i32, c: Col) {
     let k = smooth(at as f32, at as f32 + 20.0, t as f32);
     if k > 0.0 {
         jp::draw_centre(buf, f, s, y, [c[0] * k, c[1] * k, c[2] * k]);

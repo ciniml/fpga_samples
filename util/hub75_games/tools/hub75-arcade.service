@@ -4,7 +4,9 @@ After=network-online.target
 
 [Service]
 WorkingDirectory=%h/exhibit/hub75_games
-ExecStart=%h/exhibit/hub75_games/bin/arcade
+# options in arcade.env, e.g. ARCADE_ARGS=--playlist edgetech (no file: ELEKI EXPO)
+EnvironmentFile=-%h/exhibit/hub75_games/arcade.env
+ExecStart=%h/exhibit/hub75_games/bin/arcade $ARCADE_ARGS
 # the panel NIC (192.168.10.1) may come up later: try again
 Restart=always
 RestartSec=3

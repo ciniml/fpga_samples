@@ -12,6 +12,9 @@ use std::time::Duration;
 pub struct Panel {
     sock: UdpSocket,
     dest: SocketAddr,
+    // copies of everything (an emulator next to the board): their own
+    // socket, the replies are not read
+    mirror: Option<(UdpSocket, Vec<SocketAddr>)>,
     fw: usize,
     buf: Vec<u8>,
     pkt: Vec<u8>,
@@ -19,14 +22,15 @@ pub struct Panel {
 }
 
 impl Panel {
-    pub fn new(bind: &str, dest: &str, fw: usize, fh: usize) -> io::Result<Panel> {
+    pub fn new(bind: &str, dest: &str, mirrors: &[SocketAddr], fw: usize, fh: usize) -> io::Result<Panel> {
         assert!(fw >= W && fh >= H, "the frame must hold the 128x192 screen");
         let sock = UdpSocket::bind(bind)?;
         sock.set_read_timeout(Some(Duration::from_millis(6)))?;
         let dest = dest
             .parse()
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-        Ok(Panel { sock, dest, fw, buf: vec![0; fw * fh * 2], pkt: Vec::with_capacity(1026), acks: 0 })
+        let mirror = if mirrors.is_empty() { None } else { Some((UdpSocket::bind("0.0.0.0:0")?, mirrors.to_vec())) };
+        Ok(Panel { sock, dest, mirror, fw, buf: vec![0; fw * fh * 2], pkt: Vec::with_capacity(1026), acks: 0 })
     }
 
     /// loads the board's colour tables (UDP port 10005) with gamma g, 8-bit
@@ -41,6 +45,11 @@ impl Panel {
                 p.push((x.powf(g) * 255.0).round() as u8);
             }
             self.sock.send_to(&p, port)?;
+            if let Some((m, to)) = &self.mirror {
+                for a in to {
+                    m.send_to(&p, SocketAddr::new(a.ip(), 10005))?;
+                }
+            }
         }
         Ok(())
     }
@@ -61,6 +70,11 @@ impl Panel {
             self.pkt.extend_from_slice(&((off / unit) as u16).to_be_bytes());
             self.pkt.extend_from_slice(&self.buf[off..end]);
             self.sock.send_to(&self.pkt, self.dest)?;
+            if let Some((m, to)) = &self.mirror {
+                for a in to {
+                    let _ = m.send_to(&self.pkt, a);
+                }
+            }
         }
         let mut ack = [0u8; 16];
         if self.sock.recv_from(&mut ack).is_ok() {

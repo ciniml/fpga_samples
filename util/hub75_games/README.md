@@ -27,10 +27,59 @@ cargo build --release
 ./target/release/clock                    # 動作デモ: 時計 (アナログ / ニキシー管 / 7 セグメント)
 ./target/release/expo                     # 動作デモ: 超エレキ万博2026
 ./target/release/explain                  # 動作デモ: このデザインのしくみ解説
-./target/release/showcase                 # 動作デモを 40 秒ずつ順に (スペース / Enter で次へ)
+./target/release/etbooth                  # 動作デモ: EdgeTech+ 2026 の案内 (会期・会場マップ・CQ 出版ブース・GOWIN)
+./target/release/techdeep                 # 動作デモ: 技術解説 (EdgeTech+ 向け、構成・UDP・RGMII・DDR2・HUB75・Veryl・リソース)
+./target/release/showcase                 # 動作デモをプレイリストの順に (既定はエレキ万博用、スペース / Enter で次へ)
+./target/release/showcase --playlist edgetech   # EdgeTech+ 用のプレイリスト
+./target/release/hub75emu                 # 表示エミュレータ (ブラウザで見る、下の節)
 ./target/release/arcade                   # 展示用: デモを流し、コントローラのボタンでゲームの選択画面へ
 ./target/release/padtest                  # コントローラの確認 (押したボタンをキー名で表示)
 ```
+
+## 表示エミュレータ (hub75emu)
+
+ボードの代わりに同じ UDP (映像 10004 と ack、色テーブル 10005、音声 10002 とレベル応答) を受けて、Web ブラウザに
+パネルの配置どおりに LED を描く。LAN 内の別の PC (Windows など) からブラウザで開ける。標準ライブラリだけで
+HTTP と WebSocket を持つ (追加のクレートなし)。
+
+```
+./target/release/hub75emu                          # 16 枚版のフレーム (256x256) の左上 2 x 3 枚 = 展示の構成
+./target/release/hub75emu --panels 4x4             # 16 枚すべて
+./target/release/hub75emu --frame 128x192          # 6 枚版のビルド (J4〜J9)
+./target/release/arcade --emu                      # エミュレータだけに送る (--dest 127.0.0.1:10004 --bind 127.0.0.1:0)
+./target/release/arcade --mirror 192.168.2.14      # ボードとエミュレータの両方に送る (ペースはボードの ack)
+./target/release/showcase --emu --playlist edgetech
+```
+
+- **待ち受け:** HTTP / WebSocket は `--http` (既定 `0.0.0.0:8075`、全インターフェース)。ブラウザで `http://<ホストの IP>:8075/`。
+  UDP は `--udp` (既定 `0.0.0.0`) の 10004 / 10005 / 10002。ボードと同じポートなので、1 台のホストで同時に 2 つは動かせない
+- **表示:** LED は点灯時間 (線形) で光るので、色テーブルを通した 8 bit 値を線形の明るさとみなし sRGB に直して描く
+  (パネルを目で見た感じに近い)。「LED ドット」(丸い LED と消灯時の灰色) / 「ベタ」、拡大率 (自動 / 固定)、コネクタ名
+  (J4〜、ボードのコネクタの並び: 16 枚版の 2 x 3 なら J4 J5 / J8 J9 / J12 J13) を切り替えられる (ブラウザに保存)
+- **音:** 「音を出す」で鳴らす (ブラウザは操作がないと音を出せない)。ボードの FIFO (2048 フレーム、1024 で再生開始、
+  256 フレームごとにレベル応答) を時間でまねるので、送信側は実機と同じペースになる。(L + R) / 2 のモノラル
+- **フレーム:** 最後のバイトを書いたパケットで表示して `de ad be ef` を返す (実機はパネルのフレーム境界まで待つ)。
+  ヘッダに受信 fps、送信元、音声のバッファ量。受信バッファは rmem_max まで広げる (既定では 128 パケットの束があふれて
+  ときどきフレームを落とした)
+- **`--mirror`:** 映像・色テーブル・音声を別のソケットからもう 1 か所に送る (応答は読まない)。何度でも指定できる
+
+## プレイリスト (`--playlist`)
+
+showcase と arcade (巡回) のデモの順番と時間。`expo` (既定、エレキ万博: 動作デモ 15 本を 40 秒ずつ、約 10 分)、
+`edgetech` (EdgeTech+: 案内 60 秒 → 技術解説 120 秒 → フラクタル → 花火 → 案内 → しくみ解説 145 秒 → オーロラ →
+ライフゲーム → 文字の雨 → 時計、約 9.5 分で一巡、案内はおよそ 4 分ごと)、またはファイル:
+
+```
+# <デモ> <秒> [start]   start = 毎回最初から (解説もの)
+etbooth 60 start
+techdeep 120 start
+fractal 30
+```
+
+デモ名は `expo etbooth techdeep explain clock fireworks flame waterfall aurora storm hourglass matrix lavalamp fireflies
+life fractal fountain aquarium`。arcade の「デモをえらぶ」は常に全部、ゲーム後のランダムはプレイリストの中から選ぶ。
+展示 PC の自動起動では `~/exhibit/hub75_games/arcade.env` に `ARCADE_ARGS=--playlist edgetech` と書いてサービスを
+再起動する (ファイルがなければエレキ万博用)。
 
 ## 展示用 PC (deltaflyer / Raspberry Pi 4) への導入
 
@@ -264,6 +313,38 @@ stg 約 2 分 50 秒、invaders 約 1 分 50 秒 (人が遊ぶと 1 波 45〜60 
   1 ビットの字形にして `src/jpfont.rs` に書き出したもの (ビルドにフォントは要らない)。文字を足すときはスクリプトの TEXT に
   加えて実行し直す。描画は `src/jp.rs`
 
+## etbooth — EdgeTech+ 2026 の案内 (動作デモ)
+
+CQ 出版ブース (DF-05) 用。15 秒 × 4 ページ (スペース / Enter で次へ):
+
+1. 会期・会場: 2026.11.18〜20 (水〜金) 10:00〜17:00 (19 日 (木) のみ 18:00 まで)、パシフィコ横浜 展示ホール、入場無料 (事前登録制)
+2. 会場マップ: ホール D / C / B と出入口、「ここ」= CQ 出版社 DF-05 (ホール D)、丸文 BG-05 (ホール B、GOWIN を展示)、
+   その間の通路を点が歩く (配置は公式フロアマップから縮めたもので、小間の四角は飾り)
+3. CQ 出版社ブース: Interface 筆者のミニ・セミナ、学生の研究発表 (LT)、Interface 最新号・書籍・キットの販売
+4. GOWIN: この表示は GW3A (Arora III) 1 チップ、GOWIN の展示は丸文 BG-05 (各種 IF ソリューション、中小規模 FPGA 新製品)
+
+情報は 2026-11-14 に確認した公式のもの: [EdgeTech+ 開催概要](https://www.jasa.or.jp/expo/about/)、
+[オンラインガイド出展社一覧](https://etplus2026.ecos-jp.com/ne1/public/online_guide/companies?event_code=etplus2026)
+(CQ 出版社 DF-05、丸文株式会社 BG-05 の紹介に「GOWIN 各種IFソリューションの展示 中小規模FPGA（CPLD)新製品のご紹介」)、
+[フロアマップ](https://www.jasa.or.jp/expo/2026/pdf/floormap.jpg)。丸文はもう 1 小間 (組込ソリューション BG-09) あるが、
+GOWIN の記載は BG-05 のほう。
+
+## techdeep — 技術解説 (動作デモ、EdgeTech+ 向け)
+
+explain (パネルがどう絵を出すか) より技術寄り。15 秒 × 8 枚:
+
+1. タイトルと目次
+2. 構成: PC → PHY RTL8211E → (GW3A) MAC・CRC → UDP 振り分け (+ I2S) → DDR2 2 面 → ビットプレーン → HUB75 ×16 レーン、
+   1000BASE-T / RGMII、クロック 125 / 83.3 / 50 MHz
+3. UDP: パケットの並び (ofs 2 B + RGB565 1024 B)、ポート 10004 / 10005 / 10002 / 10006、ack `de ad be ef`、
+   256x256 = 128 パケット、GbE で 1.12 ms
+4. RGMII: 4 bit × 両エッジ × 125 MHz = 1000 Mbps、IDDR + IODELAY、1 クロック 1 バイト、PHY の遅延は MDIO、10/100M も自動判別
+5. DDR2: 2 面の切り替え、帯域 (書き込み 96 MB/s、読み出し 113 MB/s、ピーク 667 MB/s の約 3 割)、読出位置の自動調整
+6. HUB75: 16 レーン同時シフト、CLK / LAT / OE の波形、CLK 16.7 MHz、1/32 スキャン、8 bit BCM、432 Hz
+7. Veryl: `src/common/audio_i2s.veryl` の一部をタイプ表示、RTL はすべて Veryl (31 ファイル 9845 行)、Verilator で検証
+8. リソース: フラッシュに入っている 16 枚・8 bit・音声付きのビルドの配置配線結果 (ロジック 43 %、FF 23 %、BSRAM 27 / 120、
+   I/O 171 / 238、Fmax sys 125.2 (125)、DRAM 121.9 (83.3)、表示 100.7 (50) MHz)
+
 ## explain — しくみ解説 (動作デモ)
 
 - このパネルの表示がどう動いているか (`eda/ethernet_hub75`) を 10 の場面のアニメーションで説明する約 140 秒のループ
@@ -292,7 +373,8 @@ stg 約 2 分 50 秒、invaders 約 1 分 50 秒 (人が遊ぶと 1 波 45〜60 
 ## showcase — 動作デモを順に
 
 - expo → clock → fireworks → flame → waterfall → aurora → storm → hourglass → matrix → lavalamp → fireflies → life → fractal → fountain →
-  aquarium を 40 秒ずつ、フェードでつなぐ (1 巡 約 10 分)。各デモは自分の番の間だけ進む
+  aquarium を 40 秒ずつ、フェードでつなぐ (1 巡 約 10 分、プレイリスト `expo`)。各デモは自分の番の間だけ進む
+- `--playlist edgetech` などで順番と時間を変える (上の「プレイリスト」の節)。`start` 付きの項目は毎回最初から
 
 ## 共通部品
 

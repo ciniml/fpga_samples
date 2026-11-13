@@ -136,7 +136,9 @@ impl Recorder {
     }
 }
 
-pub fn start(bind: &str, dest: std::net::IpAddr, gain: f32, record: Option<&std::path::Path>) -> std::io::Result<()> {
+/// `mirrors`: also sent there (an emulator next to the board; its replies
+/// are not read, the board paces)
+pub fn start(bind: &str, dest: std::net::IpAddr, mirrors: &[std::net::IpAddr], gain: f32, record: Option<&std::path::Path>) -> std::io::Result<()> {
     let mut rec = match record {
         Some(p) => {
             let mut f = std::fs::File::create(p)?;
@@ -149,6 +151,8 @@ pub fn start(bind: &str, dest: std::net::IpAddr, gain: f32, record: Option<&std:
     let sock = UdpSocket::bind((ip, 0))?;
     sock.set_read_timeout(Some(Duration::from_millis(5)))?;
     let dest = std::net::SocketAddr::new(dest, 10002);
+    let mirror = UdpSocket::bind("0.0.0.0:0")?;
+    let mirrors: Vec<_> = mirrors.iter().map(|&ip| std::net::SocketAddr::new(ip, 10002)).collect();
     *GAIN.lock().unwrap() = gain;
     ON.store(true, Ordering::Relaxed);
     std::thread::spawn(move || {
@@ -185,6 +189,9 @@ pub fn start(bind: &str, dest: std::net::IpAddr, gain: f32, record: Option<&std:
                 }
                 if sock.send_to(&pkt, dest).is_err() {
                     std::thread::sleep(Duration::from_millis(10));
+                }
+                for m in &mirrors {
+                    let _ = mirror.send_to(&pkt, m);
                 }
                 sent += PKT;
                 level += PKT;
