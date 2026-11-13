@@ -1,0 +1,12 @@
+[package]
+name = "chromatic_cart_dump"
+version = "0.1.0"
+edition = "2021"
+license = "BSL-1.0"
+description = "Reads Game Boy cartridge ROMs through a ModRetro Chromatic running eda/chromatic_cart_dump"
+
+[dependencies]
+nusb = "0.2"
+clap = { version = "4", features = ["derive"] }
+sha1 = "0.10"
+crc32fast = "1"

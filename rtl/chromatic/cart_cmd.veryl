@@ -1,0 +1,297 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file cart_cmd.veryl
+ * @brief Command processor of the cartridge reader: a byte stream in (USB
+ *        EP1 OUT), a byte stream out (EP1 IN), CartBus requests.
+ *
+ * Commands (multi-byte values little endian):
+ *   'S'                        -> 8 bytes: 'C' 'R' PROTO flags rst_in
+ *                                 reject_cnt err 0
+ *       flags: [0] cartridge detected (debounced)  [1] power switch ON
+ *              [2] power requested  [3] CART_PWR_EN  [4] bus ready
+ *              (powered, /RST released)  [5] legacy board  [6] /RST pin High
+ *       err (cleared by 'S'): [0] read while not ready  [1] unknown opcode
+ *                             [2] write while not ready
+ *   'P' on                     -> 'P' flags     request slot power on / off
+ *                                 (the request is dropped when the
+ *                                 cartridge is removed or the switch goes OFF)
+ *   'R' addr16 len16           -> len bytes (len 0 = 65536), one bus read
+ *                                 per byte, address +1 (wraps at 16 bits).
+ *                                 0xFF and err[0] while the bus is not ready.
+ *   'W' addr16 data            -> 'W' result: 0 done, 1 refused (CartBus
+ *                                 whitelist), 2 bus not ready
+ * Unknown opcodes are dropped (err[1]) so the host can resynchronise by
+ * sending 'S' a few times and reading until "CR".
+ */
+pub module CartCmd #(
+    param CLK_HZ: u32 = 60_000_000,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_rx_valid: input  logic   ,
+    i_rx_data : input  logic<8>,
+    o_rx_ready: output logic   ,
+    o_tx_valid: output logic   ,
+    o_tx_data : output logic<8>,
+    i_tx_ready: input  logic   ,
+
+    // board state
+    i_cart_det : input  logic, // CART_DET pin (1 = inserted), asynchronous
+    i_switch_on: input  logic, // ~POWER_ON_FPGA, asynchronous
+    i_rst_in   : input  logic, // CART_RST pin level, asynchronous
+    i_pwr_en   : input  logic, // CartPower o_pwr_en
+    i_legacy   : input  logic, // CartPower o_legacy
+    i_bus_ready: input  logic, // CartPower o_ready && CartBus o_rst_done
+    o_power_en : output logic, // to CartPower i_enable
+    o_cart_det : output logic, // debounced
+    o_busy     : output logic, // a read is streaming (LED)
+    o_rejected : output logic, // some write was refused since reset (LED)
+
+    // CartBus
+    o_req_valid : output logic    ,
+    o_req_write : output logic    ,
+    o_req_addr  : output logic<16>,
+    o_req_wdata : output logic<8> ,
+    i_req_ready : input  logic    ,
+    i_rsp_valid : input  logic    ,
+    i_rsp_data  : input  logic<8> ,
+    i_rsp_reject: input  logic    ,
+) {
+    const PROTO   : logic<8> = 8'h01;
+    const DEB_CYC : u32      = CLK_HZ / 100; // 10 ms
+
+    enum State: logic<3> {
+        Op,
+        Args,
+        ReadReq,
+        ReadRsp,
+        ReadPush,
+        WriteReq,
+        WriteRsp,
+        Reply,
+    }
+
+    var state : State    ;
+    var op    : logic<8> ;
+    var argn  : logic<3> ; // argument bytes still expected
+    var args  : logic<8> [5];
+    var argi  : logic<3> ;
+    var addr  : logic<16>;
+    var remain: logic<17>;
+    var rdata : logic<8> ;
+    var rbuf  : logic<8> [8];
+    var rlen  : logic<4> ;
+    var ridx  : logic<4> ;
+
+    var power_req : logic    ;
+    var reject_cnt: logic<8> ;
+    var err       : logic<3> ;
+    var rejected  : logic    ;
+
+    // ---- synchronisers / debouncer ----
+    var det_s  : logic<2> ;
+    var sw_s   : logic<2> ;
+    var rst_s  : logic<2> ;
+    var det_cnt: logic<24>;
+    var det    : logic    ;
+
+    always_ff {
+        if_reset {
+            det_s   = 0;
+            sw_s    = 0;
+            rst_s   = 0;
+            det_cnt = 0;
+            det     = 0;
+        } else {
+            det_s = {det_s[0], i_cart_det};
+            sw_s  = {sw_s[0], i_switch_on};
+            rst_s = {rst_s[0], i_rst_in};
+            if det_s[1] == det {
+                det_cnt = 0;
+            } else if det_cnt == DEB_CYC - 1 {
+                det_cnt = 0;
+                det     = det_s[1];
+            } else {
+                det_cnt += 1;
+            }
+        }
+    }
+
+    let flags: logic<8> = {1'b0, rst_s[1], i_legacy, i_bus_ready, i_pwr_en, power_req, sw_s[1], det};
+
+    function nargs (
+        o: input logic<8>,
+    ) -> logic<3> {
+        case o {
+            8'h50  : return 3'd1; // 'P'
+            8'h52  : return 3'd4; // 'R'
+            8'h57  : return 3'd3; // 'W'
+            default: return 3'd0;
+        }
+    }
+
+    assign o_rx_ready = state == State::Op || state == State::Args;
+    let rx_take: logic = i_rx_valid && o_rx_ready;
+
+    assign o_tx_valid = state == State::ReadPush || state == State::Reply;
+    assign o_tx_data  = if state == State::ReadPush ? rdata : rbuf[ridx[2:0]];
+    let tx_take: logic = o_tx_valid && i_tx_ready;
+
+    assign o_req_valid = state == State::ReadReq || state == State::WriteReq;
+    assign o_req_write = state == State::WriteReq;
+    assign o_req_addr  = addr;
+    assign o_req_wdata = args[2];
+
+    always_ff {
+        if_reset {
+            state      = State::Op;
+            op         = 0;
+            argn       = 0;
+            args       = '{8'h00, 8'h00, 8'h00, 8'h00, 8'h00};
+            argi       = 0;
+            addr       = 0;
+            remain     = 0;
+            rdata      = 0;
+            rbuf       = '{8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00};
+            rlen       = 0;
+            ridx       = 0;
+            power_req  = 0;
+            reject_cnt = 0;
+            err        = 0;
+            rejected   = 0;
+        } else {
+            // the request is dropped with the cartridge or the switch
+            if !det || !sw_s[1] {
+                power_req = 0;
+            }
+            case state {
+                State::Op: {
+                    if rx_take {
+                        op   = i_rx_data;
+                        argi = 0;
+                        if i_rx_data == 8'h53 { // 'S'
+                            rbuf  = '{8'h43, 8'h52, PROTO, flags, {7'd0, rst_s[1]}, reject_cnt, {5'd0, err}, 8'h00};
+                            rlen  = 4'd8;
+                            ridx  = 0;
+                            err   = 0;
+                            state = State::Reply;
+                        } else if nargs(i_rx_data) != 0 {
+                            argn  = nargs(i_rx_data);
+                            state = State::Args;
+                        } else {
+                            err[1] = 1;
+                        }
+                    }
+                }
+                State::Args: {
+                    if rx_take {
+                        args[argi] = i_rx_data;
+                        argi       += 1;
+                        if argn == 3'd1 {
+                            case op {
+                                8'h50: { // 'P'
+                                    power_req = i_rx_data[0] && det && sw_s[1];
+                                    rbuf[0]   = 8'h50;
+                                    rbuf[1]   = {flags[7:3], i_rx_data[0] && det && sw_s[1], flags[1:0]};
+                                    rlen      = 4'd2;
+                                    ridx      = 0;
+                                    state     = State::Reply;
+                                }
+                                8'h52: { // 'R' addr_l addr_h len_l len_h
+                                    addr   = {args[1], args[0]};
+                                    remain = if {i_rx_data, args[2]} == 16'h0000 ? 17'h10000 : {1'b0, i_rx_data, args[2]};
+                                    state  = State::ReadReq;
+                                }
+                                default: { // 'W' addr_l addr_h data
+                                    addr = {args[1], args[0]};
+                                    if i_bus_ready {
+                                        state = State::WriteReq;
+                                    } else {
+                                        err[2]  = 1;
+                                        rbuf[0] = 8'h57;
+                                        rbuf[1] = 8'h02;
+                                        rlen    = 4'd2;
+                                        ridx    = 0;
+                                        state   = State::Reply;
+                                    }
+                                }
+                            }
+                        } else {
+                            argn -= 1;
+                        }
+                    }
+                }
+                State::ReadReq: {
+                    if !i_bus_ready {
+                        rdata  = 8'hFF;
+                        err[0] = 1;
+                        state  = State::ReadPush;
+                    } else if i_req_ready {
+                        state = State::ReadRsp;
+                    }
+                }
+                State::ReadRsp: {
+                    if i_rsp_valid {
+                        rdata = i_rsp_data;
+                        state = State::ReadPush;
+                    }
+                }
+                State::ReadPush: {
+                    if tx_take {
+                        addr   += 1;
+                        remain -= 1;
+                        state  = if remain == 17'd1 ? State::Op : State::ReadReq;
+                    }
+                }
+                State::WriteReq: {
+                    if !i_bus_ready {
+                        err[2]  = 1;
+                        rbuf[0] = 8'h57;
+                        rbuf[1] = 8'h02;
+                        rlen    = 4'd2;
+                        ridx    = 0;
+                        state   = State::Reply;
+                    } else if i_req_ready {
+                        state = State::WriteRsp;
+                    }
+                }
+                State::WriteRsp: {
+                    if i_rsp_valid {
+                        rbuf[0] = 8'h57;
+                        rbuf[1] = {7'd0, i_rsp_reject};
+                        rlen    = 4'd2;
+                        ridx    = 0;
+                        if i_rsp_reject {
+                            rejected = 1;
+                            if reject_cnt != 8'hFF {
+                                reject_cnt += 1;
+                            }
+                        }
+                        state = State::Reply;
+                    }
+                }
+                State::Reply: {
+                    if tx_take {
+                        ridx += 1;
+                        if ridx == rlen - 4'd1 {
+                            state = State::Op;
+                        }
+                    }
+                }
+                default: {
+                    state = State::Op;
+                }
+            }
+        }
+    }
+
+    assign o_power_en = power_req;
+    assign o_cart_det = det;
+    assign o_busy     = state == State::ReadReq || state == State::ReadRsp || state == State::ReadPush;
+    assign o_rejected = rejected;
+}
