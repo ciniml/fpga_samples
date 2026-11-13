@@ -33,6 +33,7 @@
   <span style="flex:1"></span>
   <label>表示 <select id="mode"><option value="dot">LED ドット</option><option value="flat">ベタ</option></select></label>
   <label>拡大 <select id="zoom"><option value="0">自動</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>8</option></select></label>
+  <label><input type="checkbox" id="gaps" checked> 隙間</label>
   <label><input type="checkbox" id="labels" checked> コネクタ名</label>
   <button id="snd">音を出す</button>
   <label>音量 <input type="range" id="vol" min="0" max="100" value="70" style="width:80px"></label>
@@ -48,9 +49,11 @@ let frame = null, fw = 0, fh = 0, dirty = false;
 const store = (k, v) => { try { localStorage.setItem("hub75emu." + k, v); } catch (e) {} };
 const load = k => { try { return localStorage.getItem("hub75emu." + k); } catch (e) { return null; } };
 for (const k of ["mode", "zoom"]) { const v = load(k); if (v !== null) $(k).value = v; }
-if (load("labels") !== null) $("labels").checked = load("labels") === "1";
+for (const k of ["labels", "gaps"]) {
+  if (load(k) !== null) $(k).checked = load(k) === "1";
+  $(k).onchange = () => { store(k, $(k).checked ? "1" : "0"); layout(); };
+}
 for (const k of ["mode", "zoom"]) $(k).onchange = () => { store(k, $(k).value); layout(); };
-$("labels").onchange = () => { store("labels", $("labels").checked ? "1" : "0"); layout(); };
 
 // LEDs are lit by on-time (linear); the screen wants sRGB
 const toSrgb = new Uint8Array(256);
@@ -65,8 +68,9 @@ function layout() {
   const z = +$("zoom").value;
   const main = document.querySelector("main");
   const aw = main.clientWidth - 24, ah = main.clientHeight - 24;
-  s = z || Math.max(1, Math.floor(Math.min(aw / (pw + (cfg.cols - 1) * 0.75), ah / (ph + (cfg.rows - 1) * 0.75))));
-  gap = Math.max(2, Math.round(s * 0.75));
+  const gk = $("gaps").checked ? 0.75 : 0; // the gap between panels, in LEDs
+  s = z || Math.max(1, Math.floor(Math.min(aw / (pw + (cfg.cols - 1) * gk), ah / (ph + (cfg.rows - 1) * gk))));
+  gap = gk ? Math.max(2, Math.round(s * gk)) : 0;
   W = pw * s + (cfg.cols - 1) * gap; H = ph * s + (cfg.rows - 1) * gap;
   cv.width = W; cv.height = H;
   img = ctx.createImageData(W, H);
