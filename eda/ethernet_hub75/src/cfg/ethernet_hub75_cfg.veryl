@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+//
+// Build configuration of DkLedRxcardTop as seen by the Veryl analyzer.
+//
+// The Gowin build does not use this file: project.tcl writes a package of
+// the same name with the values of the make variables (HUB75_IMPL,
+// PANEL_COLS, ...) and leaves src/cfg out of the source list, and the
+// testbench has its own copy (test/ethernet_hub75_cfg.sv). The generated
+// top refers to ethernet_hub75_cfg::* either way.
+//
+// Veryl 0.22 evaluates parameters it cannot see (a $sv:: package) as
+// garbage once they are passed down two instance levels, and then rejects
+// widths and selects in the lower modules. The values here (the 16-panel
+// DDR2 build shown at the exhibition) give it something real to check.
+package ethernet_hub75_cfg {
+    const HUB75_IMPL    : u32     = 5      ; // ddrplane
+    const RX_DELAY      : u32     = 0      ;
+    const PANEL_COLS    : u32     = 4      ;
+    const PANEL_ROWS    : u32     = 4      ;
+    const CONN_ID       : bit     = 0      ;
+    const AUDIO         : bit     = 1      ;
+    const COMPONENT_BITS: u32     = 8      ;
+    const BASE_OE_CYCLES: u32     = 4      ;
+    const TXC_SHIFTED   : bit     = 0      ;
+    const PHY_DELAY_BITS: bit<16> = 16'h3800;
+}

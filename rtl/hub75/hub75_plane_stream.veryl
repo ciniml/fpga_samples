@@ -147,7 +147,7 @@ pub module Hub75PlaneStream #(
 
     for i in 0..NUM_LANES :g_lane {
         #[sv("syn_ramstyle=\"distributed_ram\"")]
-        var mem: logic<12 * FILL_NIBS> [DEPTH];
+        var mem: 'f logic<12 * FILL_NIBS> [DEPTH];
         always_ff (i_fclk) {
             if i_we && i_wlane == i {
                 mem[i_waddr] = i_wdata;

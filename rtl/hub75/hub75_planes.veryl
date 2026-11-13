@@ -123,11 +123,11 @@ pub module Hub75Planes #(
 
     for i in 0..NUM_LANES :g_lane {
         #[sv("ram_style=\"block\"")]
-        var mem_r: logic<32> [DEPTH];
+        var mem_r: 'w logic<32> [DEPTH];
         #[sv("ram_style=\"block\"")]
-        var mem_g: logic<32> [DEPTH];
+        var mem_g: 'w logic<32> [DEPTH];
         #[sv("ram_style=\"block\"")]
-        var mem_b: logic<32> [DEPTH];
+        var mem_b: 'w logic<32> [DEPTH];
         let waddr: logic<PLANE_BITS + WORD_BITS> = {i_wplane, wbank, i_waddr};
         always_ff (i_wclk) {
             if i_we && i_wlane == i {

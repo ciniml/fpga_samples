@@ -55,7 +55,7 @@ pub module axi4s_demux::<WIDTH: u32 = 8, LAST: bbool = false, USER: u32 = 0> #(
 ) {
     type select_t = logic<$clog2(N+1)>;
     type data_t = logic<WIDTH>;
-    type user_t = logic<USER>;
+    type user_t = logic<if USER == 0 ? 1 : USER>;
 
     // Internal buffers for each channel.
     var data: data_t[N];
@@ -64,17 +64,22 @@ pub module axi4s_demux::<WIDTH: u32 = 8, LAST: bbool = false, USER: u32 = 0> #(
     var valid: logic[N];
     var ready: logic[N];
 
-    always_comb {
-        port_in.tready = 0;
-
-        for i in 0..N {
-            // Connect internal buffers to output ports
+    // Connect internal buffers to output ports
+    // (an interface array element must be selected by a generate index)
+    for i in 0..N: port_gen {
+        always_comb {
             ready[i] = port_out[i].tready;
             port_out[i].tvalid = valid[i];
             port_out[i].tdata = data[i];
             port_out[i].tlast = last[i];
             port_out[i].tuser = user[i];
+        }
+    }
 
+    always_comb {
+        port_in.tready = 0;
+
+        for i in 0..N {
             if select == i {
                 // Can accept a new data if the selected channel can consume it, (internal buffer is empty or the output is ready)
                 port_in.tready = !valid[i] || ready[i];

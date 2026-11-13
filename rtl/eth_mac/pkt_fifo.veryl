@@ -106,14 +106,14 @@ module PktFifo #(
     // ---------------------------------------------------------------
     // Storage
     // ---------------------------------------------------------------
-    var lane0: logic<8> [ROWS];
-    var lane1: logic<8> [ROWS];
-    var lane2: logic<8> [ROWS];
-    var lane3: logic<8> [ROWS];
+    var lane0: 'w logic<8> [ROWS];
+    var lane1: 'w logic<8> [ROWS];
+    var lane2: 'w logic<8> [ROWS];
+    var lane3: 'w logic<8> [ROWS];
 
-    var rec_len : logic<11>     [RECS];
-    var rec_flag: logic         [RECS];
-    var rec_rows: logic<RPTR_W> [RECS]; // rows the frame occupies (its start is row aligned)
+    var rec_len : 'w logic<11>     [RECS];
+    var rec_flag: 'w logic         [RECS];
+    var rec_rows: 'w logic<RPTR_W> [RECS]; // rows the frame occupies (its start is row aligned)
 
     // Read-domain registers (declared here: the write domain samples the
     // reader's gray pointers)
