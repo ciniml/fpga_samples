@@ -27,6 +27,8 @@ cd ../../util/chromatic_cart_dump && cargo build --release
 ./target/release/chromatic_cart_dump save                    # セーブデータ: 2 回読んで一致したら <タイトル>.sav に保存
 ```
 
+- 毎回コマンドを打たなくてよい Web UI: `chromatic_cart_dump serve` (http://<PC>:8095/、FPGA の SRAM 書き込みもボタンで行える。
+  [`../../util/chromatic_cart_dump/README.md`](../../util/chromatic_cart_dump/README.md))
 - 電源スイッチ ON、カートを挿してから `make run`。抜き差ししてもよい (抜くと電源要求は取り消され、次のコマンドで再投入)
 - `dump` のオプション: `-o <file>`、`--verify` (2 回読んで比較)、`--mapper <mbc1|mbc2|mbc3|mbc5|mbc7|camera|huc1|huc3|none>`、
   `--banks <n>`、`--mbc1m`、`--force` (ヘッダチェックサム不一致でも続行 / 非対応マッパーはバンク 0-1 のみ)、`--keep-power`
@@ -126,5 +128,8 @@ RAM モード外の RAM 有効化、RAM 有効のままの電源断、データ�
   CRC32 101e55b1、SHA-1 ff0bb1bfc446dcc835e70880b5caef4ef959ecc0。バンク 0 / 1 / 2 は互いに異なり、2 と 3 は同一
   (1 ビットの固着なら 0 = 1 にもなるはずなので、ゲーム側の予備コピーと見ている)。
   このダンプの ROM と .sav をエミュレータで読み込み、セーブ内容が出ることをユーザーが確認した
+- 2026-11-15 実機: STAROCEANGBBO2J のセーブ (MBC5、32 KiB) を CLI と Web UI (`serve`) の両方で読み、どちらも
+  SHA-1 81ee75ebc69f01c04b9b82e387d58f954f1de6cd。一度 A6 の接触不良でヘッダが化けた (0x140 → 0x100 の内容)。
+  ヘッダチェックサムで止まり、挿し直しで直った
 - 公式フラッシュのバックアップ (`make chromatic-backup`) も実機で取得: W25Q32、使用領域 0xDF754 バイト。
   フラッシュの読み出し時に openFPGALoader が SRAM を消すので、その後は画面が消えたままになる (電源 OFF → ON で戻る)

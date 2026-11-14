@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cart Dumper</title>
+<style>
+:root {
+  --bg: #f4f5f7; --card: #ffffff; --fg: #1d2129; --muted: #69707d; --line: #dfe2e7;
+  --accent: #3b5bdb; --accent-fg: #ffffff; --ok: #2b8a3e; --warn: #c77700; --err: #c92a2a;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15171c; --card: #1f2229; --fg: #e6e8ec; --muted: #9aa1ad; --line: #333844;
+    --accent: #748ffc; --accent-fg: #10131a; --ok: #69db7c; --warn: #ffc078; --err: #ff8787;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15171c; --card: #1f2229; --fg: #e6e8ec; --muted: #9aa1ad; --line: #333844;
+  --accent: #748ffc; --accent-fg: #10131a; --ok: #69db7c; --warn: #ffc078; --err: #ff8787;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.5 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+main { max-width: 880px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
+h1 { font-size: 20px; margin: 4px 0 0; }
+h2 { font-size: 15px; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 13px;
+  border: 1px solid var(--line); color: var(--muted); }
+.pill.ok { color: var(--ok); border-color: currentColor; }
+.pill.warn { color: var(--warn); border-color: currentColor; }
+.pill.err { color: var(--err); border-color: currentColor; }
+button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--card); color: var(--fg); cursor: pointer; }
+button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+label { color: var(--muted); font-size: 14px; display: inline-flex; gap: 4px; align-items: center; }
+table { border-collapse: collapse; width: 100%; }
+td { padding: 4px 8px 4px 0; vertical-align: top; border-bottom: 1px solid var(--line); }
+td:first-child { color: var(--muted); width: 38%; white-space: nowrap; }
+.mono { font-family: var(--mono); font-size: 13px; word-break: break-all; }
+.bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; margin-top: 8px; }
+.bar > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+#log { font-family: var(--mono); font-size: 12px; max-height: 240px; overflow: auto; white-space: pre-wrap; margin: 0; }
+#log .warn { color: var(--warn); } #log .error { color: var(--err); } #log .fpga { color: var(--muted); }
+.files a { color: var(--accent); text-decoration: none; }
+.err-box { color: var(--err); margin-top: 8px; }
+.muted { color: var(--muted); font-size: 13px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 640px) { .grid2 { grid-template-columns: 1fr; } td:first-child { width: 45%; } }
+</style>
+</head>
+<body>
+<main>
+  <div class="row" style="justify-content: space-between">
+    <h1>Cart Dumper</h1>
+    <span id="devpill" class="pill">接続確認中</span>
+  </div>
+
+  <section class="card">
+    <h2>本体</h2>
+    <div class="row" id="flags"></div>
+    <div class="muted" id="devmsg" style="margin-top:6px"></div>
+    <div class="row" style="margin-top:10px">
+      <button id="b-load">FPGA に書き込む (SRAM)</button>
+      <span class="muted" id="bsinfo"></span>
+    </div>
+  </section>
+
+  <div class="grid2">
+    <section class="card">
+      <h2>カートリッジ</h2>
+      <table id="hdr"><tr><td>—</td><td class="muted">「ヘッダを読む」で表示</td></tr></table>
+    </section>
+    <section class="card">
+      <h2>操作</h2>
+      <div class="row">
+        <button id="b-header">ヘッダを読む</button>
+        <button id="b-dump" class="primary">ROM をダンプ</button>
+        <button id="b-save" class="primary">セーブを読む</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <label><input type="checkbox" id="verify" checked> ROM を 2 回読んで照合</label>
+        <label><input type="checkbox" id="force"> ヘッダ不正でも続行</label>
+      </div>
+      <div id="progress" style="margin-top:12px">
+        <div class="muted" id="ptext">待機中</div>
+        <div class="bar"><div id="pbar"></div></div>
+      </div>
+      <div id="result"></div>
+      <div class="muted" style="margin-top:10px">セーブは読み出しのみ。カートへの書き込みは FPGA 側で禁止されています。</div>
+    </section>
+  </div>
+
+  <section class="card files">
+    <h2>ダンプ <span class="muted" id="outdir"></span></h2>
+    <table id="files"></table>
+  </section>
+
+  <section class="card">
+    <h2>ログ</h2>
+    <pre id="log"></pre>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let since = 0, busy = false, lastJob = null;
+
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function kib(n) { return n >= 1024 ? (n / 1024).toLocaleString() + ' KiB' : n + ' B'; }
+function pill(text, cls) { return `<span class="pill ${cls||''}">${esc(text)}</span>`; }
+
+function renderDevice(d, s) {
+  const p = $('devpill');
+  if (!d || !d.present) {
+    p.className = 'pill err'; p.textContent = 'リーダー未接続';
+    $('flags').innerHTML = '';
+    $('devmsg').textContent = (d && d.error ? d.error + ' — ' : '') + '本体の電源を入れ、「FPGA に書き込む」を押してください。';
+  } else {
+    p.className = 'pill ok'; p.textContent = 'リーダー接続中';
+    $('flags').innerHTML = [
+      d.cart ? pill('カートあり', 'ok') : pill('カートなし', 'warn'),
+      d.switch_on ? pill('電源スイッチ ON', 'ok') : pill('電源スイッチ OFF', 'warn'),
+      d.ready ? pill('スロット通電中', 'ok') : pill('スロット停止'),
+      d.ram_on ? pill('カート RAM 有効', 'warn') : '',
+      d.legacy ? pill('旧基板') : pill('新基板'),
+      d.reject_cnt ? pill('拒否した書き込み ' + d.reject_cnt, 'err') : '',
+    ].join(' ');
+    $('devmsg').textContent = '';
+  }
+  $('bsinfo').textContent = s.bitstream_ok ? '' : 'ビットストリームがありません: ' + s.bitstream;
+}
+
+function renderHeader(h) {
+  if (!h || !h.title && h.title !== '') return;
+  const rows = [
+    ['タイトル', h.title],
+    ['マッパー', `${h.mapper} (type ${h.cart_type})` + (h.rom_supported ? '' : ' — ROM ダンプ非対応')],
+    ['ROM', h.rom_kib ? `${h.rom_kib} KiB (${h.rom_banks} バンク)` : `不正なコード ${h.rom_code}`],
+    ['RAM', `${h.ram}` + (h.battery ? '、電池あり' : '')],
+    ['セーブ', h.save.ok ? `読み出し可 (${kib(h.save.bytes)})` : `不可: ${h.save.why}`],
+    ['CGB / SGB', `${h.cgb}${h.is_cgb ? ' (CGB)' : ''} / ${h.sgb ? 'あり' : 'なし'}`],
+    ['ヘッダチェックサム', h.header_ok ? `${h.header_checksum} (OK)` : `${h.header_checksum} (不一致、計算値 ${h.header_checksum_calc}): カートを挿し直してください`],
+    ['グローバルチェックサム', h.global_checksum],
+  ];
+  $('hdr').innerHTML = rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('');
+}
+
+function renderResult(r, err) {
+  let html = '';
+  if (err) html = `<div class="err-box">${esc(err)}</div>`;
+  else if (r && (r.kind === 'rom' || r.kind === 'save')) {
+    const rows = [
+      ['ファイル', `<a href="/files/${encodeURIComponent(r.file)}">${esc(r.file)}</a>${r.existed ? ' (既存と同一)' : ''}`],
+      ['サイズ', kib(r.size)],
+    ];
+    if (r.kind === 'rom') {
+      rows.push(['照合', r.verified ? '2 回一致' : 'なし']);
+      rows.push(['グローバルチェックサム', r.global_ok ? `OK (${r.global_calc})` : `不一致 (計算値 ${r.global_calc})`]);
+      if (r.mbc1m) rows.push(['MBC1', 'マルチカートとして読み出し']);
+    } else {
+      rows.push(['照合', `2 回一致 (${r.banks} × ${kib(r.bank_size)})`]);
+      if (r.all_ff) rows.push(['注意', '全部 FF (空、RAM なし、電池切れ)']);
+    }
+    rows.push(['CRC32', `<span class="mono">${r.crc32}</span>`]);
+    rows.push(['SHA-1', `<span class="mono">${r.sha1}</span>`]);
+    html = '<table style="margin-top:10px">' + rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('') + '</table>';
+  }
+  $('result').innerHTML = html;
+}
+
+function renderProgress(s) {
+  const names = {load: 'FPGA に書き込み中', header: 'ヘッダを読み込み中', dump: 'ROM をダンプ中', save: 'セーブを読み込み中'};
+  const phases = {ROM: 'ROM', verify: '照合', RAM: 'RAM', FPGA: 'FPGA'};
+  if (s.job) {
+    const frac = s.total ? s.done / s.total : 0;
+    $('ptext').textContent = `${names[s.job] || s.job}` + (s.total ? ` — ${phases[s.phase] || s.phase} ${s.done}/${s.total}` : '');
+    $('pbar').style.width = (frac * 100).toFixed(1) + '%';
+  } else {
+    $('ptext').textContent = s.error ? '失敗しました' : (lastJob ? '完了' : '待機中');
+    $('pbar').style.width = s.error || !lastJob ? '0%' : '100%';
+  }
+}
+
+function setButtons(s) {
+  busy = !!s.job;
+  const present = s.device && s.device.present;
+  const cart = present && s.device.cart && s.device.switch_on;
+  $('b-load').disabled = busy || !s.bitstream_ok;
+  for (const id of ['b-header', 'b-dump', 'b-save']) $(id).disabled = busy || !cart;
+}
+
+function appendLog(lines) {
+  if (!lines.length) return;
+  const el = $('log');
+  const atEnd = el.scrollTop + el.clientHeight >= el.scrollHeight - 4;
+  for (const l of lines) {
+    since = Math.max(since, l.seq);
+    const t = new Date(l.t).toLocaleTimeString();
+    const div = document.createElement('div');
+    div.className = l.level;
+    div.textContent = `${t} ${l.msg}`;
+    el.appendChild(div);
+  }
+  while (el.childNodes.length > 300) el.removeChild(el.firstChild);
+  if (atEnd) el.scrollTop = el.scrollHeight;
+}
+
+async function refreshFiles() {
+  try {
+    const f = await (await fetch('/api/files')).json();
+    $('files').innerHTML = f.length ? f.map(x =>
+      `<tr><td><a href="/files/${encodeURIComponent(x.name)}">${esc(x.name)}</a></td>` +
+      `<td>${kib(x.size)}</td><td class="muted">${new Date(x.mtime * 1000).toLocaleString()}</td></tr>`).join('')
+      : '<tr><td class="muted">まだありません</td></tr>';
+  } catch (e) {}
+}
+
+let wasBusy = false;
+async function poll() {
+  try {
+    const s = await (await fetch('/api/state?since=' + since)).json();
+    renderDevice(s.device, s);
+    renderHeader(s.header);
+    renderProgress(s);
+    setButtons(s);
+    appendLog(s.log);
+    $('outdir').textContent = s.out;
+    if (wasBusy && !s.job) { renderResult(s.result, s.error); refreshFiles(); }
+    wasBusy = !!s.job;
+  } catch (e) {
+    $('devpill').className = 'pill err'; $('devpill').textContent = 'サーバーに接続できません';
+  }
+  setTimeout(poll, busy ? 300 : 1000);
+}
+
+async function job(kind, extra) {
+  lastJob = kind;
+  $('result').innerHTML = '';
+  const r = await fetch('/api/job', {method: 'POST', body: JSON.stringify(Object.assign({kind}, extra || {}))});
+  if (!r.ok) { const e = await r.json(); renderResult(null, e.error); }
+  wasBusy = true; busy = true;
+}
+
+$('b-load').onclick = () => job('load');
+$('b-header').onclick = () => job('header', {force: $('force').checked});
+$('b-dump').onclick = () => job('dump', {verify: $('verify').checked, force: $('force').checked});
+$('b-save').onclick = () => job('save', {force: $('force').checked});
+refreshFiles();
+poll();
+</script>
+</body>
+</html>

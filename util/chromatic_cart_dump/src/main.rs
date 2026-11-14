@@ -9,14 +9,16 @@
 
 mod header;
 mod link;
+mod ops;
 mod proto;
+mod web;
 
 use clap::{Parser, Subcommand};
-use header::{global_checksum_calc, Header, Mapper};
+use header::{Header, Mapper};
 use link::{Link, SimLink, UsbLink};
+use ops::{DumpOpts, Progress, SaveOpts};
 use proto::Reader;
-use sha1::{Digest, Sha1};
-use std::{path::PathBuf, time::{Duration, Instant}};
+use std::{io::Write, path::PathBuf, time::Instant};
 
 #[derive(Parser)]
 #[command(version, about = "Read the ROM of the cartridge in a ModRetro Chromatic (eda/chromatic_cart_dump)")]
@@ -77,102 +79,18 @@ enum Cmd {
         #[arg(long)]
         keep_power: bool,
     },
-}
-
-const BANK: usize = 0x4000;
-
-struct Banker {
-    mapper: Mapper,
-    mbc1m: bool,
-}
-
-impl Banker {
-    /// put the MBC in a known state: cartridge RAM / RTC disabled, banking mode 0
-    fn init<L: Link>(&self, r: &mut Reader<L>) -> Result<(), String> {
-        match self.mapper {
-            Mapper::RomOnly => {}
-            Mapper::Mbc1 => {
-                r.mbc(0x0000, 0x00)?;
-                r.mbc(0x6000, 0x00)?;
-                r.mbc(0x4000, 0x00)?;
-                r.mbc(0x2000, 0x01)?;
-            }
-            Mapper::Mbc5 => {
-                r.mbc(0x0000, 0x00)?;
-                r.mbc(0x4000, 0x00)?; // RAM bank 0, rumble motor off
-                r.mbc(0x3000, 0x00)?;
-                r.mbc(0x2000, 0x01)?;
-            }
-            _ => {
-                r.mbc(0x0000, 0x00)?;
-            }
-        }
-        Ok(())
-    }
-
-    /// 16 KiB of ROM bank `bank`
-    fn read_bank<L: Link>(&self, r: &mut Reader<L>, bank: usize) -> Result<Vec<u8>, String> {
-        if bank == 0 {
-            return r.read(0x0000, BANK);
-        }
-        match self.mapper {
-            Mapper::RomOnly => r.read(0x4000, BANK),
-            Mapper::Mbc1 => {
-                let (hi_shift, lo_mask) = if self.mbc1m { (4, 0x0F) } else { (5, 0x1F) };
-                let hi = (bank >> hi_shift) as u8;
-                let lo = (bank & lo_mask) as u8;
-                if lo == 0 {
-                    // banks 0x20 / 0x40 / 0x60 (0x10 / 0x20 / 0x30 on multicarts) are not reachable
-                    // at 0x4000: mode 1 maps them at 0x0000
-                    r.mbc(0x4000, hi)?;
-                    r.mbc(0x6000, 0x01)?;
-                    let d = r.read(0x0000, BANK);
-                    r.mbc(0x6000, 0x00)?;
-                    d
-                } else {
-                    r.mbc(0x4000, hi)?;
-                    r.mbc(0x2000, lo)?;
-                    r.read(0x4000, BANK)
-                }
-            }
-            Mapper::Mbc2 => {
-                r.mbc(0x2100, (bank & 0x0F) as u8)?;
-                r.read(0x4000, BANK)
-            }
-            Mapper::Mbc5 => {
-                r.mbc(0x3000, (bank >> 8) as u8 & 1)?;
-                r.mbc(0x2000, bank as u8)?;
-                r.read(0x4000, BANK)
-            }
-            Mapper::Mbc3 | Mapper::Mbc7 | Mapper::PocketCamera | Mapper::HuC1 | Mapper::HuC3 => {
-                r.mbc(0x2000, bank as u8)?;
-                r.read(0x4000, BANK)
-            }
-            m => Err(format!("{} is not supported", m.name())),
-        }
-    }
-}
-
-fn supported(m: Mapper) -> bool {
-    matches!(
-        m,
-        Mapper::RomOnly | Mapper::Mbc1 | Mapper::Mbc2 | Mapper::Mbc3 | Mapper::Mbc5 | Mapper::Mbc7
-            | Mapper::PocketCamera | Mapper::HuC1 | Mapper::HuC3
-    )
-}
-
-/// the header, read until three reads agree
-fn read_header<L: Link>(r: &mut Reader<L>) -> Result<Header, String> {
-    let a = r.read(0x0100, 0x50)?;
-    let b = r.read(0x0100, 0x50)?;
-    let c = r.read(0x0100, 0x50)?;
-    if a != b || b != c {
-        return Err("the header reads differently each time: check the cartridge contacts".into());
-    }
-    if a.iter().all(|&x| x == 0xFF) || a.iter().all(|&x| x == 0x00) {
-        return Err(format!("the header is all {:02x}: no cartridge, or no contact", a[0]));
-    }
-    Ok(Header::new(a))
+    /// web UI (status, header, ROM dump, save data, FPGA SRAM load) for the local network
+    Serve {
+        /// address to listen on
+        #[arg(long, default_value = "0.0.0.0:8095")]
+        bind: String,
+        /// directory for the dumps, listed and downloadable in the UI (default: ~/chromatic-dumps)
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// bitstream for the "load FPGA" button (SRAM only, never the flash)
+        #[arg(long)]
+        bitstream: Option<PathBuf>,
+    },
 }
 
 fn print_header(h: &Header) {
@@ -198,235 +116,111 @@ fn print_header(h: &Header) {
     println!("global checksum: {:04x}", h.global_checksum());
 }
 
-/// MBC1 multicart: in mode 1 with the upper register = 1, 0x0000 shows bank 0x10 on multicart
-/// wiring (bank 0x20 otherwise); a second copy of the bank-0 logo there means a multicart
-fn detect_mbc1m<L: Link>(r: &mut Reader<L>, h: &Header) -> Result<bool, String> {
-    r.mbc(0x4000, 0x01)?;
-    r.mbc(0x6000, 0x01)?;
-    let logo = r.read(0x0104, 0x30);
-    r.mbc(0x6000, 0x00)?;
-    r.mbc(0x4000, 0x00)?;
-    Ok(logo? == h.logo())
+/// progress on stderr
+struct Term {
+    t0: Instant,
+    last: String,
 }
 
-fn sanitize(s: &str) -> String {
-    let t: String = s
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
-        .collect();
-    let t = t.trim_matches('_').to_string();
-    if t.is_empty() { "cartridge".into() } else { t }
-}
-
-fn dump_all<L: Link>(r: &mut Reader<L>, b: &Banker, banks: usize, pass: &str) -> Result<Vec<u8>, String> {
-    let mut rom = Vec::with_capacity(banks * BANK);
-    let t0 = Instant::now();
-    for bank in 0..banks {
-        rom.extend_from_slice(&b.read_bank(r, bank)?);
-        eprint!("\r{pass}bank {:3}/{banks}  {:5.0} KiB/s", bank + 1, rom.len() as f64 / 1024.0 / t0.elapsed().as_secs_f64());
-    }
-    eprintln!();
-    Ok(rom)
-}
-
-/// (banks, bytes per bank) of the cartridge RAM, or why it is not read
-fn ram_layout(m: Mapper, h: &Header) -> Result<(usize, usize), String> {
-    match m {
-        Mapper::Mbc2 => Ok((1, 512)),
-        Mapper::Mbc1 | Mapper::Mbc3 | Mapper::Mbc5 => {
-            let size = h.ram_size();
-            if size == 0 {
-                return Err(format!("the header declares no cartridge RAM (RAM size code {:02x})", h.ram_code()));
+impl Progress for Term {
+    fn step(&mut self, phase: &str, done: usize, total: usize) {
+        if phase != self.last {
+            if !self.last.is_empty() {
+                eprintln!();
             }
-            let bs = size.min(0x2000);
-            let nb = size / bs;
-            let max = match m {
-                // MBC1: the RAM bank is the upper register in mode 1, which also moves ROM banks
-                // on cartridges over 512 KiB (those have no banked RAM)
-                Mapper::Mbc1 if nb > 1 && h.rom_banks().unwrap_or(0) > 32 => 1,
-                Mapper::Mbc1 => 4,
-                Mapper::Mbc3 => 8,
-                // bit 3 of the RAM bank drives the rumble motor
-                Mapper::Mbc5 if h.rumble() => 8,
-                _ => 16,
-            };
-            if nb > max {
-                return Err(format!("{} KiB of RAM does not fit the {} RAM banking", size >> 10, m.name()));
-            }
-            Ok((nb, bs))
+            self.last = phase.to_string();
+            self.t0 = Instant::now();
         }
-        m => Err(format!("reading the RAM of {} is not supported", m.name())),
+        eprint!("\r{phase} {done:3}/{total}");
+        let _ = std::io::stderr().flush();
+    }
+    fn note(&mut self, msg: &str) {
+        if !self.last.is_empty() {
+            eprintln!();
+            self.last.clear();
+        }
+        eprintln!("note: {msg}");
     }
 }
 
-/// the whole cartridge RAM: RAM mode, enable, banks, disable, RAM mode off
-fn read_ram<L: Link>(r: &mut Reader<L>, m: Mapper, nb: usize, bs: usize) -> Result<Vec<u8>, String> {
-    if !r.ram_mode(true)? {
-        return Err("the device refused RAM mode".into());
-    }
-    let banked = matches!(m, Mapper::Mbc1 | Mapper::Mbc3 | Mapper::Mbc5);
-    let res = (|| {
-        if m == Mapper::Mbc1 && nb > 1 {
-            r.mbc(0x6000, 0x01)?;
-        }
-        r.mbc(0x0000, 0x0A)?;
-        let mut out = Vec::with_capacity(nb * bs);
-        for b in 0..nb {
-            if banked {
-                r.mbc(0x4000, b as u8)?;
-            }
-            out.extend_from_slice(&r.read(0xA000, bs)?);
-        }
-        Ok::<_, String>(out)
-    })();
-    // disable the RAM ourselves, then leave RAM mode (the device would disable it either way)
-    let off = r.mbc(0x0000, 0x00).and_then(|_| r.ram_off());
-    if banked {
-        let _ = r.mbc(0x4000, 0x00);
-    }
-    if m == Mapper::Mbc1 {
-        let _ = r.mbc(0x6000, 0x00);
-    }
-    let mut out = res?;
-    off?;
-    if m == Mapper::Mbc2 {
-        // 4-bit RAM: the upper nibble is not driven
-        for x in &mut out {
-            *x |= 0xF0;
+impl Term {
+    fn new() -> Term { Term { t0: Instant::now(), last: String::new() } }
+    fn end(&mut self) {
+        if !self.last.is_empty() {
+            eprintln!();
+            self.last.clear();
         }
     }
-    Ok(out)
+}
+
+fn parse_mapper(s: &Option<String>) -> Result<Option<Mapper>, String> {
+    s.as_ref().map(|s| Mapper::parse(s).ok_or(format!("unknown mapper '{s}'"))).transpose()
+}
+
+fn finish_note<L: Link>(r: &mut Reader<L>) -> Result<(), String> {
+    let s = r.status()?;
+    if s.ram_on || s.ram_mode() {
+        eprintln!("warning: {}", s.describe());
+    }
+    if s.reject_cnt != 0 {
+        eprintln!("note: the device refused {} write(s)", s.reject_cnt);
+    }
+    Ok(())
 }
 
 fn run<L: Link>(r: &mut Reader<L>, cmd: &Cmd) -> Result<(), String> {
     let s = r.hello()?;
     eprintln!("reader: {}", s.describe());
     match cmd {
-        Cmd::Status => Ok(()),
-        Cmd::Header { keep_power } => {
-            r.power_up(Duration::from_secs(2))?;
-            let res = read_header(r).map(|h| print_header(&h));
-            if !keep_power {
-                r.power(false)?;
-            }
-            res
-        }
+        Cmd::Status | Cmd::Serve { .. } => Ok(()),
+        Cmd::Header { keep_power } => ops::powered(r, *keep_power, |r| ops::read_header(r).map(|h| print_header(&h))),
         Cmd::Dump { output, verify, mapper, banks, mbc1m, force, keep_power } => {
-            r.power_up(Duration::from_secs(2))?;
-            let res = (|| {
-                let h = read_header(r)?;
-                print_header(&h);
-                if !h.header_ok() && !force {
-                    return Err("header checksum mismatch: bad contact or not a licensed-format header (--force to dump anyway)".into());
-                }
-                let mut m = match mapper {
-                    Some(s) => Mapper::parse(s).ok_or(format!("unknown mapper '{s}'"))?,
-                    None => h.mapper(),
-                };
-                let mut n = banks.or(h.rom_banks()).ok_or("invalid ROM size code: give --banks")?;
-                if !supported(m) {
-                    if !force {
-                        return Err(format!("{} is not supported (--force dumps banks 0-1 without bank switching)", m.name()));
-                    }
-                    eprintln!("warning: {} not supported, dumping banks 0-1 only", m.name());
-                    m = Mapper::RomOnly;
-                    n = 2;
-                }
-                let mut b = Banker { mapper: m, mbc1m: *mbc1m };
-                b.init(r)?;
-                if m == Mapper::Mbc1 && !mbc1m && n == 64 && detect_mbc1m(r, &h)? {
-                    eprintln!("MBC1 multicart detected");
-                    b.mbc1m = true;
-                }
-                let rom = dump_all(r, &b, n, "")?;
-                if *verify {
-                    let again = dump_all(r, &b, n, "verify ")?;
-                    if let Some(i) = rom.iter().zip(&again).position(|(x, y)| x != y) {
-                        return Err(format!("verify: first difference at {i:06x} ({:02x} / {:02x})", rom[i], again[i]));
-                    }
+            let o = DumpOpts { verify: *verify, mapper: parse_mapper(mapper)?, banks: *banks, mbc1m: *mbc1m, force: *force };
+            let res = ops::powered(r, *keep_power, |r| {
+                print_header(&ops::read_header(r)?);
+                let mut t = Term::new();
+                let res = ops::dump_rom(r, &o, &mut t);
+                t.end();
+                let d = res?;
+                if d.verified {
                     eprintln!("verify: identical");
                 }
-                if rom[0x100..0x150] != h.raw[..] {
-                    return Err("the header in the dump differs from the first read".into());
-                }
-                let gc = global_checksum_calc(&rom);
-                if gc == h.global_checksum() {
-                    println!("global checksum: OK ({gc:04x})");
+                if d.global_ok() {
+                    println!("global checksum: OK ({:04x})", d.global_calc);
                 } else {
-                    println!("global checksum: MISMATCH (calculated {gc:04x}, header {:04x}): some cartridges ship with a wrong value, compare the SHA-1 with a known-good list", h.global_checksum());
+                    println!("global checksum: MISMATCH (calculated {:04x}, header {:04x}): some cartridges ship with a wrong value, compare the SHA-1 with a known-good list", d.global_calc, d.header.global_checksum());
                 }
-                let mut sha = Sha1::new();
-                sha.update(&rom);
-                println!("size           : {} bytes", rom.len());
-                println!("CRC32          : {:08x}", crc32fast::hash(&rom));
-                println!("SHA-1          : {:x}", sha.finalize());
+                println!("size           : {} bytes ({:.1} s)", d.rom.len(), d.secs);
+                println!("CRC32          : {:08x}", crc32fast::hash(&d.rom));
+                println!("SHA-1          : {}", ops::sha1_hex(&d.rom));
                 let path = output.clone().unwrap_or_else(|| {
-                    PathBuf::from(format!("{}.{}", sanitize(&h.title()), if h.is_cgb() { "gbc" } else { "gb" }))
+                    PathBuf::from(format!("{}.{}", ops::sanitize(&d.header.title()), if d.header.is_cgb() { "gbc" } else { "gb" }))
                 });
-                std::fs::write(&path, &rom).map_err(|e| format!("{}: {e}", path.display()))?;
+                std::fs::write(&path, &d.rom).map_err(|e| format!("{}: {e}", path.display()))?;
                 println!("saved          : {}", path.display());
                 Ok(())
-            })();
-            if !keep_power {
-                if let Err(e) = r.power(false) {
-                    eprintln!("warning: power off: {e}");
-                }
-            }
-            let s = r.status()?;
-            if s.reject_cnt != 0 {
-                eprintln!("note: the device refused {} write(s)", s.reject_cnt);
-            }
+            });
+            finish_note(r)?;
             res
         }
         Cmd::Save { output, mapper, force, keep_power } => {
-            r.power_up(Duration::from_secs(2))?;
-            let res = (|| {
-                let h = read_header(r)?;
-                print_header(&h);
-                if !h.header_ok() && !force {
-                    return Err("header checksum mismatch: bad contact or not a licensed-format header (--force to read anyway)".into());
-                }
-                let m = match mapper {
-                    Some(s) => Mapper::parse(s).ok_or(format!("unknown mapper '{s}'"))?,
-                    None => h.mapper(),
-                };
-                let (nb, bs) = ram_layout(m, &h)?;
-                if !h.battery() {
-                    eprintln!("note: cartridge type {:02x} has no battery: the RAM holds nothing across power-offs", h.cart_type());
-                }
-                Banker { mapper: m, mbc1m: false }.init(r)?;
-                let t0 = Instant::now();
-                let ram = read_ram(r, m, nb, bs)?;
-                let again = read_ram(r, m, nb, bs)?;
-                if let Some(i) = ram.iter().zip(&again).position(|(x, y)| x != y) {
-                    return Err(format!("the two reads differ first at {i:05x} ({:02x} / {:02x}): check the contacts", ram[i], again[i]));
-                }
-                eprintln!("read {} bytes twice ({} x {} bytes), identical, {:.2} s", ram.len(), nb, bs, t0.elapsed().as_secs_f64());
-                if ram.iter().all(|&x| x == 0xFF) {
-                    eprintln!("warning: the RAM reads all FF (empty save, no RAM, or a dead battery)");
-                }
-                let mut sha = Sha1::new();
-                sha.update(&ram);
-                println!("size           : {} bytes", ram.len());
-                println!("CRC32          : {:08x}", crc32fast::hash(&ram));
-                println!("SHA-1          : {:x}", sha.finalize());
-                let path = output.clone().unwrap_or_else(|| PathBuf::from(format!("{}.sav", sanitize(&h.title()))));
-                std::fs::write(&path, &ram).map_err(|e| format!("{}: {e}", path.display()))?;
+            let o = SaveOpts { mapper: parse_mapper(mapper)?, force: *force };
+            let res = ops::powered(r, *keep_power, |r| {
+                print_header(&ops::read_header(r)?);
+                let mut t = Term::new();
+                let res = ops::read_save(r, &o, &mut t);
+                t.end();
+                let d = res?;
+                eprintln!("read {} bytes twice ({} x {} bytes), identical, {:.2} s", d.ram.len(), d.banks, d.bank_size, d.secs);
+                println!("size           : {} bytes", d.ram.len());
+                println!("CRC32          : {:08x}", crc32fast::hash(&d.ram));
+                println!("SHA-1          : {}", ops::sha1_hex(&d.ram));
+                let path = output.clone().unwrap_or_else(|| PathBuf::from(format!("{}.sav", ops::sanitize(&d.header.title()))));
+                std::fs::write(&path, &d.ram).map_err(|e| format!("{}: {e}", path.display()))?;
                 println!("saved          : {}", path.display());
                 Ok(())
-            })();
-            if !keep_power {
-                if let Err(e) = r.power(false) {
-                    eprintln!("warning: power off: {e}");
-                }
-            }
-            let s = r.status()?;
-            if s.ram_on || s.ram_mode() {
-                eprintln!("warning: {}", s.describe());
-            }
-            if s.reject_cnt != 0 {
-                eprintln!("note: the device refused {} write(s)", s.reject_cnt);
-            }
+            });
+            finish_note(r)?;
             res
         }
     }
@@ -434,6 +228,17 @@ fn run<L: Link>(r: &mut Reader<L>, cmd: &Cmd) -> Result<(), String> {
 
 fn main() {
     let cli = Cli::parse();
+    if let Cmd::Serve { bind, out, bitstream } = &cli.cmd {
+        let bs = bitstream.clone().unwrap_or_else(web::default_bitstream);
+        let out = out.clone().unwrap_or_else(|| {
+            PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into())).join("chromatic-dumps")
+        });
+        if let Err(e) = web::serve(bind, &out, &bs, cli.sim.clone()) {
+            eprintln!("error: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
     let res = match &cli.sim {
         Some(exe) => SimLink::spawn(exe).and_then(|l| {
             let mut r = Reader::new(l);
