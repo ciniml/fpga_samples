@@ -1,0 +1,560 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file bt_cmd.veryl
+ * @brief Command processor of the cartridge bus test design (USB EP1 byte
+ *        streams). Writes, the static mode and test runs are refused until
+ *        the handshake ('H') has shown that the slot holds the test target
+ *        (an FPGA board on the cartridge adapter running CartTarget in its
+ *        ID mode), so a real cartridge never sees them. The unlock ends with
+ *        the slot power or the cartridge.
+ *
+ * Commands (little endian):
+ *   'S'                 -> 16 bytes: 'B' 'T' PROTO flags rst cyc sample wr_on
+ *                          wr_off d_seen 0 0 0 0 0 0
+ *       flags: [0] cartridge detected [1] switch ON [2] power requested
+ *              [3] CART_PWR_EN [4] bus ready [5] legacy board [6] unlocked
+ *              [7] test running
+ *   'P' on              -> 'P' flags
+ *   'T' cyc sample on off -> 'T' ok      bus timing (60 MHz clocks)
+ *   'H'                 -> 'H' unlocked + 4 bytes read back
+ *   'R' addr16 len16    -> len bytes (len 0 = 65536)
+ *   'W' addr16 data     -> 'W' result (0 done, 1 locked, 2 not ready)
+ *   'Z' en addr16 ctl d -> 'Z' d_seen  static mode (ctl: TestBus i_st_ctl)
+ *   'G' force           -> 'G'         hold /RST Low
+ *   'X' op cart seed32 count32 -> 24 bytes after the run: 'X' status ops32
+ *          errors32 f_idx32 f_addr16 f_exp f_got xor_or + 4 bytes elapsed
+ *          (1 us units) ... status 0 done, 1 locked, 2 not ready
+ */
+pub module BtCmd #(
+    param CLK_HZ: u32 = 60_000_000,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_rx_valid: input  logic   ,
+    i_rx_data : input  logic<8>,
+    o_rx_ready: output logic   ,
+    o_tx_valid: output logic   ,
+    o_tx_data : output logic<8>,
+    i_tx_ready: input  logic   ,
+
+    i_cart_det : input  logic,
+    i_switch_on: input  logic,
+    i_rst_in   : input  logic,
+    i_pwr_en   : input  logic,
+    i_legacy   : input  logic,
+    i_bus_ready: input  logic,
+    o_power_en : output logic,
+    o_busy     : output logic,
+    o_unlocked : output logic,
+
+    // TestBus controls
+    o_cyc      : output logic<8> ,
+    o_sample   : output logic<8> ,
+    o_wr_on    : output logic<8> ,
+    o_wr_off   : output logic<8> ,
+    o_static   : output logic    ,
+    o_st_a     : output logic<16>,
+    o_st_ctl   : output logic<6> ,
+    o_st_d     : output logic<8> ,
+    i_d_seen   : input  logic<8> ,
+    o_rst_force: output logic    ,
+
+    o_req_valid: output logic    ,
+    o_req_write: output logic    ,
+    o_req_addr : output logic<16>,
+    o_req_wdata: output logic<8> ,
+    i_req_ready: input  logic    ,
+    i_rsp_valid: input  logic    ,
+    i_rsp_data : input  logic<8> ,
+) {
+    import BtPkg::*;
+
+    const PROTO  : logic<8> = 8'h01;
+    const DEB_CYC: u32      = CLK_HZ / 100;
+    const US_CYC : u32      = CLK_HZ / 1_000_000;
+
+    enum State: logic<4> {
+        Op,
+        Args,
+        Reply,
+        ReadReq,
+        ReadRsp,
+        ReadPush,
+        WriteReq,
+        WriteRsp,
+        HsReq,
+        HsRsp,
+        Test,
+        TestReply,
+    }
+
+    var state : State         ;
+    var op    : logic<8>      ;
+    var argn  : logic<4>      ;
+    var args  : logic<8>  [10];
+    var argi  : logic<4>      ;
+    var addr  : logic<16>     ;
+    var remain: logic<17>     ;
+    var rdata : logic<8>      ;
+    var rbuf  : logic<8>  [24];
+    var rlen  : logic<5>      ;
+    var ridx  : logic<5>      ;
+
+    var power_req: logic    ;
+    var unlocked : logic    ;
+    var cyc      : logic<8> ;
+    var sample   : logic<8> ;
+    var wr_on    : logic<8> ;
+    var wr_off   : logic<8> ;
+    var st_en    : logic    ;
+    var st_a     : logic<16>;
+    var st_ctl   : logic<6> ;
+    var st_d     : logic<8> ;
+    var rst_force: logic    ;
+
+    // handshake
+    var nonce  : logic<32>;
+    var free   : logic<32>;
+    var hs_step: logic<3> ;
+    var hs_got : logic<32>;
+
+    // test
+    var t_start    : logic    ;
+    var t_us       : logic<32>;
+    var t_div      : logic<8> ;
+    var t_busy     : logic    ;
+    var t_ops      : logic<32>;
+    var t_errors   : logic<32>;
+    var t_f_idx    : logic<32>;
+    var t_f_addr   : logic<16>;
+    var t_f_exp    : logic<8> ;
+    var t_f_got    : logic<8> ;
+    var t_xor      : logic<8> ;
+    var t_req_valid: logic    ;
+    var t_req_write: logic    ;
+    var t_req_addr : logic<16>;
+    var t_req_wdata: logic<8> ;
+
+    // ---- synchronisers ----
+    var det_s  : logic<2> ;
+    var sw_s   : logic<2> ;
+    var rst_s  : logic<2> ;
+    var det_cnt: logic<24>;
+    var det    : logic    ;
+    always_ff {
+        if_reset {
+            det_s   = 0;
+            sw_s    = 0;
+            rst_s   = 0;
+            det_cnt = 0;
+            det     = 0;
+        } else {
+            det_s = {det_s[0], i_cart_det};
+            sw_s  = {sw_s[0], i_switch_on};
+            rst_s = {rst_s[0], i_rst_in};
+            if det_s[1] == det {
+                det_cnt = 0;
+            } else if det_cnt == DEB_CYC - 1 {
+                det_cnt = 0;
+                det     = det_s[1];
+            } else {
+                det_cnt += 1;
+            }
+        }
+    }
+
+    let in_test: logic    = state == State::Test;
+    let flags  : logic<8> = {t_busy, unlocked, i_legacy, i_bus_ready, i_pwr_en, power_req, sw_s[1], det};
+
+    inst u_test: BusTest (
+        i_clk      : i_clk                               ,
+        i_rst      : i_rst                               ,
+        i_start    : t_start                             ,
+        i_op       : args[0][1:0]                        ,
+        i_cart     : args[1][0]                          ,
+        i_seed     : {args[5], args[4], args[3], args[2]},
+        i_count    : {args[9], args[8], args[7], args[6]},
+        i_abort    : !i_bus_ready                        ,
+        o_busy     : t_busy                              ,
+        o_ops      : t_ops                               ,
+        o_errors   : t_errors                            ,
+        o_f_idx    : t_f_idx                             ,
+        o_f_addr   : t_f_addr                            ,
+        o_f_exp    : t_f_exp                             ,
+        o_f_got    : t_f_got                             ,
+        o_xor_or   : t_xor                               ,
+        o_req_valid: t_req_valid                         ,
+        o_req_write: t_req_write                         ,
+        o_req_addr : t_req_addr                          ,
+        o_req_wdata: t_req_wdata                         ,
+        i_req_ready: i_req_ready && in_test,
+        i_rsp_valid: i_rsp_valid && in_test,
+        i_rsp_data : i_rsp_data                          ,
+    );
+
+    function nargs (
+        o: input logic<8>,
+    ) -> logic<4> {
+        case o {
+            8'h50  : return 4'd1; // 'P'
+            8'h54  : return 4'd4; // 'T'
+            8'h52  : return 4'd4; // 'R'
+            8'h57  : return 4'd3; // 'W'
+            8'h5A  : return 4'd5; // 'Z'
+            8'h47  : return 4'd1; // 'G'
+            8'h58  : return 4'd10; // 'X'
+            default: return 4'd0;
+        }
+    }
+
+    assign o_rx_ready = state == State::Op || state == State::Args;
+    let rx_take: logic = i_rx_valid && o_rx_ready;
+    assign o_tx_valid = state == State::ReadPush || state == State::Reply || state == State::TestReply;
+    assign o_tx_data  = if state == State::ReadPush ? rdata : rbuf[ridx];
+    let tx_take: logic = o_tx_valid && i_tx_ready;
+
+    // bus requests: commands, handshake, or the test engine
+    let hs_write: logic = hs_step <: 3'd4;
+    assign o_req_valid = state == State::ReadReq || state == State::WriteReq || state == State::HsReq
+        || (in_test && t_req_valid);
+    assign o_req_write = if in_test ? t_req_write : state == State::WriteReq || (state == State::HsReq && hs_write);
+    assign o_req_addr  = if in_test ?
+        t_req_addr
+    : if state == State::HsReq ?
+        (if hs_write ? 16'h2000 : {14'h1FFC, hs_step[1:0]})
+    :
+        addr
+    ;
+    assign o_req_wdata = if in_test ?
+        t_req_wdata
+    : if state == State::HsReq ?
+        (case hs_step[1:0] {
+            2'd0   : nonce[31:24],
+            2'd1   : nonce[23:16],
+            2'd2   : nonce[15:8],
+            default: nonce[7:0],
+        })
+    :
+        args[2]
+    ;
+
+    always_ff {
+        if_reset {
+            state     = State::Op;
+            op        = 0;
+            argn      = 0;
+            args      = '{0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            argi      = 0;
+            addr      = 0;
+            remain    = 0;
+            rdata     = 0;
+            rbuf      = '{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            rlen      = 0;
+            ridx      = 0;
+            power_req = 0;
+            unlocked  = 0;
+            cyc       = 8'd60;
+            sample    = 8'd57;
+            wr_on     = 8'd28;
+            wr_off    = 8'd56;
+            st_en     = 0;
+            st_a      = 0;
+            st_ctl    = 6'b100111;
+            st_d      = 0;
+            rst_force = 0;
+            nonce     = 0;
+            free      = 0;
+            hs_step   = 0;
+            hs_got    = 0;
+            t_start   = 0;
+            t_us      = 0;
+            t_div     = 0;
+        } else {
+            free    += 1;
+            t_start =  0;
+            if !det || !sw_s[1] {
+                power_req = 0;
+            }
+            // the unlock and the static mode end with the slot
+            if !i_bus_ready {
+                unlocked = 0;
+                st_en    = 0;
+            }
+            if t_busy {
+                if t_div == US_CYC - 1 {
+                    t_div =  0;
+                    t_us  += 1;
+                } else {
+                    t_div += 1;
+                }
+            }
+            case state {
+                State::Op: {
+                    if rx_take {
+                        op   = i_rx_data;
+                        argi = 0;
+                        if i_rx_data == 8'h53 { // 'S'
+                            rbuf[0]  = 8'h42;
+                            rbuf[1]  = 8'h54;
+                            rbuf[2]  = PROTO;
+                            rbuf[3]  = flags;
+                            rbuf[4]  = {7'd0, rst_s[1]};
+                            rbuf[5]  = cyc;
+                            rbuf[6]  = sample;
+                            rbuf[7]  = wr_on;
+                            rbuf[8]  = wr_off;
+                            rbuf[9]  = i_d_seen;
+                            rbuf[10] = 0;
+                            rbuf[11] = 0;
+                            rbuf[12] = 0;
+                            rbuf[13] = 0;
+                            rbuf[14] = 0;
+                            rbuf[15] = 0;
+                            rlen     = 5'd16;
+                            ridx     = 0;
+                            state    = State::Reply;
+                        } else if i_rx_data == 8'h48 { // 'H'
+                            unlocked = 0;
+                            nonce    = free ^ 32'h3C5A_A5C3;
+                            hs_step  = 0;
+                            if i_bus_ready {
+                                state = State::HsReq;
+                            } else {
+                                rbuf[0] = 8'h48;
+                                rbuf[1] = 0;
+                                rbuf[2] = 0;
+                                rbuf[3] = 0;
+                                rbuf[4] = 0;
+                                rbuf[5] = 0;
+                                rlen    = 5'd6;
+                                ridx    = 0;
+                                state   = State::Reply;
+                            }
+                        } else if nargs(i_rx_data) != 0 {
+                            argn  = nargs(i_rx_data);
+                            state = State::Args;
+                        }
+                    }
+                }
+                State::Args: {
+                    if rx_take {
+                        args[argi] =  i_rx_data;
+                        argi       += 1;
+                        if argn == 4'd1 {
+                            ridx = 0;
+                            case op {
+                                8'h50: { // 'P'
+                                    power_req = i_rx_data[0] && det && sw_s[1];
+                                    rbuf[0]   = 8'h50;
+                                    rbuf[1]   = {flags[7:3], i_rx_data[0] && det && sw_s[1], flags[1:0]};
+                                    rlen      = 5'd2;
+                                    state     = State::Reply;
+                                }
+                                8'h54: { // 'T' cyc sample on off
+                                    rbuf[0] = 8'h54;
+                                    rlen    = 5'd2;
+                                    state   = State::Reply;
+                                    if args[0] >= 8'd6 && args[1] >= 8'd2 && args[1] <: args[0] && args[2] >: 8'd2
+                                        && args[2] <: i_rx_data && i_rx_data + 8'd2 <: args[0] && !t_busy {
+                                        cyc     = args[0];
+                                        sample  = args[1];
+                                        wr_on   = args[2];
+                                        wr_off  = i_rx_data;
+                                        rbuf[1] = 1;
+                                    } else {
+                                        rbuf[1] = 0;
+                                    }
+                                }
+                                8'h52: { // 'R'
+                                    addr   = {args[1], args[0]};
+                                    remain = if {i_rx_data, args[2]} == 16'h0000 ?
+                                        17'h10000
+                                    :
+                                        {1'b0, i_rx_data, args[2]}
+                                    ;
+                                    state  = State::ReadReq;
+                                }
+                                8'h57: { // 'W'
+                                    addr    = {args[1], args[0]};
+                                    rbuf[0] = 8'h57;
+                                    rlen    = 5'd2;
+                                    if !unlocked {
+                                        rbuf[1] = 1;
+                                        state   = State::Reply;
+                                    } else if !i_bus_ready {
+                                        rbuf[1] = 2;
+                                        state   = State::Reply;
+                                    } else {
+                                        state = State::WriteReq;
+                                    }
+                                }
+                                8'h5A: { // 'Z' en addr_l addr_h ctl d
+                                    st_en   = args[0][0] && unlocked && i_bus_ready;
+                                    st_a    = {args[2], args[1]};
+                                    st_ctl  = args[3][5:0];
+                                    st_d    = i_rx_data;
+                                    rbuf[0] = 8'h5A;
+                                    rbuf[1] = i_d_seen;
+                                    rlen    = 5'd2;
+                                    state   = State::Reply;
+                                }
+                                8'h47: { // 'G'
+                                    rst_force = i_rx_data[0];
+                                    rbuf[0]   = 8'h47;
+                                    rbuf[1]   = {7'd0, i_rx_data[0]};
+                                    rlen      = 5'd2;
+                                    state     = State::Reply;
+                                }
+                                default: { // 'X'
+                                    if unlocked && i_bus_ready && !st_en {
+                                        t_start = 1;
+                                        t_us    = 0;
+                                        t_div   = 0;
+                                        state   = State::Test;
+                                    } else {
+                                        rbuf[0] = 8'h58;
+                                        rbuf[1] = if !unlocked ? 8'd1 : 8'd2;
+                                        for i in 2..24 {
+                                            rbuf[i] = 0;
+                                        }
+                                        rlen  = 5'd24;
+                                        state = State::Reply;
+                                    }
+                                }
+                            }
+                        } else {
+                            argn -= 1;
+                        }
+                    }
+                }
+                State::ReadReq: {
+                    if !i_bus_ready || st_en {
+                        rdata = 8'hFF;
+                        state = State::ReadPush;
+                    } else if i_req_ready {
+                        state = State::ReadRsp;
+                    }
+                }
+                State::ReadRsp: {
+                    if i_rsp_valid {
+                        rdata = i_rsp_data;
+                        state = State::ReadPush;
+                    }
+                }
+                State::ReadPush: {
+                    if tx_take {
+                        addr   += 1;
+                        remain -= 1;
+                        state  =  if remain == 17'd1 ? State::Op : State::ReadReq;
+                    }
+                }
+                State::WriteReq: {
+                    if !i_bus_ready || st_en {
+                        rbuf[1] = 2;
+                        state   = State::Reply;
+                    } else if i_req_ready {
+                        state = State::WriteRsp;
+                    }
+                }
+                State::WriteRsp: {
+                    if i_rsp_valid {
+                        rbuf[1] = 0;
+                        state   = State::Reply;
+                    }
+                }
+                State::HsReq: {
+                    if !i_bus_ready {
+                        state = State::Op;
+                    } else if i_req_ready {
+                        state = State::HsRsp;
+                    }
+                }
+                State::HsRsp: {
+                    if i_rsp_valid {
+                        if !hs_write {
+                            case hs_step[1:0] {
+                                2'd0   : hs_got[7:0]   = i_rsp_data;
+                                2'd1   : hs_got[15:8]  = i_rsp_data;
+                                2'd2   : hs_got[23:16] = i_rsp_data;
+                                default: hs_got[31:24] = i_rsp_data;
+                            }
+                        }
+                        hs_step += 1;
+                        if hs_step == 3'd7 {
+                            rbuf[0]  = 8'h48;
+                            rbuf[1]  = {7'd0, {i_rsp_data, hs_got[23:0]} == hs_answer(nonce)};
+                            rbuf[2]  = hs_got[7:0];
+                            rbuf[3]  = hs_got[15:8];
+                            rbuf[4]  = hs_got[23:16];
+                            rbuf[5]  = i_rsp_data;
+                            unlocked = {i_rsp_data, hs_got[23:0]} == hs_answer(nonce);
+                            rlen     = 5'd6;
+                            ridx     = 0;
+                            state    = State::Reply;
+                        } else {
+                            state = State::HsReq;
+                        }
+                    }
+                }
+                State::Test: {
+                    if !t_start && !t_busy {
+                        rbuf[0]  = 8'h58;
+                        rbuf[1]  = 0;
+                        rbuf[2]  = t_ops[7:0];
+                        rbuf[3]  = t_ops[15:8];
+                        rbuf[4]  = t_ops[23:16];
+                        rbuf[5]  = t_ops[31:24];
+                        rbuf[6]  = t_errors[7:0];
+                        rbuf[7]  = t_errors[15:8];
+                        rbuf[8]  = t_errors[23:16];
+                        rbuf[9]  = t_errors[31:24];
+                        rbuf[10] = t_f_idx[7:0];
+                        rbuf[11] = t_f_idx[15:8];
+                        rbuf[12] = t_f_idx[23:16];
+                        rbuf[13] = t_f_idx[31:24];
+                        rbuf[14] = t_f_addr[7:0];
+                        rbuf[15] = t_f_addr[15:8];
+                        rbuf[16] = t_f_exp;
+                        rbuf[17] = t_f_got;
+                        rbuf[18] = t_xor;
+                        rbuf[19] = t_us[7:0];
+                        rbuf[20] = t_us[15:8];
+                        rbuf[21] = t_us[23:16];
+                        rbuf[22] = t_us[31:24];
+                        rbuf[23] = 0;
+                        rlen     = 5'd24;
+                        ridx     = 0;
+                        state    = State::TestReply;
+                    }
+                }
+                State::Reply, State::TestReply: {
+                    if tx_take {
+                        ridx += 1;
+                        if ridx == rlen - 5'd1 {
+                            state = State::Op;
+                        }
+                    }
+                }
+                default: state = State::Op;
+            }
+        }
+    }
+
+    assign o_power_en  = power_req;
+    assign o_busy      = state != State::Op && state != State::Args;
+    assign o_unlocked  = unlocked;
+    assign o_cyc       = cyc;
+    assign o_sample    = sample;
+    assign o_wr_on     = wr_on;
+    assign o_wr_off    = wr_off;
+    assign o_static    = st_en;
+    assign o_st_a      = st_a;
+    assign o_st_ctl    = st_ctl;
+    assign o_st_d      = st_d;
+    assign o_rst_force = rst_force;
+}

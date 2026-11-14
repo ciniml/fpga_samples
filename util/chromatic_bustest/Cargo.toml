@@ -1,0 +1,11 @@
+[package]
+name = "chromatic_bustest"
+version = "0.1.0"
+edition = "2021"
+license = "BSL-1.0"
+description = "Cartridge bus test: ModRetro Chromatic (eda/chromatic_cart_bustest) against a test target on the FPGA cartridge adapter (eda/cart_target)"
+
+[dependencies]
+nusb = "0.2"
+clap = { version = "4", features = ["derive"] }
+serialport = { version = "4", default-features = false }

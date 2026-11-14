@@ -1,0 +1,510 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file cart_target.veryl
+ * @brief Test target for the FPGA cartridge adapter (gb_fpga_cart_de0 with
+ *        a Tang Primer 25K): a cartridge that answers as 64 KiB of RAM and
+ *        checks every bus cycle against the BtPkg sequence on its own, plus
+ *        pin snapshots, a PHI meter and static drive of D / RST_DRV / VIN.
+ *        Configured and read over a byte stream (UART).
+ *
+ * Bus side (adapter signals, all inputs synchronised over two clocks):
+ *   read : while /RD is Low and the address is answered, D_DIR = 1 (FPGA ->
+ *          console) and D = RAM[A], after i_dly more clocks of /RD Low
+ *   write: on the /WR rising edge, RAM[A] = D (A and D of the last sample
+ *          with /WR Low)
+ *   modes: 0 ID (writes to 0x2000-0x3FFF shift a nonce in, 0x7FF0-0x7FF3
+ *          read BtPkg::hs_answer, everything else reads FF), 1 RAM over all
+ *          addresses, 2 RAM as a cartridge (0x0000-0x7FFF, and 0xA000-0xBFFF
+ *          with /CS Low), 3 silent (no answer, nothing stored: for pin tests)
+ *   /D_OE stays Low (the data shifter enabled, towards the FPGA unless D_DIR).
+ *
+ * Commands (little endian):
+ *   'S'             -> 64 bytes of status (see the layout in the code)
+ *   'M' mode dly    -> 'M'
+ *   'C' op cart seed32 count32 -> 'C'  arm the checker (and clear the counters)
+ *   'D' en d        -> 'D'   drive D (D_DIR = 1) statically
+ *   'R' v           -> 'R'   RST_DRV (1: pull the cartridge /RST Low)
+ *   'A' v           -> 'A'   square wave on AUD_PWM (VIN), CLK_HZ/2/AUD_DIV
+ */
+pub module CartTarget #(
+    param CLK_HZ : u32 = 100_000_000,
+    param AUD_DIV: u32 = 50_000     , // 1 kHz at 100 MHz
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_rx_valid: input  logic   ,
+    i_rx_data : input  logic<8>,
+    o_rx_ready: output logic   ,
+    o_tx_valid: output logic   ,
+    o_tx_data : output logic<8>,
+    i_tx_ready: input  logic   ,
+
+    i_a      : input  logic<16>,
+    i_rd_n   : input  logic    ,
+    i_wr_n   : input  logic    ,
+    i_cs_n   : input  logic    ,
+    i_phi    : input  logic    ,
+    i_rst_n  : input  logic    , // cartridge /RST as seen
+    i_d      : input  logic<8> ,
+    o_d      : output logic<8> ,
+    o_d_oe   : output logic    , // FPGA drives its D pins
+    o_d_dir  : output logic    , // 1: FPGA -> console
+    o_d_oe_n : output logic    , // shifter enable
+    o_rst_drv: output logic    ,
+    o_aud    : output logic    ,
+) {
+    import BtPkg::*;
+
+    // ---- synchronisers (2 stages, then one more for edges) ----
+    var a_s: logic<16> [2];
+    var d_s: logic<8>  [2];
+    var c_s: logic<5>  [2]; // {rst_n, phi, cs_n, wr_n, rd_n}
+    var c_q: logic<5>     ;
+    var a_q: logic<16>    ;
+    var d_q: logic<8>     ;
+    always_ff {
+        if_reset {
+            a_s = '{0, 0};
+            d_s = '{0, 0};
+            c_s = '{5'h1F, 5'h1F};
+            c_q = 5'h1F;
+            a_q = 0;
+            d_q = 0;
+        } else {
+            a_s[0] = i_a;
+            a_s[1] = a_s[0];
+            d_s[0] = i_d;
+            d_s[1] = d_s[0];
+            c_s[0] = {i_rst_n, i_phi, i_cs_n, i_wr_n, i_rd_n};
+            c_s[1] = c_s[0];
+            c_q    = c_s[1];
+            a_q    = a_s[1];
+            d_q    = d_s[1];
+        }
+    }
+    let a     : logic<16> = a_s[1];
+    let rd_n  : logic     = c_s[1][0];
+    let wr_n  : logic     = c_s[1][1];
+    let cs_n  : logic     = c_s[1][2];
+    let phi   : logic     = c_s[1][3];
+    let rd_end: logic     = !c_q[0] && rd_n; // /RD rising (a_q = address while Low)
+    let wr_end: logic     = !c_q[1] && wr_n; // /WR rising (a_q, d_q = while Low)
+
+    // ---- configuration ----
+    var mode    : logic<2>;
+    var dly     : logic<8>;
+    var st_drive: logic   ;
+    var st_d    : logic<8>;
+    var rst_drv : logic   ;
+    var aud_en  : logic   ;
+
+    // ---- RAM ----
+    var ram   : logic<8> [65536];
+    var ram_q : logic<8>        ;
+    var ram_we: logic           ;
+    always_ff (i_clk) {
+        if ram_we {
+            ram[a_q] = d_q;
+        }
+        ram_q = ram[a];
+    }
+    let cart_ok : logic = !a[15] || (a[15:13] == 3'b101 && !cs_n);
+    let cart_okq: logic = !a_q[15] || (a_q[15:13] == 3'b101 && !c_q[2]);
+
+    // ---- handshake (mode 0) ----
+    var nonce: logic<32>;
+    let hs   : logic<32> = hs_answer(nonce);
+    let hs_q : logic<8>  = case a[1:0] {
+        2'd0   : hs[7:0],
+        2'd1   : hs[15:8],
+        2'd2   : hs[23:16],
+        default: hs[31:24],
+    };
+
+    // ---- read response ----
+    var rd_low: logic<8>;
+    let answer: logic    = case mode {
+        2'd0   : 1'b1,
+        2'd1   : 1'b1,
+        2'd2   : cart_ok,
+        default: 1'b0,
+    };
+    let drive: logic = st_drive || (!rd_n && answer && rd_low >= dly);
+    assign o_d       = if st_drive ? st_d : if mode == 2'd0 ? (if a[15:2] == 14'h1FFC ? hs_q : 8'hFF) : ram_q;
+    assign o_d_oe    = drive;
+    assign o_d_dir   = drive;
+    assign o_d_oe_n  = 1'b0;
+    assign o_rst_drv = rst_drv;
+
+    // ---- checker ----
+    var k_armed: logic    ;
+    var k_op   : logic<2> ;
+    var k_cart : logic    ;
+    var k_x    : logic<32>;
+    var k_seq  : logic<16>;
+    var k_count: logic<32>;
+    var k_seen : logic<32>;
+    var k_errs : logic<32>;
+    var k_axor : logic<16>;
+    var k_dxor : logic<8> ;
+    var k_rwerr: logic<32>;
+    var k_cserr: logic<32>;
+    var k_extra: logic<32>;
+    var k_fidx : logic<32>;
+    var k_foa  : logic<16>;
+    var k_fea  : logic<16>;
+    var k_fod  : logic<8> ;
+    var k_fed  : logic<8> ;
+    var k_ff   : logic<4> ;
+    // /CS Low at any sample of the current strobe (/CS and /RD rise on the same master clock, so
+    // the last sample with /RD Low may already see /CS High)
+    var k_csl: logic    ;
+    let k_xn : logic<32> = xs(k_x);
+    let k_ea : logic<16> = if k_op == OP_MIX ? mix_addr(k_cart, k_xn[15:0]) : k_seq;
+    let k_ew : logic     = if k_op == OP_MIX ? k_xn[16] : k_op == OP_FILL;
+    let k_ed : logic<8>  = if k_op == OP_MIX ? k_xn[31:24] : k_xn[7:0];
+
+    // ---- counters, PHI meter, VIN ----
+    var rd_cnt  : logic<32>;
+    var wr_cnt  : logic<32>;
+    var win     : logic<32>;
+    var ph_e    : logic<32>;
+    var ph_h    : logic<32>;
+    var ph_edges: logic<32>;
+    var ph_high : logic<32>;
+    var aud_cnt : logic<17>;
+    var aud_q   : logic    ;
+    assign o_aud = aud_q;
+
+    // ---- command processor ----
+    enum State: logic<2> {
+        Op,
+        Args,
+        Reply,
+    }
+    var state: State        ;
+    var cop  : logic<8>     ;
+    var argn : logic<4>     ;
+    var args : logic<8> [10];
+    var argi : logic<4>     ;
+    var rbuf : logic<8> [64];
+    var rlen : logic<7>     ;
+    var ridx : logic<7>     ;
+    var clear: logic        ;
+
+    function nargs (
+        o: input logic<8>,
+    ) -> logic<4> {
+        case o {
+            8'h4D  : return 4'd2; // 'M'
+            8'h43  : return 4'd10; // 'C'
+            8'h44  : return 4'd2; // 'D'
+            8'h52  : return 4'd1; // 'R'
+            8'h41  : return 4'd1; // 'A'
+            default: return 4'd0;
+        }
+    }
+
+    assign o_rx_ready = state == State::Op || state == State::Args;
+    let rx_take: logic = i_rx_valid && o_rx_ready;
+    assign o_tx_valid = state == State::Reply;
+    assign o_tx_data  = rbuf[ridx[5:0]];
+
+    always_ff {
+        if_reset {
+            mode     = 0;
+            dly      = 0;
+            st_drive = 0;
+            st_d     = 0;
+            rst_drv  = 0;
+            aud_en   = 0;
+            ram_we   = 0;
+            nonce    = 0;
+            rd_low   = 0;
+            k_armed  = 0;
+            k_op     = 0;
+            k_cart   = 0;
+            k_x      = 1;
+            k_seq    = 0;
+            k_count  = 0;
+            k_seen   = 0;
+            k_errs   = 0;
+            k_axor   = 0;
+            k_dxor   = 0;
+            k_rwerr  = 0;
+            k_cserr  = 0;
+            k_extra  = 0;
+            k_fidx   = 0;
+            k_foa    = 0;
+            k_fea    = 0;
+            k_fod    = 0;
+            k_fed    = 0;
+            k_ff     = 0;
+            k_csl    = 0;
+            rd_cnt   = 0;
+            wr_cnt   = 0;
+            win      = 0;
+            ph_e     = 0;
+            ph_h     = 0;
+            ph_edges = 0;
+            ph_high  = 0;
+            aud_cnt  = 0;
+            aud_q    = 0;
+            state    = State::Op;
+            cop      = 0;
+            argn     = 0;
+            args     = '{0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            argi     = 0;
+            rbuf     = '{
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+            };
+            rlen     = 0;
+            ridx     = 0;
+            clear    = 0;
+        } else {
+            ram_we = 0;
+            // /RD Low time (for the response delay)
+            if rd_n {
+                rd_low = 0;
+            } else if rd_low != 8'hFF {
+                rd_low += 1;
+            }
+            // writes
+            if wr_end {
+                wr_cnt += 1;
+                case mode {
+                    2'd0: {
+                        if a_q[15:13] == 3'b001 {
+                            nonce = {nonce[23:0], d_q};
+                        }
+                    }
+                    2'd1   : ram_we = 1;
+                    2'd2   : ram_we = cart_okq;
+                    default: {}
+                }
+            }
+            if rd_end {
+                rd_cnt += 1;
+            }
+            // checker: one bus cycle = one /RD or /WR rising edge
+            if k_armed && (rd_end || wr_end) {
+                if k_seen == k_count {
+                    k_extra += 1;
+                } else {
+                    var bad: logic;
+                    bad = (wr_end != k_ew) || (a_q != k_ea) || (wr_end && d_q != k_ed) || (k_csl != cs_low(k_ea));
+                    if wr_end != k_ew {
+                        k_rwerr += 1;
+                    }
+                    if k_csl != cs_low(k_ea) {
+                        k_cserr += 1;
+                    }
+                    k_axor |= a_q ^ k_ea;
+                    if wr_end && k_ew {
+                        k_dxor |= d_q ^ k_ed;
+                    }
+                    if bad {
+                        if k_errs == 32'd0 {
+                            k_fidx = k_seen;
+                            k_foa  = a_q;
+                            k_fea  = k_ea;
+                            k_fod  = d_q;
+                            k_fed  = k_ed;
+                            k_ff   = {!cs_low(k_ea), !k_csl, k_ew, wr_end};
+                        }
+                        k_errs += 1;
+                    }
+                    k_seen += 1;
+                    k_x    =  k_xn;
+                    if k_op != OP_MIX {
+                        k_seq = seq_next(k_cart, k_seq);
+                    }
+                }
+            }
+            // /CS during the strobe (cleared after each cycle)
+            if rd_end || wr_end {
+                k_csl = 0;
+            } else if !c_q[0] || !c_q[1] {
+                k_csl |= !c_q[2];
+            }
+            // PHI meter (1 s windows)
+            if phi && !c_q[3] {
+                ph_e += 1;
+            }
+            if phi {
+                ph_h += 1;
+            }
+            if win == CLK_HZ - 1 {
+                win      = 0;
+                ph_edges = ph_e;
+                ph_high  = ph_h;
+                ph_e     = 0;
+                ph_h     = 0;
+            } else {
+                win += 1;
+            }
+            // VIN square wave
+            if !aud_en {
+                aud_q   = 0;
+                aud_cnt = 0;
+            } else if aud_cnt == AUD_DIV - 1 {
+                aud_cnt = 0;
+                aud_q   = !aud_q;
+            } else {
+                aud_cnt += 1;
+            }
+            if clear {
+                clear   = 0;
+                rd_cnt  = 0;
+                wr_cnt  = 0;
+                k_seen  = 0;
+                k_errs  = 0;
+                k_axor  = 0;
+                k_dxor  = 0;
+                k_rwerr = 0;
+                k_cserr = 0;
+                k_extra = 0;
+                k_fidx  = 0;
+                k_foa   = 0;
+                k_fea   = 0;
+                k_fod   = 0;
+                k_fed   = 0;
+                k_ff    = 0;
+            }
+            // commands
+            case state {
+                State::Op: {
+                    if rx_take {
+                        cop  = i_rx_data;
+                        argi = 0;
+                        if i_rx_data == 8'h53 { // 'S'
+                            rbuf[0]  = 8'h54;
+                            rbuf[1]  = 8'h47;
+                            rbuf[2]  = 8'h01;
+                            rbuf[3]  = {6'd0, mode};
+                            rbuf[4]  = dly;
+                            rbuf[5]  = {3'd0, k_armed && k_seen == k_count, k_armed, st_drive, aud_en, rst_drv};
+                            rbuf[6]  = a[7:0];
+                            rbuf[7]  = a[15:8];
+                            rbuf[8]  = {3'd0, c_s[1]};
+                            rbuf[9]  = d_s[1];
+                            rbuf[10] = rd_cnt[7:0];
+                            rbuf[11] = rd_cnt[15:8];
+                            rbuf[12] = rd_cnt[23:16];
+                            rbuf[13] = rd_cnt[31:24];
+                            rbuf[14] = wr_cnt[7:0];
+                            rbuf[15] = wr_cnt[15:8];
+                            rbuf[16] = wr_cnt[23:16];
+                            rbuf[17] = wr_cnt[31:24];
+                            rbuf[18] = ph_edges[7:0];
+                            rbuf[19] = ph_edges[15:8];
+                            rbuf[20] = ph_edges[23:16];
+                            rbuf[21] = ph_edges[31:24];
+                            rbuf[22] = ph_high[7:0];
+                            rbuf[23] = ph_high[15:8];
+                            rbuf[24] = ph_high[23:16];
+                            rbuf[25] = ph_high[31:24];
+                            rbuf[26] = k_seen[7:0];
+                            rbuf[27] = k_seen[15:8];
+                            rbuf[28] = k_seen[23:16];
+                            rbuf[29] = k_seen[31:24];
+                            rbuf[30] = k_errs[7:0];
+                            rbuf[31] = k_errs[15:8];
+                            rbuf[32] = k_errs[23:16];
+                            rbuf[33] = k_errs[31:24];
+                            rbuf[34] = k_axor[7:0];
+                            rbuf[35] = k_axor[15:8];
+                            rbuf[36] = k_dxor;
+                            rbuf[37] = 0;
+                            rbuf[38] = k_rwerr[7:0];
+                            rbuf[39] = k_rwerr[15:8];
+                            rbuf[40] = k_rwerr[23:16];
+                            rbuf[41] = k_rwerr[31:24];
+                            rbuf[42] = k_cserr[7:0];
+                            rbuf[43] = k_cserr[15:8];
+                            rbuf[44] = k_cserr[23:16];
+                            rbuf[45] = k_cserr[31:24];
+                            rbuf[46] = k_extra[7:0];
+                            rbuf[47] = k_extra[15:8];
+                            rbuf[48] = k_extra[23:16];
+                            rbuf[49] = k_extra[31:24];
+                            rbuf[50] = k_fidx[7:0];
+                            rbuf[51] = k_fidx[15:8];
+                            rbuf[52] = k_fidx[23:16];
+                            rbuf[53] = k_fidx[31:24];
+                            rbuf[54] = k_foa[7:0];
+                            rbuf[55] = k_foa[15:8];
+                            rbuf[56] = k_fea[7:0];
+                            rbuf[57] = k_fea[15:8];
+                            rbuf[58] = k_fod;
+                            rbuf[59] = k_fed;
+                            rbuf[60] = {4'd0, k_ff};
+                            rbuf[61] = 0;
+                            rbuf[62] = 0;
+                            rbuf[63] = 0;
+                            rlen     = 7'd64;
+                            ridx     = 0;
+                            state    = State::Reply;
+                        } else if nargs(i_rx_data) != 0 {
+                            argn  = nargs(i_rx_data);
+                            state = State::Args;
+                        }
+                    }
+                }
+                State::Args: {
+                    if rx_take {
+                        args[argi] =  i_rx_data;
+                        argi       += 1;
+                        if argn == 4'd1 {
+                            rbuf[0] = cop;
+                            rlen    = 7'd1;
+                            ridx    = 0;
+                            state   = State::Reply;
+                            case cop {
+                                8'h4D: { // 'M' mode dly
+                                    mode = args[0][1:0];
+                                    dly  = i_rx_data;
+                                }
+                                8'h43: { // 'C' op cart seed32 count32
+                                    k_armed = 1;
+                                    k_op    = args[0][1:0];
+                                    k_cart  = args[1][0];
+                                    k_x     = if {args[5], args[4], args[3], args[2]} == 32'd0 ?
+                                        32'd1
+                                    :
+                                        {args[5], args[4], args[3], args[2]}
+                                    ;
+                                    k_seq   = 0;
+                                    k_count = {i_rx_data, args[8], args[7], args[6]};
+                                    clear   = 1;
+                                }
+                                8'h44: { // 'D' en d
+                                    st_drive = args[0][0];
+                                    st_d     = i_rx_data;
+                                }
+                                8'h52  : rst_drv = i_rx_data[0];
+                                default: aud_en  = i_rx_data[0]; // 'A'
+                            }
+                        } else {
+                            argn -= 1;
+                        }
+                    }
+                }
+                default: {
+                    if i_tx_ready {
+                        ridx += 1;
+                        if ridx == rlen - 7'd1 {
+                            state = State::Op;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
