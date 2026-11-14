@@ -79,6 +79,23 @@ enum Cmd {
         #[arg(long)]
         keep_power: bool,
     },
+    /// show the flash chip of a flash cartridge (autoselect; nothing is written to the flash array)
+    FlashId,
+    /// write an image to a flash cartridge (SST39VF1681 / 1682): backup first, erase only the
+    /// blocks that need it, program, read back
+    FlashWrite {
+        /// image to write
+        file: PathBuf,
+        /// flash address to write at (e.g. 0x1F0000)
+        #[arg(long, default_value = "0", value_parser = parse_num)]
+        offset: usize,
+        /// allow changing blocks that are not blank (the game itself)
+        #[arg(long)]
+        overwrite: bool,
+        /// where the automatic full backup goes (default: ~/chromatic-dumps)
+        #[arg(long)]
+        backup_dir: Option<PathBuf>,
+    },
     /// web UI (status, header, ROM dump, save data, FPGA SRAM load) for the local network
     Serve {
         /// address to listen on
@@ -155,6 +172,15 @@ impl Term {
     }
 }
 
+fn parse_num(s: &str) -> Result<usize, String> {
+    let r = if let Some(h) = s.strip_prefix("0x").or(s.strip_prefix("0X")) { usize::from_str_radix(h, 16) } else { s.parse() };
+    r.map_err(|e| format!("{s}: {e}"))
+}
+
+fn dumps_dir(d: &Option<PathBuf>) -> PathBuf {
+    d.clone().unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into())).join("chromatic-dumps"))
+}
+
 fn parse_mapper(s: &Option<String>) -> Result<Option<Mapper>, String> {
     s.as_ref().map(|s| Mapper::parse(s).ok_or(format!("unknown mapper '{s}'"))).transpose()
 }
@@ -175,6 +201,63 @@ fn run<L: Link>(r: &mut Reader<L>, cmd: &Cmd) -> Result<(), String> {
     eprintln!("reader: {}", s.describe());
     match cmd {
         Cmd::Status | Cmd::Serve { .. } => Ok(()),
+        Cmd::FlashId => ops::powered(r, false, |r| {
+            if !r.flash_mode(true)? {
+                return Err("the device refused flash mode".into());
+            }
+            let id = r.flash_id();
+            let off = r.flash_mode(false);
+            let id = id?;
+            off?;
+            println!("identifier     : {id:02x?}");
+            match ops::flash_chip(&id) {
+                Some(c) => println!("chip           : {} ({} KiB){}", c.name, c.size >> 10, if c.block.is_some() { "" } else { ", writing not supported" }),
+                None => println!("chip           : unknown"),
+            }
+            Ok(())
+        }),
+        Cmd::FlashWrite { file, offset, overwrite, backup_dir } => {
+            let image = std::fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?;
+            let res = ops::powered(r, false, |r| {
+                let h = ops::read_header(r)?;
+                print_header(&h);
+                // identify, then a full backup (read twice) before anything is written
+                if !r.flash_mode(true)? {
+                    return Err("the device refused flash mode".into());
+                }
+                let id = r.flash_id();
+                let off = r.flash_mode(false);
+                let id = id?;
+                off?;
+                let chip = ops::flash_chip(&id).ok_or(format!("unknown flash identifier {id:02x?}: not writing"))?;
+                eprintln!("flash: {} ({} KiB)", chip.name, chip.size >> 10);
+                let a = ops::flash_read(r, 0, chip.size)?;
+                let b = ops::flash_read(r, 0, chip.size)?;
+                if a != b {
+                    return Err("the backup reads differ: check the contacts (nothing written)".into());
+                }
+                let dir = dumps_dir(backup_dir);
+                std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                let base = format!("{}-flash-backup", ops::sanitize(&h.title()));
+                let mut path = dir.join(format!("{base}.bin"));
+                let mut i = 2;
+                while path.exists() && std::fs::read(&path).map(|d| d != a).unwrap_or(true) {
+                    path = dir.join(format!("{base}-{i}.bin"));
+                    i += 1;
+                }
+                std::fs::write(&path, &a).map_err(|e| format!("{}: {e}", path.display()))?;
+                println!("backup         : {} (SHA-1 {})", path.display(), ops::sha1_hex(&a));
+                let mut t = Term::new();
+                let res = ops::flash_write(r, &image, *offset, *overwrite, &mut t);
+                t.end();
+                let w = res?;
+                println!("written        : {} bytes at {:#x} on {}: {} block(s) erased, {} byte(s) programmed, read back OK ({:.1} s)",
+                    image.len(), offset, w.chip, w.erased, w.programmed, w.secs);
+                Ok(())
+            });
+            finish_note(r)?;
+            res
+        }
         Cmd::Header { keep_power } => ops::powered(r, *keep_power, |r| ops::read_header(r).map(|h| print_header(&h))),
         Cmd::Dump { output, verify, mapper, banks, mbc1m, force, keep_power } => {
             let o = DumpOpts { verify: *verify, mapper: parse_mapper(mapper)?, banks: *banks, mbc1m: *mbc1m, force: *force };

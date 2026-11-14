@@ -22,7 +22,12 @@ int main(int argc, char **argv) {
     std::string romout, ramout;
     if (const char *e = getenv("CART_SIM_ROMOUT")) { romout = std::string("+romout=") + e; args.push_back(romout.c_str()); }
     if (const char *e = getenv("CART_SIM_RAMOUT")) { ramout = std::string("+ramout=") + e; args.push_back(ramout.c_str()); }
+    std::string flashout;
+    if (const char *e = getenv("CART_SIM_FLASHOUT")) { flashout = std::string("+flashout=") + e; args.push_back(flashout.c_str()); }
     Verilated::commandArgs((int)args.size(), args.data());
+    // the byte stream keeps the original stdout; $display output goes to stderr
+    int data_fd = dup(1);
+    dup2(2, 1);
     auto *m = new Vcart_sim_top;
     fcntl(0, F_SETFL, fcntl(0, F_GETFL) | O_NONBLOCK);
     std::deque<uint8_t> in;
@@ -60,7 +65,7 @@ int main(int argc, char **argv) {
         if (!out.empty() && (out.size() >= 4096 || idle > 50)) {
             size_t off = 0;
             while (off < out.size()) {
-                ssize_t n = write(1, out.data() + off, out.size() - off);
+                ssize_t n = write(data_fd, out.data() + off, out.size() - off);
                 if (n <= 0) return 1;
                 off += n;
             }

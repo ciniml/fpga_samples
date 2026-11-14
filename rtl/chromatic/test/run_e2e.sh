@@ -52,4 +52,37 @@ for c in "7 5 0 ok 128" "7 5 0 ok 256" "1 2 2 ok" "1 4 3 ok" "2 3 0 ok" "3 6 3 o
         echo "FAIL save $name (expected $4, got $r), see $work/$name.save.log"; fail=1
     fi
 done
+# flash cartridge (MBC5 + 2 MiB AMD flash, 256 KiB image): offset size overwrite expect(ok|reject)
+make -s -C "$here" simexe MBC=5 ROM_CODE=3 FLASH=1 >/dev/null
+exe=$here/obj_sim_mbc5_r3_m0_h0_s0_f/cart_sim
+for c in "0x1F0000 4096 no ok" "0x100 70000 yes ok" "0x100 4096 no reject"; do
+    set -- $c
+    name=flash_$1_$2_$3
+    python3 -c "import sys,random; random.seed(sys.argv[2]); open(sys.argv[1],'wb').write(bytes(random.randrange(256) for _ in range(int(sys.argv[2]))))" "$work/$name.img" "$2"
+    rm -f "$work/$name.after" "$work/$name.rom"; rm -rf "$work/$name.bk"
+    ow=; [ "$3" = yes ] && ow=--overwrite
+    if CART_SIM_ROMOUT="$work/$name.rom" CART_SIM_FLASHOUT="$work/$name.after" "$tool" --sim "$exe" flash-write "$work/$name.img" --offset "$1" $ow --backup-dir "$work/$name.bk" > "$work/$name.log" 2>&1; then
+        r=ok
+    else
+        r=reject
+    fi
+    # expected flash: the 256 KiB image padded with FF, with the written image on top (unless refused)
+    python3 - "$work/$name.rom" "$work/$name.img" "$1" "$r" "$work/$name.expected" <<'PY'
+import sys
+rom = open(sys.argv[1], 'rb').read()
+img = open(sys.argv[2], 'rb').read()
+off = int(sys.argv[3], 0)
+d = bytearray(rom + b'\xff' * (0x200000 - len(rom)))
+if sys.argv[4] == 'ok':
+    d[off:off + len(img)] = img
+open(sys.argv[5], 'wb').write(d)
+PY
+    python3 -c "import sys; d=open(sys.argv[1],'rb').read(); open(sys.argv[2],'wb').write(d+b'\xff'*(0x200000-len(d)))" "$work/$name.rom" "$work/$name.before"
+    bk_ok=no; cmp -s "$work/$name.bk/TESTCART_MBC5-flash-backup.bin" "$work/$name.before" && bk_ok=yes
+    if [ "$r" = "$4" ] && cmp -s "$work/$name.after" "$work/$name.expected" && ! grep -q "VIOLATION\|rule violation" "$work/$name.log"; then
+        echo "PASS $name ($r, backup $bk_ok, $(grep -o 'written .*' "$work/$name.log" | cut -c1-90)$(grep -o 'error: .*' "$work/$name.log"))"
+    else
+        echo "FAIL $name (expected $4, got $r), see $work/$name.log"; fail=1
+    fi
+done
 exit $fail

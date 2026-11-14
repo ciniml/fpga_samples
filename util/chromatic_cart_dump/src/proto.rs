@@ -5,7 +5,7 @@
 use crate::link::Link;
 use std::time::{Duration, Instant};
 
-pub const PROTO: u8 = 3;
+pub const PROTO: u8 = 4;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Status {
@@ -15,6 +15,8 @@ pub struct Status {
     pub err: u8,
     /// the cartridge RAM is enabled (the device disables it itself when RAM mode ends)
     pub ram_on: bool,
+    /// flash mode (FlashEngine may write the cartridge flash)
+    pub flash_mode: bool,
 }
 
 impl Status {
@@ -27,7 +29,7 @@ impl Status {
     pub fn ram_mode(&self) -> bool { self.flags & 0x80 != 0 }
     pub fn describe(&self) -> String {
         format!(
-            "cartridge {} / switch {} / power request {} / slot power {} / bus {} / /RST {} / board {}{}{}{}",
+            "cartridge {} / switch {} / power request {} / slot power {} / bus {} / /RST {} / board {}{}{}{}{}",
             if self.cart() { "inserted" } else { "none" },
             if self.switch_on() { "ON" } else { "OFF" },
             self.power_req() as u8,
@@ -37,6 +39,7 @@ impl Status {
             if self.legacy() { "legacy" } else { "new" },
             if self.reject_cnt != 0 { format!(" / refused writes {}", self.reject_cnt) } else { String::new() },
             if self.err != 0 { format!(" / err {:03b}", self.err) } else { String::new() },
+            if self.flash_mode { " / FLASH mode" } else { "" },
             match (self.ram_mode(), self.ram_on) {
                 (false, false) => "",
                 (true, false) => " / RAM mode",
@@ -77,7 +80,7 @@ impl<L: Link> Reader<L> {
         if b[2] != PROTO {
             return Err(format!("protocol {} (this tool speaks {PROTO})", b[2]));
         }
-        Ok(Status { flags: b[3], rst_high: b[4] & 1 != 0, reject_cnt: b[5], err: b[6], ram_on: b[7] & 1 != 0 })
+        Ok(Status { flags: b[3], rst_high: b[4] & 1 != 0, reject_cnt: b[5], err: b[6], ram_on: b[7] & 1 != 0, flash_mode: b[7] & 2 != 0 })
     }
 
     pub fn power(&mut self, on: bool) -> Result<u8, String> {
@@ -172,6 +175,52 @@ impl<L: Link> Reader<L> {
         let mut buf = vec![0u8; n * 2];
         self.link.recv(&mut buf)?;
         Ok(buf)
+    }
+
+    /// flash mode on / off ('F'): Ok(granted)
+    pub fn flash_mode(&mut self, on: bool) -> Result<bool, String> {
+        self.link.send(&[b'F', on as u8])?;
+        let mut b = [0u8; 2];
+        self.link.recv(&mut b)?;
+        if b[0] != b'F' {
+            return Err(format!("unexpected flash mode reply {b:02x?}"));
+        }
+        Ok(b[1] & 1 != 0)
+    }
+
+    /// flash identifier bytes at 0x00-0x03 and 0x1C-0x1F (autoselect mode)
+    pub fn flash_id(&mut self) -> Result<[u8; 8], String> {
+        self.link.send(b"I")?;
+        let mut b = [0u8; 8];
+        self.link.recv(&mut b)?;
+        Ok(b)
+    }
+
+    /// program `data` from cartridge address `addr` (bank for the 0x4000 window):
+    /// Ok((status, bytes programmed)), status 0 done, 1 timeout, 2 refused
+    pub fn flash_program(&mut self, bank: u16, addr: u16, data: &[u8]) -> Result<(u8, usize), String> {
+        let n = data.len();
+        assert!(n > 0 && n < 0x10000 && addr as usize + n <= 0x8000);
+        let mut cmd = vec![b'G', bank as u8, (bank >> 8) as u8, addr as u8, (addr >> 8) as u8, n as u8, (n >> 8) as u8];
+        cmd.extend_from_slice(data);
+        self.link.send(&cmd)?;
+        let mut b = [0u8; 4];
+        self.link.recv(&mut b)?;
+        if b[0] != b'G' {
+            return Err(format!("unexpected program reply {b:02x?}"));
+        }
+        Ok((b[1], b[2] as usize | (b[3] as usize) << 8))
+    }
+
+    /// erase the sector / block containing cartridge address `addr` (bank for the window)
+    pub fn flash_erase(&mut self, bank: u16, addr: u16) -> Result<u8, String> {
+        self.link.send(&[b'X', bank as u8, (bank >> 8) as u8, addr as u8, (addr >> 8) as u8])?;
+        let mut b = [0u8; 2];
+        self.link.recv(&mut b)?;
+        if b[0] != b'X' {
+            return Err(format!("unexpected erase reply {b:02x?}"));
+        }
+        Ok(b[1])
     }
 
     /// MBC register write (the device refuses anything outside its whitelist)

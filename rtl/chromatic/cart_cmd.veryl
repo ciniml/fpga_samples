@@ -15,7 +15,7 @@
  *              [2] power requested  [3] CART_PWR_EN  [4] bus ready
  *              (powered, /RST released)  [5] legacy board  [6] /RST pin High
  *              [7] RAM mode
- *       ram:   [0] cartridge RAM enabled (CartBus o_ram_on)
+ *       ram:   [0] cartridge RAM enabled (CartBus o_ram_on)  [1] flash mode
  *       err (cleared by 'S'): [0] read while not ready  [1] unknown opcode
  *                             [2] write while not ready
  *                             [3] EEPROM read incomplete (not in RAM mode
@@ -33,6 +33,18 @@
  *                                 first (Mbc7Eeprom; needs RAM mode and the
  *                                 RAM enabled by 0x0000 <- 0x0A, else FFFF
  *                                 words and err[3])
+ *   'F' on                     -> 'F' mode      flash mode on / off (bit 0 =
+ *                                 granted). Granted / dropped like RAM mode
+ *                                 (not together with it); CartBus resets the
+ *                                 flash (0000 <- F0) itself when it ends.
+ *   'I'                        -> 8 bytes: flash identifier (FlashEngine;
+ *                                 FF and err[3] outside flash mode)
+ *   'G' bank16 addr16 len16 data[len]
+ *                              -> 'G' status count16   program len bytes
+ *                                 from addr (0x0000-0x7FFF, bank for the
+ *                                 0x4000 window); status 0 done, 1 timeout,
+ *                                 2 refused / not in flash mode
+ *   'X' bank16 addr16          -> 'X' status       erase the sector at addr
  *   'A' on                     -> 'A' flags     RAM mode on / off: cartridge
  *                                 RAM may be enabled and read (CartBus).
  *                                 Granted only while power is requested; it
@@ -59,19 +71,21 @@ pub module CartCmd #(
     i_tx_ready: input  logic   ,
 
     // board state
-    i_cart_det : input  logic, // CART_DET pin (1 = inserted), asynchronous
-    i_switch_on: input  logic, // ~POWER_ON_FPGA, asynchronous
-    i_rst_in   : input  logic, // CART_RST pin level, asynchronous
-    i_pwr_en   : input  logic, // CartPower o_pwr_en
-    i_legacy   : input  logic, // CartPower o_legacy
-    i_bus_ready: input  logic, // CartPower o_ready && CartBus o_rst_done
-    i_host_ok  : input  logic, // the host is there (USB configured)
-    i_ram_on   : input  logic, // CartBus o_ram_on
-    o_ram_mode : output logic, // to CartBus i_ram_mode
-    o_power_en : output logic, // to CartPower i_enable
-    o_cart_det : output logic, // debounced
-    o_busy     : output logic, // a read is streaming (LED)
-    o_rejected : output logic, // some write was refused since reset (LED)
+    i_cart_det   : input  logic, // CART_DET pin (1 = inserted), asynchronous
+    i_switch_on  : input  logic, // ~POWER_ON_FPGA, asynchronous
+    i_rst_in     : input  logic, // CART_RST pin level, asynchronous
+    i_pwr_en     : input  logic, // CartPower o_pwr_en
+    i_legacy     : input  logic, // CartPower o_legacy
+    i_bus_ready  : input  logic, // CartPower o_ready && CartBus o_rst_done
+    i_host_ok    : input  logic, // the host is there (USB configured)
+    i_ram_on     : input  logic, // CartBus o_ram_on
+    o_ram_mode   : output logic, // to CartBus i_ram_mode
+    i_flash_dirty: input  logic, // CartBus o_flash_dirty
+    o_flash_mode : output logic, // to CartBus i_flash_mode
+    o_power_en   : output logic, // to CartPower i_enable
+    o_cart_det   : output logic, // debounced
+    o_busy       : output logic, // a read is streaming (LED)
+    o_rejected   : output logic, // some write was refused since reset (LED)
 
     // CartBus
     o_req_valid : output logic    ,
@@ -79,12 +93,13 @@ pub module CartCmd #(
     o_req_addr  : output logic<16>,
     o_req_wdata : output logic<8> ,
     o_req_priv  : output logic    , // the request comes from Mbc7Eeprom
+    o_req_flash : output logic    , // the request comes from FlashEngine
     i_req_ready : input  logic    ,
     i_rsp_valid : input  logic    ,
     i_rsp_data  : input  logic<8> ,
     i_rsp_reject: input  logic    ,
 ) {
-    const PROTO  : logic<8> = 8'h03;
+    const PROTO  : logic<8> = 8'h04;
     const DEB_CYC: u32      = CLK_HZ / 100; // 10 ms
     const WD_CYC : u32      = CLK_HZ; // RAM mode watchdog, 1 s
 
@@ -98,12 +113,13 @@ pub module CartCmd #(
         WriteRsp,
         Reply,
         Eeprom,
+        Flash,
     }
 
     var state : State        ;
     var op    : logic<8>     ;
     var argn  : logic<3>     ; // argument bytes still expected
-    var args  : logic<8>  [5];
+    var args  : logic<8>  [6];
     var argi  : logic<3>     ;
     var addr  : logic<16>    ;
     var remain: logic<17>    ;
@@ -117,6 +133,7 @@ pub module CartCmd #(
     var err       : logic<4> ;
     var rejected  : logic    ;
     var ram_mode  : logic    ;
+    var flash_mode: logic    ;
     var wd_cnt    : logic<27>;
 
     // ---- synchronisers / debouncer ----
@@ -159,6 +176,9 @@ pub module CartCmd #(
             8'h52  : return 3'd4; // 'R'
             8'h57  : return 3'd3; // 'W'
             8'h45  : return 3'd3; // 'E'
+            8'h46  : return 3'd1; // 'F'
+            8'h47  : return 3'd6; // 'G'
+            8'h58  : return 3'd4; // 'X'
             default: return 3'd0;
         }
     }
@@ -201,25 +221,84 @@ pub module CartCmd #(
         i_tx_ready  : i_tx_ready && in_eep,
     );
 
-    assign o_rx_ready = state == State::Op || state == State::Args;
-    let rx_take: logic = i_rx_valid && o_rx_ready;
+    // ---- flash cartridge (the only source of flash-class CartBus requests) ----
+    var fl_start    : logic    ;
+    var fl_op       : logic<2> ;
+    var fl_dry      : logic    ;
+    var fl_bank     : logic<9> ;
+    var fl_addr     : logic<15>;
+    var fl_len      : logic<16>;
+    var fl_busy     : logic    ;
+    var fl_status   : logic<2> ;
+    var fl_count    : logic<16>;
+    var fl_dr       : logic    ;
+    var fl_req_valid: logic    ;
+    var fl_req_write: logic    ;
+    var fl_req_addr : logic<16>;
+    var fl_req_wdata: logic<8> ;
+    var fl_tx_valid : logic    ;
+    var fl_tx_data  : logic<8> ;
+    let in_fl       : logic     = state == State::Flash;
 
-    assign o_tx_valid = state == State::ReadPush || state == State::Reply || (in_eep && eep_tx_valid);
-    assign o_tx_data  = if in_eep ? eep_tx_data : if state == State::ReadPush ? rdata : rbuf[ridx[2:0]];
+    inst u_fl: FlashEngine (
+        i_clk       : i_clk               ,
+        i_rst       : i_rst               ,
+        i_start     : fl_start            ,
+        i_op        : fl_op               ,
+        i_dry       : fl_dry              ,
+        i_bank      : fl_bank             ,
+        i_addr      : fl_addr             ,
+        i_len       : fl_len              ,
+        i_bus_ok    : i_bus_ready         ,
+        o_busy      : fl_busy             ,
+        o_status    : fl_status           ,
+        o_count     : fl_count            ,
+        i_dv        : i_rx_valid && in_fl,
+        i_d         : i_rx_data           ,
+        o_dr        : fl_dr               ,
+        o_tx_valid  : fl_tx_valid         ,
+        o_tx_data   : fl_tx_data          ,
+        i_tx_ready  : i_tx_ready && in_fl,
+        o_req_valid : fl_req_valid        ,
+        o_req_write : fl_req_write        ,
+        o_req_addr  : fl_req_addr         ,
+        o_req_wdata : fl_req_wdata        ,
+        i_req_ready : i_req_ready && in_fl,
+        i_rsp_valid : i_rsp_valid && in_fl,
+        i_rsp_data  : i_rsp_data          ,
+        i_rsp_reject: i_rsp_reject        ,
+    );
+
+    assign o_rx_ready = state == State::Op || state == State::Args || (in_fl && fl_dr);
+    let rx_take: logic = i_rx_valid && (state == State::Op || state == State::Args);
+
+    assign o_tx_valid = state == State::ReadPush || state == State::Reply || (in_eep && eep_tx_valid)
+        || (in_fl && fl_tx_valid);
+    assign o_tx_data  = if in_eep ?
+        eep_tx_data
+    : if in_fl ?
+        fl_tx_data
+    : if state == State::ReadPush ?
+        rdata
+    :
+        rbuf[ridx[2:0]]
+    ;
     let tx_take: logic = o_tx_valid && i_tx_ready;
 
-    assign o_req_valid = state == State::ReadReq || state == State::WriteReq || (in_eep && eep_req_valid);
-    assign o_req_write = if in_eep ? eep_req_write : state == State::WriteReq;
-    assign o_req_addr  = if in_eep ? eep_req_addr : addr;
-    assign o_req_wdata = if in_eep ? eep_req_wdata : args[2];
+    assign o_req_valid = state == State::ReadReq || state == State::WriteReq || (in_eep && eep_req_valid)
+        || (in_fl && fl_req_valid);
+    assign o_req_write = if in_eep ? eep_req_write : if in_fl ? fl_req_write : state == State::WriteReq;
+    assign o_req_addr  = if in_eep ? eep_req_addr : if in_fl ? fl_req_addr : addr;
+    assign o_req_wdata = if in_eep ? eep_req_wdata : if in_fl ? fl_req_wdata : args[2];
     assign o_req_priv  = in_eep;
+    assign o_req_flash = in_fl;
 
     always_ff {
         if_reset {
             state      = State::Op;
             op         = 0;
             argn       = 0;
-            args       = '{8'h00, 8'h00, 8'h00, 8'h00, 8'h00};
+            args       = '{8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00};
             argi       = 0;
             addr       = 0;
             remain     = 0;
@@ -237,29 +316,45 @@ pub module CartCmd #(
             eep_dry    = 0;
             eep_addr   = 0;
             eep_count  = 0;
+            flash_mode = 0;
+            fl_start   = 0;
+            fl_op      = 0;
+            fl_dry     = 0;
+            fl_bank    = 0;
+            fl_addr    = 0;
+            fl_len     = 0;
         } else {
             eep_start = 0;
+            fl_start  = 0;
             // the request is dropped with the cartridge or the switch
             if !det || !sw_s[1] {
                 power_req = 0;
             }
             // RAM mode watchdog: counts while waiting for a command byte
-            if rx_take || state != State::Op || !ram_mode {
+            if rx_take || state != State::Op || !(ram_mode || flash_mode) {
                 wd_cnt = 0;
             } else if wd_cnt != WD_CYC - 1 {
                 wd_cnt += 1;
             }
             if !power_req || !det_s[1] || !i_host_ok || wd_cnt == WD_CYC - 1 {
-                ram_mode = 0;
+                ram_mode   = 0;
+                flash_mode = 0;
             }
             case state {
                 State::Op: {
                     if rx_take {
                         op   = i_rx_data;
                         argi = 0;
-                        if i_rx_data == 8'h53 { // 'S'
+                        if i_rx_data == 8'h49 { // 'I'
+                            fl_op    = 2'd0;
+                            fl_dry   = !(i_bus_ready && flash_mode);
+                            fl_len   = 0;
+                            fl_start = 1;
+                            state    = State::Flash;
+                        } else if i_rx_data == 8'h53 { // 'S'
                             rbuf  = '{
-                                8'h43, 8'h52, PROTO, flags, {7'd0, rst_s[1]}, reject_cnt, {4'd0, err}, {7'd0, i_ram_on}
+                                8'h43, 8'h52, PROTO, flags, {7'd0, rst_s[1]}, reject_cnt, {4'd0, err},
+                                {6'd0, flash_mode, i_ram_on}
                             };
                             rlen  = 4'd8;
                             ridx  = 0;
@@ -280,9 +375,11 @@ pub module CartCmd #(
                         if argn == 3'd1 {
                             case op {
                                 8'h41: { // 'A'
-                                    ram_mode = i_rx_data[0] && power_req && det_s[1] && i_host_ok;
+                                    ram_mode = i_rx_data[0] && power_req && det_s[1] && i_host_ok && !flash_mode;
                                     rbuf[0]  = 8'h41;
-                                    rbuf[1]  = {i_rx_data[0] && power_req && det_s[1] && i_host_ok, flags[6:0]};
+                                    rbuf[1]  = {
+                                        i_rx_data[0] && power_req && det_s[1] && i_host_ok && !flash_mode, flags[6:0]
+                                    };
                                     rlen     = 4'd2;
                                     ridx     = 0;
                                     state    = State::Reply;
@@ -303,6 +400,34 @@ pub module CartCmd #(
                                         {1'b0, i_rx_data, args[2]}
                                     ;
                                     state  = State::ReadReq;
+                                }
+                                8'h46: { // 'F' on
+                                    flash_mode = i_rx_data[0] && power_req && det_s[1] && i_host_ok && !ram_mode;
+                                    rbuf[0]    = 8'h46;
+                                    rbuf[1]    = {
+                                        7'd0, i_rx_data[0] && power_req && det_s[1] && i_host_ok && !ram_mode
+                                    };
+                                    rlen       = 4'd2;
+                                    ridx       = 0;
+                                    state      = State::Reply;
+                                }
+                                8'h47: { // 'G' bank_l bank_h addr_l addr_h len_l len_h, then the data
+                                    fl_op    = 2'd1;
+                                    fl_bank  = {args[1][0], args[0]};
+                                    fl_addr  = {args[3][6:0], args[2]};
+                                    fl_len   = {i_rx_data, args[4]};
+                                    fl_dry   = !(i_bus_ready && flash_mode) || args[3][7];
+                                    fl_start = 1;
+                                    state    = State::Flash;
+                                }
+                                8'h58: { // 'X' bank_l bank_h addr_l addr_h
+                                    fl_op    = 2'd2;
+                                    fl_bank  = {args[1][0], args[0]};
+                                    fl_addr  = {i_rx_data[6:0], args[2]};
+                                    fl_len   = 0;
+                                    fl_dry   = !(i_bus_ready && flash_mode) || i_rx_data[7];
+                                    fl_start = 1;
+                                    state    = State::Flash;
                                 }
                                 8'h45: { // 'E' addr count_l count_h
                                     eep_addr  = args[0];
@@ -383,6 +508,24 @@ pub module CartCmd #(
                         state = State::Reply;
                     }
                 }
+                State::Flash: {
+                    if !fl_start && !fl_busy {
+                        if fl_status != 2'd0 {
+                            err[3] = 1;
+                        }
+                        if fl_op == 2'd0 {
+                            state = State::Op;
+                        } else {
+                            rbuf[0] = if fl_op == 2'd1 ? 8'h47 : 8'h58;
+                            rbuf[1] = {6'd0, fl_status};
+                            rbuf[2] = fl_count[7:0];
+                            rbuf[3] = fl_count[15:8];
+                            rlen    = if fl_op == 2'd1 ? 4'd4 : 4'd2;
+                            ridx    = 0;
+                            state   = State::Reply;
+                        }
+                    }
+                }
                 State::Eeprom: {
                     // eep_start was given last cycle: wait until the engine has taken it and finished
                     if !eep_start && !eep_busy {
@@ -408,9 +551,11 @@ pub module CartCmd #(
     }
 
     // the slot stays powered until CartBus has disabled the cartridge RAM
-    assign o_power_en = power_req || i_ram_on;
-    assign o_ram_mode = ram_mode;
-    assign o_cart_det = det;
-    assign o_busy     = state == State::ReadReq || state == State::ReadRsp || state == State::ReadPush || in_eep;
-    assign o_rejected = rejected;
+    assign o_power_en   = power_req || i_ram_on || i_flash_dirty;
+    assign o_ram_mode   = ram_mode;
+    assign o_flash_mode = flash_mode;
+    assign o_cart_det   = det;
+    assign o_busy       = state == State::ReadReq || state == State::ReadRsp || state == State::ReadPush || in_eep
+        || in_fl;
+    assign o_rejected   = rejected;
 }

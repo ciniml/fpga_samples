@@ -43,6 +43,12 @@
  *       0x4000 <- 0x40 / 0x00 (MBC7 RAM enable 2)
  *       0xA080 <- CS / CLK / DI bits only (the MBC7 EEPROM register), the
  *              only write cycle ever made with /CS Low (/CS around /WR)
+ *   - Flash-class requests (i_req_flash, only from FlashEngine through
+ *     CartCmd) may write any address below 0x8000 while i_flash_mode
+ *     (the AMD command sequences of a flash cartridge; never with /CS).
+ *     After such a write (o_flash_dirty) this module writes 0x0000 <- 0xF0
+ *     (flash reset) itself as soon as i_flash_mode falls, before any other
+ *     request; the requester keeps the slot powered until then.
  *   - After a RAM enable (o_ram_on), the RAM is disabled again by this
  *     module itself (a 0x0000 <- 0x00 cycle of its own, before any other
  *     request) as soon as i_ram_mode falls. The requester keeps the slot
@@ -64,10 +70,12 @@ pub module CartBus #(
     i_clk: input clock,
     i_rst: input reset,
 
-    i_ready    : input  logic, // CartPower o_ready
-    i_drive_low: input  logic, // CartPower o_drive_low
-    i_ram_mode : input  logic, // cartridge RAM reads allowed (see above)
-    o_ram_on   : output logic, // a RAM enable was written and not yet undone
+    i_ready      : input  logic, // CartPower o_ready
+    i_drive_low  : input  logic, // CartPower o_drive_low
+    i_ram_mode   : input  logic, // cartridge RAM reads allowed (see above)
+    o_ram_on     : output logic, // a RAM enable was written and not yet undone
+    i_flash_mode : input  logic, // flash-class writes allowed (see above)
+    o_flash_dirty: output logic, // a flash-class write was made, the reset is not yet written
 
     // request: accepted when o_req_ready (one bus cycle each)
     i_req_valid: input  logic    ,
@@ -75,6 +83,7 @@ pub module CartBus #(
     i_req_addr : input  logic<16>,
     i_req_wdata: input  logic<8> ,
     i_req_priv : input  logic    , // from Mbc7Eeprom (see above)
+    i_req_flash: input  logic    , // from FlashEngine (see above)
     o_req_ready: output logic    ,
     // response: one per accepted request
     o_rsp_valid : output logic   ,
@@ -131,66 +140,69 @@ pub module CartBus #(
     var rst_cnt : logic<10>;
     var rst_done: logic    ;
 
-    var a_q     : logic<16>;
-    var dout_q  : logic<8> ;
-    var doe_q   : logic    ;
-    var clk_q   : logic    ;
-    var rd_q    : logic    ;
-    var wr_q    : logic    ;
-    var dir_q   : logic    ;
-    var cs_q    : logic    ;
-    var rsp_v   : logic    ;
-    var rsp_d   : logic<8> ;
-    var rsp_rej : logic    ;
-    var cs_sel  : logic    ; // the cycle in progress is a cartridge RAM read
-    var internal: logic    ; // the cycle in progress is our own RAM disable (no response)
-    var ram_on  : logic    ;
+    var a_q        : logic<16>;
+    var dout_q     : logic<8> ;
+    var doe_q      : logic    ;
+    var clk_q      : logic    ;
+    var rd_q       : logic    ;
+    var wr_q       : logic    ;
+    var dir_q      : logic    ;
+    var cs_q       : logic    ;
+    var rsp_v      : logic    ;
+    var rsp_d      : logic<8> ;
+    var rsp_rej    : logic    ;
+    var cs_sel     : logic    ; // the cycle in progress is a cartridge RAM read
+    var internal   : logic    ; // the cycle in progress is our own RAM disable (no response)
+    var ram_on     : logic    ;
+    var flash_dirty: logic    ;
 
     // a request is taken whenever the bus is idle; its cycle starts there (t restarts)
     // our own RAM disable goes first
-    let need_off: logic = ram_on && !i_ram_mode;
+    let need_off: logic = (ram_on && !i_ram_mode) || (flash_dirty && !i_flash_mode);
     assign o_req_ready = i_ready && rst_done && !busy && !need_off;
     let take    : logic = i_req_valid && o_req_ready;
     let take_off: logic = i_ready && rst_done && !busy && need_off;
 
     always_ff {
         if_reset {
-            t        = 0;
-            busy     = 0;
-            is_write = 0;
-            addr     = 0;
-            wdata    = 0;
-            d_sync   = 0;
-            rst_cnt  = 0;
-            rst_done = 0;
-            a_q      = 0;
-            dout_q   = 0;
-            doe_q    = 1;
-            clk_q    = 0;
-            rd_q     = 0;
-            wr_q     = 0;
-            dir_q    = 0;
-            cs_q     = 0;
-            rsp_v    = 0;
-            rsp_d    = 0;
-            rsp_rej  = 0;
-            cs_sel   = 0;
-            internal = 0;
-            ram_on   = 0;
+            t           = 0;
+            busy        = 0;
+            is_write    = 0;
+            addr        = 0;
+            wdata       = 0;
+            d_sync      = 0;
+            rst_cnt     = 0;
+            rst_done    = 0;
+            a_q         = 0;
+            dout_q      = 0;
+            doe_q       = 1;
+            clk_q       = 0;
+            rd_q        = 0;
+            wr_q        = 0;
+            dir_q       = 0;
+            cs_q        = 0;
+            rsp_v       = 0;
+            rsp_d       = 0;
+            rsp_rej     = 0;
+            cs_sel      = 0;
+            internal    = 0;
+            ram_on      = 0;
+            flash_dirty = 0;
         } else {
             d_sync = i_d_in;
             rsp_v  = 0;
             // /CS: Low as part of "every line Low", or during a RAM read (below)
             cs_q = !(!i_ready && i_drive_low);
             if !i_ready {
-                t        = 0;
-                busy     = 0;
-                cs_sel   = 0;
-                internal = 0;
-                ram_on   = 0;
-                rst_cnt  = 0;
-                rst_done = 0;
-                a_q      = 0;
+                t           = 0;
+                busy        = 0;
+                cs_sel      = 0;
+                internal    = 0;
+                ram_on      = 0;
+                flash_dirty = 0;
+                rst_cnt     = 0;
+                rst_done    = 0;
+                a_q         = 0;
                 if i_drive_low {
                     dout_q = 0;
                     doe_q  = 1;
@@ -228,15 +240,18 @@ pub module CartBus #(
                     is_write = 1;
                     cs_sel   = 0;
                     addr     = 16'h0000;
-                    wdata    = 8'h00;
-                    a_q      = 16'h0000;
-                    rd_q     = 1;
-                    wr_q     = 1;
-                    dir_q    = 1;
-                    doe_q    = 0;
+                    // RAM disable first, then the flash reset (0xF0 also disables the RAM)
+                    wdata = if ram_on && !i_ram_mode ? 8'h00 : 8'hF0;
+                    a_q   = 16'h0000;
+                    rd_q  = 1;
+                    wr_q  = 1;
+                    dir_q = 1;
+                    doe_q = 0;
                 } else if take {
                     if i_req_write
-                        && !(if i_req_priv ?
+                        && !(if i_req_flash ?
+                            (i_flash_mode && !i_req_addr[15])
+                        : if i_req_priv ?
                             (i_ram_mode && ram_on && allowed_priv(i_req_addr, i_req_wdata))
                         :
                             allowed(i_req_addr, i_req_wdata, i_ram_mode)
@@ -258,8 +273,11 @@ pub module CartBus #(
                         wr_q   = 1;
                         dir_q  = 1;
                         doe_q  = 0;
+                        if i_req_write && i_req_flash {
+                            flash_dirty = 1;
+                        }
                         // counted as enabled from the moment the enable cycle starts
-                        if i_req_write && i_req_addr == 16'h0000 && i_req_wdata == 8'h0A {
+                        if i_req_write && !i_req_flash && i_req_addr == 16'h0000 && i_req_wdata == 8'h0A {
                             ram_on = 1;
                         }
                     }
@@ -306,6 +324,10 @@ pub module CartBus #(
                         if is_write && addr == 16'h0000 && wdata == 8'h00 {
                             ram_on = 0;
                         }
+                        if internal && wdata == 8'hF0 {
+                            flash_dirty = 0;
+                            ram_on      = 0;
+                        }
                         if !internal {
                             rsp_v   = 1;
                             rsp_rej = 0;
@@ -325,18 +347,19 @@ pub module CartBus #(
         }
     }
 
-    assign o_rsp_valid  = rsp_v;
-    assign o_rsp_data   = rsp_d;
-    assign o_rsp_reject = rsp_rej;
-    assign o_a          = a_q;
-    assign o_d_out      = dout_q;
-    assign o_d_oe       = doe_q;
-    assign o_clk        = clk_q;
-    assign o_rd_n       = rd_q;
-    assign o_wr_n       = wr_q;
-    assign o_cs_n       = cs_q;
-    assign o_dir_e      = dir_q;
-    assign o_rst_low    = !(i_ready && rst_done);
-    assign o_rst_done   = rst_done;
-    assign o_ram_on     = ram_on;
+    assign o_rsp_valid   = rsp_v;
+    assign o_rsp_data    = rsp_d;
+    assign o_rsp_reject  = rsp_rej;
+    assign o_a           = a_q;
+    assign o_d_out       = dout_q;
+    assign o_d_oe        = doe_q;
+    assign o_clk         = clk_q;
+    assign o_rd_n        = rd_q;
+    assign o_wr_n        = wr_q;
+    assign o_cs_n        = cs_q;
+    assign o_dir_e       = dir_q;
+    assign o_rst_low     = !(i_ready && rst_done);
+    assign o_rst_done    = rst_done;
+    assign o_ram_on      = ram_on;
+    assign o_flash_dirty = flash_dirty;
 }

@@ -22,7 +22,7 @@ set_option -multi_boot 0
 
 add_file -type verilog [file normalize ${SRC_DIR}/top.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/pll_60m_24.v]
-foreach f {cart_power cart_bus mbc7_eeprom cart_cmd} {
+foreach f {cart_power cart_bus mbc7_eeprom flash_engine cart_cmd} {
     add_file -type verilog [file normalize ${RTL_DIR}/chromatic/${f}.sv]
 }
 # USB core (rtl/usb, Veryl output)

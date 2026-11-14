@@ -4,6 +4,8 @@
 // generated header, ROM only / MBC1 / MBC2 / MBC3 / MBC5 banking, cartridge
 // RAM (MBC2: 512 x 4 bit inside the MBC, its upper nibble reads as noise),
 // MBC7 with a 93LC56 / 93LC66 serial EEPROM (any command but READ is a violation),
+// a 2 MiB AMD command-set flash behind MBC5 (FLASH; SST39VF1681-like ID, 64 KiB
+// erase blocks; chip erase and programming bits that are not erased are violations),
 // and monitors for every rule the reader must keep (whitelisted MBC writes
 // only, never a write with /CS or to 0xA000-0xBFFF, /CS only for RAM reads,
 // RAM disabled before the power goes down, no data contention, every line
@@ -15,7 +17,8 @@ module gb_cart_model #(
     parameter bit MBC1M     = 0,     // MBC1 multicart wiring (bank bits 4:0 -> 3:0, reg2 -> bits 5:4)
     parameter bit BAD_HDR   = 0,     // corrupt the header checksum
     parameter int RAM_CODE  = 0,     // header 0x149 (0 none, 1 2 KiB, 2 8 KiB, 3 32 KiB, 4 128 KiB, 5 64 KiB)
-    parameter int EEP_WORDS = 128    // MBC7: 128 (93LC56) or 256 (93LC66)
+    parameter int EEP_WORDS = 128,   // MBC7: 128 (93LC56) or 256 (93LC66)
+    parameter bit FLASH     = 0      // MBC5 flash cartridge (2 MiB, ROM_CODE gives the image in it)
 ) (
     input  logic        clk,         // monitor clock (the design clock)
     input  logic        rst,
@@ -24,6 +27,7 @@ module gb_cart_model #(
     input  logic        ctrl_oe,
     input  logic        drive_low_expected,
     input  logic        ram_mode,    // the reader's RAM mode (a RAM enable is allowed only then)
+    input  logic        flash_mode,  // the reader's flash mode (any write below 0x8000 allowed then)
     input  logic [15:0] a,
     input  logic        clk_phi,
     input  logic        rd_n,
@@ -40,13 +44,14 @@ module gb_cart_model #(
     output logic        ram_enabled
 );
     localparam int ROM_BYTES = 32768 << ROM_CODE;
-    localparam int BANKS     = ROM_BYTES / 16384;
+    localparam int ROM_ALLOC = FLASH ? 2097152 : ROM_BYTES;
+    localparam int BANKS     = ROM_ALLOC / 16384;
     localparam int RAM_BYTES = MBC == 7 ? EEP_WORDS * 2 : MBC == 2 ? 512 :
                                RAM_CODE == 1 ? 2048 : RAM_CODE == 2 ? 8192 : RAM_CODE == 3 ? 32768 :
                                RAM_CODE == 4 ? 131072 : RAM_CODE == 5 ? 65536 : 0;
     localparam int RAM_ALLOC = RAM_BYTES == 0 ? 1 : RAM_BYTES;
 
-    logic [7:0] rom [ROM_BYTES];
+    logic [7:0] rom [ROM_ALLOC];
     logic [8:0] bank_lo;    // MBC1: 5 bits, MBC2: 4, MBC3: 7, MBC5: 9
     logic [1:0] reg2;
     logic       mode;
@@ -65,7 +70,7 @@ module gb_cart_model #(
         int unsigned sum;
         logic [7:0] x;
         string title;
-        for (int i = 0; i < ROM_BYTES; i++) rom[i] = fill(i);
+        for (int i = 0; i < ROM_ALLOC; i++) rom[i] = i < ROM_BYTES ? fill(i) : 8'hFF;
         // header
         title = $sformatf("TESTCART MBC%0d", MBC);
         for (int i = 0; i < 16; i++) rom[16'h134 + i] = (i < title.len()) ? title[i] : 8'h00;
@@ -163,9 +168,21 @@ module gb_cart_model #(
     endfunction
 
     wire cart_drives = !rd_n && !a[15];
+    // ---- flash: AMD command state ----
+    logic [2:0] f_st;       // 0 read, 1 AA seen, 2 55 seen, 3 80 seen, 4 80 AA, 5 80 AA 55, 6 program
+    logic       f_id;
+    int         f_busy;     // clocks left
+    logic [7:0] f_busy_q;   // status read while busy
+    int         f_busy_addr;
+    int         n_flash_prog, n_flash_erase;
+    function automatic int faddr(logic [15:0] ad);
+        return ad[14] ? (int'(bank_lo) % BANKS) * 16384 + int'(ad[13:0]) : int'(ad[13:0]);
+    endfunction
+    wire [7:0] flash_q = f_id ? (a[7:0] == 8'h00 ? 8'hBF : a[7:0] == 8'h01 ? 8'hC8 : 8'hFF) :
+                         f_busy > 0 ? f_busy_q : rom[map(a)];
     wire [7:0] ram_q = ram[ram_addr(a)];
     assign d_in = !dir_e ? 8'hFF :
-                  cart_drives ? rom[map(a)] :
+                  cart_drives ? (FLASH ? flash_q : rom[map(a)]) :
                   ram_hit ? (MBC == 2 ? {noise, ram_q[3:0]} : ram_q) :
                   (MBC == 7 && ram_sel && !rd_n) ? mbc7_q : 8'hFF;
 
@@ -180,10 +197,20 @@ module gb_cart_model #(
     function automatic bit allowed(logic [15:0] ad, logic [7:0] dt);
         return (ad == 16'h0000 && (dt == 8'h00 || dt == 8'h0A)) || ad == 16'h2000 || ad == 16'h2100 ||
                ad == 16'h3000 || (ad == 16'h4000 && dt < 8'h10) || ad == 16'h6000 ||
-               (MBC == 7 && ((ad == 16'h4000 && dt == 8'h40) || (ad == 16'hA080 && (dt & 8'h3D) == 0)));
+               (MBC == 7 && ((ad == 16'h4000 && dt == 8'h40) || (ad == 16'hA080 && (dt & 8'h3D) == 0))) ||
+               (FLASH && ad == 16'h0000 && dt == 8'hF0);  // the reader's own flash reset
     endfunction
     // the one write cycle that may carry /CS: the MBC7 EEPROM register, in RAM mode
     wire cs_write_ok = MBC == 7 && a == 16'hA080 && ram_mode;
+    final begin
+        string fn;
+        if (FLASH && $value$plusargs("flashout=%s", fn)) begin
+            int fd;
+            fd = $fopen(fn, "wb");
+            for (int i = 0; i < ROM_ALLOC; i++) $fwrite(fd, "%c", rom[i]);
+            $fclose(fd);
+        end
+    end
     task automatic violation(string s);
         n_violations++;
         $display("[cart] VIOLATION at %0t: %s", $time, s);
@@ -194,6 +221,8 @@ module gb_cart_model #(
         n_violations = 0;
         n_ram_reads = 0;
         n_eep_reads = 0;
+        n_flash_prog = 0;
+        n_flash_erase = 0;
     end
 
     always_ff @(posedge clk) begin
@@ -205,6 +234,7 @@ module gb_cart_model #(
             ram_bank <= 0;
             noise   <= 0;
             access2 <= 0;
+            f_st <= 0; f_id <= 0; f_busy <= 0; f_busy_q <= 0;
             e_cs <= 0; e_clk <= 0; e_di <= 0; e_do <= 1;
             e_state <= 0; e_sr <= 0; e_bits <= 0; e_addr <= 0;
             on_q    <= 0;
@@ -220,6 +250,7 @@ module gb_cart_model #(
             cs_n_q <= cs_n;
             on_q   <= on;
             noise  <= noise + 4'd5;
+            if (f_busy > 0) f_busy <= f_busy - 1;
             dl_q   <= {dl_q[0], drive_low_expected};
             if (d_oe && dir_e) violation("FPGA drives D while the shifter drives the FPGA side");
             if (on && !cs_n && !wr_n && !cs_write_ok) violation("/CS and /WR Low together");
@@ -237,8 +268,46 @@ module gb_cart_model #(
             // latch on the /WR rising edge (as MBCs do)
             if (!wr_n_q && wr_n && on) begin
                 n_writes <= n_writes + 1;
-                if (!allowed(a, d_out)) violation($sformatf("write %h <- %h is not whitelisted", a, d_out));
-                if (a == 16'h0000 && d_out == 8'h0A && !ram_mode) violation("RAM enable outside RAM mode");
+                if (!allowed(a, d_out) && !(FLASH && flash_mode && !a[15])) violation($sformatf("write %h <- %h is not whitelisted", a, d_out));
+                if (!a[15] && !(FLASH && flash_mode) && f_st != 0) violation("flash command state changed outside flash mode");
+                if (FLASH && !a[15]) begin
+                    // AMD command decode (the flash sees every write below 0x8000)
+                    if (f_busy > 0) ;
+                    else if (d_out == 8'hF0 && f_st != 6) begin f_st <= 0; f_id <= 0; end  // in a program cycle F0 is data
+                    else case (f_st)
+                        0: if (faddr(a) == 'hAAA && d_out == 8'hAA) f_st <= 1;
+                        1: f_st <= (faddr(a) == 'h555 && d_out == 8'h55) ? 2 : 0;
+                        2: begin
+                            f_st <= 0;
+                            if (faddr(a) == 'hAAA && d_out == 8'h90) f_id <= 1;
+                            else if (faddr(a) == 'hAAA && d_out == 8'hA0) f_st <= 6;
+                            else if (faddr(a) == 'hAAA && d_out == 8'h80) f_st <= 3;
+                        end
+                        3: f_st <= (faddr(a) == 'hAAA && d_out == 8'hAA) ? 4 : 0;
+                        4: f_st <= (faddr(a) == 'h555 && d_out == 8'h55) ? 5 : 0;
+                        5: begin
+                            f_st <= 0;
+                            if (d_out == 8'h10) violation("flash CHIP ERASE");
+                            else if (d_out == 8'h30 || d_out == 8'h50) begin
+                                int b0;
+                                b0 = (faddr(a) / 65536) * 65536;
+                                for (int i = 0; i < 65536; i++) rom[b0 + i] = 8'hFF;
+                                f_busy <= 3000; f_busy_q <= 8'h00; n_flash_erase <= n_flash_erase + 1;
+                            end
+                        end
+                        6: begin
+                            int fa;
+                            fa = faddr(a);
+                            f_st <= 0;
+                            if ((rom[fa] & d_out) != d_out)
+                                violation($sformatf("flash program %06h <- %02h over %02h (not erased)", fa, d_out, rom[fa]));
+                            rom[fa] = rom[fa] & d_out;
+                            f_busy <= 200; f_busy_q <= {~d_out[7], 7'h00}; n_flash_prog <= n_flash_prog + 1;
+                        end
+                        default: f_st <= 0;
+                    endcase
+                end
+                if (a == 16'h0000 && d_out == 8'h0A && !ram_mode && !(FLASH && flash_mode)) violation("RAM enable outside RAM mode");
                 if (a[15] && !cs_write_ok) violation($sformatf("write to %h (not an MBC register)", a));
                 if (a[15] && cs_write_ok && cs_n) violation("EEPROM register write without /CS");
                 if (MBC == 7 && a == 16'hA080 && !cs_n && mbc7_on) begin

@@ -1,0 +1,327 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file flash_engine.veryl
+ * @brief AMD command-set NOR flash operations on a flash cartridge behind
+ *        an MBC5-style mapper (ModRetro Chromatic cartridges: SST39VF1681 /
+ *        1682, IS29GL032, ...): identifier read, byte program, sector erase.
+ *
+ * Only this module issues flash-class CartBus requests (CartCmd gives the
+ * class to it alone). The command sequences are constants here; the host
+ * chooses only the bank, the address and the data. There is no chip erase
+ * (the 0x10 command byte does not exist in this module).
+ *
+ *   ID:      AAA<-AA, 555<-55, AAA<-90, read 0000 0001 0002 0003 001C 001D
+ *            001E 001F (8 bytes out), 0000<-F0
+ *   program: 2000<-bank[7:0], 3000<-bank[8], then per byte (taken from the
+ *            data input): AAA<-AA, 555<-55, AAA<-A0, PA<-PD, read PA until
+ *            it reads PD (DQ7 polling: a busy chip returns ~PD[7])
+ *   erase:   2000<-bank[7:0], 3000<-bank[8], AAA<-AA, 555<-55, AAA<-80,
+ *            AAA<-AA, 555<-55, SA<-30, read SA until it reads FF
+ * A poll that does not finish in time (PROG_POLLS / ERASE_POLLS reads)
+ * writes 0000<-F0 (reset) and ends with status 1; a refused request or a
+ * bus that is not ready ends with status 2. After an error the rest of the
+ * program data is still taken from the input (and dropped), without bus
+ * activity. i_dry starts in the error state (status 2).
+ */
+pub module FlashEngine #(
+    param PROG_POLLS : u32 = 4096      , // reads (1 us each) for one byte program
+    param ERASE_POLLS: u32 = 12_000_000, // reads for one sector erase
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_start : input  logic    ,
+    i_op    : input  logic<2> , // 0 ID, 1 program, 2 erase
+    i_dry   : input  logic    ,
+    i_bank  : input  logic<9> ,
+    i_addr  : input  logic<15>, // 0x0000-0x7FFF (0x4000-0x7FFF = bank window)
+    i_len   : input  logic<16>, // program: bytes (1-65535)
+    i_bus_ok: input  logic    ,
+    o_busy  : output logic    ,
+    o_status: output logic<2> , // 0 done, 1 timeout, 2 refused / not ready (valid when not busy)
+    o_count : output logic<16>, // bytes programmed
+
+    // program data
+    i_dv: input  logic   ,
+    i_d : input  logic<8>,
+    o_dr: output logic   ,
+
+    // ID bytes
+    o_tx_valid: output logic   ,
+    o_tx_data : output logic<8>,
+    i_tx_ready: input  logic   ,
+
+    o_req_valid : output logic    ,
+    o_req_write : output logic    ,
+    o_req_addr  : output logic<16>,
+    o_req_wdata : output logic<8> ,
+    i_req_ready : input  logic    ,
+    i_rsp_valid : input  logic    ,
+    i_rsp_data  : input  logic<8> ,
+    i_rsp_reject: input  logic    ,
+) {
+    enum St: logic<3> {
+        Idle,
+        Req,
+        Rsp,
+        Fetch,
+        Tx,
+    }
+
+    var st    : St       ;
+    var op    : logic<2> ;
+    var k     : logic<4> ; // step within the operation
+    var bank  : logic<9> ;
+    var pa    : logic<15>;
+    var left  : logic<16>;
+    var cnt   : logic<16>;
+    var pd    : logic<8> ;
+    var polls : logic<24>;
+    var status: logic<2> ;
+    var idq   : logic<8> ;
+
+    // ---- the request of step k ----
+    var r_write: logic    ;
+    var r_addr : logic<16>;
+    var r_data : logic<8> ;
+    always_comb {
+        r_write = 1;
+        r_addr  = 16'h0AAA;
+        r_data  = 8'hAA;
+        case op {
+            2'd0: { // ID
+                case k {
+                    4'd0: {}
+                    4'd1: {
+                        r_addr = 16'h0555;
+                        r_data = 8'h55;
+                    }
+                    4'd2 : r_data = 8'h90;
+                    4'd11: {
+                        r_addr = 16'h0000;
+                        r_data = 8'hF0;
+                    }
+                    default: {
+                        // k 3..10: 0000 0001 0002 0003 001C 001D 001E 001F
+                        r_write = 0;
+                        r_addr  = {11'd0, k >= 4'd7, k >= 4'd7, k >= 4'd7, k[1:0] + 2'd1};
+                    }
+                }
+            }
+            2'd1: { // program
+                case k {
+                    4'd0: {
+                        r_addr = 16'h2000;
+                        r_data = bank[7:0];
+                    }
+                    4'd1: {
+                        r_addr = 16'h3000;
+                        r_data = {7'd0, bank[8]};
+                    }
+                    4'd3: {}
+                    4'd4: {
+                        r_addr = 16'h0555;
+                        r_data = 8'h55;
+                    }
+                    4'd5: r_data = 8'hA0;
+                    4'd6: {
+                        r_addr = {1'b0, pa};
+                        r_data = pd;
+                    }
+                    4'd7: {
+                        r_write = 0;
+                        r_addr  = {1'b0, pa};
+                    }
+                    default: { // 8: reset after a timeout
+                        r_addr = 16'h0000;
+                        r_data = 8'hF0;
+                    }
+                }
+            }
+            default: { // erase
+                case k {
+                    4'd0: {
+                        r_addr = 16'h2000;
+                        r_data = bank[7:0];
+                    }
+                    4'd1: {
+                        r_addr = 16'h3000;
+                        r_data = {7'd0, bank[8]};
+                    }
+                    4'd2, 4'd5: {}
+                    4'd3, 4'd6: {
+                        r_addr = 16'h0555;
+                        r_data = 8'h55;
+                    }
+                    4'd4: r_data = 8'h80;
+                    4'd7: {
+                        r_addr = {1'b0, pa};
+                        r_data = 8'h30;
+                    }
+                    4'd8: {
+                        r_write = 0;
+                        r_addr  = {1'b0, pa};
+                    }
+                    default: { // 9: reset after a timeout
+                        r_addr = 16'h0000;
+                        r_data = 8'hF0;
+                    }
+                }
+            }
+        }
+    }
+
+    assign o_req_valid = st == St::Req && i_bus_ok;
+    assign o_req_write = r_write;
+    assign o_req_addr  = r_addr;
+    assign o_req_wdata = r_data;
+    assign o_busy      = st != St::Idle;
+    assign o_status    = status;
+    assign o_count     = cnt;
+    assign o_dr        = st == St::Fetch;
+    assign o_tx_valid  = st == St::Tx;
+    assign o_tx_data   = idq;
+
+    let prog_to : logic = polls == PROG_POLLS as 24 - 24'd1;
+    let erase_to: logic = polls == ERASE_POLLS as 24 - 24'd1;
+
+    always_ff {
+        if_reset {
+            st     = St::Idle;
+            op     = 0;
+            k      = 0;
+            bank   = 0;
+            pa     = 0;
+            left   = 0;
+            cnt    = 0;
+            pd     = 0;
+            polls  = 0;
+            status = 0;
+            idq    = 0;
+        } else {
+            case st {
+                St::Idle: {
+                    if i_start {
+                        op     = i_op;
+                        bank   = i_bank;
+                        pa     = i_addr;
+                        left   = i_len;
+                        cnt    = 0;
+                        polls  = 0;
+                        k      = 0;
+                        status = if i_dry ? 2'd2 : 2'd0;
+                        // a dry program still takes its data; a dry ID still sends 8 (FF) bytes
+                        st  = if !i_dry ? St::Req : if i_op == 2'd1 ? St::Fetch : if i_op == 2'd0 ? St::Tx : St::Idle;
+                        idq = 8'hFF;
+                        if i_dry && i_op == 2'd0 {
+                            k = 4'd3;
+                        }
+                    }
+                }
+                St::Req: {
+                    if !i_bus_ok {
+                        status = 2'd2;
+                        st     = if op == 2'd1 ? St::Fetch : St::Idle;
+                    } else if i_req_ready {
+                        st = St::Rsp;
+                    }
+                }
+                St::Rsp: {
+                    if i_rsp_valid {
+                        if i_rsp_reject {
+                            status = 2'd2;
+                            st     = if op == 2'd1 ? St::Fetch : St::Idle;
+                        } else {
+                            st = St::Req;
+                            case op {
+                                2'd0: {
+                                    if k >= 4'd3 && k <= 4'd10 {
+                                        idq = i_rsp_data;
+                                        st  = St::Tx;
+                                    } else if k == 4'd11 {
+                                        st = St::Idle;
+                                    } else {
+                                        k += 1;
+                                    }
+                                }
+                                2'd1: {
+                                    case k {
+                                        4'd0: k = 4'd1;
+                                        4'd1: {
+                                            k  = 4'd3;
+                                            st = St::Fetch;
+                                        }
+                                        4'd7: {
+                                            if i_rsp_data == pd {
+                                                cnt   += 1;
+                                                pa    += 1;
+                                                polls =  0;
+                                                k     =  4'd3;
+                                                st    =  St::Fetch;
+                                            } else if prog_to {
+                                                k = 4'd8;
+                                            } else {
+                                                polls += 1;
+                                            }
+                                        }
+                                        4'd8: {
+                                            status = 2'd1;
+                                            st     = St::Fetch; // drop the rest of the data
+                                        }
+                                        default: k += 1;
+                                    }
+                                }
+                                default: {
+                                    case k {
+                                        4'd8: {
+                                            if i_rsp_data == 8'hFF {
+                                                st = St::Idle;
+                                            } else if erase_to {
+                                                k = 4'd9;
+                                            } else {
+                                                polls += 1;
+                                            }
+                                        }
+                                        4'd9: {
+                                            status = 2'd1;
+                                            st     = St::Idle;
+                                        }
+                                        default: k += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                St::Fetch: {
+                    // program data: one byte per program cycle, or dropped after an error
+                    if left == 16'd0 {
+                        st = St::Idle;
+                    } else if i_dv {
+                        left -= 1;
+                        pd   =  i_d;
+                        if status == 2'd0 {
+                            st = St::Req;
+                        }
+                    }
+                }
+                St::Tx: {
+                    if i_tx_ready {
+                        if k == 4'd10 {
+                            k  = 4'd11;
+                            st = if status == 2'd0 ? St::Req : St::Idle;
+                        } else {
+                            k  += 1;
+                            st =  if status == 2'd0 ? St::Req : St::Tx;
+                        }
+                    }
+                }
+                default: st = St::Idle;
+            }
+        }
+    }
+}

@@ -363,3 +363,149 @@ pub fn sha1_hex(d: &[u8]) -> String {
     sha.update(d);
     format!("{:x}", sha.finalize())
 }
+
+// ---------------------------------------------------------------- flash cartridges
+
+pub struct FlashChip {
+    pub name: &'static str,
+    pub size: usize,
+    /// erase unit of the 0x30 command, uniform over the chip (None: not supported for writing)
+    pub block: Option<usize>,
+}
+
+/// identify from the autoselect bytes (0x00-0x03, 0x1C-0x1F)
+pub fn flash_chip(id: &[u8; 8]) -> Option<FlashChip> {
+    match (id[0], id[1], id[2], id[4]) {
+        (0xBF, 0xC8, _, _) => Some(FlashChip { name: "SST39VF1681", size: 0x200000, block: Some(0x10000) }),
+        (0xBF, 0xC9, _, _) => Some(FlashChip { name: "SST39VF1682", size: 0x200000, block: Some(0x10000) }),
+        // boot-sector parts: the 0x30 erase unit differs at one end (needs the CFI sector map)
+        (0x01 | 0x9D, _, 0x7E, 0x1A | 0x1C | 0x1D) => Some(FlashChip { name: "S29GL032 / IS29GL032", size: 0x400000, block: None }),
+        _ => None,
+    }
+}
+
+/// (bank, cartridge address) of flash address `fa` (MBC5 wiring: bank 0 at 0x0000, others in the window)
+fn flash_cart_addr(fa: usize) -> (u16, u16) {
+    let bank = (fa / BANK) as u16;
+    if bank == 0 { (1, fa as u16) } else { (bank, 0x4000 | (fa % BANK) as u16) }
+}
+
+/// `len` bytes of the flash from flash address `fa` (ordinary reads, bank by bank)
+pub fn flash_read<L: Link>(r: &mut Reader<L>, fa: usize, len: usize) -> Result<Vec<u8>, String> {
+    let mut out = Vec::with_capacity(len);
+    let mut a = fa;
+    while out.len() < len {
+        let n = (len - out.len()).min(BANK - a % BANK);
+        let (bank, ca) = flash_cart_addr(a);
+        if a >= BANK {
+            r.mbc(0x3000, (bank >> 8) as u8 & 1)?;
+            r.mbc(0x2000, bank as u8)?;
+        }
+        out.extend_from_slice(&r.read(ca, n)?);
+        a += n;
+    }
+    Ok(out)
+}
+
+pub struct FlashWriteResult {
+    pub chip: &'static str,
+    pub erased: usize,
+    pub programmed: usize,
+    pub secs: f64,
+}
+
+/// write `image` at flash address `offset`: blocks that need a 0 -> 1 change are erased, only the
+/// differing bytes are programmed, everything is read back. Blocks that are not blank are changed
+/// only with `overwrite`. The caller keeps the slot powered and has taken a backup.
+pub fn flash_write<L: Link>(
+    r: &mut Reader<L>,
+    image: &[u8],
+    offset: usize,
+    overwrite: bool,
+    p: &mut dyn Progress,
+) -> Result<FlashWriteResult, String> {
+    if !r.flash_mode(true)? {
+        return Err("the device refused flash mode".into());
+    }
+    let res = (|| {
+        let id = r.flash_id()?;
+        let chip = flash_chip(&id).ok_or(format!("unknown flash identifier {id:02x?}"))?;
+        let block = chip.block.ok_or(format!("{}: writing is not supported (its erase sectors are not uniform)", chip.name))?;
+        if image.is_empty() || offset + image.len() > chip.size {
+            return Err(format!("{} bytes at {offset:#x} do not fit the {} KiB {}", image.len(), chip.size >> 10, chip.name));
+        }
+        let b0 = offset / block;
+        let b1 = (offset + image.len() - 1) / block;
+        let t0 = Instant::now();
+        // plan
+        let mut plan = Vec::new();
+        for b in b0..=b1 {
+            let base = b * block;
+            let cur = flash_read(r, base, block)?;
+            let mut new = cur.clone();
+            let lo = offset.max(base);
+            let hi = (offset + image.len()).min(base + block);
+            new[lo - base..hi - base].copy_from_slice(&image[lo - offset..hi - offset]);
+            if new == cur {
+                continue;
+            }
+            if !overwrite && cur.iter().any(|&x| x != 0xFF) {
+                return Err(format!("block {base:#08x} is not blank: refusing to change it without overwrite"));
+            }
+            let erase = cur.iter().zip(&new).any(|(&c, &n)| c & n != n);
+            plan.push((base, cur, new, erase));
+        }
+        let total: usize = plan.len();
+        let (mut erased, mut programmed) = (0, 0);
+        for (i, (base, cur, new, erase)) in plan.iter().enumerate() {
+            let have = if *erase {
+                let (bank, ca) = flash_cart_addr(*base);
+                match r.flash_erase(bank, ca)? {
+                    0 => {}
+                    1 => return Err(format!("erase of block {base:#08x} timed out")),
+                    s => return Err(format!("erase of block {base:#08x} refused ({s})")),
+                }
+                erased += 1;
+                let chk = flash_read(r, *base, block)?;
+                if let Some(j) = chk.iter().position(|&x| x != 0xFF) {
+                    return Err(format!("block {base:#08x} not blank after erase ({:#08x} = {:02x})", base + j, chk[j]));
+                }
+                vec![0xFFu8; block]
+            } else {
+                cur.clone()
+            };
+            // program runs of differing bytes, within one 16 KiB bank window, up to 4 KiB each
+            let mut j = 0;
+            while j < block {
+                if have[j] == new[j] {
+                    j += 1;
+                    continue;
+                }
+                let start = j;
+                let lim = (start - start % BANK + BANK).min(block).min(start + 4096);
+                while j < lim && have[j] != new[j] {
+                    j += 1;
+                }
+                let (bank, ca) = flash_cart_addr(base + start);
+                let (st, n) = r.flash_program(bank, ca, &new[start..j])?;
+                if st != 0 || n != j - start {
+                    return Err(format!("program at {:#08x}: status {st}, {n} of {} bytes", base + start, j - start));
+                }
+                programmed += n;
+            }
+            p.step("flash", i + 1, total);
+        }
+        // read back
+        for (base, _, new, _) in &plan {
+            let chk = flash_read(r, *base, block)?;
+            if let Some(j) = chk.iter().zip(new).position(|(a, b)| a != b) {
+                return Err(format!("verify: {:#08x} reads {:02x}, expected {:02x}", base + j, chk[j], new[j]));
+            }
+        }
+        Ok(FlashWriteResult { chip: chip.name, erased, programmed, secs: t0.elapsed().as_secs_f64() })
+    })();
+    let off = r.flash_mode(false);
+    let res = res?;
+    off?;
+    Ok(res)
+}
