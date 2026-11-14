@@ -93,5 +93,6 @@ make unit          # SV の単体テスト (状態、電源順序、MBC5 バン�
   `VERSION_DET` = 0 で新基板と判定。MR.TETRIS (MBC5、256 KiB) を `dump --verify` で読み出し、2 回一致・ヘッダ/グローバル
   チェックサム OK、CRC32 a1378c6b、SHA-1 641bbad5bb19973a4a0935f0d422941e34d1b9b6、約 630 KiB/s (2 回読みで 0.9 s)
 - 2026-11-15 実機: MINI4WD GB (MBC1、512 KiB、SGB) も `dump --verify` で 2 回一致・ヘッダ/グローバルチェックサム OK、CRC32 fc0c180b、SHA-1 a51dc3ea1961297a3056e0326c8a153f496dae8a
+- 2026-11-15 実機: MINI4WD GB2 (MBC3、1 MiB、RTC なし) も `dump --verify` で 2 回一致・ヘッダ/グローバルチェックサム OK、CRC32 97ebd21d、SHA-1 ca662cb506b553f1730c29c088e597bace1e0052。カートの抜き差しはデザインを載せたままでよい
 - 公式フラッシュのバックアップ (`make chromatic-backup`) も実機で取得: W25Q32、使用領域 0xDF754 バイト。
   フラッシュの読み出し時に openFPGALoader が SRAM を消すので、その後は画面が消えたままになる (電源 OFF → ON で戻る)
