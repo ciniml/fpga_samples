@@ -9,6 +9,7 @@ cargo build --release
 ./target/release/chromatic_cart_dump header
 ./target/release/chromatic_cart_dump dump [-o out.gb] [--verify] [--mapper mbc5] [--banks 128] [--mbc1m] [--force]
 ./target/release/chromatic_cart_dump save [-o out.sav] [--mapper mbc3] [--force]
+./target/release/chromatic_cart_dump flash-id | flash-read -o all.bin | flash-write image.bin [--offset N] [--overwrite]   # フラッシュカート
 # 実機の代わりに Verilator モデル (rtl/chromatic/test で make simexe)
 ./target/release/chromatic_cart_dump --sim ../../rtl/chromatic/test/obj_sim_mbc5_r5_m0_h0/cart_sim dump
 ```

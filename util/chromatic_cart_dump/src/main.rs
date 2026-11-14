@@ -81,6 +81,21 @@ enum Cmd {
     },
     /// show the flash chip of a flash cartridge (autoselect; nothing is written to the flash array)
     FlashId,
+    /// read the flash by flash address (bank 0 at 0x0000, others through the 0x4000 window)
+    FlashRead {
+        /// output file
+        #[arg(short, long)]
+        output: PathBuf,
+        /// flash address
+        #[arg(long, default_value = "0", value_parser = parse_num)]
+        offset: usize,
+        /// bytes
+        #[arg(long, default_value = "0x200000", value_parser = parse_num)]
+        len: usize,
+    },
+    /// (debug) single-byte reads of 0x0000 / 0x0001 around a flash identifier read
+    #[command(hide = true)]
+    FlashDebug,
     /// write an image to a flash cartridge (SST39VF1681 / 1682): backup first, erase only the
     /// blocks that need it, program, read back
     FlashWrite {
@@ -214,6 +229,26 @@ fn run<L: Link>(r: &mut Reader<L>, cmd: &Cmd) -> Result<(), String> {
                 Some(c) => println!("chip           : {} ({} KiB){}", c.name, c.size >> 10, if c.block.is_some() { "" } else { ", writing not supported" }),
                 None => println!("chip           : unknown"),
             }
+            Ok(())
+        }),
+        Cmd::FlashDebug => ops::powered(r, false, |r| {
+            let one = |r: &mut Reader<L>, a: u16| r.read(a, 1).map(|v| v[0]);
+            println!("before: 0000={:02x} 0000={:02x} 0001={:02x}", one(r, 0)?, one(r, 0)?, one(r, 1)?);
+            r.flash_mode(true)?;
+            println!("id: {:02x?}", r.flash_id()?);
+            println!("in flash mode after id: 0000={:02x} 0000={:02x} 0001={:02x}", one(r, 0)?, one(r, 0)?, one(r, 1)?);
+            println!("  0000..0020: {:02x?}", r.read(0, 0x20)?);
+            println!("  0100..0110: {:02x?}", r.read(0x100, 0x10)?);
+            println!("  0000 again: {:02x}", one(r, 0)?);
+            r.flash_mode(false)?;
+            let s = r.status()?;
+            println!("after mode off ({}): 0000={:02x} 0000={:02x} 0001={:02x} 0100={:02x}", s.describe(), one(r, 0)?, one(r, 0)?, one(r, 1)?, one(r, 0x100)?);
+            Ok(())
+        }),
+        Cmd::FlashRead { output, offset, len } => ops::powered(r, false, |r| {
+            let d = ops::flash_read(r, *offset, *len)?;
+            std::fs::write(output, &d).map_err(|e| format!("{}: {e}", output.display()))?;
+            println!("SHA-1          : {}", ops::sha1_hex(&d));
             Ok(())
         }),
         Cmd::FlashWrite { file, offset, overwrite, backup_dir } => {

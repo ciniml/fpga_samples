@@ -49,6 +49,7 @@ cd ../../util/chromatic_cart_dump && cargo build --release
 | RAM は FPGA が自分で無効に戻す | RAM モードが切れると、他の要求より先に `0x0000 ← 0x00` を自分で出す。RAM モードが切れる条件: `'A' 0`、電源要求の取り消し、CART_DET が落ちる (デバウンスなし)、USB 切断 (configured が落ちる)、1 秒間コマンドなし |
 | RAM 有効中は電源を切らない | 無効化が済むまでスロット電源を保持する (`'P' 0` やスイッチ OFF でも、無効化が先) |
 | MBC7 の EEPROM は READ だけ | /CS 付きの書き込みは 0xA080 (CS/CLK/DI ビットのみ) だけで、`Mbc7Eeprom` からの特権付き要求に限る (RAM モード中、RAM 有効時)。開始ビットと命令 (10) は回路の定数なので、書き込み・消去に必須の EWEN は送れない。0x4000 ← 0x40 (RAM enable 2) も同じ特権付き要求だけ |
+| フラッシュカートへの書き込みは決まった手順だけ | `FlashEngine` からの要求に限り、フラッシュモード (`'F' 1`) 中だけ 0x8000 未満に書ける。出せるのは ID 読み出し、1 バイト書き込み、セクタ消去 (0x30) の固定の手順で、チップ消去 (0x10) は回路に存在しない。フラッシュモードが終わると CartBus が `0x0000 ← 0xF0` (リセット) を自分で書き、それまでスロット電源を切らない |
 | 特殊モードに入らない | 0x0000 には 0x00 / 0x0A しか書けないので HuC1/HuC3 の赤外線モードなどに入らない。0x4000 は 0x0F までなので Pocket Camera のレジスタ (0x10) や MBC7 の EEPROM 選択 (0x40) も出せない |
 | フラッシュのコマンドは不可 | AMD 系のアンロック (0x0555/0x0AAA/0x2AAA/0x5555 への AA/55) のアドレスに書けない |
 | 電源 OFF 中は全線 Low | 新基板では電源の切れたスロットに信号線から電流を流さない (`CartPower`) |
@@ -88,15 +89,40 @@ cd ../../util/chromatic_cart_dump && cargo build --release
 2. 読み出し後: ダンプ内のヘッダが最初の読み出しと一致すること、グローバルチェックサム (0x14E-0x14F、不一致は警告のみ。正規品にも誤った値のものがある)、`--verify`
 3. CRC32 / SHA-1 を表示 (既知のダンプ一覧と照合できる)
 
+## フラッシュカートへの書き込み (ModRetro 付属の Tetris カートなど)
+
+```sh
+chromatic_cart_dump flash-id                                   # フラッシュの ID (書き込みはしない)
+chromatic_cart_dump flash-read -o all.bin                      # フラッシュ全体をフラッシュのアドレスで読む
+chromatic_cart_dump flash-write image.bin --offset 0x1F0000    # 空きブロックへ書く
+chromatic_cart_dump flash-write game.gb --overwrite            # ゲームを書き換える (中身のあるブロックの変更は --overwrite 必須)
+```
+
+- 対応は SST39VF1681 / 1682 (2 MiB、消去単位 64 KiB で一様)。IS29GL032 などブートセクタ付きの品は ID 表示だけ (書き込みは拒否)
+- `flash-write` の手順: ヘッダを読む → フラッシュ全体を 2 回読んで一致したら `~/chromatic-dumps/<タイトル>-flash-backup.bin` に保存
+  (`--backup-dir`) → ID を確認 → 変更のある 64 KiB ブロックだけ、0 → 1 の変化があれば消去 → 違うバイトだけ書く → 全ブロックを読み戻して照合
+- 元に戻す: バックアップを `flash-write <backup> --overwrite` で書けば、違うブロックだけ書き戻される
+- マッパーは MBC5 相当 (バンク 0 が 0x0000、それ以外は 0x2000/0x3000 で選んで 0x4000 の窓)。コマンドは 0x0AAA / 0x0555
+- 注意: フラッシュはアドレスが変わったときに出力を更新する。同じアドレスへのコマンド (ID 終了の `0000 ← F0` など) の直後に
+  同じアドレスを読むと古い値 (ID の 0xBF) が出る。スロット電源を切っても (全線 Low でアドレス 0 のまま) 残った。
+  ホストは各ブロックを読む前に別のアドレスを 1 バイト空読みする
+- Tetris カートの構成: GW1N (マッパー)、2 MiB パラレル NOR (ゲームは先頭 256 KiB、残りは消去済み)、
+  8 ピンのシリアル部品 (役割は未確認。GW1N はコンフィグ用フラッシュを内蔵するので、セーブ用 SPI FRAM の可能性が高い)。
+  シリアル部品には GB バスからの経路がなく、このツールは触れない
+
 ## プロトコル (EP1 OUT → IN、rtl/chromatic/cart_cmd.veryl)
 
 | コマンド | 応答 |
 |---|---|
-| `'S'` | 8 バイト `'C' 'R' PROTO flags rst reject_cnt err ram` (PROTO = 2、flags bit 7 = RAM モード、ram bit 0 = RAM 有効中) |
+| `'S'` | 8 バイト `'C' 'R' PROTO flags rst reject_cnt err ram` (PROTO = 4、flags bit 7 = RAM モード、ram bit 0 = RAM 有効中、bit 1 = フラッシュモード) |
 | `'P' on` | `'P' flags` (スロット電源の要求) |
 | `'R' addr16 len16` | len バイト (len 0 = 65536) |
 | `'W' addr16 data` | `'W' result` (0 完了 / 1 拒否 / 2 未準備) |
 | `'A' on` | `'A' flags` (RAM モード。電源要求中のみ許可、bit 7 が結果) |
+| `'F' on` | `'F' mode` (フラッシュモード、bit 0 が結果。RAM モードとは同時に使えない) |
+| `'I'` | 8 バイト (フラッシュ ID、0x00-0x03 と 0x1C-0x1F) |
+| `'G' bank16 addr16 len16 data` | `'G' status count16` (1 バイトずつ書き込み、status 0 完了 / 1 タイムアウト / 2 拒否) |
+| `'X' bank16 addr16` | `'X' status` (セクタ消去) |
 | `'E' addr8 count16` | count × 2 バイト (MBC7 EEPROM のワード、上位バイト先。RAM モードかつ RAM 有効でなければ FFFF と err bit 3)。PROTO = 3 |
 
 vendor request 0x01 (IN, 4 バイト) は `"GBCR"` を返す。ホストツールは 1209:0001 のうちこれを返すデバイスだけを使う。
@@ -137,5 +163,9 @@ RAM モード外の RAM 有効化、RAM 有効のままの電源断、データ�
 - 2026-11-15 実機: MBC7 の KORO2 KIRBYKKKJ (コロコロカービィ)。ROM 1 MiB を `dump --verify` で 2 回一致、グローバルチェックサム OK、
   CRC32 c0face3d、SHA-1 8dd46f6d34c831c910c4574f252fa47ce6f67261。EEPROM は `save` で 93LC56 (256 B) と判定、2 回一致、
   CRC32 b8f56469、SHA-1 b6d47b3c857f25a429b27e24cd3356d0e5e87e3b (先頭が "TAMAB" の ASCII なので上位バイト先の並びで正しい)
+- 2026-11-15 実機: MR.TETRIS (付属カート) のフラッシュは SST39VF1681 (ID BF C8)。2 MiB 全体のうちゲームは先頭 256 KiB で、
+  残りは消去済み (SHA-1 c84239c26c28a983d95dbe468299b25b19afcbee)。末尾の空きブロック 0x1F0000 に 4 KiB を書いて読み戻し一致
+  (0.2 s)、ゲーム領域は不変。同じ場所に FF を書いてブロック消去し、フラッシュ全体が元のバックアップと一致することを確認。
+  ID 終了直後に 0x0000 が 0xBF のまま読める現象 (上の注意) を見つけて対処
 - 公式フラッシュのバックアップ (`make chromatic-backup`) も実機で取得: W25Q32、使用領域 0xDF754 バイト。
   フラッシュの読み出し時に openFPGALoader が SRAM を消すので、その後は画面が消えたままになる (電源 OFF → ON で戻る)

@@ -401,6 +401,9 @@ pub fn flash_read<L: Link>(r: &mut Reader<L>, fa: usize, len: usize) -> Result<V
             r.mbc(0x3000, (bank >> 8) as u8 & 1)?;
             r.mbc(0x2000, bank as u8)?;
         }
+        // the flash updates its outputs on an address change: after a command at the same
+        // address (e.g. the identifier exit 0000 <- F0) the first read would return stale data
+        r.read(ca ^ 1, 1)?;
         out.extend_from_slice(&r.read(ca, n)?);
         a += n;
     }
