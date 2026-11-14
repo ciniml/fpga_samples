@@ -122,5 +122,8 @@ RAM モード外の RAM 有効化、RAM 有効のままの電源断、データ�
 - 2026-11-15: セーブデータの読み出しを追加。`make unit`、`run_e2e.sh` 17 ケース全 PASS (セーブ: MBC1 8 / 32 KiB、MBC2、
   MBC3 32 / 64 KiB、MBC5 128 KiB、RAM なしと ROM only の拒否)。自動無効化を外した変異版では単体テストが 6 件失敗することも確認。
   ビルド: LUT 16%、clk60 Fmax 65.1 MHz。gw_sh が X に繋げないシェルでは `QT_QPA_PLATFORM=offscreen make`
+- 2026-11-15 実機: MINI4WD GB2 (MBC3、RAM 32 KiB、電池あり) のセーブを `save` で読み出し、2 回一致 (2 回で 0.07 s)、
+  CRC32 101e55b1、SHA-1 ff0bb1bfc446dcc835e70880b5caef4ef959ecc0。バンク 0 / 1 / 2 は互いに異なり、2 と 3 は同一
+  (ゲーム側の予備コピーか、バンク選択の不具合かは未確定。1 ビットの固着なら 0 = 1 にもなるはずなので前者と見ている)
 - 公式フラッシュのバックアップ (`make chromatic-backup`) も実機で取得: W25Q32、使用領域 0xDF754 バイト。
   フラッシュの読み出し時に openFPGALoader が SRAM を消すので、その後は画面が消えたままになる (電源 OFF → ON で戻る)
