@@ -4,3 +4,4 @@ dependencies
 .build/
 Veryl.lock
 *.sv
+*.pdf

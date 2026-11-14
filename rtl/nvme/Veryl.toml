@@ -13,6 +13,7 @@ include_files = [
     "test/nvme_controller_test_body.sv",
     "test/nvme_tcp_target_test_body.sv",
     "test/eth_ip_test_body.sv",
+    "test/nvme_pcie_test_body.sv",
 ]
 
 [test.verilator]
@@ -21,6 +22,7 @@ compile_args = [
     "nvme_controller_test_body.sv",
     "nvme_tcp_target_test_body.sv",
     "eth_ip_test_body.sv",
+    "nvme_pcie_test_body.sv",
     "-Wno-WIDTHEXPAND",
     "-Wno-WIDTHTRUNC",
     "-Wno-CASEINCOMPLETE",

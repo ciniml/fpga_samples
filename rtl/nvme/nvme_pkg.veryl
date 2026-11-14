@@ -25,6 +25,7 @@ pub package nvme_pkg {
     const ADM_OPC_IDENTIFY     : logic<8> = 8'h06;
     const ADM_OPC_SET_FEATURES : logic<8> = 8'h09;
     const ADM_OPC_GET_FEATURES : logic<8> = 8'h0A;
+    const ADM_OPC_ASYNC_EVENT  : logic<8> = 8'h0C;
 
     // NVM command opcodes (I/O queue)
     const NVM_OPC_FLUSH: logic<8> = 8'h00;

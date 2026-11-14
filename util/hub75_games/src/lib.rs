@@ -112,6 +112,10 @@ pub struct Cli {
     /// the board: the board paces, the copies are not answered
     #[arg(long, value_name = "HOST[:PORT]")]
     mirror: Vec<String>,
+    /// take the keys of an emulator's page (UDP 10006) also without --emu /
+    /// --mirror (e.g. --dest at an emulator on another PC)
+    #[arg(long)]
+    keys: bool,
     /// the demo rotation (showcase / arcade): expo (ELEKI EXPO, the
     /// default), edgetech (EdgeTech+ at the CQ booth) or a file of lines
     /// "<demo> <seconds> [start]" (start: from its beginning each time)
@@ -272,7 +276,7 @@ pub fn run<G: Game>(name: &str, keys: &str, make: impl FnOnce(u64, u64) -> G) ->
     // can play; with neither, only --auto works
     let mut inp = if std::io::stdin().is_terminal() { Some(input::Input::new()?) } else { Some(input::Input::pad_only()) };
     // with an emulator, its page's keys too
-    if cli.emu || !mirrors.is_empty() {
+    if cli.emu || !mirrors.is_empty() || cli.keys {
         if let Some(Err(e)) = inp.as_mut().map(|i| i.listen()) {
             print!("emulator page keys: off (UDP {}: {})\r\n", input::KEY_PORT, e);
         }

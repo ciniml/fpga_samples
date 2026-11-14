@@ -42,7 +42,29 @@ ETH_SV = $(ETH_DIR)/rmii_mac/rmii_mac.sv \
 	$(ETH_DIR)/mii_mac/crc_mac.sv $(ETH_DIR)/util/simple_fifo.v
 ETH_BRIDGE = obj_eth/eth_tap_bridge
 
-.PHONY: all vfio tcp_rtl eth run smoke clean
+.PHONY: all vfio pcie_vfio tcp_rtl eth run smoke clean
+
+# TLP-level vfio-user server: NvmePcieTop behind a model of the Gowin
+# PCIe IP transaction layer + root complex (pcie_tl_model.h).
+# TRACE=1 adds FST waveform support (--fst FILE). DATA_BSWAP must match
+# the RTL parameter used on the board.
+RTL_PCIE = $(RTL_CTRL) ../nvme_pcie_ep.sv ../nvme_pcie_top.sv
+PCIE_VFIO = obj_pcie/nvme_pcie_vfio
+DATA_BSWAP ?= 0
+TRACE ?= 0
+PCIE_TRACE_FLAGS = $(if $(filter 1,$(TRACE)),--trace-fst --trace-structs,)
+
+pcie_vfio: $(PCIE_VFIO)
+
+$(PCIE_VFIO): $(RTL_PCIE) nvme_pcie_vfio.cpp pcie_tl_model.h
+	verilator --cc --exe --build -j 8 -O2 --top-module NvmePcieTop --Mdir obj_pcie \
+	  $(PCIE_TRACE_FLAGS) \
+	  -GLBA_COUNT=$(LBA_COUNT) -GDATA_BSWAP=$(DATA_BSWAP) \
+	  -CFLAGS "-O2 -DSIM_LBA_COUNT=$(LBA_COUNT) -DSIM_DATA_BSWAP=$(DATA_BSWAP) -I$(VFU_INC)" \
+	  -LDFLAGS "$(VFU_LIB) -ljson-c" \
+	  -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEINCOMPLETE \
+	  -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM \
+	  $(RTL_PCIE) nvme_pcie_vfio.cpp -o nvme_pcie_vfio
 
 eth: $(ETH_BRIDGE)
 
@@ -105,4 +127,4 @@ smoke: $(BRIDGE)
 	./run_smoke.sh $(PORT)
 
 clean:
-	rm -rf obj_dir obj_vfio obj_tcp
+	rm -rf obj_dir obj_vfio obj_tcp obj_pcie
