@@ -48,6 +48,7 @@ cd ../../util/chromatic_cart_dump && cargo build --release
 | /CS は RAM モード中の読み出しだけ | ホストが `'A' 1` で RAM モードにしたときだけ、0xA000-0xBFFF の読み出しで /CS を出す。RAM モードが切れたら進行中のサイクルでも /CS を即座に戻す |
 | RAM は FPGA が自分で無効に戻す | RAM モードが切れると、他の要求より先に `0x0000 ← 0x00` を自分で出す。RAM モードが切れる条件: `'A' 0`、電源要求の取り消し、CART_DET が落ちる (デバウンスなし)、USB 切断 (configured が落ちる)、1 秒間コマンドなし |
 | RAM 有効中は電源を切らない | 無効化が済むまでスロット電源を保持する (`'P' 0` やスイッチ OFF でも、無効化が先) |
+| MBC7 の EEPROM は READ だけ | /CS 付きの書き込みは 0xA080 (CS/CLK/DI ビットのみ) だけで、`Mbc7Eeprom` からの特権付き要求に限る (RAM モード中、RAM 有効時)。開始ビットと命令 (10) は回路の定数なので、書き込み・消去に必須の EWEN は送れない。0x4000 ← 0x40 (RAM enable 2) も同じ特権付き要求だけ |
 | 特殊モードに入らない | 0x0000 には 0x00 / 0x0A しか書けないので HuC1/HuC3 の赤外線モードなどに入らない。0x4000 は 0x0F までなので Pocket Camera のレジスタ (0x10) や MBC7 の EEPROM 選択 (0x40) も出せない |
 | フラッシュのコマンドは不可 | AMD 系のアンロック (0x0555/0x0AAA/0x2AAA/0x5555 への AA/55) のアドレスに書けない |
 | 電源 OFF 中は全線 Low | 新基板では電源の切れたスロットに信号線から電流を流さない (`CartPower`) |
@@ -76,7 +77,8 @@ cd ../../util/chromatic_cart_dump && cargo build --release
 | MBC2 | 512 × 4 bit (MBC 内蔵) | 下位 4 bit を読み、上位 4 bit は 1 にして保存 (バスに出ないので値が定まらない) |
 | MBC3 / MBC30 | 8-64 KiB | 0x4000 ← 0-7 (RTC レジスタ 0x08-0x0C は選ばない) |
 | MBC5 | 8-128 KiB | 0x4000 ← 0-15 (ランブル付きは bit 3 がモーターなので 8 バンクまで) |
-| それ以外 (MBC7 の EEPROM、HuC1/HuC3、Pocket Camera、TAMA5 など) | — | 非対応 (拒否) |
+| MBC7 | シリアル EEPROM 93LC56 (256 B) / 93LC66 (512 B) | FPGA の読み出し専用エンジン (`rtl/chromatic/mbc7_eeprom.veryl`) が READ 命令だけを送る。256 ワード読んで前半と後半が同じなら 93LC56。各ワードを上位バイト先で保存 (mGBA と同じ) |
+| それ以外 (HuC1/HuC3、Pocket Camera、TAMA5 など) | — | 非対応 (拒否) |
 
 手順: RAM モード → `0x0000 ← 0x0A` → バンクごとに 0xA000 から読む → `0x0000 ← 0x00` → RAM モード解除、を 2 回行い、
 一致しなければエラー。全部 0xFF なら警告 (空、RAM なし、電池切れ)。
@@ -95,6 +97,7 @@ cd ../../util/chromatic_cart_dump && cargo build --release
 | `'R' addr16 len16` | len バイト (len 0 = 65536) |
 | `'W' addr16 data` | `'W' result` (0 完了 / 1 拒否 / 2 未準備) |
 | `'A' on` | `'A' flags` (RAM モード。電源要求中のみ許可、bit 7 が結果) |
+| `'E' addr8 count16` | count × 2 バイト (MBC7 EEPROM のワード、上位バイト先。RAM モードかつ RAM 有効でなければ FFFF と err bit 3)。PROTO = 3 |
 
 vendor request 0x01 (IN, 4 バイト) は `"GBCR"` を返す。ホストツールは 1209:0001 のうちこれを返すデバイスだけを使う。
 
@@ -131,5 +134,8 @@ RAM モード外の RAM 有効化、RAM 有効のままの電源断、データ�
 - 2026-11-15 実機: STAROCEANGBBO2J のセーブ (MBC5、32 KiB) を CLI と Web UI (`serve`) の両方で読み、どちらも
   SHA-1 81ee75ebc69f01c04b9b82e387d58f954f1de6cd。一度 A6 の接触不良でヘッダが化けた (0x140 → 0x100 の内容)。
   ヘッダチェックサムで止まり、挿し直しで直った
+- 2026-11-15 実機: MBC7 の KORO2 KIRBYKKKJ (コロコロカービィ)。ROM 1 MiB を `dump --verify` で 2 回一致、グローバルチェックサム OK、
+  CRC32 c0face3d、SHA-1 8dd46f6d34c831c910c4574f252fa47ce6f67261。EEPROM は `save` で 93LC56 (256 B) と判定、2 回一致、
+  CRC32 b8f56469、SHA-1 b6d47b3c857f25a429b27e24cd3356d0e5e87e3b (先頭が "TAMAB" の ASCII なので上位バイト先の並びで正しい)
 - 公式フラッシュのバックアップ (`make chromatic-backup`) も実機で取得: W25Q32、使用領域 0xDF754 バイト。
   フラッシュの読み出し時に openFPGALoader が SRAM を消すので、その後は画面が消えたままになる (電源 OFF → ON で戻る)
