@@ -89,5 +89,8 @@ make unit          # SV の単体テスト (状態、電源順序、MBC5 バン�
 
 - 2026-11-14: ビルド (Gowin 1.9.12.03、LUT 16%、clk60 Fmax 64.2 MHz / 60 MHz)、`make unit` と `run_e2e.sh` が全 PASS
   (ROM only 32 KiB、MBC1 512 KiB / 1 MiB / 2 MiB、MBC1M 1 MiB、MBC2 256 KiB、MBC3 2 MiB、MBC5 4 MiB、ヘッダ不正の拒否)。実機は未確認
-- 実機で確かめること: USB の列挙 (SRAM 書き込みでも列挙するか、ChromatiX は flash 起動でないと列挙しないと書いている)、
-  `CART_DET` の極性 (1 = 挿入、と読める公式 RTL のコメントに依拠)、`VERSION_DET` による新旧基板の判別
+- 2026-11-15 実機: `make run` (SRAM) だけで 1209:0001 が列挙した (フラッシュ起動は不要)。`CART_DET` = 1 が挿入、
+  `VERSION_DET` = 0 で新基板と判定。MR.TETRIS (MBC5、256 KiB) を `dump --verify` で読み出し、2 回一致・ヘッダ/グローバル
+  チェックサム OK、CRC32 a1378c6b、SHA-1 641bbad5bb19973a4a0935f0d422941e34d1b9b6、約 630 KiB/s (2 回読みで 0.9 s)
+- 公式フラッシュのバックアップ (`make chromatic-backup`) も実機で取得: W25Q32、使用領域 0xDF754 バイト。
+  フラッシュの読み出し時に openFPGALoader が SRAM を消すので、その後は画面が消えたままになる (電源 OFF → ON で戻る)
