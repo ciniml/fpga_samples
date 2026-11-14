@@ -104,6 +104,8 @@ fn print_header(h: &Header) {
     }
     if h.mapper() == Mapper::Mbc2 {
         println!("RAM size       : {:02x} (512 x 4 bit inside the MBC2)", h.ram_code());
+    } else if h.mapper() == Mapper::Mbc7 {
+        println!("RAM size       : {:02x} (serial EEPROM, 93LC56 256 B / 93LC66 512 B)", h.ram_code());
     } else {
         println!("RAM size       : {:02x} ({} KiB)", h.ram_code(), h.ram_size() >> 10);
     }

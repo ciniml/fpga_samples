@@ -38,6 +38,11 @@
  *   - /CS (the cartridge RAM select) is asserted only for reads of
  *     0xA000-0xBFFF while i_ram_mode, together with /RD; never with /WR.
  *     A cycle in progress drops /CS as soon as i_ram_mode falls.
+ *   - Privileged requests (i_req_priv, only from Mbc7Eeprom through
+ *     CartCmd) may additionally write, while i_ram_mode and o_ram_on:
+ *       0x4000 <- 0x40 / 0x00 (MBC7 RAM enable 2)
+ *       0xA080 <- CS / CLK / DI bits only (the MBC7 EEPROM register), the
+ *              only write cycle ever made with /CS Low (/CS around /WR)
  *   - After a RAM enable (o_ram_on), the RAM is disabled again by this
  *     module itself (a 0x0000 <- 0x00 cycle of its own, before any other
  *     request) as soon as i_ram_mode falls. The requester keeps the slot
@@ -69,6 +74,7 @@ pub module CartBus #(
     i_req_write: input  logic    ,
     i_req_addr : input  logic<16>,
     i_req_wdata: input  logic<8> ,
+    i_req_priv : input  logic    , // from Mbc7Eeprom (see above)
     o_req_ready: output logic    ,
     // response: one per accepted request
     o_rsp_valid : output logic   ,
@@ -107,6 +113,13 @@ pub module CartBus #(
     ) -> logic {
         return (a == 16'h0000 && (d == 8'h00 || (d == 8'h0A && rm))) || a == 16'h2000 || a == 16'h2100 || a == 16'h3000
             || (a == 16'h4000 && d <: 8'h10) || a == 16'h6000;
+    }
+
+    function allowed_priv (
+        a: input logic<16>,
+        d: input logic<8> ,
+    ) -> logic {
+        return (a == 16'h4000 && (d == 8'h40 || d == 8'h00)) || (a == 16'hA080 && (d & 8'h3D) == 8'h00);
     }
 
     var t       : logic<8> ;
@@ -222,7 +235,12 @@ pub module CartBus #(
                     dir_q    = 1;
                     doe_q    = 0;
                 } else if take {
-                    if i_req_write && !allowed(i_req_addr, i_req_wdata, i_ram_mode) {
+                    if i_req_write
+                        && !(if i_req_priv ?
+                            (i_ram_mode && ram_on && allowed_priv(i_req_addr, i_req_wdata))
+                        :
+                            allowed(i_req_addr, i_req_wdata, i_ram_mode)
+                        ) {
                         // refused: answer at once, no bus cycle
                         rsp_v   = 1;
                         rsp_d   = 8'hFF;
@@ -231,14 +249,15 @@ pub module CartBus #(
                         busy     = 1;
                         internal = 0;
                         is_write = i_req_write;
-                        cs_sel   = !i_req_write && i_ram_mode && i_req_addr[15:13] == 3'b101;
-                        addr     = i_req_addr;
-                        wdata    = i_req_wdata;
-                        a_q      = i_req_addr;
-                        rd_q     = 1;
-                        wr_q     = 1;
-                        dir_q    = 1;
-                        doe_q    = 0;
+                        // RAM read, or the privileged EEPROM register write
+                        cs_sel = i_ram_mode && i_req_addr[15:13] == 3'b101 && (!i_req_write || i_req_priv);
+                        addr   = i_req_addr;
+                        wdata  = i_req_wdata;
+                        a_q    = i_req_addr;
+                        rd_q   = 1;
+                        wr_q   = 1;
+                        dir_q  = 1;
+                        doe_q  = 0;
                         // counted as enabled from the moment the enable cycle starts
                         if i_req_write && i_req_addr == 16'h0000 && i_req_wdata == 8'h0A {
                             ram_on = 1;
@@ -266,6 +285,8 @@ pub module CartBus #(
                         if t == T_DIR_RX as 8 {
                             dir_q = 1;
                         }
+                        // /CS (EEPROM register only) from t1 to after /WR High
+                        cs_q = !(cs_sel && i_ram_mode && t <: T_DIR_RX as 8);
                     } else {
                         if t == 1 {
                             rd_q = 0;

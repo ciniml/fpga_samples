@@ -110,7 +110,11 @@ fn status_json(s: &Status) -> Value {
 
 fn header_json(h: &Header) -> Value {
     let m = h.mapper();
-    let ram = if m == Mapper::Mbc2 { "512 x 4 bit (MBC2)".to_string() } else { format!("{} KiB", h.ram_size() >> 10) };
+    let ram = match m {
+        Mapper::Mbc2 => "512 x 4 bit (MBC2)".to_string(),
+        Mapper::Mbc7 => "EEPROM (93LC56 256 B / 93LC66 512 B)".to_string(),
+        _ => format!("{} KiB", h.ram_size() >> 10),
+    };
     json!({
         "title": h.title(), "cgb": format!("{:02x}", h.cgb()), "is_cgb": h.is_cgb(), "sgb": h.sgb(),
         "cart_type": format!("{:02x}", h.cart_type()), "mapper": m.name(), "rom_supported": ops::supported(m),
@@ -120,7 +124,11 @@ fn header_json(h: &Header) -> Value {
         "header_ok": h.header_ok(), "header_checksum": format!("{:02x}", h.header_checksum()),
         "header_checksum_calc": format!("{:02x}", h.header_checksum_calc()),
         "global_checksum": format!("{:04x}", h.global_checksum()),
-        "save": match ops::ram_layout(m, h) { Ok((nb, bs)) => json!({"ok": true, "bytes": nb * bs}), Err(e) => json!({"ok": false, "why": e}) },
+        "save": match ops::ram_layout(m, h) {
+            Ok(_) if m == Mapper::Mbc7 => json!({"ok": true, "bytes": 512, "eeprom": true}),
+            Ok((nb, bs)) => json!({"ok": true, "bytes": nb * bs}),
+            Err(e) => json!({"ok": false, "why": e}),
+        },
     })
 }
 

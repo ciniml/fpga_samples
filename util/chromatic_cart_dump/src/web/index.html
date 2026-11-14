@@ -141,7 +141,7 @@ function renderHeader(h) {
     ['マッパー', `${h.mapper} (type ${h.cart_type})` + (h.rom_supported ? '' : ' — ROM ダンプ非対応')],
     ['ROM', h.rom_kib ? `${h.rom_kib} KiB (${h.rom_banks} バンク)` : `不正なコード ${h.rom_code}`],
     ['RAM', `${h.ram}` + (h.battery ? '、電池あり' : '')],
-    ['セーブ', h.save.ok ? `読み出し可 (${kib(h.save.bytes)})` : `不可: ${h.save.why}`],
+    ['セーブ', h.save.ok ? (h.save.eeprom ? '読み出し可 (EEPROM、256 B か 512 B)' : `読み出し可 (${kib(h.save.bytes)})`) : `不可: ${h.save.why}`],
     ['CGB / SGB', `${h.cgb}${h.is_cgb ? ' (CGB)' : ''} / ${h.sgb ? 'あり' : 'なし'}`],
     ['ヘッダチェックサム', h.header_ok ? `${h.header_checksum} (OK)` : `${h.header_checksum} (不一致、計算値 ${h.header_checksum_calc}): カートを挿し直してください`],
     ['グローバルチェックサム', h.global_checksum],

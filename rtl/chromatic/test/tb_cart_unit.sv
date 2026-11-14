@@ -125,6 +125,14 @@ module tb_cart_unit;
         foreach (r[i]) if (r[i] != 8'hFF) begin $display("FAIL: RAM read without RAM mode gave %h", r[i]); errors++; break; end
         if (n_ram_reads) begin $display("FAIL: %0d RAM reads without RAM mode", n_ram_reads); errors++; end
 
+        // MBC7 EEPROM read outside RAM mode: no bus activity at all, FFFF words, err[3]
+        w0 = n_writes;
+        send("E"); send(8'h00); send(8'h04); send(8'h00); recv(8, r);
+        foreach (r[i]) if (r[i] != 8'hFF) begin $display("FAIL: EEPROM read outside RAM mode gave %h", r[i]); errors++; break; end
+        if (n_writes != w0) begin $display("FAIL: EEPROM read outside RAM mode made %0d bus writes", n_writes - w0); errors++; end
+        status(s);
+        if (!s[6][3]) begin $display("FAIL: EEPROM error flag not set (err %h)", s[6]); errors++; end
+
         // RAM mode: enable, bank 2, read; writes to RAM still refused
         ram_mode(1, res);
         if (!res[7]) begin $display("FAIL: RAM mode refused (flags %h)", res); errors++; end

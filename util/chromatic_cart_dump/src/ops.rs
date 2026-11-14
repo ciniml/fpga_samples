@@ -135,6 +135,8 @@ pub fn sanitize(s: &str) -> String {
 pub fn ram_layout(m: Mapper, h: &Header) -> Result<(usize, usize), String> {
     match m {
         Mapper::Mbc2 => Ok((1, 512)),
+        // 93LC56 (256 bytes) or 93LC66 (512 bytes): 512 are read, read_ram decides
+        Mapper::Mbc7 => Ok((1, 512)),
         Mapper::Mbc1 | Mapper::Mbc3 | Mapper::Mbc5 => {
             let size = h.ram_size();
             if size == 0 {
@@ -165,6 +167,9 @@ pub fn ram_layout(m: Mapper, h: &Header) -> Result<(usize, usize), String> {
 pub fn read_ram<L: Link>(r: &mut Reader<L>, m: Mapper, nb: usize, bs: usize) -> Result<Vec<u8>, String> {
     if !r.ram_mode(true)? {
         return Err("the device refused RAM mode".into());
+    }
+    if m == Mapper::Mbc7 {
+        return read_mbc7(r);
     }
     let banked = matches!(m, Mapper::Mbc1 | Mapper::Mbc3 | Mapper::Mbc5);
     let res = (|| {
@@ -202,6 +207,26 @@ pub fn read_ram<L: Link>(r: &mut Reader<L>, m: Mapper, nb: usize, bs: usize) -> 
 
 
 /// power the slot, run `f`, power it down again (unless `keep`)
+/// MBC7: RAM enable 1, the EEPROM through the FPGA's read-only engine (which writes RAM enable 2
+/// itself), disable. 256 words are read; a 93LC56 ignores address bit 7, so identical halves mean
+/// a 256-byte EEPROM (an empty 93LC66 is then saved as 256 bytes of FF).
+fn read_mbc7<L: Link>(r: &mut Reader<L>) -> Result<Vec<u8>, String> {
+    let res = (|| {
+        r.status()?; // clears the error flags
+        r.mbc(0x0000, 0x0A)?;
+        let d = r.eeprom(0, 256)?;
+        let s = r.status()?;
+        if s.err & 0x08 != 0 {
+            return Err("the EEPROM read did not complete (refused by the device)".to_string());
+        }
+        Ok(d)
+    })();
+    let off = r.mbc(0x0000, 0x00).and_then(|_| r.ram_off());
+    let d = res?;
+    off?;
+    Ok(if d[..256] == d[256..] { d[..256].to_vec() } else { d })
+}
+
 pub fn powered<L: Link, T>(
     r: &mut Reader<L>,
     keep: bool,
@@ -323,7 +348,9 @@ pub fn read_save<L: Link>(r: &mut Reader<L>, o: &SaveOpts, p: &mut dyn Progress)
     if let Some(i) = ram.iter().zip(&again).position(|(x, y)| x != y) {
         return Err(format!("the two reads differ first at {i:05x} ({:02x} / {:02x}): check the contacts", ram[i], again[i]));
     }
-    let res = SaveResult { header: h, ram, banks: nb, bank_size: bs, secs: t0.elapsed().as_secs_f64() };
+    let _ = bs;
+    let bank_size = ram.len() / nb;
+    let res = SaveResult { header: h, ram, banks: nb, bank_size, secs: t0.elapsed().as_secs_f64() };
     if res.all_ff() {
         p.note("the RAM reads all FF (empty save, no RAM, or a dead battery)");
     }

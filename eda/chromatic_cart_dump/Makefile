@@ -3,7 +3,7 @@
 PROJECT_NAME := chromatic_cart_dump
 TARGET ?= chromatic
 
-CHROMATIC_VERYL_SV := $(addprefix ../../rtl/chromatic/,cart_power.sv cart_bus.sv cart_cmd.sv)
+CHROMATIC_VERYL_SV := $(addprefix ../../rtl/chromatic/,cart_power.sv cart_bus.sv mbc7_eeprom.sv cart_cmd.sv)
 USB_VERYL_SV := $(addprefix ../../rtl/usb/,usb_pkg.sv usb_phy_rx.sv usb_phy_tx.sv usb_phy.sv usb_sie.sv usb_descriptor_rom.sv usb_device.sv)
 SRCS := $(wildcard src/$(TARGET)/*.sv) $(wildcard src/$(TARGET)/*.v) $(wildcard src/$(TARGET)/*.sdc) \
         ../targets/$(TARGET)/chromatic.cst ../targets/$(TARGET)/chromatic_cst.tcl \

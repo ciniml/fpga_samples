@@ -5,7 +5,7 @@
 use crate::link::Link;
 use std::time::{Duration, Instant};
 
-pub const PROTO: u8 = 2;
+pub const PROTO: u8 = 3;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Status {
@@ -161,6 +161,17 @@ impl<L: Link> Reader<L> {
             a = (a + n) & 0xFFFF;
         }
         Ok(out)
+    }
+
+    /// MBC7 EEPROM words from `addr` ('E', read-only engine in the FPGA), high byte first.
+    /// Needs RAM mode and 0x0000 <- 0x0A; otherwise the words read FFFF and err bit 3 is set.
+    pub fn eeprom(&mut self, addr: u8, words: usize) -> Result<Vec<u8>, String> {
+        let n = words.clamp(1, 256);
+        let c = if n == 256 { 0 } else { n };
+        self.link.send(&[b'E', addr, c as u8, (c >> 8) as u8])?;
+        let mut buf = vec![0u8; n * 2];
+        self.link.recv(&mut buf)?;
+        Ok(buf)
     }
 
     /// MBC register write (the device refuses anything outside its whitelist)

@@ -140,7 +140,7 @@ module top (
     wire [15:0] req_addr, bus_a;
     wire [7:0]  req_wdata, rsp_data, bus_dout;
     wire bus_doe, bus_clk, bus_rd_n, bus_wr_n, bus_cs_n, bus_dir_e, bus_rst_low;
-    wire cmd_busy, cmd_rejected, ram_mode, ram_on;
+    wire cmd_busy, cmd_rejected, ram_mode, ram_on, req_priv;
 
     CartPower #(.CLK_HZ(60000000)) u_pwr (
         .i_clk(clk60), .i_rst(rst), .i_enable(power_en), .i_version_det(VERSION_DET),
@@ -149,7 +149,7 @@ module top (
         .i_clk(clk60), .i_rst(rst), .i_ready(pw_ready), .i_drive_low(drive_low),
         .i_ram_mode(ram_mode), .o_ram_on(ram_on),
         .i_req_valid(req_valid), .i_req_write(req_write), .i_req_addr(req_addr), .i_req_wdata(req_wdata),
-        .o_req_ready(req_ready), .o_rsp_valid(rsp_valid), .o_rsp_data(rsp_data), .o_rsp_reject(rsp_reject),
+        .i_req_priv(req_priv), .o_req_ready(req_ready), .o_rsp_valid(rsp_valid), .o_rsp_data(rsp_data), .o_rsp_reject(rsp_reject),
         .o_a(bus_a), .o_d_out(bus_dout), .o_d_oe(bus_doe), .i_d_in(CART_D), .o_clk(bus_clk),
         .o_rd_n(bus_rd_n), .o_wr_n(bus_wr_n), .o_cs_n(bus_cs_n), .o_dir_e(bus_dir_e),
         .o_rst_low(bus_rst_low), .o_rst_done(rst_done));
@@ -162,7 +162,7 @@ module top (
         .i_host_ok(configured), .i_ram_on(ram_on), .o_ram_mode(ram_mode),
         .o_cart_det(), .o_busy(cmd_busy), .o_rejected(cmd_rejected),
         .o_req_valid(req_valid), .o_req_write(req_write), .o_req_addr(req_addr), .o_req_wdata(req_wdata),
-        .i_req_ready(req_ready), .i_rsp_valid(rsp_valid), .i_rsp_data(rsp_data), .i_rsp_reject(rsp_reject));
+        .o_req_priv(req_priv), .i_req_ready(req_ready), .i_rsp_valid(rsp_valid), .i_rsp_data(rsp_data), .i_rsp_reject(rsp_reject));
 
     assign CART_A          = bus_a;
     assign CART_D          = bus_doe ? bus_dout : 8'hzz;
