@@ -10,10 +10,12 @@
  *
  * Commands (multi-byte values little endian):
  *   'S'                        -> 8 bytes: 'C' 'R' PROTO flags rst_in
- *                                 reject_cnt err 0
+ *                                 reject_cnt err ram
  *       flags: [0] cartridge detected (debounced)  [1] power switch ON
  *              [2] power requested  [3] CART_PWR_EN  [4] bus ready
  *              (powered, /RST released)  [5] legacy board  [6] /RST pin High
+ *              [7] RAM mode
+ *       ram:   [0] cartridge RAM enabled (CartBus o_ram_on)
  *       err (cleared by 'S'): [0] read while not ready  [1] unknown opcode
  *                             [2] write while not ready
  *   'P' on                     -> 'P' flags     request slot power on / off
@@ -24,6 +26,15 @@
  *                                 0xFF and err[0] while the bus is not ready.
  *   'W' addr16 data            -> 'W' result: 0 done, 1 refused (CartBus
  *                                 whitelist), 2 bus not ready
+ *   'A' on                     -> 'A' flags     RAM mode on / off: cartridge
+ *                                 RAM may be enabled and read (CartBus).
+ *                                 Granted only while power is requested; it
+ *                                 ends with 'A' 0, the power request, the
+ *                                 cartridge (CART_DET, not debounced), the
+ *                                 host (i_host_ok, USB configured), or 1 s
+ *                                 without a command byte. CartBus then
+ *                                 disables the RAM itself, and the slot
+ *                                 stays powered until it has.
  * Unknown opcodes are dropped (err[1]) so the host can resynchronise by
  * sending 'S' a few times and reading until "CR".
  */
@@ -47,6 +58,9 @@ pub module CartCmd #(
     i_pwr_en   : input  logic, // CartPower o_pwr_en
     i_legacy   : input  logic, // CartPower o_legacy
     i_bus_ready: input  logic, // CartPower o_ready && CartBus o_rst_done
+    i_host_ok  : input  logic, // the host is there (USB configured)
+    i_ram_on   : input  logic, // CartBus o_ram_on
+    o_ram_mode : output logic, // to CartBus i_ram_mode
     o_power_en : output logic, // to CartPower i_enable
     o_cart_det : output logic, // debounced
     o_busy     : output logic, // a read is streaming (LED)
@@ -62,8 +76,9 @@ pub module CartCmd #(
     i_rsp_data  : input  logic<8> ,
     i_rsp_reject: input  logic    ,
 ) {
-    const PROTO   : logic<8> = 8'h01;
-    const DEB_CYC : u32      = CLK_HZ / 100; // 10 ms
+    const PROTO  : logic<8> = 8'h02;
+    const DEB_CYC: u32      = CLK_HZ / 100; // 10 ms
+    const WD_CYC : u32      = CLK_HZ; // RAM mode watchdog, 1 s
 
     enum State: logic<3> {
         Op,
@@ -76,22 +91,24 @@ pub module CartCmd #(
         Reply,
     }
 
-    var state : State    ;
-    var op    : logic<8> ;
-    var argn  : logic<3> ; // argument bytes still expected
-    var args  : logic<8> [5];
-    var argi  : logic<3> ;
-    var addr  : logic<16>;
-    var remain: logic<17>;
-    var rdata : logic<8> ;
-    var rbuf  : logic<8> [8];
-    var rlen  : logic<4> ;
-    var ridx  : logic<4> ;
+    var state : State        ;
+    var op    : logic<8>     ;
+    var argn  : logic<3>     ; // argument bytes still expected
+    var args  : logic<8>  [5];
+    var argi  : logic<3>     ;
+    var addr  : logic<16>    ;
+    var remain: logic<17>    ;
+    var rdata : logic<8>     ;
+    var rbuf  : logic<8>  [8];
+    var rlen  : logic<4>     ;
+    var ridx  : logic<4>     ;
 
     var power_req : logic    ;
     var reject_cnt: logic<8> ;
     var err       : logic<3> ;
     var rejected  : logic    ;
+    var ram_mode  : logic    ;
+    var wd_cnt    : logic<27>;
 
     // ---- synchronisers / debouncer ----
     var det_s  : logic<2> ;
@@ -122,12 +139,13 @@ pub module CartCmd #(
         }
     }
 
-    let flags: logic<8> = {1'b0, rst_s[1], i_legacy, i_bus_ready, i_pwr_en, power_req, sw_s[1], det};
+    let flags: logic<8> = {ram_mode, rst_s[1], i_legacy, i_bus_ready, i_pwr_en, power_req, sw_s[1], det};
 
     function nargs (
         o: input logic<8>,
     ) -> logic<3> {
         case o {
+            8'h41  : return 3'd1; // 'A'
             8'h50  : return 3'd1; // 'P'
             8'h52  : return 3'd4; // 'R'
             8'h57  : return 3'd3; // 'W'
@@ -164,10 +182,21 @@ pub module CartCmd #(
             reject_cnt = 0;
             err        = 0;
             rejected   = 0;
+            ram_mode   = 0;
+            wd_cnt     = 0;
         } else {
             // the request is dropped with the cartridge or the switch
             if !det || !sw_s[1] {
                 power_req = 0;
+            }
+            // RAM mode watchdog: counts while waiting for a command byte
+            if rx_take || state != State::Op || !ram_mode {
+                wd_cnt = 0;
+            } else if wd_cnt != WD_CYC - 1 {
+                wd_cnt += 1;
+            }
+            if !power_req || !det_s[1] || !i_host_ok || wd_cnt == WD_CYC - 1 {
+                ram_mode = 0;
             }
             case state {
                 State::Op: {
@@ -175,7 +204,9 @@ pub module CartCmd #(
                         op   = i_rx_data;
                         argi = 0;
                         if i_rx_data == 8'h53 { // 'S'
-                            rbuf  = '{8'h43, 8'h52, PROTO, flags, {7'd0, rst_s[1]}, reject_cnt, {5'd0, err}, 8'h00};
+                            rbuf  = '{
+                                8'h43, 8'h52, PROTO, flags, {7'd0, rst_s[1]}, reject_cnt, {5'd0, err}, {7'd0, i_ram_on}
+                            };
                             rlen  = 4'd8;
                             ridx  = 0;
                             err   = 0;
@@ -190,10 +221,18 @@ pub module CartCmd #(
                 }
                 State::Args: {
                     if rx_take {
-                        args[argi] = i_rx_data;
+                        args[argi] =  i_rx_data;
                         argi       += 1;
                         if argn == 3'd1 {
                             case op {
+                                8'h41: { // 'A'
+                                    ram_mode = i_rx_data[0] && power_req && det_s[1] && i_host_ok;
+                                    rbuf[0]  = 8'h41;
+                                    rbuf[1]  = {i_rx_data[0] && power_req && det_s[1] && i_host_ok, flags[6:0]};
+                                    rlen     = 4'd2;
+                                    ridx     = 0;
+                                    state    = State::Reply;
+                                }
                                 8'h50: { // 'P'
                                     power_req = i_rx_data[0] && det && sw_s[1];
                                     rbuf[0]   = 8'h50;
@@ -204,7 +243,11 @@ pub module CartCmd #(
                                 }
                                 8'h52: { // 'R' addr_l addr_h len_l len_h
                                     addr   = {args[1], args[0]};
-                                    remain = if {i_rx_data, args[2]} == 16'h0000 ? 17'h10000 : {1'b0, i_rx_data, args[2]};
+                                    remain = if {i_rx_data, args[2]} == 16'h0000 ?
+                                        17'h10000
+                                    :
+                                        {1'b0, i_rx_data, args[2]}
+                                    ;
                                     state  = State::ReadReq;
                                 }
                                 default: { // 'W' addr_l addr_h data
@@ -245,7 +288,7 @@ pub module CartCmd #(
                     if tx_take {
                         addr   += 1;
                         remain -= 1;
-                        state  = if remain == 17'd1 ? State::Op : State::ReadReq;
+                        state  =  if remain == 17'd1 ? State::Op : State::ReadReq;
                     }
                 }
                 State::WriteReq: {
@@ -290,7 +333,9 @@ pub module CartCmd #(
         }
     }
 
-    assign o_power_en = power_req;
+    // the slot stays powered until CartBus has disabled the cartridge RAM
+    assign o_power_en = power_req || i_ram_on;
+    assign o_ram_mode = ram_mode;
     assign o_cart_det = det;
     assign o_busy     = state == State::ReadReq || state == State::ReadRsp || state == State::ReadPush;
     assign o_rejected = rejected;

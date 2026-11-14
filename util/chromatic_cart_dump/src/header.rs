@@ -110,12 +110,19 @@ impl Header {
     }
     pub fn ram_size(&self) -> usize {
         match self.ram_code() {
+            0x01 => 2 << 10,
             0x02 => 8 << 10,
             0x03 => 32 << 10,
             0x04 => 128 << 10,
             0x05 => 64 << 10,
             _ => 0,
         }
+    }
+    /// rumble cartridges (MBC5 0x1C-0x1E): RAM bank bit 3 drives the motor
+    pub fn rumble(&self) -> bool { matches!(self.cart_type(), 0x1C..=0x1E) }
+    /// battery-backed cartridge types (the RAM / RTC keeps its contents)
+    pub fn battery(&self) -> bool {
+        matches!(self.cart_type(), 0x03 | 0x06 | 0x09 | 0x0D | 0x0F | 0x10 | 0x13 | 0x1B | 0x1E | 0x22 | 0xFC | 0xFD | 0xFF)
     }
     pub fn header_checksum(&self) -> u8 { self.b(0x14D) }
     pub fn header_checksum_calc(&self) -> u8 {

@@ -19,8 +19,9 @@
 int main(int argc, char **argv) {
     // CART_SIM_ROMOUT=<file>: the cartridge model writes its ROM image there (+romout)
     std::vector<const char *> args(argv, argv + argc);
-    std::string romout;
+    std::string romout, ramout;
     if (const char *e = getenv("CART_SIM_ROMOUT")) { romout = std::string("+romout=") + e; args.push_back(romout.c_str()); }
+    if (const char *e = getenv("CART_SIM_RAMOUT")) { ramout = std::string("+ramout=") + e; args.push_back(ramout.c_str()); }
     Verilated::commandArgs((int)args.size(), args.data());
     auto *m = new Vcart_sim_top;
     fcntl(0, F_SETFL, fcntl(0, F_GETFL) | O_NONBLOCK);
@@ -28,7 +29,7 @@ int main(int argc, char **argv) {
     std::vector<uint8_t> out;
     bool eof = false;
     uint64_t cyc = 0, idle = 0;
-    m->rst = 1; m->cart_det = 1; m->switch_on = 1; m->rx_valid = 0; m->tx_ready = 1;
+    m->rst = 1; m->cart_det = 1; m->switch_on = 1; m->host_ok = 1; m->rx_valid = 0; m->tx_ready = 1;
     auto tick = [&]() { m->clk = 0; m->eval(); m->clk = 1; m->eval(); cyc++; };
     for (int i = 0; i < 16; i++) tick();
     m->rst = 0;
@@ -68,9 +69,10 @@ int main(int argc, char **argv) {
         if (m->n_violations) { fprintf(stderr, "cart_sim: rule violation, stopping\n"); return 3; }
         if (eof && in.empty() && idle > 100000) break;
     }
-    fprintf(stderr, "cart_sim: %llu cycles, %d bus writes, %d violations\n",
-            (unsigned long long)cyc, m->n_writes, m->n_violations);
-    int viol = m->n_violations;
+    fprintf(stderr, "cart_sim: %llu cycles, %d bus writes, %d RAM reads, %d violations%s\n",
+            (unsigned long long)cyc, m->n_writes, m->n_ram_reads, m->n_violations,
+            m->ram_enabled ? ", cartridge RAM left ENABLED" : "");
+    int viol = m->n_violations + (m->ram_enabled ? 1 : 0);
     m->final();
     delete m;
     return viol ? 3 : 0;

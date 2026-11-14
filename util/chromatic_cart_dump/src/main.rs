@@ -3,8 +3,9 @@
 //! Game Boy cartridge ROM dumper for a ModRetro Chromatic running eda/chromatic_cart_dump.
 //!
 //! The FPGA only offers single-byte bus reads and MBC register writes (it refuses every write
-//! outside a small whitelist and never selects cartridge RAM); this tool reads the header,
-//! decides the mapper, switches banks and saves the image.
+//! outside a small whitelist, and selects cartridge RAM only for reads in its RAM mode); this
+//! tool reads the header, decides the mapper, switches banks and saves the ROM image or the
+//! save data (cartridge RAM, read only).
 
 mod header;
 mod link;
@@ -55,6 +56,21 @@ enum Cmd {
         #[arg(long)]
         mbc1m: bool,
         /// dump even when the header checksum is wrong / the mapper is unsupported (banks 0-1 only)
+        #[arg(long)]
+        force: bool,
+        /// leave the slot powered afterwards
+        #[arg(long)]
+        keep_power: bool,
+    },
+    /// read the save data (cartridge RAM), twice and compared; nothing is ever written to it
+    Save {
+        /// output file (default: <title>.sav)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// override the mapper from the header (mbc1, mbc2, mbc3, mbc5)
+        #[arg(long)]
+        mapper: Option<String>,
+        /// read even when the header checksum is wrong
         #[arg(long)]
         force: bool,
         /// leave the slot powered afterwards
@@ -168,7 +184,12 @@ fn print_header(h: &Header) {
         Some(n) => println!("ROM size       : {:02x} ({} KiB, {} banks)", h.rom_code(), n * 16, n),
         None => println!("ROM size       : {:02x} (invalid)", h.rom_code()),
     }
-    println!("RAM size       : {:02x} ({} KiB, not read)", h.ram_code(), h.ram_size() >> 10);
+    if h.mapper() == Mapper::Mbc2 {
+        println!("RAM size       : {:02x} (512 x 4 bit inside the MBC2)", h.ram_code());
+    } else {
+        println!("RAM size       : {:02x} ({} KiB)", h.ram_code(), h.ram_size() >> 10);
+    }
+    println!("battery        : {}", h.battery());
     println!(
         "header checksum: {:02x} ({})",
         h.header_checksum(),
@@ -206,6 +227,75 @@ fn dump_all<L: Link>(r: &mut Reader<L>, b: &Banker, banks: usize, pass: &str) ->
     }
     eprintln!();
     Ok(rom)
+}
+
+/// (banks, bytes per bank) of the cartridge RAM, or why it is not read
+fn ram_layout(m: Mapper, h: &Header) -> Result<(usize, usize), String> {
+    match m {
+        Mapper::Mbc2 => Ok((1, 512)),
+        Mapper::Mbc1 | Mapper::Mbc3 | Mapper::Mbc5 => {
+            let size = h.ram_size();
+            if size == 0 {
+                return Err(format!("the header declares no cartridge RAM (RAM size code {:02x})", h.ram_code()));
+            }
+            let bs = size.min(0x2000);
+            let nb = size / bs;
+            let max = match m {
+                // MBC1: the RAM bank is the upper register in mode 1, which also moves ROM banks
+                // on cartridges over 512 KiB (those have no banked RAM)
+                Mapper::Mbc1 if nb > 1 && h.rom_banks().unwrap_or(0) > 32 => 1,
+                Mapper::Mbc1 => 4,
+                Mapper::Mbc3 => 8,
+                // bit 3 of the RAM bank drives the rumble motor
+                Mapper::Mbc5 if h.rumble() => 8,
+                _ => 16,
+            };
+            if nb > max {
+                return Err(format!("{} KiB of RAM does not fit the {} RAM banking", size >> 10, m.name()));
+            }
+            Ok((nb, bs))
+        }
+        m => Err(format!("reading the RAM of {} is not supported", m.name())),
+    }
+}
+
+/// the whole cartridge RAM: RAM mode, enable, banks, disable, RAM mode off
+fn read_ram<L: Link>(r: &mut Reader<L>, m: Mapper, nb: usize, bs: usize) -> Result<Vec<u8>, String> {
+    if !r.ram_mode(true)? {
+        return Err("the device refused RAM mode".into());
+    }
+    let banked = matches!(m, Mapper::Mbc1 | Mapper::Mbc3 | Mapper::Mbc5);
+    let res = (|| {
+        if m == Mapper::Mbc1 && nb > 1 {
+            r.mbc(0x6000, 0x01)?;
+        }
+        r.mbc(0x0000, 0x0A)?;
+        let mut out = Vec::with_capacity(nb * bs);
+        for b in 0..nb {
+            if banked {
+                r.mbc(0x4000, b as u8)?;
+            }
+            out.extend_from_slice(&r.read(0xA000, bs)?);
+        }
+        Ok::<_, String>(out)
+    })();
+    // disable the RAM ourselves, then leave RAM mode (the device would disable it either way)
+    let off = r.mbc(0x0000, 0x00).and_then(|_| r.ram_off());
+    if banked {
+        let _ = r.mbc(0x4000, 0x00);
+    }
+    if m == Mapper::Mbc1 {
+        let _ = r.mbc(0x6000, 0x00);
+    }
+    let mut out = res?;
+    off?;
+    if m == Mapper::Mbc2 {
+        // 4-bit RAM: the upper nibble is not driven
+        for x in &mut out {
+            *x |= 0xF0;
+        }
+    }
+    Ok(out)
 }
 
 fn run<L: Link>(r: &mut Reader<L>, cmd: &Cmd) -> Result<(), String> {
@@ -283,6 +373,57 @@ fn run<L: Link>(r: &mut Reader<L>, cmd: &Cmd) -> Result<(), String> {
                 }
             }
             let s = r.status()?;
+            if s.reject_cnt != 0 {
+                eprintln!("note: the device refused {} write(s)", s.reject_cnt);
+            }
+            res
+        }
+        Cmd::Save { output, mapper, force, keep_power } => {
+            r.power_up(Duration::from_secs(2))?;
+            let res = (|| {
+                let h = read_header(r)?;
+                print_header(&h);
+                if !h.header_ok() && !force {
+                    return Err("header checksum mismatch: bad contact or not a licensed-format header (--force to read anyway)".into());
+                }
+                let m = match mapper {
+                    Some(s) => Mapper::parse(s).ok_or(format!("unknown mapper '{s}'"))?,
+                    None => h.mapper(),
+                };
+                let (nb, bs) = ram_layout(m, &h)?;
+                if !h.battery() {
+                    eprintln!("note: cartridge type {:02x} has no battery: the RAM holds nothing across power-offs", h.cart_type());
+                }
+                Banker { mapper: m, mbc1m: false }.init(r)?;
+                let t0 = Instant::now();
+                let ram = read_ram(r, m, nb, bs)?;
+                let again = read_ram(r, m, nb, bs)?;
+                if let Some(i) = ram.iter().zip(&again).position(|(x, y)| x != y) {
+                    return Err(format!("the two reads differ first at {i:05x} ({:02x} / {:02x}): check the contacts", ram[i], again[i]));
+                }
+                eprintln!("read {} bytes twice ({} x {} bytes), identical, {:.2} s", ram.len(), nb, bs, t0.elapsed().as_secs_f64());
+                if ram.iter().all(|&x| x == 0xFF) {
+                    eprintln!("warning: the RAM reads all FF (empty save, no RAM, or a dead battery)");
+                }
+                let mut sha = Sha1::new();
+                sha.update(&ram);
+                println!("size           : {} bytes", ram.len());
+                println!("CRC32          : {:08x}", crc32fast::hash(&ram));
+                println!("SHA-1          : {:x}", sha.finalize());
+                let path = output.clone().unwrap_or_else(|| PathBuf::from(format!("{}.sav", sanitize(&h.title()))));
+                std::fs::write(&path, &ram).map_err(|e| format!("{}: {e}", path.display()))?;
+                println!("saved          : {}", path.display());
+                Ok(())
+            })();
+            if !keep_power {
+                if let Err(e) = r.power(false) {
+                    eprintln!("warning: power off: {e}");
+                }
+            }
+            let s = r.status()?;
+            if s.ram_on || s.ram_mode() {
+                eprintln!("warning: {}", s.describe());
+            }
             if s.reject_cnt != 0 {
                 eprintln!("note: the device refused {} write(s)", s.reject_cnt);
             }

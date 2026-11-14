@@ -18,8 +18,8 @@
 //
 // Every other board pin is held as in eda/chromatic_blink (ESP32 in reset, codec in reset,
 // backlight off, ...). LED: green blink = USB not configured, green = ready / slot off,
-// yellow = slot powering, blue = cartridge powered (flickers while reading), red blink = a write
-// was refused since the design was loaded.
+// yellow = slot powering, blue = cartridge powered (flickers while reading), magenta = cartridge
+// RAM enabled (save data being read), red blink = a write was refused since the design was loaded.
 module top (
     input  wire        CLK_FPGA,
     input  wire        CLK_24MHz,
@@ -140,13 +140,14 @@ module top (
     wire [15:0] req_addr, bus_a;
     wire [7:0]  req_wdata, rsp_data, bus_dout;
     wire bus_doe, bus_clk, bus_rd_n, bus_wr_n, bus_cs_n, bus_dir_e, bus_rst_low;
-    wire cmd_busy, cmd_rejected;
+    wire cmd_busy, cmd_rejected, ram_mode, ram_on;
 
     CartPower #(.CLK_HZ(60000000)) u_pwr (
         .i_clk(clk60), .i_rst(rst), .i_enable(power_en), .i_version_det(VERSION_DET),
         .o_legacy(legacy), .o_ready(pw_ready), .o_pwr_en(pwr_en), .o_ctrl_oe(ctrl_oe), .o_drive_low(drive_low));
     CartBus #(.CYCLE(60)) u_bus (
         .i_clk(clk60), .i_rst(rst), .i_ready(pw_ready), .i_drive_low(drive_low),
+        .i_ram_mode(ram_mode), .o_ram_on(ram_on),
         .i_req_valid(req_valid), .i_req_write(req_write), .i_req_addr(req_addr), .i_req_wdata(req_wdata),
         .o_req_ready(req_ready), .o_rsp_valid(rsp_valid), .o_rsp_data(rsp_data), .o_rsp_reject(rsp_reject),
         .o_a(bus_a), .o_d_out(bus_dout), .o_d_oe(bus_doe), .i_d_in(CART_D), .o_clk(bus_clk),
@@ -158,6 +159,7 @@ module top (
         .o_tx_valid(tx_valid), .o_tx_data(tx_data), .i_tx_ready(tx_ready),
         .i_cart_det(CART_DET), .i_switch_on(~POWER_ON_FPGA), .i_rst_in(CART_RST), .i_pwr_en(pwr_en),
         .i_legacy(legacy), .i_bus_ready(pw_ready & rst_done), .o_power_en(power_en),
+        .i_host_ok(configured), .i_ram_on(ram_on), .o_ram_mode(ram_mode),
         .o_cart_det(), .o_busy(cmd_busy), .o_rejected(cmd_rejected),
         .o_req_valid(req_valid), .o_req_write(req_write), .o_req_addr(req_addr), .o_req_wdata(req_wdata),
         .i_req_ready(req_ready), .i_rsp_valid(rsp_valid), .i_rsp_data(rsp_data), .i_rsp_reject(rsp_reject));
@@ -180,6 +182,7 @@ module top (
     always_comb begin
         r = 1'b0; g = 1'b0; b = 1'b0;
         if (!configured)                 g = blink[25];
+        else if (ram_on)                 begin r = 1'b1; b = 1'b1; end
         else if (pw_ready && rst_done)   b = cmd_busy ? blink[20] : 1'b1;
         else if (pwr_en || power_en)     begin r = 1'b1; g = 1'b1; end
         else                             g = 1'b1;

@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: BSL-1.0
 // Copyright Kenta Ida 2026.
 // Game Boy cartridge model for the cartridge reader tests: ROM with a
-// generated header, ROM only / MBC1 / MBC2 / MBC3 / MBC5 banking, and
-// monitors for every rule the reader must keep (no /CS, whitelisted MBC
-// writes only, no RAM enable, no data contention, every line Low while
-// the slot is unpowered on a newer board).
+// generated header, ROM only / MBC1 / MBC2 / MBC3 / MBC5 banking, cartridge
+// RAM (MBC2: 512 x 4 bit inside the MBC, its upper nibble reads as noise),
+// and monitors for every rule the reader must keep (whitelisted MBC writes
+// only, never a write with /CS or to 0xA000-0xBFFF, /CS only for RAM reads,
+// RAM disabled before the power goes down, no data contention, every line
+// Low while the slot is unpowered on a newer board).
 `timescale 1ns/1ps
 module gb_cart_model #(
     parameter int MBC       = 5,     // 0 ROM only, 1 MBC1, 2 MBC2, 3 MBC3, 5 MBC5
     parameter int ROM_CODE  = 5,     // header 0x148: 32 KiB << ROM_CODE
     parameter bit MBC1M     = 0,     // MBC1 multicart wiring (bank bits 4:0 -> 3:0, reg2 -> bits 5:4)
-    parameter bit BAD_HDR   = 0      // corrupt the header checksum
+    parameter bit BAD_HDR   = 0,     // corrupt the header checksum
+    parameter int RAM_CODE  = 0      // header 0x149 (0 none, 1 2 KiB, 2 8 KiB, 3 32 KiB, 4 128 KiB, 5 64 KiB)
 ) (
     input  logic        clk,         // monitor clock (the design clock)
     input  logic        rst,
@@ -18,6 +21,7 @@ module gb_cart_model #(
     input  logic        pwr_en,      // CART_PWR_EN
     input  logic        ctrl_oe,
     input  logic        drive_low_expected,
+    input  logic        ram_mode,    // the reader's RAM mode (a RAM enable is allowed only then)
     input  logic [15:0] a,
     input  logic        clk_phi,
     input  logic        rd_n,
@@ -29,16 +33,25 @@ module gb_cart_model #(
     input  logic        d_oe,
     output logic [7:0]  d_in,        // data seen by the FPGA
     output int          n_writes,
-    output int          n_violations
+    output int          n_violations,
+    output int          n_ram_reads,  // bus reads that returned cartridge RAM
+    output logic        ram_enabled
 );
     localparam int ROM_BYTES = 32768 << ROM_CODE;
     localparam int BANKS     = ROM_BYTES / 16384;
+    localparam int RAM_BYTES = MBC == 2 ? 512 :
+                               RAM_CODE == 1 ? 2048 : RAM_CODE == 2 ? 8192 : RAM_CODE == 3 ? 32768 :
+                               RAM_CODE == 4 ? 131072 : RAM_CODE == 5 ? 65536 : 0;
+    localparam int RAM_ALLOC = RAM_BYTES == 0 ? 1 : RAM_BYTES;
 
     logic [7:0] rom [ROM_BYTES];
     logic [8:0] bank_lo;    // MBC1: 5 bits, MBC2: 4, MBC3: 7, MBC5: 9
     logic [1:0] reg2;
     logic       mode;
     logic       ram_en;
+    logic [3:0] ram_bank;   // MBC3 / MBC5 (MBC1 uses reg2 in mode 1)
+    logic [7:0] ram [RAM_ALLOC];
+    assign ram_enabled = ram_en;
 
     function automatic logic [7:0] fill(int i);
         logic [31:0] x;
@@ -57,14 +70,15 @@ module gb_cart_model #(
         rom[16'h143] = 8'h80;
         case (MBC)
             0: rom[16'h147] = 8'h00;
-            1: rom[16'h147] = 8'h01;
-            2: rom[16'h147] = 8'h05;
-            3: rom[16'h147] = 8'h11;
-            5: rom[16'h147] = 8'h19;
+            1: rom[16'h147] = RAM_CODE != 0 ? 8'h03 : 8'h01;
+            2: rom[16'h147] = 8'h06;
+            3: rom[16'h147] = RAM_CODE != 0 ? 8'h13 : 8'h11;
+            5: rom[16'h147] = RAM_CODE != 0 ? 8'h1B : 8'h19;
             default: rom[16'h147] = 8'h00;
         endcase
         rom[16'h148] = 8'(ROM_CODE);
-        rom[16'h149] = 8'h00;
+        rom[16'h149] = MBC == 2 ? 8'h00 : 8'(RAM_CODE);
+        for (int i = 0; i < RAM_ALLOC; i++) ram[i] = fill(i * 7 + 12345) ^ 8'h5A;
         x = 0;
         for (int i = 16'h134; i <= 16'h14C; i++) x = x - rom[i] - 8'd1;
         rom[16'h14D] = BAD_HDR ? ~x : x;
@@ -84,7 +98,28 @@ module gb_cart_model #(
             for (int i = 0; i < ROM_BYTES; i++) $fwrite(fd, "%c", rom[i]);
             $fclose(fd);
         end
+        // +ramout=<file>: the expected save image (MBC2: low nibble, upper nibble 1s)
+        if ($value$plusargs("ramout=%s", title)) begin
+            int fd;
+            fd = $fopen(title, "wb");
+            for (int i = 0; i < RAM_BYTES; i++) $fwrite(fd, "%c", MBC == 2 ? (ram[i] | 8'hF0) : ram[i]);
+            $fclose(fd);
+        end
     end
+
+    function automatic int ram_addr(logic [15:0] addr);
+        int b;
+        if (MBC == 2) return int'(addr[8:0]);  // 512 nibbles, mirrored over 0xA000-0xBFFF
+        case (MBC)
+            1: b = mode ? int'(reg2) : 0;
+            3, 5: b = int'(ram_bank);
+            default: b = 0;
+        endcase
+        return (b * 8192 + int'(addr[12:0])) % RAM_ALLOC;
+    endfunction
+    wire ram_sel = !cs_n && a[15:13] == 3'b101;
+    wire ram_hit = ram_sel && !rd_n && ram_en && RAM_BYTES != 0;
+    logic [3:0] noise;
 
     // ---- banking ----
     function automatic int unsigned map(logic [15:0] addr);
@@ -111,16 +146,22 @@ module gb_cart_model #(
     endfunction
 
     wire cart_drives = !rd_n && !a[15];
-    assign d_in = dir_e ? (cart_drives ? rom[map(a)] : 8'hFF) : 8'hFF;
+    wire [7:0] ram_q = ram[ram_addr(a)];
+    assign d_in = !dir_e ? 8'hFF :
+                  cart_drives ? rom[map(a)] :
+                  ram_hit ? (MBC == 2 ? {noise, ram_q[3:0]} : ram_q) : 8'hFF;
 
     // ---- monitors ----
     logic wr_n_q;
     int   cyc;
     logic [1:0] dl_q;
+    logic on_q, rd_n_q, cs_n_q;
     wire  on = ctrl_oe || legacy;
+    // the reader's whitelist (0x0A only in RAM mode, which the model does not see: the
+    // test checks the mode separately)
     function automatic bit allowed(logic [15:0] ad, logic [7:0] dt);
-        return (ad == 16'h0000 && dt == 8'h00) || ad == 16'h2000 || ad == 16'h2100 ||
-               ad == 16'h3000 || ad == 16'h4000 || ad == 16'h6000;
+        return (ad == 16'h0000 && (dt == 8'h00 || dt == 8'h0A)) || ad == 16'h2000 || ad == 16'h2100 ||
+               ad == 16'h3000 || (ad == 16'h4000 && dt < 8'h10) || ad == 16'h6000;
     endfunction
     task automatic violation(string s);
         n_violations++;
@@ -130,6 +171,7 @@ module gb_cart_model #(
     initial begin
         n_writes = 0;
         n_violations = 0;
+        n_ram_reads = 0;
     end
 
     always_ff @(posedge clk) begin
@@ -138,15 +180,29 @@ module gb_cart_model #(
             reg2    <= 0;
             mode    <= 0;
             ram_en  <= 0;
+            ram_bank <= 0;
+            noise   <= 0;
+            on_q    <= 0;
+            rd_n_q  <= 1;
+            cs_n_q  <= 1;
             wr_n_q  <= 1;
             dl_q    <= 0;
             cyc     <= 0;
         end else begin
             cyc    <= cyc + 1;
             wr_n_q <= wr_n;
+            rd_n_q <= rd_n;
+            cs_n_q <= cs_n;
+            on_q   <= on;
+            noise  <= noise + 4'd5;
             dl_q   <= {dl_q[0], drive_low_expected};
             if (d_oe && dir_e) violation("FPGA drives D while the shifter drives the FPGA side");
-            if (on && !cs_n) violation("/CS asserted with the slot powered");
+            if (on && !cs_n && !wr_n) violation("/CS and /WR Low together");
+            if (on && !cs_n && a[15:13] != 3'b101) violation($sformatf("/CS Low outside 0xA000-0xBFFF (a=%h)", a));
+            if (on && !cs_n && rd_n) violation("/CS Low without /RD");
+            if (on_q && !on && ram_en) violation("slot powered down with the cartridge RAM enabled");
+            // count a RAM read once per /RD pulse, at its end
+            if (on && !rd_n_q && rd_n && !cs_n_q && a[15:13] == 3'b101 && ram_en) n_ram_reads <= n_ram_reads + 1;
             if (!legacy && !pwr_en && drive_low_expected && dl_q == 2'b11 && cyc > 64 &&
                 (a != 0 || clk_phi || rd_n || wr_n || cs_n || !rst_low || !d_oe || d_out != 0 || dir_e))
                 violation($sformatf("slot unpowered but a line is not Low (a=%h phi=%b rd=%b wr=%b cs=%b rst_low=%b oe=%b d=%h dir=%b)",
@@ -157,8 +213,8 @@ module gb_cart_model #(
             if (!wr_n_q && wr_n && on) begin
                 n_writes <= n_writes + 1;
                 if (!allowed(a, d_out)) violation($sformatf("write %h <- %h is not whitelisted", a, d_out));
+                if (a == 16'h0000 && d_out == 8'h0A && !ram_mode) violation("RAM enable outside RAM mode");
                 if (a[15]) violation($sformatf("write to %h (not an MBC register)", a));
-                if (a < 16'h2000 && d_out[3:0] == 4'hA) violation("RAM enable written");
                 if (!a[15]) begin
                     case (MBC)
                         1: begin
@@ -177,6 +233,7 @@ module gb_cart_model #(
                             case (a[14:13])
                                 2'd0: ram_en <= d_out[3:0] == 4'hA;
                                 2'd1: bank_lo <= {2'd0, d_out[6:0]};
+                                2'd2: ram_bank <= d_out[3:0];
                                 default: ;
                             endcase
                         end
@@ -185,6 +242,7 @@ module gb_cart_model #(
                                 3'd0, 3'd1: ram_en <= d_out[3:0] == 4'hA;
                                 3'd2: bank_lo[7:0] <= d_out;
                                 3'd3: bank_lo[8] <= d_out[0];
+                                3'd4, 3'd5: ram_bank <= d_out[3:0];
                                 default: ;
                             endcase
                         end

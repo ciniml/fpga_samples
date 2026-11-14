@@ -5,7 +5,7 @@
 use crate::link::Link;
 use std::time::{Duration, Instant};
 
-pub const PROTO: u8 = 1;
+pub const PROTO: u8 = 2;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Status {
@@ -13,6 +13,8 @@ pub struct Status {
     pub rst_high: bool,
     pub reject_cnt: u8,
     pub err: u8,
+    /// the cartridge RAM is enabled (the device disables it itself when RAM mode ends)
+    pub ram_on: bool,
 }
 
 impl Status {
@@ -22,9 +24,10 @@ impl Status {
     pub fn pwr_en(&self) -> bool { self.flags & 0x08 != 0 }
     pub fn ready(&self) -> bool { self.flags & 0x10 != 0 }
     pub fn legacy(&self) -> bool { self.flags & 0x20 != 0 }
+    pub fn ram_mode(&self) -> bool { self.flags & 0x80 != 0 }
     pub fn describe(&self) -> String {
         format!(
-            "cartridge {} / switch {} / power request {} / slot power {} / bus {} / /RST {} / board {}{}{}",
+            "cartridge {} / switch {} / power request {} / slot power {} / bus {} / /RST {} / board {}{}{}{}",
             if self.cart() { "inserted" } else { "none" },
             if self.switch_on() { "ON" } else { "OFF" },
             self.power_req() as u8,
@@ -34,6 +37,12 @@ impl Status {
             if self.legacy() { "legacy" } else { "new" },
             if self.reject_cnt != 0 { format!(" / refused writes {}", self.reject_cnt) } else { String::new() },
             if self.err != 0 { format!(" / err {:03b}", self.err) } else { String::new() },
+            match (self.ram_mode(), self.ram_on) {
+                (false, false) => "",
+                (true, false) => " / RAM mode",
+                (true, true) => " / RAM mode, RAM enabled",
+                (false, true) => " / RAM enabled (being disabled)",
+            },
         )
     }
 }
@@ -68,7 +77,7 @@ impl<L: Link> Reader<L> {
         if b[2] != PROTO {
             return Err(format!("protocol {} (this tool speaks {PROTO})", b[2]));
         }
-        Ok(Status { flags: b[3], rst_high: b[4] & 1 != 0, reject_cnt: b[5], err: b[6] })
+        Ok(Status { flags: b[3], rst_high: b[4] & 1 != 0, reject_cnt: b[5], err: b[6], ram_on: b[7] & 1 != 0 })
     }
 
     pub fn power(&mut self, on: bool) -> Result<u8, String> {
@@ -79,6 +88,33 @@ impl<L: Link> Reader<L> {
             return Err(format!("unexpected power reply {b:02x?}"));
         }
         Ok(b[1])
+    }
+
+    /// RAM mode on / off ('A'): Ok(granted)
+    pub fn ram_mode(&mut self, on: bool) -> Result<bool, String> {
+        self.link.send(&[b'A', on as u8])?;
+        let mut b = [0u8; 2];
+        self.link.recv(&mut b)?;
+        if b[0] != b'A' {
+            return Err(format!("unexpected RAM mode reply {b:02x?}"));
+        }
+        Ok(b[1] & 0x80 != 0)
+    }
+
+    /// leave RAM mode and wait until the device has disabled the cartridge RAM
+    pub fn ram_off(&mut self) -> Result<(), String> {
+        self.ram_mode(false)?;
+        let t0 = Instant::now();
+        loop {
+            let s = self.status()?;
+            if !s.ram_on && !s.ram_mode() {
+                return Ok(());
+            }
+            if t0.elapsed() > Duration::from_secs(2) {
+                return Err(format!("the cartridge RAM is still enabled: {}", s.describe()));
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
     }
 
     /// power the slot and wait until the bus is ready and the cartridge released /RST
