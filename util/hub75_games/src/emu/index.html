@@ -35,6 +35,7 @@
   <label>拡大 <select id="zoom"><option value="0">自動</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>8</option></select></label>
   <label><input type="checkbox" id="gaps" checked> 隙間</label>
   <label><input type="checkbox" id="labels" checked> コネクタ名</label>
+  <label title="矢印 移動 / Space / Z / X / C / Enter 開始 / P ポーズ / M メニュー / - + 音量 / 0 ミュート"><input type="checkbox" id="keys" checked> キー操作</label>
   <button id="snd">音を出す</button>
   <label>音量 <input type="range" id="vol" min="0" max="100" value="70" style="width:80px"></label>
 </header>
@@ -49,7 +50,7 @@ let frame = null, fw = 0, fh = 0, dirty = false;
 const store = (k, v) => { try { localStorage.setItem("hub75emu." + k, v); } catch (e) {} };
 const load = k => { try { return localStorage.getItem("hub75emu." + k); } catch (e) { return null; } };
 for (const k of ["mode", "zoom"]) { const v = load(k); if (v !== null) $(k).value = v; }
-for (const k of ["labels", "gaps"]) {
+for (const k of ["labels", "gaps", "keys"]) {
   if (load(k) !== null) $(k).checked = load(k) === "1";
   $(k).onchange = () => { store(k, $(k).checked ? "1" : "0"); layout(); };
 }
@@ -161,9 +162,35 @@ function play(samples) {
   at += b.duration;
 }
 
+// ---- keys: sent back to the demo (hub75emu relays them over UDP), the
+// same as in its terminal; the demo repeats a held arrow itself
+const KEYMAP = { arrowleft: "Left", a: "Left", h: "Left", arrowright: "Right", d: "Right", l: "Right",
+  arrowup: "Up", w: "Up", k: "Up", arrowdown: "Down", s: "Down", j: "Down", z: "A", x: "B", b: "B",
+  " ": "Space", c: "Hold", v: "Hold", enter: "Start", p: "Pause", m: "Home",
+  "-": "VolDown", "+": "VolUp", "=": "VolUp", "0": "Mute" };
+let sock = null;
+const held = new Map(); // physical key (e.code) -> its name
+const sendKey = (name, down) => { if (sock && sock.readyState === 1) sock.send(`key ${name} ${down ? 1 : 0}`); };
+function onKey(e, down) {
+  if (!$("keys").checked || e.ctrlKey || e.altKey || e.metaKey) return;
+  const name = down ? KEYMAP[e.key.toLowerCase()] : held.get(e.code);
+  if (!name) return;
+  e.preventDefault(); // no scrolling, no toggled checkbox
+  if (down === held.has(e.code)) return; // auto-repeat
+  if (down) held.set(e.code, name); else held.delete(e.code);
+  // two keys for one name (A and ←): down at the first, up after the last
+  if ([...held.values()].filter(n => n === name).length === (down ? 1 : 0)) sendKey(name, down);
+}
+document.addEventListener("keydown", e => onKey(e, true), true);
+document.addEventListener("keyup", e => onKey(e, false), true);
+function releaseAll() { if (held.size) { held.clear(); if (sock && sock.readyState === 1) sock.send("key all 0"); } }
+window.addEventListener("blur", releaseAll);
+$("keys").addEventListener("change", releaseAll);
+
 // ---- the link ----
 function connect() {
   const ws = new WebSocket(`ws://${location.host}/ws`);
+  sock = ws;
   ws.binaryType = "arraybuffer";
   ws.onopen = () => { $("conn").textContent = "接続"; $("conn").classList.remove("bad"); };
   ws.onclose = () => { $("conn").textContent = "切断 (再接続中)"; $("conn").classList.add("bad"); setTimeout(connect, 1000); };

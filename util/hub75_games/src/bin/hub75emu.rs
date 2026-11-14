@@ -15,6 +15,9 @@
 //   2 sound: mono i16 little endian at 48 kHz ((L + R) / 2 of the packet)
 //   3 colour tables: 64 R, 64 G, 64 B (8 bit, as loaded on port 10005)
 // and text messages (JSON): the layout on connecting, the counters every second.
+// From the browser: its keys, text "key <name> <1 | 0>" ("key all 0": the
+// page lost the focus), sent on to the host the frames come from (UDP
+// 10006, where the demo's input.rs takes them like a controller's).
 use clap::Parser;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
@@ -23,6 +26,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const PAGE: &str = include_str!("../emu/index.html");
+use hub75_games::input::KEY_PORT;
 
 #[derive(Parser)]
 struct Cli {
@@ -55,6 +59,8 @@ struct Hub {
     lut: Mutex<Vec<u8>>,
     frame: Mutex<Option<Arc<Vec<u8>>>>,
     stat: Mutex<Stat>,
+    sender: Mutex<Option<SocketAddr>>, // where the frames come from
+    keys: Mutex<Option<UdpSocket>>,    // sends the page's keys there
 }
 
 #[derive(Default)]
@@ -70,6 +76,14 @@ struct Stat {
 impl Hub {
     fn send(&self, m: Arc<Vec<u8>>) {
         self.clients.lock().unwrap().retain(|c| !matches!(c.try_send(m.clone()), Err(TrySendError::Disconnected(_))));
+    }
+
+    /// a key from a page, to the demo
+    fn key(&self, m: &[u8]) {
+        let Some(to) = *self.sender.lock().unwrap() else { return };
+        if let Some(s) = &*self.keys.lock().unwrap() {
+            let _ = s.send_to(m, SocketAddr::new(to.ip(), KEY_PORT));
+        }
     }
 }
 
@@ -147,6 +161,30 @@ fn ws_frame(op: u8, payload: &[u8]) -> Vec<u8> {
     f
 }
 
+/// a WebSocket message from the browser (masked, at most 64 KB): (opcode, payload)
+fn ws_read(r: &mut impl Read) -> std::io::Result<(u8, Vec<u8>)> {
+    let mut h = [0u8; 2];
+    r.read_exact(&mut h)?;
+    let mut n = (h[1] & 0x7f) as usize;
+    if n == 126 {
+        let mut l = [0u8; 2];
+        r.read_exact(&mut l)?;
+        n = u16::from_be_bytes(l) as usize;
+    } else if n == 127 {
+        return Err(std::io::ErrorKind::InvalidData.into());
+    }
+    let mut mask = [0u8; 4];
+    if h[1] & 0x80 != 0 {
+        r.read_exact(&mut mask)?;
+    }
+    let mut p = vec![0u8; n];
+    r.read_exact(&mut p)?;
+    for (i, b) in p.iter_mut().enumerate() {
+        *b ^= mask[i % 4];
+    }
+    Ok((h[0] & 0x0f, p))
+}
+
 fn text(s: &str) -> Arc<Vec<u8>> {
     Arc::new(ws_frame(1, s.as_bytes()))
 }
@@ -197,13 +235,13 @@ fn http(mut s: TcpStream, hub: Arc<Hub>, config: Arc<String>) -> std::io::Result
                 }
                 let _ = w.shutdown(std::net::Shutdown::Both);
             });
-            // read (and drop) what the page sends, until it closes
-            let mut b = [0u8; 4096];
-            loop {
-                match r.read(&mut b) {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) if n >= 1 && b[0] & 0x0f == 8 => break,
-                    Ok(_) => {}
+            // the page's keys, until it closes
+            while let Ok((op, m)) = ws_read(&mut r) {
+                if op == 8 {
+                    break;
+                }
+                if op == 1 && m.starts_with(b"key ") {
+                    hub.key(&m);
                 }
             }
             let _ = s.shutdown(std::net::Shutdown::Both);
@@ -276,6 +314,7 @@ fn video(sock: UdpSocket, hub: Arc<Hub>, fw: usize, fh: usize, cols: usize, rows
             *hub.frame.lock().unwrap() = Some(msg.clone());
             hub.send(msg);
             let _ = sock.send_to(&[0xde, 0xad, 0xbe, 0xef], src);
+            *hub.sender.lock().unwrap() = Some(src);
             let mut st = hub.stat.lock().unwrap();
             st.frames += 1;
             st.src = src.to_string();
@@ -397,6 +436,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
     let hub = Arc::new(Hub::default());
     *hub.lut.lock().unwrap() = identity_lut();
+    *hub.keys.lock().unwrap() = Some(UdpSocket::bind("0.0.0.0:0")?);
 
     let v = UdpSocket::bind((cli.udp.as_str(), 10004))?;
     big_rcvbuf(&v);

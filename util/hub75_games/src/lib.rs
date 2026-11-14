@@ -271,13 +271,19 @@ pub fn run<G: Game>(name: &str, keys: &str, make: impl FnOnce(u64, u64) -> G) ->
     // without a terminal (e.g. started in the background) a game controller
     // can play; with neither, only --auto works
     let mut inp = if std::io::stdin().is_terminal() { Some(input::Input::new()?) } else { Some(input::Input::pad_only()) };
-    let pad = inp.as_ref().map_or(false, |i| i.pad.connected());
+    // with an emulator, its page's keys too
+    if cli.emu || !mirrors.is_empty() {
+        if let Some(Err(e)) = inp.as_mut().map(|i| i.listen()) {
+            print!("emulator page keys: off (UDP {}: {})\r\n", input::KEY_PORT, e);
+        }
+    }
+    let pad = inp.as_ref().map_or(false, |i| i.pad.connected() || i.listening());
     if !std::io::stdin().is_terminal() && !pad && !cli.auto && game.needs_keys() {
         return Err("no terminal and no game controller for the keys (use --auto for the attract mode)".into());
     }
     let pad_name = inp.as_ref().filter(|i| i.pad.connected()).map(|i| i.pad.name.clone());
     print!(
-        "hub75 {} -> {}{} ({}x{} frame)\r\nkeys: {}\r\ncontroller: {}\r\n{}\r\n",
+        "hub75 {} -> {}{} ({}x{} frame)\r\nkeys: {}\r\ncontroller: {}{}\r\n{}\r\n",
         name,
         dest,
         mirrors.iter().map(|m| format!(" + {}", m)).collect::<String>(),
@@ -285,6 +291,7 @@ pub fn run<G: Game>(name: &str, keys: &str, make: impl FnOnce(u64, u64) -> G) ->
         fh,
         keys,
         pad_name.as_deref().unwrap_or("none yet (looked for every 2 s)"),
+        if inp.as_ref().is_some_and(|i| i.listening()) { ", and the emulator page's keys" } else { "" },
         if !std::io::stdin().is_terminal() {
             "no terminal: the controller only"
         } else if inp.as_ref().is_some_and(|i| i.releases) {

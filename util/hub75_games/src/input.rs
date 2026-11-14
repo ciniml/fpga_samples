@@ -11,6 +11,10 @@
 // and releases, and the arrows repeat while held (like a keyboard's
 // auto-repeat, for the moves that step per press). Without a terminal the
 // controller alone can play (Input::pad_only).
+//
+// The emulator's web page (hub75emu) sends its keys back too, as UDP
+// datagrams "key <name> <1 | 0>" to port KEY_PORT (Input::listen): they
+// count like the controller's (press / release, the arrows repeat).
 use crate::gamepad::Gamepad;
 use crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags,
@@ -18,6 +22,7 @@ use crossterm::event::{
 };
 use crossterm::{execute, terminal};
 use std::io;
+use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -40,6 +45,9 @@ pub enum Key {
 }
 pub const NKEYS: usize = 15;
 
+/// where hub75emu sends the page's keys (on the host the frames come from)
+pub const KEY_PORT: u16 = 10006;
+
 const FIRST_HOLD: Duration = Duration::from_millis(550); // > auto-repeat delay
 const REPEAT_HOLD: Duration = Duration::from_millis(120); // > auto-repeat period
 
@@ -56,6 +64,7 @@ pub struct Input {
     pad_held: [Option<Instant>; NKEYS], // held on the controller: the next repeat
     pad_any: bool,                      // a controller button since the last call
     pad_active: bool,                   // any controller press, the arrows too
+    net: Option<UdpSocket>,             // the emulator page's keys
 }
 
 fn map(k: &KeyEvent) -> Option<Key> {
@@ -81,6 +90,30 @@ fn map(k: &KeyEvent) -> Option<Key> {
         _ => return None,
     })
 }
+
+/// a key named by the emulator page (not Quit: a visitor must not stop it)
+fn named(s: &str) -> Option<Key> {
+    Some(match s {
+        "Left" => Key::Left,
+        "Right" => Key::Right,
+        "Up" => Key::Up,
+        "Down" => Key::Down,
+        "A" => Key::A,
+        "B" => Key::B,
+        "Space" => Key::Space,
+        "Hold" => Key::Hold,
+        "Start" => Key::Start,
+        "Pause" => Key::Pause,
+        "Home" => Key::Home,
+        "VolDown" => Key::VolDown,
+        "VolUp" => Key::VolUp,
+        "Mute" => Key::Mute,
+        _ => return None,
+    })
+}
+
+const ALL: [Key; NKEYS] =
+    [Key::Left, Key::Right, Key::Up, Key::Down, Key::A, Key::B, Key::Space, Key::Hold, Key::Start, Key::Pause, Key::Quit, Key::Home, Key::VolDown, Key::VolUp, Key::Mute];
 
 fn opposite(k: Key) -> Option<Key> {
     match k {
@@ -124,7 +157,20 @@ impl Input {
             pad_held: [None; NKEYS],
             pad_any: false,
             pad_active: false,
+            net: None,
         }
+    }
+
+    /// also take the keys of the emulator's page (UDP KEY_PORT, all interfaces)
+    pub fn listen(&mut self) -> io::Result<()> {
+        let s = UdpSocket::bind(("0.0.0.0", KEY_PORT))?;
+        s.set_nonblocking(true)?;
+        self.net = Some(s);
+        Ok(())
+    }
+
+    pub fn listening(&self) -> bool {
+        self.net.is_some()
     }
 
     /// no keys at all (a game left on its end screen)
@@ -153,24 +199,42 @@ impl Input {
     /// reads all pending events
     pub fn poll(&mut self) -> io::Result<()> {
         let now = Instant::now();
-        let (pressed, hits, held, any, active) = (&mut self.pressed, &mut self.hits, &mut self.pad_held, &mut self.pad_any, &mut self.pad_active);
-        self.pad.poll(
-            |k, down| {
-                let i = k as usize;
-                if down {
-                    *active = true;
-                    pressed[i] = true;
-                    hits[i] += 1;
-                    held[i] = Some(now + PAD_DELAY);
-                    if let Some(o) = opposite(k) {
-                        held[o as usize] = None;
+        let mut evs = Vec::new();
+        let mut any = false;
+        self.pad.poll(|k, down| evs.push((k, down)), || any = true);
+        if let Some(sock) = &self.net {
+            let mut b = [0u8; 64];
+            while let Ok(n) = sock.recv(&mut b) {
+                let msg = String::from_utf8_lossy(&b[..n]);
+                let mut w = msg.split_whitespace();
+                let (Some("key"), Some(name), Some(d)) = (w.next(), w.next(), w.next()) else { continue };
+                let down = d == "1";
+                if name == "all" {
+                    // the page lost the focus: everything up
+                    evs.extend(ALL.iter().map(|&k| (k, false)));
+                } else if let Some(k) = named(name) {
+                    if down && !matches!(k, Key::VolDown | Key::VolUp | Key::Mute) {
+                        any = true;
                     }
-                } else {
-                    held[i] = None;
+                    evs.push((k, down));
                 }
-            },
-            || *any = true,
-        );
+            }
+        }
+        self.pad_any |= any;
+        for (k, down) in evs {
+            let i = k as usize;
+            if down {
+                self.pad_active = true;
+                self.pressed[i] = true;
+                self.hits[i] += 1;
+                self.pad_held[i] = Some(now + PAD_DELAY);
+                if let Some(o) = opposite(k) {
+                    self.pad_held[o as usize] = None;
+                }
+            } else {
+                self.pad_held[i] = None;
+            }
+        }
         // the arrows repeat while held
         for k in [Key::Left, Key::Right, Key::Up, Key::Down] {
             let i = k as usize;
