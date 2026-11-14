@@ -3,7 +3,9 @@
 //! Web UI: `chromatic_cart_dump serve`. One worker thread owns the cartridge reader (USB, opened
 //! per operation because an FPGA load re-enumerates it) and refreshes the status every second
 //! while idle; the browser polls /api/state. The cartridge stays write-protected by the FPGA
-//! whatever is asked here (rtl/chromatic/cart_bus.veryl), and the FPGA load is SRAM only.
+//! whatever is asked here (rtl/chromatic/cart_bus.veryl), except the flash of a flash cartridge
+//! through the flash job (FlashEngine: identifier, byte program, sector erase; a full backup is
+//! read twice and saved first). The FPGA load is SRAM only.
 
 use crate::header::{Header, Mapper};
 use crate::link::{Link, SimLink, UsbLink};
@@ -23,6 +25,7 @@ use tiny_http::{Header as HttpHeader, Method, Request, Response, Server};
 
 const INDEX: &str = include_str!("web/index.html");
 const LOG_LINES: usize = 300;
+const UPLOAD_MAX: usize = 8 << 20;
 
 pub fn default_bitstream() -> PathBuf {
     PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../eda/chromatic_cart_dump/build/chromatic/impl/pnr/chromatic_cart_dump.fs"))
@@ -270,8 +273,50 @@ impl Worker {
                     "crc32": format!("{:08x}", crc32fast::hash(&d.ram)), "sha1": ops::sha1_hex(&d.ram),
                 }))
             }
+            "flash" => self.flash_job(r, job, &mut p),
             k => Err(format!("unknown job '{k}'")),
         }
+    }
+
+    /// write a file of the dumps directory to a flash cartridge: backup first, then ops::flash_write
+    fn flash_job(&self, r: &mut Reader<AnyLink>, job: &Value, p: &mut WebProgress) -> Result<Value, String> {
+        let name = job["file"].as_str().unwrap_or("");
+        if !safe_name(name) {
+            return Err(format!("bad file name '{name}'"));
+        }
+        let path = self.out.join(name);
+        let image = fs::read(&path).map_err(|e| format!("{name}: {e}"))?;
+        let offset = job["offset"].as_u64().unwrap_or(0) as usize;
+        let overwrite = job["overwrite"].as_bool().unwrap_or(false);
+        log(&self.st, "info", format!("flash: {name} ({} bytes) at {offset:#x}{}", image.len(), if overwrite { ", overwrite allowed" } else { "" }));
+        ops::powered(r, false, |r| {
+            // the header only names the backup (a cartridge with a broken header can still be written)
+            let title = match ops::read_header(r) {
+                Ok(h) => {
+                    let t = if h.header_ok() { ops::sanitize(&h.title()) } else { "flash".to_string() };
+                    self.st.lock().unwrap().header = header_json(&h);
+                    t
+                }
+                Err(_) => "flash".to_string(),
+            };
+            let (id, chip) = ops::flash_identify(r)?;
+            let chip = chip.ok_or(format!("unknown flash identifier {id:02x?}: not a supported flash cartridge"))?;
+            log(&self.st, "info", format!("flash chip: {} ({} KiB)", chip.name, chip.size >> 10));
+            let backup = ops::flash_backup(r, chip.size, p)?;
+            let (bname, existed) = store(&self.out, &format!("{title}-flash-backup"), "bin", &backup)?;
+            log(&self.st, "info", format!("backup: {bname}{} (SHA-1 {})", if existed { " (identical to the existing file)" } else { "" }, ops::sha1_hex(&backup)));
+            let w = ops::flash_write(r, &image, offset, overwrite, p)?;
+            log(&self.st, "info", format!("written: {} block(s) erased, {} byte(s) programmed, read back OK", w.erased, w.programmed));
+            // the header as it is now
+            if let Ok(h) = ops::read_header(r) {
+                self.st.lock().unwrap().header = header_json(&h);
+            }
+            Ok(json!({
+                "kind": "flash", "file": name, "size": image.len(), "offset": offset, "chip": w.chip,
+                "erased": w.erased, "programmed": w.programmed, "backup": bname, "secs": w.secs,
+                "sha1": ops::sha1_hex(&image),
+            }))
+        })
     }
 
     /// SRAM load only: openFPGALoader without --write-flash / -f
@@ -318,6 +363,11 @@ impl Worker {
     }
 }
 
+/// a plain file name inside the dumps directory
+fn safe_name(n: &str) -> bool {
+    !n.is_empty() && n.len() < 200 && !n.contains('/') && !n.contains('\\') && !n.starts_with('.')
+}
+
 fn files_json(dir: &Path) -> Value {
     let mut v: Vec<(u64, Value)> = fs::read_dir(dir)
         .into_iter()
@@ -326,7 +376,7 @@ fn files_json(dir: &Path) -> Value {
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
             let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-            if !matches!(ext.as_str(), "gb" | "gbc" | "sav") {
+            if !matches!(ext.as_str(), "gb" | "gbc" | "sav" | "bin") {
                 return None;
             }
             let md = e.metadata().ok()?;
@@ -372,13 +422,13 @@ fn handle(mut req: Request, st: &Shared, tx: &Mutex<mpsc::Sender<Value>>, out: &
         (Method::Get, "/api/files") => reply_json(req, 200, &files_json(out)),
         (Method::Post, "/api/job") => {
             let mut body = String::new();
-            let _ = req.as_reader().take(4096).read_to_string(&mut body);
+            let _ = req.as_reader().take(65536).read_to_string(&mut body);
             let job: Value = match serde_json::from_str(&body) {
                 Ok(v) => v,
                 Err(e) => return reply_json(req, 400, &json!({"error": e.to_string()})),
             };
             let kind = job["kind"].as_str().unwrap_or("").to_string();
-            if !matches!(kind.as_str(), "load" | "header" | "dump" | "save") {
+            if !matches!(kind.as_str(), "load" | "header" | "dump" | "save" | "flash") {
                 return reply_json(req, 400, &json!({"error": format!("unknown job '{kind}'")}));
             }
             {
@@ -392,6 +442,24 @@ fn handle(mut req: Request, st: &Shared, tx: &Mutex<mpsc::Sender<Value>>, out: &
             }
             let _ = tx.lock().unwrap().send(job);
             reply_json(req, 202, &json!({"ok": true}));
+        }
+        (Method::Post, "/api/upload") => {
+            // raw body; ?name=<file name>; stored in the dumps directory (an identical file is reused)
+            let q = req.url().split_once('?').map(|x| x.1.to_string()).unwrap_or_default();
+            let name = q.split('&').find_map(|kv| kv.strip_prefix("name=")).map(percent_decode).unwrap_or_default();
+            let name = ops::sanitize(name.rsplit_once('.').map(|x| x.0).unwrap_or(&name));
+            let mut body = Vec::new();
+            let n = req.as_reader().take(UPLOAD_MAX as u64 + 1).read_to_end(&mut body).unwrap_or(0);
+            if n == 0 || n > UPLOAD_MAX {
+                return reply_json(req, 400, &json!({"error": format!("upload of {n} bytes (1 byte to 8 MiB)")}));
+            }
+            match store(out, &name, "bin", &body) {
+                Ok((f, existed)) => {
+                    log(st, "info", format!("uploaded {f} ({} bytes){}", body.len(), if existed { ", identical to the existing file" } else { "" }));
+                    reply_json(req, 200, &json!({"file": f, "size": body.len()}));
+                }
+                Err(e) => reply_json(req, 500, &json!({"error": e})),
+            }
         }
         (Method::Get, u) if u.starts_with("/files/") => {
             let name = percent_decode(&u["/files/".len()..]);

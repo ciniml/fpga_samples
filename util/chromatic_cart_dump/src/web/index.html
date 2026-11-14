@@ -95,6 +95,27 @@ td:first-child { color: var(--muted); width: 38%; white-space: nowrap; }
     </section>
   </div>
 
+  <section class="card">
+    <h2>フラッシュカートに書き込む (SST39VF1681 / 1682、ModRetro の付属カートなど)</h2>
+    <div class="row">
+      <input type="file" id="upfile">
+      <button id="b-upload">アップロード</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label>書き込むファイル <select id="flfile"></select></label>
+      <label>オフセット <input id="floffset" value="0x0" size="10"></label>
+      <label><input type="checkbox" id="floverwrite"> 中身のあるブロック (ゲーム) の上書きを許可</label>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button id="b-flash" class="primary">フラッシュに書き込む</button>
+    </div>
+    <div class="muted" style="margin-top:8px">
+      書き込みの前にフラッシュ全体を 2 回読んで <code>&lt;タイトル&gt;-flash-backup.bin</code> に保存します。
+      変更のある 64 KiB ブロックだけを消去・書き込みし、最後に読み戻して照合します。
+      元に戻すには、そのバックアップを選び、上書きを許可して書き込みます。
+    </div>
+  </section>
+
   <section class="card files">
     <h2>ダンプ <span class="muted" id="outdir"></span></h2>
     <table id="files"></table>
@@ -152,6 +173,17 @@ function renderHeader(h) {
 function renderResult(r, err) {
   let html = '';
   if (err) html = `<div class="err-box">${esc(err)}</div>`;
+  else if (r && r.kind === 'flash') {
+    const rows = [
+      ['書き込んだファイル', `${esc(r.file)} (${kib(r.size)}、オフセット 0x${r.offset.toString(16)})`],
+      ['フラッシュ', esc(r.chip)],
+      ['消去', `${r.erased} ブロック`],
+      ['書き込み', `${r.programmed.toLocaleString()} バイト、読み戻し一致`],
+      ['バックアップ', `<a href="/files/${encodeURIComponent(r.backup)}">${esc(r.backup)}</a>`],
+      ['SHA-1', `<span class="mono">${r.sha1}</span>`],
+    ];
+    html = '<table style="margin-top:10px">' + rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('') + '</table>';
+  }
   else if (r && (r.kind === 'rom' || r.kind === 'save')) {
     const rows = [
       ['ファイル', `<a href="/files/${encodeURIComponent(r.file)}">${esc(r.file)}</a>${r.existed ? ' (既存と同一)' : ''}`],
@@ -173,8 +205,8 @@ function renderResult(r, err) {
 }
 
 function renderProgress(s) {
-  const names = {load: 'FPGA に書き込み中', header: 'ヘッダを読み込み中', dump: 'ROM をダンプ中', save: 'セーブを読み込み中'};
-  const phases = {ROM: 'ROM', verify: '照合', RAM: 'RAM', FPGA: 'FPGA'};
+  const names = {load: 'FPGA に書き込み中', header: 'ヘッダを読み込み中', dump: 'ROM をダンプ中', save: 'セーブを読み込み中', flash: 'フラッシュに書き込み中'};
+  const phases = {ROM: 'ROM', verify: '照合', RAM: 'RAM', FPGA: 'FPGA', backup: 'バックアップ', flash: '消去・書き込み (ブロック)'};
   if (s.job) {
     const frac = s.total ? s.done / s.total : 0;
     $('ptext').textContent = `${names[s.job] || s.job}` + (s.total ? ` — ${phases[s.phase] || s.phase} ${s.done}/${s.total}` : '');
@@ -191,6 +223,7 @@ function setButtons(s) {
   const cart = present && s.device.cart && s.device.switch_on;
   $('b-load').disabled = busy || !s.bitstream_ok;
   for (const id of ['b-header', 'b-dump', 'b-save']) $(id).disabled = busy || !cart;
+  $('b-flash').disabled = busy || !cart || !$('flfile').value;
 }
 
 function appendLog(lines) {
@@ -209,9 +242,18 @@ function appendLog(lines) {
   if (atEnd) el.scrollTop = el.scrollHeight;
 }
 
-async function refreshFiles() {
+function fillFlashSelect(f, pick) {
+  const sel = $('flfile');
+  const keep = pick || sel.value;
+  const cand = f.filter(x => /\.(bin|gb|gbc)$/i.test(x.name));
+  sel.innerHTML = cand.map(x => `<option value="${esc(x.name)}">${esc(x.name)} (${kib(x.size)})</option>`).join('');
+  if (cand.some(x => x.name === keep)) sel.value = keep;
+}
+
+async function refreshFiles(pick) {
   try {
     const f = await (await fetch('/api/files')).json();
+    fillFlashSelect(f, pick);
     $('files').innerHTML = f.length ? f.map(x =>
       `<tr><td><a href="/files/${encodeURIComponent(x.name)}">${esc(x.name)}</a></td>` +
       `<td>${kib(x.size)}</td><td class="muted">${new Date(x.mtime * 1000).toLocaleString()}</td></tr>`).join('')
@@ -249,6 +291,26 @@ $('b-load').onclick = () => job('load');
 $('b-header').onclick = () => job('header', {force: $('force').checked});
 $('b-dump').onclick = () => job('dump', {verify: $('verify').checked, force: $('force').checked});
 $('b-save').onclick = () => job('save', {force: $('force').checked});
+$('b-upload').onclick = async () => {
+  const file = $('upfile').files[0];
+  if (!file) { renderResult(null, 'ファイルを選んでください'); return; }
+  const r = await fetch('/api/upload?name=' + encodeURIComponent(file.name), {method: 'POST', body: file});
+  const j = await r.json();
+  if (!r.ok) { renderResult(null, j.error); return; }
+  $('result').innerHTML = `<div class="muted" style="margin-top:8px">アップロードしました: ${esc(j.file)} (${kib(j.size)})</div>`;
+  refreshFiles(j.file);
+};
+$('b-flash').onclick = () => {
+  const file = $('flfile').value;
+  const offset = parseInt($('floffset').value, $('floffset').value.trim().toLowerCase().startsWith('0x') ? 16 : 10);
+  if (!file || isNaN(offset) || offset < 0) { renderResult(null, 'ファイルとオフセットを確かめてください'); return; }
+  const ow = $('floverwrite').checked;
+  const msg = `${file} をフラッシュのオフセット 0x${offset.toString(16)} に書き込みます。` +
+    (ow ? '\nゲームのあるブロックも書き換えます (先にバックアップを取ります)。' : '\n空きブロックだけに書きます (中身のあるブロックにかかるときは中止します)。') +
+    '\nよろしいですか?';
+  if (!window.confirm(msg)) return;
+  job('flash', {file, offset, overwrite: ow});
+};
 refreshFiles();
 poll();
 </script>

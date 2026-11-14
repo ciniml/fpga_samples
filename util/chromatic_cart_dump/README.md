@@ -24,6 +24,9 @@ cargo build --release
 - 「FPGA に書き込む (SRAM)」: 電源を入れ直して公式イメージに戻ったあとに、`openFPGALoader --cable gwu2x <bitstream>` で
   リーダーのデザインを SRAM に書き込む (フラッシュには書かない)。ビットストリームの既定は
   `eda/chromatic_cart_dump/build/chromatic/impl/pnr/chromatic_cart_dump.fs` (`--bitstream` で変更)
+- 「フラッシュカートに書き込む」: ファイルをアップロード (保存先に `<名前>.bin` で置く) するか一覧から選び、オフセットと
+  「中身のあるブロックの上書きを許可」を指定して書き込む。手順は CLI の `flash-write` と同じ (全体のバックアップ
+  `<タイトル>-flash-backup.bin` → ID 確認 → 必要なブロックだけ消去 → 書き込み → 読み戻し照合)。元に戻すにはバックアップを選んで上書き許可で書く
 - 保存先は `~/chromatic-dumps` (`--out`)。同名で中身が違えば `<タイトル>-2.gbc` のように番号を付け、同一なら上書きしない
 - 認証はない。LAN 内の誰でも読み出しとダウンロードができる (カートへの書き込みは FPGA 側で不可能)。
   外に出したくなければ `--bind 127.0.0.1:8095`

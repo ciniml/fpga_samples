@@ -217,15 +217,9 @@ fn run<L: Link>(r: &mut Reader<L>, cmd: &Cmd) -> Result<(), String> {
     match cmd {
         Cmd::Status | Cmd::Serve { .. } => Ok(()),
         Cmd::FlashId => ops::powered(r, false, |r| {
-            if !r.flash_mode(true)? {
-                return Err("the device refused flash mode".into());
-            }
-            let id = r.flash_id();
-            let off = r.flash_mode(false);
-            let id = id?;
-            off?;
+            let (id, chip) = ops::flash_identify(r)?;
             println!("identifier     : {id:02x?}");
-            match ops::flash_chip(&id) {
+            match chip {
                 Some(c) => println!("chip           : {} ({} KiB){}", c.name, c.size >> 10, if c.block.is_some() { "" } else { ", writing not supported" }),
                 None => println!("chip           : unknown"),
             }
@@ -257,20 +251,13 @@ fn run<L: Link>(r: &mut Reader<L>, cmd: &Cmd) -> Result<(), String> {
                 let h = ops::read_header(r)?;
                 print_header(&h);
                 // identify, then a full backup (read twice) before anything is written
-                if !r.flash_mode(true)? {
-                    return Err("the device refused flash mode".into());
-                }
-                let id = r.flash_id();
-                let off = r.flash_mode(false);
-                let id = id?;
-                off?;
-                let chip = ops::flash_chip(&id).ok_or(format!("unknown flash identifier {id:02x?}: not writing"))?;
+                let (id, chip) = ops::flash_identify(r)?;
+                let chip = chip.ok_or(format!("unknown flash identifier {id:02x?}: not writing"))?;
                 eprintln!("flash: {} ({} KiB)", chip.name, chip.size >> 10);
-                let a = ops::flash_read(r, 0, chip.size)?;
-                let b = ops::flash_read(r, 0, chip.size)?;
-                if a != b {
-                    return Err("the backup reads differ: check the contacts (nothing written)".into());
-                }
+                let mut t = Term::new();
+                let a = ops::flash_backup(r, chip.size, &mut t);
+                t.end();
+                let a = a?;
                 let dir = dumps_dir(backup_dir);
                 std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
                 let base = format!("{}-flash-backup", ops::sanitize(&h.title()));

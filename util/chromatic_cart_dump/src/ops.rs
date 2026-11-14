@@ -512,3 +512,34 @@ pub fn flash_write<L: Link>(
     off?;
     Ok(res)
 }
+
+/// flash identifier and chip, through flash mode (nothing is written to the flash array)
+pub fn flash_identify<L: Link>(r: &mut Reader<L>) -> Result<([u8; 8], Option<FlashChip>), String> {
+    if !r.flash_mode(true)? {
+        return Err("the device refused flash mode".into());
+    }
+    let id = r.flash_id();
+    let off = r.flash_mode(false);
+    let id = id?;
+    off?;
+    Ok((id, flash_chip(&id)))
+}
+
+/// the whole flash, read twice and compared (64 KiB steps for the progress)
+pub fn flash_backup<L: Link>(r: &mut Reader<L>, size: usize, p: &mut dyn Progress) -> Result<Vec<u8>, String> {
+    const STEP: usize = 0x10000;
+    let n = size / STEP;
+    let mut a = Vec::with_capacity(size);
+    for i in 0..n {
+        a.extend_from_slice(&flash_read(r, i * STEP, STEP)?);
+        p.step("backup", i + 1, 2 * n);
+    }
+    for i in 0..n {
+        let b = flash_read(r, i * STEP, STEP)?;
+        if b[..] != a[i * STEP..(i + 1) * STEP] {
+            return Err(format!("the backup reads differ in {:#08x}-{:#08x}: check the contacts (nothing written)", i * STEP, (i + 1) * STEP - 1));
+        }
+        p.step("backup", n + i + 1, 2 * n);
+    }
+    Ok(a)
+}
