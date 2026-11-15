@@ -1,13 +1,14 @@
 // csi_ctrl + i2c_reg16 + the init ROM against a CCI / SCCB (16-bit address)
 // I2C slave model: the power-up init must write every ROM entry, and the
 // UART commands 'P', 'W', 'R', 'S' must answer as documented.
-// SENSOR 0: IMX219 (0x10, imx219_init_rom), 1: OV5640 (0x3C, ov5640_init_rom).
+// SENSOR 0: IMX219 (0x10, imx219_init_rom), 1: OV5640 (0x3C, ov5640_init_rom),
+// 2: OV5640 720p30 lock (0x3C, ov5640_720p30_init_rom: 128 entries, the index past 127 ends it).
 // Run: ./run_ctrl.sh (Verilator --binary --timing, both sensors)
 `timescale 1ns/1ps
 module tb_csi_ctrl #(parameter int SENSOR = 0);
-    localparam logic [6:0] DEV = (SENSOR == 1) ? 7'h3C : 7'h10;
-    localparam logic [15:0] ID_ADDR = (SENSOR == 1) ? 16'h300A : 16'h0000;
-    localparam logic [15:0] ID = (SENSOR == 1) ? 16'h5640 : 16'h0219;
+    localparam logic [6:0] DEV = (SENSOR >= 1) ? 7'h3C : 7'h10;
+    localparam logic [15:0] ID_ADDR = (SENSOR >= 1) ? 16'h300A : 16'h0000;
+    localparam logic [15:0] ID = (SENSOR >= 1) ? 16'h5640 : 16'h0219;
     logic clk = 0, rst = 1;
     always #10 clk = ~clk;                  // 50 MHz
     localparam int BAUD_DIV = 8;            // fast UART for simulation
@@ -94,7 +95,10 @@ module tb_csi_ctrl #(parameter int SENSOR = 0);
         .o_ofs0(), .o_ofs1(), .o_inv(), .o_init_busy(init_busy),
         .o_snap_tgl(snap_tgl), .i_snap_ack(snap_ack), .o_snap_idx(snap_idx), .i_snap_data(snap_data),
         .o_cap_tgl(), .o_cap_mode(), .o_cap_raddr(), .i_cap_rdata('0),
-        .o_log_tgl(), .o_log_at_fs(), .o_log_raddr(), .i_log_rdata('0));
+        .o_log_tgl(), .o_log_at_fs(), .o_log_raddr(), .i_log_rdata('0),
+        .o_xwr(xwr), .o_xaddr(xaddr), .o_xdata(xdata), .i_xrdata({xaddr, ~xaddr}),
+        .i_aux_tgl(aux_tgl), .i_aux_addr(16'h380F), .i_aux_data(8'hED), .o_aux_ack(aux_ack));
+    logic xwr, aux_ack; logic [7:0] xaddr; logic [15:0] xdata; logic aux_tgl = 0;
 
     initial begin #200ms; $fatal(1, "timeout: nwrites %0d state %0d", nwrites, dut.st); end
     always @(nwrites) if (nwrites % 10 == 0) $display("[%0t] %0d register writes", $time, nwrites);
@@ -112,7 +116,9 @@ module tb_csi_ctrl #(parameter int SENSOR = 0);
         // the auto init runs ~20 ms after reset
         @(negedge init_busy);   // busy from reset (boot wait) through the init
         if (nwrites != nrom) $fatal(1, "init wrote %0d registers, ROM has %0d", nwrites, nrom);
-        if (SENSOR == 1) begin
+        if (SENSOR == 2 && (regs[16'h380C] != 8'h09 || regs[16'h380D] != 8'hB9 || regs[16'h380F] != 8'hEE))
+            $fatal(1, "720p30 HTS / VTS wrong");
+        if (SENSOR >= 1) begin
             // streaming, 1280 x 720, 2-lane MIPI, RAW10 formatter
             if (regs[16'h3008] != 8'h02 || regs[16'h3808] != 8'h05 || regs[16'h3809] != 8'h00 ||
                 regs[16'h380A] != 8'h02 || regs[16'h380B] != 8'hD0 || regs[16'h300E] != 8'h45 ||
@@ -140,11 +146,21 @@ module tb_csi_ctrl #(parameter int SENSOR = 0);
             recv(v[7:0]); recv(v[15:8]); recv(v[23:16]); recv(v[31:24]);
             if (v != (32'hA0000000 | i)) $fatal(1, "S word %0d = %08h", i, v);
         end
+        // design registers and the aux write port
+        send("X"); send(8'h21); send(8'h34); send(8'h12); recv(r0);
+        if (r0 != "x" || xaddr != 8'h21 || xdata != 16'h1234) $fatal(1, "X -> %02h %02h %04h", r0, xaddr, xdata);
+        send("Y"); send(8'h5A); recv(r0); recv(r1); recv(r2);
+        if (r0 != "y" || r1 != 8'hA5 || r2 != 8'h5A) $fatal(1, "Y -> %02h %02h %02h", r0, r1, r2);
+        aux_tgl = 1;
+        wait (aux_ack == 1);
+        if (regs[16'h380F] != 8'hED) $fatal(1, "aux write: 380F = %02h", regs[16'h380F]);
         $display("tb_csi_ctrl (SENSOR %0d): PASS", SENSOR);
         $finish;
     end
     logic [6:0] ridx; logic [23:0] rent;
-    if (SENSOR == 1) begin : g_ov5640
+    if (SENSOR == 2) begin : g_ov5640_720p30
+        ov5640_720p30_init_rom trom (.i_idx(ridx), .o_entry(rent));
+    end else if (SENSOR == 1) begin : g_ov5640
         ov5640_init_rom trom (.i_idx(ridx), .o_entry(rent));
     end else begin : g_imx219
         imx219_init_rom trom (.i_idx(ridx), .o_entry(rent));

@@ -35,7 +35,7 @@ foreach f {csi2_pkg csi2_edge_sampler csi2_lane_aligner csi2_lane_merge csi2_pac
 add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_tx.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_rx.sv]
 add_file -type verilog [file normalize ${SRC_DIR}/../../../easycdr_bert/src/${TARGET}/pll_rx_500m_4ph/pll_rx_500m_4ph.v]
-foreach f {reset_seq i2c_reg16 imx219_init_rom ov5640_init_rom csi_ctrl csi_stats csi_phy_gw5a top} {
+foreach f {reset_seq i2c_reg16 imx219_init_rom ov5640_init_rom ov5640_720p30_init_rom csi_ctrl csi_stats csi_phy_gw5a top} {
     add_file -type verilog ${CSI_DIR}/${f}.sv
 }
 add_file -type cst ${CSI_DIR}/pins.cst

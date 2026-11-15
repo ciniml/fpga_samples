@@ -119,7 +119,9 @@ module top (
         .o_ofs0(ofs0), .o_ofs1(ofs1), .o_inv(inv), .o_init_busy(init_busy),
         .o_snap_tgl(snap_tgl), .i_snap_ack(snap_ack), .o_snap_idx(snap_idx), .i_snap_data(snap_data),
         .o_cap_tgl(cap_tgl), .o_cap_mode(cap_mode), .o_cap_raddr(cap_raddr), .i_cap_rdata(cap_rdata),
-        .o_log_tgl(log_tgl), .o_log_at_fs(log_at_fs), .o_log_raddr(log_raddr), .i_log_rdata(log_rdata));
+        .o_log_tgl(log_tgl), .o_log_at_fs(log_at_fs), .o_log_raddr(log_raddr), .i_log_rdata(log_rdata),
+        .o_xwr(), .o_xaddr(), .o_xdata(), .i_xrdata(16'h0000),
+        .i_aux_tgl(1'b0), .i_aux_addr(16'h0000), .i_aux_data(8'h00), .o_aux_ack());
 
     // ---------------- LEDs / scope taps ----------------
     logic [23:0] ok_st, err_st;    // ~0.13 s at 125 MHz

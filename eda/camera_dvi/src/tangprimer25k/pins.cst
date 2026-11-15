@@ -1,0 +1,48 @@
+// eda/camera_dvi — Tang Primer 25K: camera on pmod0 (as eda/csi_capture), Pmod DVI on pmod2.
+
+IO_LOC "csi_clk_p" G7,G8;
+IO_PORT "csi_clk_p" IO_TYPE=LVDS25 PULL_MODE=NONE DIFF_RESISTOR=ON BANK_VCCIO=3.3;
+IO_LOC "csi_d0_p" H5,J5;
+IO_PORT "csi_d0_p" IO_TYPE=LVDS25 PULL_MODE=NONE DIFF_RESISTOR=ON BANK_VCCIO=3.3;
+IO_LOC "csi_d1_p" H8,H7;
+IO_PORT "csi_d1_p" IO_TYPE=LVDS25 PULL_MODE=NONE DIFF_RESISTOR=ON BANK_VCCIO=3.3;
+
+// I2C: open drain by the IOBUF alone (I = 0, OEN = release). With
+// OPEN_DRAIN=ON on top of that, both lines read low all the time on the
+// hardware (every address ACKed, every read 0x00).
+IO_LOC "cam_scl" F5;
+IO_PORT "cam_scl" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_LOC "cam_sda" G5;
+IO_PORT "cam_sda" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+
+INS_LOC "u_phy/u_pll_rx/PLLA_inst" PLL_T;
+
+IO_LOC "clock" E2;
+IO_PORT "clock" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+IO_LOC "reset_button" H11;
+IO_PORT "reset_button" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
+
+// USB-UART (USB Debugger, FT2232 if01), 115200 8N1
+IO_LOC "uart_txd" C3;
+IO_PORT "uart_txd" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "uart_rxd" B3;
+IO_PORT "uart_rxd" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+// Pmod DVI on pmod2 (Dock J4, banks 6/7; as eda/dvi_loopback TX):
+//   tx_clk     = pmod2_4/10 = C11/C10
+//   tx_data[0] = pmod2_3/9  = B11/B10
+//   tx_data[1] = pmod2_2/8  = D11/D10
+//   tx_data[2] = pmod2_1/7  = G11/G10
+IO_LOC "tx_clk_p" C11;
+IO_PORT "tx_clk_p" IO_TYPE=LVPECL33E PULL_MODE=NONE DRIVE=16;
+IO_LOC "tx_data_p[0]" B11;
+IO_PORT "tx_data_p[0]" IO_TYPE=LVPECL33E PULL_MODE=NONE DRIVE=16;
+IO_LOC "tx_data_p[1]" D11;
+IO_PORT "tx_data_p[1]" IO_TYPE=LVPECL33E PULL_MODE=NONE DRIVE=16;
+IO_LOC "tx_data_p[2]" G11;
+IO_PORT "tx_data_p[2]" IO_TYPE=LVPECL33E PULL_MODE=NONE DRIVE=16;
+
+IO_LOC "led_lock" B2;
+IO_PORT "led_lock" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "led_err" C2;
+IO_PORT "led_err" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;

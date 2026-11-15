@@ -1,0 +1,260 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file isp_display.veryl
+ * @brief Display side of the camera pipeline: raw lines from IspLineRing
+ *        -> 3x3 window -> bilinear demosaic -> black level, white balance
+ *        -> sRGB gamma -> RGB888, in step with the video timing.
+ *
+ * Input: IspVideoTiming (x, y, de, syncs) at stage 0. Output 9 clocks
+ * later (o_* registered). Row r of the frame is in ring line r % NB; the
+ * display line y reads lines y - 1, y, y + 1 (mirrored at the top and
+ * bottom: row -1 -> 1, row H -> H - 2, the same colours), columns x - 1,
+ * x, x + 1 (mirrored the same way at the left and right edges).
+ *
+ * CFA: base pattern RGGB (row 0: R G, row 1: G B); i_cfa[0] / [1] flip the
+ * column / row parity (OV5640 BGGR = 3). Black level: subtracted from the
+ * interpolated values (10 bit). Gains: 8.8 fixed point per channel.
+ * i_mode: 0 camera, 1 colour bars, 2 raw (the centre pixel as grey, then
+ * black / gain / gamma), 3 50 % grey.
+ */
+pub module IspDisplay #(
+    param W : u32 = 1280,
+    param H : u32 = 720 ,
+    param NB: u32 = 8   ,
+    param AW: u32 = 9   ,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_x : input logic<12>,
+    i_y : input logic<12>,
+    i_de: input logic    ,
+    i_hs: input logic    ,
+    i_vs: input logic    ,
+
+    i_black : input logic<10>,
+    i_gain_r: input logic<16>,
+    i_gain_g: input logic<16>,
+    i_gain_b: input logic<16>,
+    i_cfa   : input logic<2> ,
+    i_mode  : input logic<2> ,
+
+    o_raddr : output logic<AW>        ,
+    o_rbank0: output logic<$clog2(NB)>,
+    o_rbank1: output logic<$clog2(NB)>,
+    o_rbank2: output logic<$clog2(NB)>,
+    i_q0    : input  logic<40>        ,
+    i_q1    : input  logic<40>        ,
+    i_q2    : input  logic<40>        ,
+
+    o_rgb: output logic<24>,
+    o_de : output logic    ,
+    o_hs : output logic    ,
+    o_vs : output logic    ,
+) {
+    const BW: u32 = $clog2(NB);
+    const NS: u32 = 9; // stages of the delayed timing (s1 .. s9)
+
+    // ---- stage 0: fetch address (column x + 1, clamped) and lines ----
+    // In the horizontal blanking the fetch is already for column 0 of the
+    // next line (the last blanking pixel is the window's x - 1 / x of the
+    // first two pixels); in the vertical blanking, for row 0.
+    var xf : logic<12>;
+    var yf : logic<12>;
+    var ym1: logic<12>;
+    var yp1: logic<12>;
+    always_comb {
+        if i_x >= W as 12 {
+            xf = 0;
+            yf = if i_y >= (H - 1) as 12 ? 12'd0 : i_y + 12'd1;
+        } else {
+            xf = if i_x == (W - 1) as 12 ? (W - 1) as 12 : i_x + 12'd1;
+            yf = if i_y >= H as 12 ? 12'd0 : i_y;
+        }
+        ym1      = if yf == 12'd0 ? 12'd1 : yf - 12'd1;
+        yp1      = if yf >= (H - 1) as 12 ? (H - 2) as 12 : yf + 12'd1;
+        o_raddr  = xf[AW + 1:2];
+        o_rbank0 = ym1[BW - 1:0];
+        o_rbank1 = yf[BW - 1:0];
+        o_rbank2 = yp1[BW - 1:0];
+    }
+
+    // timing delayed by stage: [k] = stage k + 1
+    var dx  : logic<12> [NS];
+    var dy  : logic<12> [NS];
+    var dde : logic<NS>      ;
+    var dhs : logic<NS>      ;
+    var dvs : logic<NS>      ;
+    var lane: logic<2, 2>    ; // column within the word, stages 1, 2
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            dx   = '{default: 0};
+            dy   = '{default: 0};
+            dde  = 0;
+            dhs  = 0;
+            dvs  = 0;
+            lane = 0;
+        } else {
+            dx[0] = i_x;
+            dy[0] = i_y;
+            for k in 1..NS {
+                dx[k] = dx[k - 1];
+                dy[k] = dy[k - 1];
+            }
+            dde     = {dde[NS - 2:0], i_de};
+            dhs     = {dhs[NS - 2:0], i_hs};
+            dvs     = {dvs[NS - 2:0], i_vs};
+            lane[0] = xf[1:0];
+            lane[1] = lane[0];
+        }
+    }
+
+    // ---- stage 3: the raw pixel of each line at column x + 1 ----
+    var r0: logic<10>;
+    var r1: logic<10>;
+    var r2: logic<10>;
+    // ---- stage 4: 3x3 window (columns x - 1, x, x + 1) ----
+    var w0: logic<3, 10>; // line y - 1: [0] left, [1] centre, [2] right
+    var w1: logic<3, 10>;
+    var w2: logic<3, 10>;
+    always_ff (i_clk) {
+        r0 = i_q0[{lane[1], 3'b000} + {2'b00, lane[1], 1'b0}+:10];
+        r1 = i_q1[{lane[1], 3'b000} + {2'b00, lane[1], 1'b0}+:10];
+        r2 = i_q2[{lane[1], 3'b000} + {2'b00, lane[1], 1'b0}+:10];
+        w0 = {r0, w0[2], w0[1]};
+        w1 = {r1, w1[2], w1[1]};
+        w2 = {r2, w2[2], w2[1]};
+    }
+
+    // ---- stage 4 -> 5: demosaic ----
+    var l0   : logic<10>;
+    var l1   : logic<10>;
+    var l2   : logic<10>;
+    var e0   : logic<10>;
+    var e1   : logic<10>;
+    var e2   : logic<10>;
+    var crs: logic<12>;
+    var diag : logic<12>;
+    var hor  : logic<11>;
+    var ver  : logic<11>;
+    var px   : logic    ;
+    var py   : logic    ;
+    var dr   : logic<10>;
+    var dg   : logic<10>;
+    var db   : logic<10>;
+    always_comb {
+        l0    = if dx[3] == 12'd0 ? w0[2] : w0[0];
+        l1    = if dx[3] == 12'd0 ? w1[2] : w1[0];
+        l2    = if dx[3] == 12'd0 ? w2[2] : w2[0];
+        e0    = if dx[3] >= (W - 1) as 12 ? w0[0] : w0[2];
+        e1    = if dx[3] >= (W - 1) as 12 ? w1[0] : w1[2];
+        e2    = if dx[3] >= (W - 1) as 12 ? w2[0] : w2[2];
+        crs = (w0[1] as 12) + (w2[1] as 12) + (l1 as 12) + (e1 as 12);
+        diag  = (l0 as 12) + (e0 as 12) + (l2 as 12) + (e2 as 12);
+        hor   = (l1 as 11) + (e1 as 11);
+        ver   = (w0[1] as 11) + (w2[1] as 11);
+        px    = dx[3][0] ^ i_cfa[0];
+        py    = dy[3][0] ^ i_cfa[1];
+        case {py, px} {
+            2'b00: { // R
+                dr = w1[1];
+                dg = crs[11:2];
+                db = diag[11:2];
+            }
+            2'b01: { // G on an R row
+                dr = hor[10:1];
+                dg = w1[1];
+                db = ver[10:1];
+            }
+            2'b10: { // G on a B row
+                dr = ver[10:1];
+                dg = w1[1];
+                db = hor[10:1];
+            }
+            default: { // B
+                dr = diag[11:2];
+                dg = crs[11:2];
+                db = w1[1];
+            }
+        }
+        if i_mode == 2'd2 {
+            dr = w1[1];
+            dg = w1[1];
+            db = w1[1];
+        }
+    }
+
+    var c5: logic<3, 10>; // stage 5: R, G, B
+    var c6: logic<3, 10>; // stage 6: black level removed
+    var c7: logic<3, 10>; // stage 7: white balance, clamped
+    var g8: logic<3, 8> ; // stage 8: gamma (ROM output)
+    var p6: logic<3, 26>;
+    always_comb {
+        p6[2] = (c6[2] as 26) * (i_gain_r as 26);
+        p6[1] = (c6[1] as 26) * (i_gain_g as 26);
+        p6[0] = (c6[0] as 26) * (i_gain_b as 26);
+    }
+    always_ff (i_clk) {
+        c5 = {dr, dg, db};
+        for k in 0..3 {
+            c6[k] = if c5[k] >: i_black ? c5[k] - i_black : 10'd0;
+            c7[k] = if p6[k][25:18] != 8'd0 ? 10'h3FF : p6[k][17:8];
+        }
+    }
+    inst u_gamma_r: IspGamma (
+        i_clk           ,
+        i_a  : c7[2]    ,
+        o_q  : g8[2]    ,
+    );
+    inst u_gamma_g: IspGamma (
+        i_clk           ,
+        i_a  : c7[1]    ,
+        o_q  : g8[1]    ,
+    );
+    inst u_gamma_b: IspGamma (
+        i_clk           ,
+        i_a  : c7[0]    ,
+        o_q  : g8[0]    ,
+    );
+
+    // ---- stage 9: output (dx / dde index 7 = stage 8) ----
+    var bar: logic<24>;
+    always_comb {
+        // eight bars: white yellow cyan green magenta red blue black
+        case (dx[7] * 8 / W) as 3 {
+            3'd0   : bar = 24'hFFFFFF;
+            3'd1   : bar = 24'hFFFF00;
+            3'd2   : bar = 24'h00FFFF;
+            3'd3   : bar = 24'h00FF00;
+            3'd4   : bar = 24'hFF00FF;
+            3'd5   : bar = 24'hFF0000;
+            3'd6   : bar = 24'h0000FF;
+            default: bar = 24'h000000;
+        }
+    }
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            o_rgb = 0;
+            o_de  = 0;
+            o_hs  = 0;
+            o_vs  = 0;
+        } else {
+            o_de = dde[7];
+            o_hs = dhs[7];
+            o_vs = dvs[7];
+            if !dde[7] {
+                o_rgb = 0;
+            } else {
+                case i_mode {
+                    2'd1   : o_rgb = bar;
+                    2'd3   : o_rgb = 24'h808080;
+                    default: o_rgb = {g8[2], g8[1], g8[0]};
+                }
+            }
+        }
+    }
+}

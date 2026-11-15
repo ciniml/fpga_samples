@@ -38,7 +38,7 @@ STAT_NAMES = [
 ]
 PCLK_HZ = 125e6
 SAMPLES_PER_NS = 4.0
-VERSION_OV5640 = 0x51     # csi_ctrl VERSION of the eda/csi_capture_pcam5c build
+VERSION_OV5640 = (0x51, 0x52)  # csi_ctrl VERSION of the OV5640 builds (csi_capture_pcam5c, camera_dvi)
 DT_NAMES = {0x00: 'FS', 0x01: 'FE', 0x02: 'LS', 0x03: 'LE', 0x12: 'EMB', 0x2A: 'RAW8', 0x2B: 'RAW10'}
 CAP_MODES = {'now': 0, 'clock': 1, 'sync': 2, 'error': 3, 'fs': 4}
 
@@ -241,10 +241,10 @@ def main():
         return
 
     c = Csi(a.port or default_port())
-    ov5640 = a.cmd in ('id', 'rate', 'tp', 'stream') and c.ping() == VERSION_OV5640
+    ov5640 = a.cmd in ('id', 'rate', 'tp', 'stream') and c.ping() in VERSION_OV5640
     if a.cmd == 'ping':
         v = c.ping()
-        print(f'version {v:#04x}' + (' (OV5640 / Pcam 5C build)' if v == VERSION_OV5640 else ' (IMX219 build)'))
+        print(f'version {v:#04x}' + (' (OV5640 / Pcam 5C build)' if v in VERSION_OV5640 else ' (IMX219 build)'))
     elif a.cmd == 'id':
         if ov5640:
             cid = c.rd(0x300A) << 8 | c.rd(0x300B)

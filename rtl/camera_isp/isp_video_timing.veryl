@@ -1,0 +1,70 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file isp_video_timing.veryl
+ * @brief Video timing generator (active area first, positive syncs).
+ *
+ * Counters start at the first active pixel / line: x in 0..HT-1,
+ * y in 0..VT-1; de = x < HACT && y < VACT. hsync covers
+ * HACT+HFP .. HACT+HFP+HSW-1, vsync the lines VACT+VFP .. VACT+VFP+VSW-1
+ * (changing with hsync, CEA-861 progressive). The defaults are CEA-861
+ * VIC 62, 1280x720p30 at 74.25 MHz (3300 x 750); VIC 34, 1920x1080p30,
+ * is HACT 1920, HFP 88, HSW 44, HBP 148, VACT 1080, VFP 4, VSW 5, VBP 36
+ * (2200 x 1125) at the same pixel clock.
+ */
+pub module IspVideoTiming #(
+    param HACT: u32 = 1280,
+    param HFP : u32 = 1760,
+    param HSW : u32 = 40  ,
+    param HBP : u32 = 220 ,
+    param VACT: u32 = 720 ,
+    param VFP : u32 = 5   ,
+    param VSW : u32 = 5   ,
+    param VBP : u32 = 20  ,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    o_x : output logic<12>,
+    o_y : output logic<12>,
+    o_de: output logic    ,
+    o_hs: output logic    ,
+    o_vs: output logic    ,
+) {
+    const HT: u32 = HACT + HFP + HSW + HBP;
+    const VT: u32 = VACT + VFP + VSW + VBP;
+
+    var x: logic<12>;
+    var y: logic<12>;
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            x = 0;
+            y = 0;
+        } else {
+            if x == (HT - 1) as 12 {
+                x = 0;
+                y = if y == (VT - 1) as 12 ? 12'd0 : y + 12'd1;
+            } else {
+                x = x + 12'd1;
+            }
+        }
+    }
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            o_x  = 0;
+            o_y  = 0;
+            o_de = 0;
+            o_hs = 0;
+            o_vs = 0;
+        } else {
+            o_x  = x;
+            o_y  = y;
+            o_de = x <: HACT as 12 && y <: VACT as 12;
+            o_hs = x >= (HACT + HFP) as 12 && x <: (HACT + HFP + HSW) as 12;
+            o_vs = y >= (VACT + VFP) as 12 && y <: (VACT + VFP + VSW) as 12;
+        }
+    }
+}
