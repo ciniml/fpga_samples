@@ -68,7 +68,7 @@ if {$SL} {
         @CMP_P@   [ball $PMOD 2]  @CMP_N@   [ball $PMOD 8] \
         @TERM_DP@ [ball $PMOD 3]  @TERM_DN@ [ball $PMOD 9] \
         @PULLUP@  [ball $PMOD 4]  @VBUS@    [ball $PMOD 10] \
-        @DX_DRIVE@ [expr {[info exists ::env(DX_DRIVE)] ? $::env(DX_DRIVE) : 8}]] $cst]   ;# 8 mA: 4.4 GB loopback without a mismatch (16 mA gave no improvement)
+        @DX_DRIVE@ [expr {[info exists ::env(DX_DRIVE)] && $::env(DX_DRIVE) ne "" ? $::env(DX_DRIVE) : 8}]] $cst]   ;# 8 mA: 4.4 GB loopback without a mismatch (16 mA gave no improvement)
     set fh [open pins_gen.cst w]; puts -nonewline $fh $cst; close $fh
     puts "usb_device: Pmod USB HS Single on ${PMOD}"
     add_file -type cst [file normalize pins_gen.cst]
