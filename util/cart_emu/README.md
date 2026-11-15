@@ -13,3 +13,16 @@ cargo build --release
 ```
 
 64 KiB 以下の ROM なら試験 ROM 以外も読み込める (MBC5 として振る舞う。RAM は 8 KiB、バンク 0 のみ)。
+
+## game (eda/cart_game)
+
+実際のゲーム (MBC1/3/5、4 MiB まで) を TP25K のフラッシュから動かす。手順と時間の予算は [`../../eda/cart_game/README.md`](../../eda/cart_game/README.md)。
+
+```sh
+./target/release/cart_emu game flash-id | flash-read -o x.bin [--offset --len]
+./target/release/cart_emu game write game.gbc
+./target/release/cart_emu game start game.gbc --cont [--sav game.sav] [--cap N]
+./target/release/cart_emu game status | watch | clear | trace | late N | delay N
+./target/release/cart_emu game save game.gbc -o game.sav
+./target/release/cart_emu game stop
+```

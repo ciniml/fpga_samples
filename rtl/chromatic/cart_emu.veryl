@@ -27,6 +27,8 @@
  *   'S'                        -> 64 bytes of status (see the layout in the code)
  *   'E' v                      -> 'E'  v[0] answer the bus, v[1] RST_DRV
  *   'C'                        -> 'C'  clear the counters
+ *   'D' n                      -> 'D'  answer reads only after the address has been stable n
+ *                                      clocks (to measure the console's access time)
  *   'T' v                      -> 'T'  trace: v[0] start now, v[1] start at the next /RST rise or read of
  *                                      0x0104 (the boot ROM's first),
  *                                      v[2] cartridge cycles only (and MBC writes)
@@ -100,6 +102,7 @@ pub module CartEmu #(
 
     // ---- configuration, MBC5 registers ----
     var en     : logic   ;
+    var dly    : logic<8>; // answer only after the address has been stable this many clocks
     var rst_drv: logic   ;
     var ram_en : logic   ;
     var romb   : logic<9>;
@@ -180,7 +183,8 @@ pub module CartEmu #(
             sel_ram = a[15];
         }
     }
-    let drive: logic = !rd_n && answer;
+    var stab : logic<8>;
+    let drive: logic    = !rd_n && answer && stab >= dly;
     assign o_d       = if sel_ram ? ram_q : rom_q;
     assign o_d_oe    = drive;
     assign o_d_dir   = drive;
@@ -188,12 +192,11 @@ pub module CartEmu #(
     assign o_rst_drv = rst_drv;
 
     // ---- cycle detection ----
-    var stab  : logic<4>;
-    var csl   : logic   ; // /CS Low at any sample of the current /WR strobe
-    var rcs   : logic   ; // /CS Low at any sample of the current stable read address
-    let rd_brk: logic    = rd_n || a != a_q;
+    var csl   : logic; // /CS Low at any sample of the current /WR strobe
+    var rcs   : logic; // /CS Low at any sample of the current stable read address
+    let rd_brk: logic = rd_n || a != a_q;
     // the read of a_q ends now (d_q is still the data of its last sample)
-    let rd_ev : logic = !c_q[0] && rd_brk && stab >= RD_STABLE[3:0];
+    let rd_ev : logic = !c_q[0] && rd_brk && stab >= RD_STABLE[7:0];
     let rd_ram: logic = a_q[15:13] == 3'b101 && rcs;
 
     // ---- counters, trace control, PHI meter ----
@@ -237,6 +240,7 @@ pub module CartEmu #(
     ) -> logic<3> {
         case o {
             8'h45  : return 3'd1; // 'E'
+            8'h44  : return 3'd1; // 'D'
             8'h54  : return 3'd1; // 'T'
             8'h57  : return 3'd6; // 'W'
             8'h51  : return 3'd6; // 'Q'
@@ -252,6 +256,7 @@ pub module CartEmu #(
     always_ff {
         if_reset {
             en       = 0;
+            dly      = 0;
             rst_drv  = 0;
             ram_en   = 0;
             romb     = 1;
@@ -313,7 +318,7 @@ pub module CartEmu #(
                 stab = 0;
                 rcs  = !cs_n;
             } else {
-                if stab != 4'hF {
+                if stab != 8'hFF {
                     stab += 1;
                 }
                 rcs |= !cs_n;
@@ -501,7 +506,7 @@ pub module CartEmu #(
                             rbuf[56] = tr_time[15:8];
                             rbuf[57] = tr_time[23:16];
                             rbuf[58] = tr_time[31:24];
-                            rbuf[59] = 0;
+                            rbuf[59] = dly;
                             rbuf[60] = 0;
                             rbuf[61] = 0;
                             rbuf[62] = 0;
@@ -531,6 +536,7 @@ pub module CartEmu #(
                             ridx    = 0;
                             state   = State::Reply;
                             case cop {
+                                8'h44: dly = i_rx_data; // 'D'
                                 8'h45: { // 'E'
                                     en      = i_rx_data[0];
                                     rst_drv = i_rx_data[1];

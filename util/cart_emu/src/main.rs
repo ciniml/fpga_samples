@@ -4,6 +4,7 @@
 //! as an MBC5 cartridge that a console boots (L4 of the adapter test). Builds the test ROM,
 //! loads it over the Dock's UART and reads the counters, the trace and the CPU's results.
 
+mod game;
 mod rom;
 
 use clap::{Parser, Subcommand};
@@ -77,6 +78,13 @@ enum Cmd {
     Enable { on: u8 },
     /// clear the counters (and re-arm the trace for the next boot)
     Clear,
+    /// eda/cart_game: a real game (ROM in the Tang Primer 25K's SPI flash)
+    Game {
+        #[command(subcommand)]
+        cmd: game::GameCmd,
+    },
+    /// answer reads only after the address has been stable N clocks (10 ns) on the target
+    Delay { n: u8 },
 }
 
 struct Emu {
@@ -94,13 +102,15 @@ impl Status {
 }
 
 impl Emu {
-    fn open(tty: &str, baud: u32) -> Result<Emu, String> {
+    /// magic: b"CE" (eda/cart_emu) or b"GC" (eda/cart_game)
+    fn open(tty: &str, baud: u32, magic: &[u8; 2]) -> Result<Emu, String> {
         let port = serialport::new(tty, baud).timeout(Duration::from_secs(3)).open().map_err(|e| format!("{tty}: {e}"))?;
         let _ = port.clear(serialport::ClearBuffer::All);
         let mut e = Emu { port, en: false };
         let st = e.status()?;
-        if &st.raw[0..2] != b"CE" {
-            return Err(format!("{tty}: not eda/cart_emu (status {:02x?})", &st.raw[0..3]));
+        if &st.raw[0..2] != magic {
+            let want = if magic == b"CE" { "eda/cart_emu" } else { "eda/cart_game" };
+            return Err(format!("{tty}: not {want} (status {:02x?})", &st.raw[0..3]));
         }
         e.en = st.raw[3] & 1 != 0;
         Ok(e)
@@ -160,8 +170,9 @@ fn print_status(e: &mut Emu, exp: Option<&[u8]>) -> Result<bool, String> {
     let ph = s.u32(43);
     let duty = if ph > 0 { s.u32(47) as f64 / 1e6 } else { 0.0 };
     println!(
-        "cart: {} | /RST {} | RAM {} | ROM bank {rbank:#x} RAM bank {} | PHI {:.3} MHz ({:.1} %) | resets {} | trace {} entries{}",
+        "cart: {} (delay {} ns) | /RST {} | RAM {} | ROM bank {rbank:#x} RAM bank {} | PHI {:.3} MHz ({:.1} %) | resets {} | trace {} entries{}",
         if f & 1 != 0 { "answering" } else { "silent" },
+        s.raw[59] as u32 * 10,
         if f & 8 != 0 { "high" } else { "LOW" },
         if f & 4 != 0 { "on" } else { "off" },
         s.raw[6],
@@ -223,10 +234,13 @@ fn run(cli: &Cli) -> Result<bool, String> {
         println!("{out}: {} bytes, header checksum {:#04x}, bank sums {}", img.len(), img[0x14D], sums.join(" "));
         return Ok(true);
     }
-    let mut e = Emu::open(&cli.tty, cli.baud)?;
+    if let Cmd::Game { cmd } = &cli.cmd {
+        return game::run(&cli.tty, cli.baud, cmd);
+    }
+    let mut e = Emu::open(&cli.tty, cli.baud, b"CE")?;
     let load = |p: &Option<String>| -> Result<Option<Vec<u8>>, String> { p.as_ref().map(|p| std::fs::read(p).map_err(|e| format!("{p}: {e}"))).transpose() };
     match &cli.cmd {
-        Cmd::Rom { .. } => unreachable!(),
+        Cmd::Rom { .. } | Cmd::Game { .. } => unreachable!(),
         Cmd::Load { rom, fill } => {
             let img = std::fs::read(rom).map_err(|e| format!("{rom}: {e}"))?;
             if img.is_empty() || img.len() > rom::ROM_SIZE {
@@ -301,6 +315,11 @@ fn run(cli: &Cli) -> Result<bool, String> {
             } else {
                 println!("{out}: 8192 bytes");
             }
+            Ok(true)
+        }
+        Cmd::Delay { n } => {
+            e.send(&[b'D', *n])?;
+            e.ack(b'D')?;
             Ok(true)
         }
         Cmd::Clear => {
