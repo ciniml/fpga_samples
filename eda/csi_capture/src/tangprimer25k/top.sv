@@ -17,7 +17,7 @@
  *   receiver trims, readouts. The sensor is initialised automatically
  *   ~20 ms after configuration (640x480 RAW10, 2 x 456 Mbps).
  *   With CSI_SENSOR_OV5640 defined (eda/csi_capture_pcam5c) the sensor is a
- *   Digilent Pcam 5C (OV5640, I2C 0x3C, 1280x720 RAW10 60 fps, ~560 Mbps).
+ *   Digilent Pcam 5C (OV5640, I2C 0x3C, 1280x720 RAW10 30 fps, 280 Mbps).
  *
  * LEDs: led_rx = long packets with good CRC within ~0.1 s,
  *       led_err = CRC / ECC error or abort within ~0.1 s.

@@ -9,11 +9,29 @@
 | センサ | IMX219 | OV5640 |
 | I2C アドレス (7 bit) | 0x10 | 0x3C |
 | 初期化 ROM | `imx219_init_rom.sv` | `ov5640_init_rom.sv` |
-| 出力 | 640x480 RAW10 約 60 fps | 1280x720 RAW10 60 fps (ビニング) |
-| レーン速度 | 456 Mbps (非連続クロック) | 約 560 Mbps の見込み (連続クロック、0x4800 = 0x14) |
+| 出力 | 640x480 RAW10 約 60 fps | 1280x720 RAW10 30 fps (ビニング) |
+| レーン速度 | 456 Mbps (非連続クロック) | 280 Mbps (連続クロック、0x4800 = 0x14) |
 | `csictl.py ping` | 0x01 | 0x51 |
 
-状態: シミュレーション (csi_ctrl の初期化) と合成まで (2026-11-16)。実機未確認。
+状態: **実機で受信 OK** (2026-11-16)。
+
+## 実機確認の結果 (2026-11-16、Tang Primer 25K + Pmod_RPiCamera rev A + Pcam 5C 付属ケーブル、pmod0)
+
+| 項目 | 結果 |
+|---|---|
+| `ping` / `id` | 0x51 / 0x5640 (OV5640)。存在しないアドレスは NACK |
+| 自動初期化 | NACK 0。0x3008 = 0x02 (動作中)、0x3808 = 0x05 (幅 1280) など ROM どおり |
+| `stats` (720p、ROM の既定) | **280.0 Mb/s/レーン、30.0 fps、720 行、RAW10 WC 1600、CRC / ECC 誤り 0** |
+| 連続 2 分 | ロングパケット約 260 万 (約 4.1 Gbit)、CRC / ECC 誤り 0 |
+| `tp 1` (カラーバー) | CRC 誤り 0 |
+| `log --at-fs` | FS → LS → RAW10 WC 1600 (CRC ok) → LE → ... |
+| `scan` | サンプル位置 3〜13 (16 中 11、0.25 ns 刻み) で誤り 0。既定の 8 は中央 |
+| 1080p30 (Digilent `cfg_1080p_30fps_336M_mipi_` をホストから書込み) | **672 Mb/s/レーン**、24 fps、1080 行、WC 2400。CRC 誤りが約 2 万行に 1 回 (レーンビット誤り率約 3e-9)。誤りの数だけ 2 レーンの sync 数がずれる = 片方のレーンの SoT 検出が原因らしく、サンプル位置を変えても残る (未解決) |
+
+デモ名の「60 fps」にはならない (PCLK 56 MHz、HTS 1896 × VTS 984 で 30 fps、レーン速度もそれに見合う 280 Mbps)。
+
+最初のビルドでは I2C が全アドレス ACK・読み値 0x00 で動かなかった。原因は pins.cst の `OPEN_DRAIN=ON` で、
+IOBUF (I = 0、OEN で開放) と併用すると SCL / SDA が常に Low になる。属性を外して解決 (`eda/csi_capture` も同じ pins.cst)。
 
 ## 初期化 ROM (`../csi_capture/src/tangprimer25k/ov5640_init_rom.sv`)
 
@@ -61,8 +79,8 @@ csi_ctrl の試験は `eda/csi_capture/test/run_ctrl.sh` (IMX219 と OV5640 の�
 | 1 | 電源投入、`make run` | 電流が安定、F1 が切れない。FFC 11 番 (R3) が約 3.3 V (半分程度なら Pcam 側のプルダウンと競合: R3 を 1 kΩ 以下に) |
 | 2 | `csictl.py ping` | `0x51 (OV5640 / Pcam 5C build)` |
 | 3 | `csictl.py id` | `0x5640 (OV5640)` (I2C と Pcam の電源 OK) |
-| 4 | `csictl.py stats` | `lane ... Mb/s` が数百 Mb/s (約 560 の見込み、連続クロックなので常に見える)。`sync` が増える |
-| 5 | `csictl.py tp 1` (8 色カラーバー) → `stats` | CRC err 0、lines 720、約 60 fps。LED B2 点灯、C2 消灯 |
+| 4 | `csictl.py stats` | `lane 280.0 Mb/s` (連続クロックなので常に見える)。`sync` が増える |
+| 5 | `csictl.py tp 1` (8 色カラーバー) → `stats` | CRC err 0、lines 720、30 fps。LED B2 点灯、C2 消灯 |
 | 6 | `csictl.py log --at-fs` | FS → RAW10 WC 1600 × 720 → FE (OV5640 は LS / LE のショートパケットも出す) |
 | 7 | `csictl.py tp 0` で実画像に戻し数分 | CRC / ECC 誤り 0 のまま |
 | 8 | 化ける場合 | `capture -m clock` (生サンプル)、`scan` (サンプル位置ごとの CRC 誤り)、`trim` (レーン別、`INV` で P/N 反転) |

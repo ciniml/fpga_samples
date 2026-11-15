@@ -16,7 +16,9 @@ FPGA の汎用 LVDS 入力だけで受ける。D-PHY のハード IP も LP 受�
 状態: **シミュレーションと合成まで** (2026-10-10)。変換基板が未製作のため実機未確認。
 
 Digilent Pcam 5C (OV5640) 用は同じソースを別設定でビルドする [`eda/csi_capture_pcam5c`](../csi_capture_pcam5c/README.md)
-(I2C アドレス 0x3C、`ov5640_init_rom.sv`、1280x720 RAW10 60 fps)。変換基板は共通。
+(I2C アドレス 0x3C、`ov5640_init_rom.sv`、1280x720 RAW10 30 fps)。変換基板は共通。
+**Pcam 5C では実機で受信できた** (2026-11-16、280 Mbps × 2 レーンで CRC 誤り 0。詳細はそちらの README)。
+I2C の pins.cst から `OPEN_DRAIN=ON` を外した (IOBUF と併用すると SCL / SDA が常に Low になり、全アドレスが ACK・読み値 0x00)。
 
 ## 変換基板 (Pmod 12 ピン → 15 ピン 1 mm ピッチ FFC)
 

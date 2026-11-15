@@ -11,7 +11,7 @@
   csictl.py rd 0x0100             register read
   csictl.py wr 0x0100 1           register write
   csictl.py init                  rerun the FPGA's init ROM (IMX219: 640x480, 2 x 456 Mbps;
-                                  OV5640: 1280x720 60 fps, 2 x ~560 Mbps)
+                                  OV5640: 1280x720 30 fps, 2 x 280 Mbps)
   csictl.py rate 456|912          IMX219 only: output PLL (lane rate) via standby / stream
   csictl.py tp N                  test pattern. IMX219: 0 off, 2 colour bars, 4 PN9 ...;
                                   OV5640: 0 off, 1 eight colour bars

@@ -41,9 +41,10 @@
  * The demo's power cycle on PWUP is not possible here (the adapter pulls
  * PWUP high); the software reset stands in for it. The demo waits 1 s after
  * the reset, 100 ms is used here.
- * Lane rate: about 560 Mbps (the PLL settings of the mode with the Pcam's
- * 12 MHz oscillator; 1280 x 10 bit per 16.9 us line needs > 378 Mbps per
- * lane) - csictl.py stats shows the actual rate.
+ * Measured on the hardware (2026-11-16): 280 Mbps per lane (continuous
+ * clock), 30 fps (not the 60 of the demo's name), 720 lines of RAW10
+ * WC 1600, no CRC / ECC errors over 2 minutes, error-free sample offsets
+ * 3..13 of 16.
  * Entry: {addr[15:0], data[7:0]}; addr 0xFFFF = wait data ms,
  * 0xFFFE = end. The host (host/csictl.py) can rewrite any of it.
  */
@@ -122,7 +123,7 @@ module ov5640_init_rom (
             7'd64:  o_entry = {16'h3824, 8'h01};
             7'd65:  o_entry = {16'h5000, 8'h07};
             7'd66:  o_entry = {16'h5001, 8'h03};
-            // Digilent cfg_720p_60fps_: 1280x720 RAW10 (binned), 60 fps
+            // Digilent cfg_720p_60fps_: 1280x720 RAW10 (binned); 30 fps measured (PCLK 56 MHz, HTS 1896 x VTS 984)
             7'd67:  o_entry = {16'h3008, 8'h42}; // software power down while configuring
             7'd68:  o_entry = {16'h3035, 8'h21};
             7'd69:  o_entry = {16'h3036, 8'h46};

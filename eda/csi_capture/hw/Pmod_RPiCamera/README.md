@@ -42,7 +42,7 @@ FPGA 側の定義は `mod/pmod_rpi_camera/pmod_pins.csv`。
 ## 使えるカメラ
 
 - Raspberry Pi Camera Module 2 (IMX219) と社外の IMX219 モジュール (24 MHz 水晶): `eda/csi_capture`
-- Digilent Pcam 5C (OV5640): `eda/csi_capture_pcam5c`。Raspberry Pi カメラとピン互換で、カメラ側コネクタも
+- Digilent Pcam 5C (OV5640): `eda/csi_capture_pcam5c`。**rev A で受信確認済み** (2026-11-16、280 Mbps × 2 で誤り 0)。Raspberry Pi カメラとピン互換で、カメラ側コネクタも
   基板側に接点。付属ケーブル (両端で接点の向きが逆) でピン n ↔ ピン n。11 番 PWUP は R3 で常時 ON
 - Camera Module 3 (IMX708): 基板は使えるが初期化 ROM が未作成
 
