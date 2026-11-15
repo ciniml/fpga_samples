@@ -159,6 +159,13 @@ impl Game {
             }
         }
     }
+    /// Engine off, then one throwaway ID read: if the FPGA was reset while the flash was in
+    /// continuous read mode, the first single-line command only ends that mode (and reads FF).
+    fn single(&mut self) -> Result<(), String> {
+        self.quad(false, 0)?;
+        self.spi(&[0x9F], 3)?;
+        Ok(())
+    }
     fn wait_busy(&mut self, limit: Duration) -> Result<(), String> {
         let t0 = Instant::now();
         while self.spi(&[0x05], 1)?[0] & 1 != 0 {
@@ -246,7 +253,7 @@ pub fn run(tty: &str, baud: u32, cmd: &GameCmd) -> Result<bool, String> {
     match cmd {
         GameCmd::FlashId => {
             g.e.enable(false)?;
-            g.quad(false, 0)?;
+            g.single()?;
             let id = g.spi(&[0x9F], 3)?;
             let sr: Vec<u8> = [0x05, 0x35, 0x15].iter().map(|&c| g.spi(&[c], 1).map(|r| r[0])).collect::<Result<_, _>>()?;
             let uid = g.spi(&[0x4B, 0, 0, 0, 0], 8)?;
@@ -255,7 +262,7 @@ pub fn run(tty: &str, baud: u32, cmd: &GameCmd) -> Result<bool, String> {
         }
         GameCmd::FlashRead { offset, len, out } => {
             g.e.enable(false)?;
-            g.quad(false, 0)?;
+            g.single()?;
             let t0 = Instant::now();
             let mut data = Vec::with_capacity(*len as usize);
             while data.len() < *len as usize {
@@ -273,7 +280,7 @@ pub fn run(tty: &str, baud: u32, cmd: &GameCmd) -> Result<bool, String> {
             let img = readf(rom)?;
             let h = header(&img)?;
             g.e.enable(false)?;
-            g.quad(false, 0)?;
+            g.single()?;
             let id = g.spi(&[0x9F], 3)?;
             // Winbond W25Q64 or the XTX part on later boards (0B 40 17): same commands
             if !matches!(id[0], 0xEF | 0x0B) || id[2] != 0x17 {
@@ -319,7 +326,7 @@ pub fn run(tty: &str, baud: u32, cmd: &GameCmd) -> Result<bool, String> {
             let img = readf(rom)?;
             let h = header(&img)?;
             g.e.enable(false)?;
-            g.quad(false, 0)?;
+            g.single()?;
             // the image must be in the flash already: compare the start of every bank
             for b in 0..img.len() / 0x4000 {
                 let a = b * 0x4000;
@@ -446,7 +453,7 @@ pub fn run(tty: &str, baud: u32, cmd: &GameCmd) -> Result<bool, String> {
         }
         GameCmd::Qdump { addr, len } => {
             g.e.enable(false)?;
-            g.quad(false, 0)?;
+            g.single()?;
             println!("single: {:02x?}", g.read(*addr, *len)?);
             for (sp, co) in [(false, false), (true, false), (true, true)] {
                 g.spiq = sp;
@@ -455,7 +462,7 @@ pub fn run(tty: &str, baud: u32, cmd: &GameCmd) -> Result<bool, String> {
                     g.quad(true, c)?;
                     println!("{} cap {c}: {:02x?}", if co { "continuous" } else if sp { "SPI-Quad" } else { "QPI" }, g.qread(*addr, *len)?);
                 }
-                g.quad(false, 0)?;
+                g.single()?;
             }
             let sr: Vec<u8> = [0x05, 0x35, 0x15].iter().map(|&c| g.spi(&[c], 1).map(|r| r[0])).collect::<Result<_, _>>()?;
             println!("after exit: SR1 {:#04x} SR2 {:#04x} SR3 {:#04x}, single: {:02x?}", sr[0], sr[1], sr[2], g.read(*addr, 4)?);
@@ -463,7 +470,7 @@ pub fn run(tty: &str, baud: u32, cmd: &GameCmd) -> Result<bool, String> {
         }
         GameCmd::Stop => {
             g.e.enable(false)?;
-            g.quad(false, 0)?;
+            g.single()?;
             println!("silent, flash back in single-line mode");
             Ok(true)
         }

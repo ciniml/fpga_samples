@@ -25,9 +25,16 @@ UART と同じコマンド列を USB でも受け付ける。Pmod USB HS Single 
 - PHY は `eda/usb_device` の `USB_SL=1` と同じ (`usb_phy_gowin_sl`、PLL も共用)。コアは `rtl/usb` の `UsbDevice` で、EP1 を
   バイト列にする設定 (`EP1_STREAM`、短いパケットは 20 µs 途切れたら送る)
 - 60 MHz の USB 側と 100 MHz の GameCart の間は `rtl/chromatic/byte_afifo.veryl` (レジスタで 16 段の非同期 FIFO) を往復 1 本ずつ
+- `game` の各コマンドは単線モードに切り替えた直後に ID を 1 回空読みする。連続読み出しモードのまま FPGA の
+  ロジックがリセットされると、最初の単線コマンドはモードを抜けるだけで FF を読むため (実機で一度発生)
 - 返事は、最後にコマンドのバイトが来た側 (UART か USB) へ返す。両方から同時に送らないこと
 - VID:PID は他の試作と同じ 1209:0001。ベンダリクエスト 0x01 の上位 2 バイトが "GC" のものを `cart_emu` が選ぶ
 - 別のスロットなら `make USB_PMOD=pmod2` (ビルドディレクトリは `build/tangprimer25k_pmod2`)
+
+実機 (2026-11-16、pmod1): HS (480M) で列挙。
+- ワリオランド2 (2 MiB) の `game write` は消去 16 ブロック・8192 ページ・照合込みで 7.4 秒 (UART では 4 MiB で約 7 分)
+- そのまま `--usb game start` で起動し、倍速で遅れ 0、最も遅い読み出し 190 ns
+- トレース 16 KiB を 300 回読んで全部一致 (UART で読んだものとも一致)、32 KiB のセーブ取り出しは 0.06 秒
 
 ```sh
 ./target/release/cart_emu --usb game write game.gbc
