@@ -5,11 +5,48 @@ D- 側の比較器を省き、FPGA ピン 7 本 + VBUS 検出 1 本に収めた�
 
 - FPGA 側: `rtl/usb/gowin/usb_phy_gowin_sl.v` の `CMP1=1`
 - 設計検討: [`../../SINGLE_PMOD.md`](../../SINGLE_PMOD.md)
+- FPGA デザイン: Tang Primer 25K は `eda/usb_device` の `make USB_SL=1` (下の「実機確認」)
 - PHY の動作確認: SLogic16U3 で HS を実機確認済み (`eda/slogic16u3_usb2`、`make HS=1 CMP1=1`)
 
 <img src="fab/Pmod_USB_HS_Single_3d.png" width="45%"/> <img src="fab/Pmod_USB_HS_Single_top.png" width="30%"/>
 
-状態: **設計のみ (未発注・実機未確認)**。ERC / DRC (回路図との一致を含む) はエラー 0。
+状態: **JLCPCB に発注 (発注番号 Y118)・組み立て済み。Tang Primer 25K の pmod1 で HS を実機確認 (2026-11-09)**。FS での通信は未確認。
+ERC / DRC (回路図との一致を含む) はエラー 0。
+
+## 実機確認 (2026-11-09、Tang Primer 25K)
+
+Tang Primer 25K Dock の pmod1 (シルクの中央、A11 側) に挿し、Linux PC につないで確認した。
+
+| 項目 | 結果 |
+|---|---|
+| 列挙 | **HS** で列挙、configured |
+| SOF 受信 | 12 回書き込み直して 12 回とも SOF 100%、受信エラー 0 |
+| バルク往復 (`usb_echo.py`) | 8 / 64 / 512 / 2048 / 3584 B × 1000 回、2 回の書き込みとも全一致 (往復で約 14 MB/s) |
+| 連続試験 (`usb_soak.py --minutes 5`) | 片方向 21.7 MB/s、4.4 GB でデータ不一致 0、USB エラー 0 |
+| VBUS_DET | 接続中 1 (FPGA 側の `PULL_MODE=NONE` が必要。下記) |
+
+手順 (`eda/usb_device`):
+
+```sh
+DISPLAY= QT_QPA_PLATFORM=offscreen make USB_SL=1 USB_PMOD=pmod1 GW_SH=~/gowin/1.9.12/IDE/bin/gw_sh
+openFPGALoader --board tangprimer25k --write-sram build/tangprimer25k_sl_pmod1/impl/pnr/usb_device.fs
+python3 host/usb_echo.py --bytes 512 --rounds 1000
+python3 host/usb_soak.py --minutes 5
+```
+
+- `USB_PMOD` は Dock のシルクの番号 (既定 pmod1)。ボールは `eda/targets/tangprimer25k/pmod_ports.csv` から引く。
+- dx 対の DRIVE は `DX_DRIVE` (既定 8 mA)。16 mA にしても結果は変わらなかった。
+- `top_sl.v` は UART (115200 bps) に 140 ms ごとの状態フレームを出す (`host/usb_status.py` で読める。最後のバイトと受信エラー数は `top.v` と意味が違い、受信エラー数は折り返すので差分で見る。書式は `top_sl.v` のコメント)。生サンプルの捕捉とヒストグラムのコマンドもある。
+- 立ち上げで分かったこと:
+  - 書き込みごとに SOF 98% / 81% と二峰性になる不具合があり、原因は FPGA 側の PHY だった。IDES16/OSER16 の RESET をクロックが走り出してから解除していたため、語境界と PCLK の位相関係が書き込みごとに変わっていた。`usb_phy_gowin_sl.v` で、クロックを止めたまま (DHCE) リセットを解除するように直した (コミット 297ecca)。基板側の変更はない。
+  - VBUS_DET は FPGA の内部プルダウンを有効にすると R12/R13 の分圧が VIH 未満に下がり、0 を返す。`PULL_MODE=NONE` にする。
+
+未確認:
+
+- FS (12 Mbps) での通信 (FS ハブ経由、`USB_FS_ONLY=1` のビルド)。
+- HS の振幅・終端 (R2/R3 33 Ω)・VREF (約 135 mV) の実測 (オシロでの波形確認はしていない)。
+- pmod1 以外のスロット (pmod0 / pmod2)、Tang Primer 25K 以外のボード。
+- 5 分より長い連続試験、Linux 以外のホスト。
 
 ## 仕様
 
@@ -42,16 +79,17 @@ D- 側の比較器を省き、FPGA ピン 7 本 + VBUS 検出 1 本に収めた�
 
 ## ピン割り当て
 
-| Pmod | 信号 | FPGA の IO | Tang Primer 25K (pmod2) |
-|---|---|---|---|
-| 1 / 7 | DX_P / DX_N | LVCMOS33D 双方向 (ELVDS_IOBUF) | G11 / G10 |
-| 2 / 8 | D+ / VREF | LVDS25 入力 (D+ 比較器) | D11 / D10 |
-| 3 / 9 | TERM_DP / TERM_DN | LVCMOS33 双方向 (Low で終端、Hi-Z で FS 受信) | B11 / B10 |
-| 4 | PULLUP | LVCMOS33 出力 | C11 |
-| 10 | VBUS_DET | LVCMOS33 入力 (PULL_MODE=DOWN) | C10 |
-| 5, 11 / 6, 12 | GND / 3.3 V | | |
+| Pmod | 信号 | FPGA の IO | Tang Primer 25K pmod1 (実機確認) | pmod2 (未確認) |
+|---|---|---|---|---|
+| 1 / 7 | DX_P / DX_N | LVCMOS33D 双方向 (ELVDS_IOBUF) | A11 / A10 | G11 / G10 |
+| 2 / 8 | D+ / VREF | LVDS25 入力 (D+ 比較器) | E11 / E10 | D11 / D10 |
+| 3 / 9 | TERM_DP / TERM_DN | LVCMOS33 双方向 (Low で終端、Hi-Z で FS 受信) | K11 / L11 | B11 / B10 |
+| 4 | PULLUP | LVCMOS33 出力 | L5 | C11 |
+| 10 | VBUS_DET | LVCMOS33 入力 (PULL_MODE=NONE) | K5 | C10 |
+| 5, 11 / 6, 12 | GND / 3.3 V | | | |
 
-制約の例と PHY のつなぎ方は `../../SINGLE_PMOD.md` の §3 と §4 にある。
+実機で使った制約は `eda/usb_device/src/tangprimer25k/pins_sl.cst` (スロットのボールは project.tcl が埋める)。
+制約の考え方と PHY のつなぎ方は `../../SINGLE_PMOD.md` の §3 と §4 にある。
 
 ## 配線の要点
 
@@ -122,8 +160,9 @@ LCSC 番号は 2026-10-29 時点。JLC の Basic 部品があるものはそれ�
 - **差動インピーダンス**: Pmod_RPiCamera と同じ寸法 (100 Ω 想定、2 層 1.6 mm でのペア結合が主体) で、USB の 90 Ω に合わせた計算はしていない。
   - 基板上の D+/D- は約 15 mm で、FPGA ボード側の Pmod 配線とヘッダの方が支配的。
   - 製造業者のスタックアップで要再計算。
-- **定数**: R2/R3 と R8/R9 以外は TN710 の Arora-V の値そのままで、HS の振幅 (400 mV) と終端 (33 Ω + IO の ON 抵抗) は未実測。SLogic16U3 の実装値も不明。
+- **定数**: R2/R3 と R8/R9 以外は TN710 の Arora-V の値そのままで、HS の振幅 (400 mV) と終端 (33 Ω + IO の ON 抵抗) は未実測 (この定数で HS の転送は動いた)。SLogic16U3 の実装値も不明。
   - R6/R7 (直列) と IO の DRIVE で振幅が決まる。
 - **Pmod 経由の HS 品質**: 送受信が同じ dx 対を通るので、ヘッダから FPGA までの未整合区間が両方向に効く。`SINGLE_PMOD.md` §7 を参照。
-- **Tang Primer 25K の pmod2**: G11/G10 を ELVDS_IOBUF (エミュレート差動の出力) にできるか、960 MHz の FCLK が届くかは合成で未確認。
+  pmod1 では上の「実機確認」のとおり不一致なしで動いたが、波形 (アイ) は見ていない。
+- **Tang Primer 25K の pmod2**: G11/G10 を ELVDS_IOBUF (エミュレート差動の出力) にできるか、960 MHz の FCLK が届くかは合成で未確認 (pmod1 は合成・実機とも確認済み)。
 - **J2**: 基板端に対する前後位置。

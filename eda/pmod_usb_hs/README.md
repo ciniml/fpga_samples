@@ -1,11 +1,33 @@
-# Pmod USB 2.0 HS デバイス基板 — 設計検討
+# Pmod USB 2.0 HS デバイス基板
 
-`rtl/usb` の PHY コア (UTMI/ULPI、HS/FS/LS) を Tang Primer 25K / Tang Nano 9K の
-Pmod で実機評価するための基板案。Gowin USB 2.0 SoftPHY IP の **Dual LVDS モード**
+`rtl/usb` の PHY コア (UTMI/ULPI、HS/FS/LS) を Tang Primer 25K などの Pmod で実機評価するための基板。
+
+## 現状 (2026-11-15)
+
+実際に作ったのは **1 Pmod 版の [Pmod USB HS Single](hw/Pmod_USB_HS_Single/README.md)** (Single LVDS、D- 比較器なしの 7 本 + VBUS 検出)。
+この README の §1 以降は、最初に検討した **2 ポート版 (Dual LVDS)** の設計検討で、2 ポート版の回路図と基板はこのリポジトリにない。
+
+| 対象 | 状態 |
+|---|---|
+| Pmod USB HS Single (`hw/Pmod_USB_HS_Single`) | JLCPCB に発注 (発注番号 Y118)、組み立て済み。Tang Primer 25K の pmod1 で **HS の列挙とバルク転送を実機確認** (2026-11-09、片方向 21.7 MB/s で 4.4 GB 不一致 0)。FS での通信は未確認。手順と結果は [hw/Pmod_USB_HS_Single/README.md](hw/Pmod_USB_HS_Single/README.md) |
+| 2 ポート版 (TN710 Dual LVDS、本 README §1〜) | 設計検討のみ。2 コネクタ構成の Pmod USB 基板での `rtl/usb` の HS 実機評価は [`eda/usb_device/README.md`](../usb_device/README.md) にある |
+| PHY ラッパ | 1 Pmod 版: `rtl/usb/gowin/usb_phy_gowin_sl.v` (`CMP1=1`、SLogic16U3 と共用)。2 コネクタ版: `rtl/usb/gowin/usb_phy_gowin_p.v` |
+
+ドキュメント:
+
+- [SINGLE_PMOD.md](SINGLE_PMOD.md): 1 Pmod 版 (Single LVDS、9 本 → 7 本) の設計検討。
+- [hw/Pmod_USB_HS_Single/README.md](hw/Pmod_USB_HS_Single/README.md): 1 Pmod 版の基板 (KiCad、製造データ、部品、実機確認の結果)。
+- [`eda/usb_device`](../usb_device/README.md): Tang Primer 25K のデザイン。1 Pmod 版は `make USB_SL=1`。
+- [SURVEY.md](SURVEY.md): `rtl/usb` を実機で動かすための調査記録 (2026-08-25)。
+- [FROM_EXTEASYCDR.md](FROM_EXTEASYCDR.md): ExtEasyCDR の回路図から 2 ポート版を起こすための引き継ぎ情報。
+
+## 2 ポート版 (Dual LVDS) の設計検討
+
+Gowin USB 2.0 SoftPHY IP の **Dual LVDS モード**
 (IPUG781 §3.2 図 3-3) と **TN710 (Gowin USB 2.0 SoftPHY Device Peripheral Circuit Design
 Application Note) の USB2.0-RC 回路**をベースに、Pmod 2 ポート分の I/O に収めた。コネクタは USB Type-C レセプタクル (USB 2.0 専用、SS レーンなし)。
 
-状態: **机上検討** (回路図/基板は未作成)。
+状態: **机上検討のみ** (この構成の回路図/基板は作っていない。実際に作ったのは上記の 1 Pmod 版)。
 
 ## 1. 要求と方針
 
@@ -200,8 +222,8 @@ IO_PORT "usb_pullup_en_o" IO_TYPE=LVCMOS33 DRIVE=8 PULL_MODE=NONE;
 
 ## 9. 代替案
 
-- **Pmod 1 ポート版 (Single LVDS、7 I/O + VBUS 検出)**: D- 比較器を省いた構成。RTL は SLogic16U3 で
-  HS 実機確認済み。詳細は [SINGLE_PMOD.md](SINGLE_PMOD.md)
+- **Pmod 1 ポート版 (Single LVDS、7 I/O + VBUS 検出)**: D- 比較器を省いた構成。この案を採用して
+  [Pmod USB HS Single](hw/Pmod_USB_HS_Single/README.md) を作り、Tang Primer 25K で HS を実機確認した。設計検討は [SINGLE_PMOD.md](SINGLE_PMOD.md)
 - **FS 専用ミニ基板 (1 Pmod, 3 I/O)**: D+/D- を 27Ω 直列で双方向ピンに直結、D+ 1.5k
   プルアップ制御の 3 本のみ。RX は同じ双方向ピンの入力を使う。HS の評価はできないが
   半日で作れるので先行して作る価値がある
