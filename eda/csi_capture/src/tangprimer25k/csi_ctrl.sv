@@ -13,10 +13,11 @@
  *   'P'                -> 'p' VERSION
  *   'W' ah al d        -> 'w' nack          sensor register write
  *   'R' ah al          -> 'r' d nack        sensor register read
- *   'D' dev            -> 'd'               7-bit I2C address (default 0x10)
+ *   'D' dev            -> 'd'               7-bit I2C address (default I2C_DEV)
  *   'C' ofs inv        -> 'c'               ofs = {lane1, lane0} sample offsets
  *                                           (+8 = at the clock edge), inv[1:0]
- *   'I'                -> 'i' nacks         run the init ROM (imx219_init_rom)
+ *   'I'                -> 'i' nacks         run the init ROM (SENSOR: imx219_init_rom
+ *                                           or ov5640_init_rom)
  *   'S'                -> 'S' 25 x u32      counter snapshot (csi_stats)
  *   'A' mode           -> 'a'               arm the raw capture (trigger mode)
  *   'G'                -> 'G' 1024 x 12 B   capture memory, address order
@@ -31,7 +32,9 @@ module csi_ctrl #(
     parameter bit AUTO_INIT    = 1'b1,
     parameter int BOOT_CYCLES  = CLOCK_HZ / 50,  // auto init after ~20 ms
     parameter int MS_CYCLES    = CLOCK_HZ / 1000,
-    parameter logic [7:0] VERSION = 8'h01
+    parameter logic [7:0] VERSION = 8'h01,
+    parameter int SENSOR       = 0,              // init ROM: 0 IMX219 (RPi Camera v2), 1 OV5640 (Pcam 5C)
+    parameter logic [6:0] I2C_DEV = 7'h10        // sensor 7-bit I2C address (IMX219 0x10, OV5640 0x3C)
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -92,7 +95,13 @@ module csi_ctrl #(
 
     logic [6:0]  rom_idx;
     logic [23:0] rom_entry;
-    imx219_init_rom u_rom (.i_idx(rom_idx), .o_entry(rom_entry));
+    generate
+        if (SENSOR == 1) begin : g_ov5640
+            ov5640_init_rom u_rom (.i_idx(rom_idx), .o_entry(rom_entry));
+        end else begin : g_imx219
+            imx219_init_rom u_rom (.i_idx(rom_idx), .o_entry(rom_entry));
+        end
+    endgenerate
 
     // ---------------- command FSM ----------------
     typedef enum logic [3:0] {
@@ -139,7 +148,7 @@ module csi_ctrl #(
         if (rst) begin
             st          <= AUTO_INIT ? S_BOOT : S_IDLE;
             tx_valid    <= 1'b0;
-            i2c_dev     <= 7'h10;
+            i2c_dev     <= I2C_DEV;
             o_ofs0      <= 4'd8;
             o_ofs1      <= 4'd8;
             o_inv       <= 2'b00;

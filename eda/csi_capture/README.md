@@ -15,6 +15,9 @@ FPGA の汎用 LVDS 入力だけで受ける。D-PHY のハード IP も LP 受�
 
 状態: **シミュレーションと合成まで** (2026-10-10)。変換基板が未製作のため実機未確認。
 
+Digilent Pcam 5C (OV5640) 用は同じソースを別設定でビルドする [`eda/csi_capture_pcam5c`](../csi_capture_pcam5c/README.md)
+(I2C アドレス 0x3C、`ov5640_init_rom.sv`、1280x720 RAW10 60 fps)。変換基板は共通。
+
 ## 変換基板 (Pmod 12 ピン → 15 ピン 1 mm ピッチ FFC)
 
 KiCad プロジェクト: [`hw/Pmod_RPiCamera`](hw/Pmod_RPiCamera/README.md) (25.4 × 24.13 mm, 2 層)。

@@ -6,13 +6,15 @@
 #          https://www.boost.org/LICENSE_1_0.txt)
 """Host side of eda/csi_capture (csi_ctrl.sv binary protocol, 115200 8N1).
 
-  csictl.py ping                  version byte
-  csictl.py id                    sensor chip id (IMX219: 0x0219)
+  csictl.py ping                  version byte (0x01 IMX219 build, 0x51 OV5640 / Pcam 5C build)
+  csictl.py id                    sensor chip id (IMX219: 0x0219, OV5640: 0x5640)
   csictl.py rd 0x0100             register read
   csictl.py wr 0x0100 1           register write
-  csictl.py init                  rerun the FPGA's init ROM (640x480, 2 x 456 Mbps)
-  csictl.py rate 456|912          output PLL (lane rate) via standby / stream
-  csictl.py tp 0..9               IMX219 test pattern (0 off, 2 colour bars, 4 PN9 ...)
+  csictl.py init                  rerun the FPGA's init ROM (IMX219: 640x480, 2 x 456 Mbps;
+                                  OV5640: 1280x720 60 fps, 2 x ~560 Mbps)
+  csictl.py rate 456|912          IMX219 only: output PLL (lane rate) via standby / stream
+  csictl.py tp N                  test pattern. IMX219: 0 off, 2 colour bars, 4 PN9 ...;
+                                  OV5640: 0 off, 1 eight colour bars
   csictl.py stream on|off
   csictl.py trim OFS0 OFS1 [INV]  receiver sample offsets (8 = at the clock edge)
   csictl.py stats [-n N] [-t S]   rates: lane bit rate, fps, lines, CRC / ECC errors
@@ -36,6 +38,7 @@ STAT_NAMES = [
 ]
 PCLK_HZ = 125e6
 SAMPLES_PER_NS = 4.0
+VERSION_OV5640 = 0x51     # csi_ctrl VERSION of the eda/csi_capture_pcam5c build
 DT_NAMES = {0x00: 'FS', 0x01: 'FE', 0x02: 'LS', 0x03: 'LE', 0x12: 'EMB', 0x2A: 'RAW8', 0x2B: 'RAW10'}
 CAP_MODES = {'now': 0, 'clock': 1, 'sync': 2, 'error': 3, 'fs': 4}
 
@@ -238,11 +241,17 @@ def main():
         return
 
     c = Csi(a.port or default_port())
+    ov5640 = a.cmd in ('id', 'rate', 'tp', 'stream') and c.ping() == VERSION_OV5640
     if a.cmd == 'ping':
-        print(f'version {c.ping():#04x}')
+        v = c.ping()
+        print(f'version {v:#04x}' + (' (OV5640 / Pcam 5C build)' if v == VERSION_OV5640 else ' (IMX219 build)'))
     elif a.cmd == 'id':
-        cid = c.rd(0x0000) << 8 | c.rd(0x0001)
-        print(f'chip id {cid:#06x}' + (' (IMX219)' if cid == 0x0219 else ''))
+        if ov5640:
+            cid = c.rd(0x300A) << 8 | c.rd(0x300B)
+            print(f'chip id {cid:#06x}' + (' (OV5640)' if cid == 0x5640 else ''))
+        else:
+            cid = c.rd(0x0000) << 8 | c.rd(0x0001)
+            print(f'chip id {cid:#06x}' + (' (IMX219)' if cid == 0x0219 else ''))
     elif a.cmd == 'rd':
         for i in range(a.n):
             print(f'{a.addr + i:04x}: {c.rd(a.addr + i):02x}')
@@ -251,6 +260,8 @@ def main():
     elif a.cmd == 'init':
         n = c.init()
         print('init done' + (f', {n} NACKs' if n else ''))
+    elif a.cmd == 'rate' and ov5640:
+        sys.exit('rate: IMX219 only')
     elif a.cmd == 'rate':
         mpy = 57 if a.mbps == 456 else 114
         c.wr(0x0100, 0)
@@ -258,6 +269,10 @@ def main():
         c.wr(0x030C, mpy >> 8)
         c.wr(0x030D, mpy & 0xFF)
         c.wr(0x0100, 1)
+    elif a.cmd == 'tp' and ov5640:
+        c.wr(0x503D, 0x80 if a.pattern else 0x00)   # PRE_ISP_TEST_SET1: eight colour bars
+    elif a.cmd == 'stream' and ov5640:
+        c.wr(0x3008, 0x02 if a.on == 'on' else 0x42)  # software power down off / on
     elif a.cmd == 'tp':
         c.wr(0x0600, a.pattern >> 8)
         c.wr(0x0601, a.pattern & 0xFF)

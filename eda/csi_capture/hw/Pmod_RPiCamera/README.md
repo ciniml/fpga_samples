@@ -39,6 +39,13 @@ FFC のピン配置は Raspberry Pi 4 公式回路図 (J3 CAMERA) で確認。Pm
 FFC 上の並びと同じ順にして、差動対が交差しないようにしてある (FPGA の `pins.cst` も同じ割り当て)。
 FPGA 側の定義は `mod/pmod_rpi_camera/pmod_pins.csv`。
 
+## 使えるカメラ
+
+- Raspberry Pi Camera Module 2 (IMX219) と社外の IMX219 モジュール (24 MHz 水晶): `eda/csi_capture`
+- Digilent Pcam 5C (OV5640): `eda/csi_capture_pcam5c`。Raspberry Pi カメラとピン互換で、カメラ側コネクタも
+  基板側に接点。付属ケーブル (両端で接点の向きが逆) でピン n ↔ ピン n。11 番 PWUP は R3 で常時 ON
+- Camera Module 3 (IMX708): 基板は使えるが初期化 ROM が未作成
+
 ## ケーブルの向き
 
 公式資料から確認済み:
