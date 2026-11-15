@@ -12,6 +12,8 @@ set_device -name $DEVICE_FAMILY $DEVICE_PART
 
 set_option -verilog_std sysv2017
 set_option -print_all_synthesis_warning 1
+# placement: the default algorithm missed pclk (125 MHz, Csi2Packet header check) by ~0.3 ns
+set_option -place_option 1
 set_option -top_module top
 
 if {${TARGET} == "tangprimer25k"} {
