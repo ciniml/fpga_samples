@@ -26,7 +26,8 @@
  *   'X' a dl dh        -> 'x'               write register a of the design (o_x*)
  *   'Y' a              -> 'y' dl dh         read register a of the design (i_xrdata)
  * The init ROM also runs once ~20 ms after configuration (AUTO_INIT).
- * ROM index 128 and above end the init (ROMs of up to 128 entries).
+ * ROM index 128 and above end the init of the 7-bit ROMs (up to 128 entries);
+ * the 720p30 ROM (SENSOR 2) has an 8-bit index.
  * Aux port: a toggle of i_aux_tgl (this clock domain) asks for one sensor
  * register write (i_aux_addr, i_aux_data) when no command / init is
  * running; o_aux_ack follows i_aux_tgl when it is done (no UART reply).
@@ -87,12 +88,32 @@ module csi_ctrl #(
     output logic       o_aux_ack
 );
     // ---------------- UART ----------------
+    // 16-byte receive FIFO: a command may arrive while an aux sensor
+    // write (or the init) keeps the FSM busy (bytes were overwritten).
+    logic       u_valid;
+    logic [7:0] u_data;
     logic       rx_valid;
     logic [7:0] rx_data;
     logic       rx_ready;
     uart_rx #(.BAUD_DIVIDER(BAUD_DIVIDER)) u_rx (
-        .clock(clk), .reset(rst), .data_valid(rx_valid), .data_ready(rx_ready),
-        .data_bits(rx_data), .rx(uart_rxd), .overrun());
+        .clock(clk), .reset(rst), .data_valid(u_valid), .data_ready(1'b1),
+        .data_bits(u_data), .rx(uart_rxd), .overrun());
+    (* syn_ramstyle = "registers" *) logic [7:0] rxq [0:15];   // (LUT RAM lost bit 4 on the hardware)
+    logic [4:0] rxq_w, rxq_r;
+    assign rx_valid = rxq_w != rxq_r;
+    assign rx_data  = rxq[rxq_r[3:0]];
+    always_ff @(posedge clk) begin
+        if (rst) begin
+            rxq_w <= '0;
+            rxq_r <= '0;
+        end else begin
+            if (u_valid && (rxq_w - rxq_r) != 5'd16) begin
+                rxq[rxq_w[3:0]] <= u_data;
+                rxq_w           <= rxq_w + 1'b1;
+            end
+            if (rx_valid && rx_ready) rxq_r <= rxq_r + 1'b1;
+        end
+    end
     logic       tx_valid;
     logic [7:0] tx_data;
     logic       tx_ready;
@@ -116,14 +137,14 @@ module csi_ctrl #(
     logic [23:0] rom_q, rom_entry;
     generate
         if (SENSOR == 2) begin : g_ov5640_720p30
-            ov5640_720p30_init_rom u_rom (.i_idx(rom_idx[6:0]), .o_entry(rom_q));
+            ov5640_720p30_init_rom u_rom (.i_idx(rom_idx), .o_entry(rom_q));   // (8-bit index)
         end else if (SENSOR == 1) begin : g_ov5640
             ov5640_init_rom u_rom (.i_idx(rom_idx[6:0]), .o_entry(rom_q));
         end else begin : g_imx219
             imx219_init_rom u_rom (.i_idx(rom_idx[6:0]), .o_entry(rom_q));
         end
     endgenerate
-    assign rom_entry = rom_idx[7] ? {16'hFFFE, 8'h00} : rom_q;
+    assign rom_entry = (SENSOR != 2 && rom_idx[7]) ? {16'hFFFE, 8'h00} : rom_q;
 
     // ---------------- command FSM ----------------
     typedef enum logic [3:0] {

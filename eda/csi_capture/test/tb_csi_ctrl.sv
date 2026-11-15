@@ -106,7 +106,7 @@ module tb_csi_ctrl #(parameter int SENSOR = 0);
         logic [7:0] r0, r1, r2;
         int nrom = 0;
         repeat (4) @(posedge clk); rst = 0;
-        for (int i = 0; i < 128; i++) begin
+        for (int i = 0; i < (SENSOR == 2 ? 256 : 128); i++) begin
             logic [23:0] e;
             ridx = i; #1;
             e = rent;
@@ -157,12 +157,12 @@ module tb_csi_ctrl #(parameter int SENSOR = 0);
         $display("tb_csi_ctrl (SENSOR %0d): PASS", SENSOR);
         $finish;
     end
-    logic [6:0] ridx; logic [23:0] rent;
+    logic [7:0] ridx; logic [23:0] rent;   // (the 7-bit ROMs take ridx[6:0])
     if (SENSOR == 2) begin : g_ov5640_720p30
         ov5640_720p30_init_rom trom (.i_idx(ridx), .o_entry(rent));
     end else if (SENSOR == 1) begin : g_ov5640
-        ov5640_init_rom trom (.i_idx(ridx), .o_entry(rent));
+        ov5640_init_rom trom (.i_idx(ridx[6:0]), .o_entry(rent));
     end else begin : g_imx219
-        imx219_init_rom trom (.i_idx(ridx), .o_entry(rent));
+        imx219_init_rom trom (.i_idx(ridx[6:0]), .o_entry(rent));
     end
 endmodule
