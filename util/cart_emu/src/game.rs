@@ -185,10 +185,20 @@ impl Game {
     }
     fn program(&mut self, addr: u32, data: &[u8]) -> Result<(), String> {
         assert!(addr >= FLASH_BASE && data.len() <= 256 && (addr & 0xFF) as usize + data.len() <= 256);
-        self.spi(&[0x06], 0)?;
-        let mut m = vec![0x02, (addr >> 16) as u8, (addr >> 8) as u8, addr as u8];
+        // WREN, page program and the first status read in one go (one round trip over USB)
+        let mut m = vec![b'F', 1, 0, 0, 0, 0x06, b'F'];
+        let n = 4 + data.len();
+        m.extend_from_slice(&[n as u8, (n >> 8) as u8, 0, 0, 0x02, (addr >> 16) as u8, (addr >> 8) as u8, addr as u8]);
         m.extend_from_slice(data);
-        self.spi(&m, 0)?;
+        m.extend_from_slice(&[b'F', 1, 0, 1, 0, 0x05]);
+        self.e.send(&m)?;
+        let r = self.e.recv(4)?;
+        if r[0] != b'F' || r[1] != b'F' || r[3] != b'F' {
+            return Err(format!("page program at {addr:#x}: replies {r:02x?}"));
+        }
+        if r[2] & 1 == 0 {
+            return Ok(());
+        }
         self.wait_busy(Duration::from_millis(100))
     }
     /// bytes through the quad engine (not while answering)

@@ -8,3 +8,4 @@ description = "Host tool of eda/cart_emu (Tang Primer 25K as an MBC5 cartridge o
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 serialport = { version = "4", default-features = false }
+nusb = "0.2"

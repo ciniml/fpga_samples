@@ -5,10 +5,11 @@
 //! loads it over the Dock's UART and reads the counters, the trace and the CPU's results.
 
 mod game;
+mod link;
 mod rom;
 
 use clap::{Parser, Subcommand};
-use std::{io::{Read, Write}, time::Duration};
+use std::time::Duration;
 
 #[derive(Parser)]
 #[command(version, about = "MBC5 cartridge on the FPGA cartridge adapter (eda/cart_emu) and the L4 test ROM")]
@@ -17,6 +18,9 @@ struct Cli {
     tty: String,
     #[arg(long, global = true, default_value_t = 1_000_000)]
     baud: u32,
+    /// talk over USB (eda/cart_game with a Pmod USB HS Single) instead of the UART
+    #[arg(long, global = true)]
+    usb: bool,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -88,7 +92,7 @@ enum Cmd {
 }
 
 struct Emu {
-    port: Box<dyn serialport::SerialPort>,
+    port: Box<dyn link::Link>,
     en: bool,
 }
 
@@ -103,9 +107,15 @@ impl Status {
 
 impl Emu {
     /// magic: b"CE" (eda/cart_emu) or b"GC" (eda/cart_game)
+    /// port: a serial device, or "usb" (link::UsbLink)
     fn open(tty: &str, baud: u32, magic: &[u8; 2]) -> Result<Emu, String> {
-        let port = serialport::new(tty, baud).timeout(Duration::from_secs(3)).open().map_err(|e| format!("{tty}: {e}"))?;
-        let _ = port.clear(serialport::ClearBuffer::All);
+        let port: Box<dyn link::Link> = if tty == "usb" {
+            Box::new(link::UsbLink::open()?)
+        } else {
+            let p = serialport::new(tty, baud).timeout(Duration::from_secs(3)).open().map_err(|e| format!("{tty}: {e}"))?;
+            let _ = p.clear(serialport::ClearBuffer::All);
+            Box::new(link::UartLink(p))
+        };
         let mut e = Emu { port, en: false };
         let st = e.status()?;
         if &st.raw[0..2] != magic {
@@ -115,10 +125,10 @@ impl Emu {
         e.en = st.raw[3] & 1 != 0;
         Ok(e)
     }
-    fn send(&mut self, d: &[u8]) -> Result<(), String> { self.port.write_all(d).map_err(|e| format!("UART write: {e}")) }
+    fn send(&mut self, d: &[u8]) -> Result<(), String> { self.port.send(d) }
     fn recv(&mut self, n: usize) -> Result<Vec<u8>, String> {
         let mut b = vec![0; n];
-        self.port.read_exact(&mut b).map_err(|e| format!("UART read: {e}"))?;
+        self.port.recv(&mut b)?;
         Ok(b)
     }
     fn ack(&mut self, c: u8) -> Result<(), String> {
@@ -235,9 +245,9 @@ fn run(cli: &Cli) -> Result<bool, String> {
         return Ok(true);
     }
     if let Cmd::Game { cmd } = &cli.cmd {
-        return game::run(&cli.tty, cli.baud, cmd);
+        return game::run(if cli.usb { "usb" } else { &cli.tty }, cli.baud, cmd);
     }
-    let mut e = Emu::open(&cli.tty, cli.baud, b"CE")?;
+    let mut e = Emu::open(if cli.usb { "usb" } else { &cli.tty }, cli.baud, b"CE")?;
     let load = |p: &Option<String>| -> Result<Option<Vec<u8>>, String> { p.as_ref().map(|p| std::fs::read(p).map_err(|e| format!("{p}: {e}"))).transpose() };
     match &cli.cmd {
         Cmd::Rom { .. } | Cmd::Game { .. } => unreachable!(),

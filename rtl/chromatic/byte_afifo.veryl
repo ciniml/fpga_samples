@@ -1,0 +1,99 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file byte_afifo.veryl
+ * @brief Small asynchronous FIFO (valid/ready both sides) for a byte stream between unrelated
+ *        clocks: gray-code pointers synchronised over two flip-flops, storage in registers
+ *        (2 ** AW entries; no block RAM, whose same-address write/read in one cycle corrupts
+ *        data on the GW5A). After rtl/la/la_afifo.veryl.
+ */
+pub module ByteAfifo #(
+    param DW: u32 = 8,
+    param AW: u32 = 4,
+) (
+    i_wclk  : input  'w clock    ,
+    i_wrst  : input  'w reset    ,
+    s_valid : input  'w logic    ,
+    s_data  : input  'w logic<DW>,
+    s_ready : output 'w logic    ,
+
+    i_rclk  : input  'r clock    ,
+    i_rrst  : input  'r reset    ,
+    m_valid : output 'r logic    ,
+    m_data  : output 'r logic<DW>,
+    m_ready : input  'r logic    ,
+) {
+    const PW: u32 = AW + 1;
+
+    // write side
+    var wbin    : 'w logic<PW>;
+    var wgray   : 'w logic<PW>;
+    var rgray_w1: 'w logic<PW>;
+    var rgray_w2: 'w logic<PW>;
+    var wfull   : 'w logic    ;
+    let wr_go   : 'w logic     = s_valid & ~wfull;
+    let wbin_n  : 'w logic<PW> = wbin + 1;
+    let wgray_n : 'w logic<PW> = if wr_go ? (wbin_n >> 1) ^ wbin_n : wgray;
+    let rgray_wf: 'w logic<PW> = {~rgray_w2[AW:AW - 1], rgray_w2[AW - 2:0]};
+    assign s_ready = ~wfull;
+
+    // read side (one output register)
+    var rbin    : 'r logic<PW>;
+    var rgray   : 'r logic<PW>;
+    var wgray_r1: 'r logic<PW>;
+    var wgray_r2: 'r logic<PW>;
+    var ovalid  : 'r logic    ;
+    var odata   : 'r logic<DW>;
+    let rempty  : 'r logic     = rgray == wgray_r2;
+    let fetch   : 'r logic     = ~rempty & (~ovalid | m_ready);
+    let rbin_n  : 'r logic<PW> = rbin + 1;
+    assign m_valid = ovalid;
+    assign m_data  = odata;
+
+    var mem: 'w logic<DW> [2 ** AW];
+
+    unsafe (cdc) {
+        always_ff (i_wclk, i_wrst) {
+            if_reset {
+                wbin     = 0;
+                wgray    = 0;
+                wfull    = 1'b0;
+                rgray_w1 = 0;
+                rgray_w2 = 0;
+            } else {
+                if wr_go {
+                    wbin              = wbin_n;
+                    mem[wbin[AW - 1:0]] = s_data;
+                }
+                wgray    = wgray_n;
+                rgray_w1 = rgray;
+                rgray_w2 = rgray_w1;
+                wfull    = wgray_n == rgray_wf;
+            }
+        }
+        always_ff (i_rclk, i_rrst) {
+            if_reset {
+                rbin     = 0;
+                rgray    = 0;
+                ovalid   = 1'b0;
+                odata    = 0;
+                wgray_r1 = 0;
+                wgray_r2 = 0;
+            } else {
+                if fetch {
+                    rbin   = rbin_n;
+                    rgray  = (rbin_n >> 1) ^ rbin_n;
+                    odata  = mem[rbin[AW - 1:0]];
+                    ovalid = 1'b1;
+                } else if m_ready {
+                    ovalid = 1'b0;
+                }
+                wgray_r1 = wgray;
+                wgray_r2 = wgray_r1;
+            }
+        }
+    }
+}

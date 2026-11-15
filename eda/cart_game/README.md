@@ -19,6 +19,21 @@ openFPGALoader --cable gwu2x -r                                                 
 ./target/release/cart_emu game stop                                             # フラッシュを単線モードに戻す
 ```
 
+## USB 2.0 HS (Pmod USB HS Single)
+UART と同じコマンド列を USB でも受け付ける。Pmod USB HS Single ([`../pmod_usb_hs/hw/Pmod_USB_HS_Single`](../pmod_usb_hs/))
+を Dock の `USB_PMOD` (既定 `pmod1`) に挿し、`cart_emu` に `--usb` を付ける (`--tty` の代わり)。
+- PHY は `eda/usb_device` の `USB_SL=1` と同じ (`usb_phy_gowin_sl`、PLL も共用)。コアは `rtl/usb` の `UsbDevice` で、EP1 を
+  バイト列にする設定 (`EP1_STREAM`、短いパケットは 20 µs 途切れたら送る)
+- 60 MHz の USB 側と 100 MHz の GameCart の間は `rtl/chromatic/byte_afifo.veryl` (レジスタで 16 段の非同期 FIFO) を往復 1 本ずつ
+- 返事は、最後にコマンドのバイトが来た側 (UART か USB) へ返す。両方から同時に送らないこと
+- VID:PID は他の試作と同じ 1209:0001。ベンダリクエスト 0x01 の上位 2 バイトが "GC" のものを `cart_emu` が選ぶ
+- 別のスロットなら `make USB_PMOD=pmod2` (ビルドディレクトリは `build/tangprimer25k_pmod2`)
+
+```sh
+./target/release/cart_emu --usb game write game.gbc
+./target/release/cart_emu --usb game start game.gbc --cont --sav game.sav
+```
+
 ## 時間の予算
 - 本体 (公式ファーム) がデータを取り込むまでの時間を `eda/cart_emu` の応答遅延で測った。
   同期後のアドレスから、等速は 500 ns まで合格 (600 ns で停止)、倍速は 230 ns まで合格 (240 ns で停止)
