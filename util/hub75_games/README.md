@@ -28,6 +28,7 @@ cargo build --release
 ./target/release/expo                     # 動作デモ: 超エレキ万博2026
 ./target/release/explain                  # 動作デモ: このデザインのしくみ解説
 ./target/release/etbooth                  # 動作デモ: EdgeTech+ 2026 の案内 (会期・会場マップ・CQ 出版ブース・GOWIN)
+./target/release/bento                    # 動作デモ: お隣のお弁当屋さんの紹介 (EdgeTech+ のネタ枠)
 ./target/release/techdeep                 # 動作デモ: 技術解説 (EdgeTech+ 向け、構成・UDP・RGMII・DDR2・HUB75・Veryl・リソース)
 ./target/release/showcase                 # 動作デモをプレイリストの順に (既定はエレキ万博用、スペース / Enter で次へ)
 ./target/release/showcase --playlist edgetech   # EdgeTech+ 用のプレイリスト
@@ -72,7 +73,7 @@ HTTP と WebSocket を持つ (追加のクレートなし)。
 
 showcase と arcade (巡回) のデモの順番と時間。`expo` (既定、エレキ万博: 動作デモ 15 本を 40 秒ずつ、約 10 分)、
 `edgetech` (EdgeTech+: 案内 60 秒 → 技術解説 120 秒 → フラクタル → 花火 → 案内 → しくみ解説 145 秒 → オーロラ →
-ライフゲーム → 文字の雨 → 時計、約 9.5 分で一巡、案内はおよそ 4 分ごと)、またはファイル:
+ライフゲーム → 文字の雨 → 時計 → お隣のお弁当 48 秒、約 10 分で一巡、案内はおよそ 4 分ごと)、またはファイル:
 
 ```
 # <デモ> <秒> [start]   start = 毎回最初から (解説もの)
@@ -81,7 +82,7 @@ techdeep 120 start
 fractal 30
 ```
 
-デモ名は `expo etbooth techdeep explain clock fireworks flame waterfall aurora storm hourglass matrix lavalamp fireflies
+デモ名は `expo etbooth bento techdeep explain clock fireworks flame waterfall aurora storm hourglass matrix lavalamp fireflies
 life fractal fountain aquarium`。arcade の「デモをえらぶ」は常に全部、ゲーム後のランダムはプレイリストの中から選ぶ。
 展示 PC の自動起動では `~/exhibit/hub75_games/arcade.env` に `ARCADE_ARGS=--playlist edgetech` と書いてサービスを
 再起動する (ファイルがなければエレキ万博用)。
@@ -333,6 +334,19 @@ CQ 出版ブース (DF-05) 用。15 秒 × 4 ページ (スペース / Enter で
 (CQ 出版社 DF-05、丸文株式会社 BG-05 の紹介に「GOWIN 各種IFソリューションの展示 中小規模FPGA（CPLD)新製品のご紹介」)、
 [フロアマップ](https://www.jasa.or.jp/expo/2026/pdf/floormap.jpg)。丸文はもう 1 小間 (組込ソリューション BG-09) あるが、
 GOWIN の記載は BG-05 のほう。
+
+## bento — お隣のお弁当屋さん (動作デモ、EdgeTech+ のネタ枠)
+
+CQ 出版ブースの隣がお弁当屋さんなので、勝手に紹介する。12 秒 × 4 ページ (スペース / Enter で次へ):
+
+1. 赤いのぼり「お弁当」がはためき、黄色い帯に「絶賛販売中」、「(勝手に応援中)」
+2. お弁当箱におかず (ごはんと梅干し、からあげ、卵焼き、ブロッコリー、タコさんウインナー) が順に入る。中身は「※イメージ」
+3. 焼菓子・飲み物 (お茶、水、焼菓子)、「お取り置きできます！」
+4. 電子レンジが 5 秒数えて「チン！」(ベルの音)、「レンジご利用ください」「※LEDでは温まりません」「おなかが満ちたら
+   CQ出版ブースへ」
+
+文言はお店の看板 (2026-11-17 の写真) から: お弁当 絶賛販売中、焼菓子、飲料、お取り置きできます！、レンジご利用ください。
+メニューと値段は分からないので出さない。
 
 ## techdeep — 技術解説 (動作デモ、EdgeTech+ 向け)
 

@@ -13,6 +13,7 @@ pub mod clock;
 pub mod fireworks;
 pub mod fountain;
 pub mod fractal;
+pub mod bento;
 pub mod etbooth;
 pub mod explain;
 pub mod expo;

@@ -18,9 +18,10 @@ const FADE: u64 = 45;
 type Make = fn(u64) -> Box<dyn Game>;
 
 /// (name, name on the menu, how to make it)
-static DEMOS: [(&str, &str, Make); 18] = [
+static DEMOS: [(&str, &str, Make); 19] = [
     ("expo", "超エレキ万博", |s| Box::new(crate::expo::Expo::new(s ^ 13, 0))),
     ("etbooth", "EdgeTech+案内", |s| Box::new(crate::etbooth::EtBooth::new(s ^ 16, 0))),
+    ("bento", "お隣のお弁当", |s| Box::new(crate::bento::Bento::new(s ^ 18, 0))),
     ("techdeep", "技術解説", |s| Box::new(crate::techdeep::TechDeep::new(s ^ 17, 0))),
     ("explain", "しくみ解説", |s| Box::new(crate::explain::Explain::new(s ^ 15, 0))),
     ("clock", "時計", |s| Box::new(crate::clock::Clock::new(s ^ 14, 0))),
@@ -59,8 +60,8 @@ aquarium 40
 ";
 
 /// EdgeTech+ 2026 (CQ booth DF-05): the booth guide about every 4 minutes,
-/// the technical explanations from their start, eye candy between
-/// (about 9.5 minutes a round)
+/// the technical explanations from their start, eye candy between, and
+/// the bento shop next door as a joke (about 10 minutes a round)
 const EDGETECH: &str = "
 etbooth 60 start
 techdeep 120 start
@@ -72,6 +73,7 @@ aurora 30
 life 30
 matrix 25
 clock 20
+bento 48 start
 ";
 
 /// a playlist entry: the demo, its time in ticks, from its start each time
