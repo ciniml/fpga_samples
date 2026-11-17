@@ -19,6 +19,7 @@
   button, select { background: #161b26; color: var(--fg); border: 1px solid #2a3243; border-radius: 4px;
     padding: 3px 10px; font: inherit; }
   button.on { border-color: var(--acc); color: var(--acc); }
+  button.rec { border-color: var(--warn); color: var(--warn); }
   main { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 12px; }
   canvas { image-rendering: pixelated; }
 </style>
@@ -37,6 +38,7 @@
   <label><input type="checkbox" id="labels" checked> コネクタ名</label>
   <label title="矢印 移動 / Space / Z / X / C / Enter 開始 / P ポーズ / M メニュー / - + 音量 / 0 ミュート"><input type="checkbox" id="keys" checked> キー操作</label>
   <button id="snd">音を出す</button>
+  <button id="rec" title="表示 (と音) を動画ファイルに保存">● 録画</button>
   <label>音量 <input type="range" id="vol" min="0" max="100" value="70" style="width:80px"></label>
 </header>
 <main><canvas id="cv"></canvas></main>
@@ -87,7 +89,7 @@ function layout() {
   px32.fill(0xff0d0a08); // the gaps between the panels
   dirty = true;
 }
-window.addEventListener("resize", layout);
+window.addEventListener("resize", () => { if (!rec) layout(); }); // not while recording: the video keeps its size
 
 function draw() {
   if (!dirty || !img) return;
@@ -135,20 +137,29 @@ function tick() { draw(); requestAnimationFrame(tick); }
 requestAnimationFrame(tick);
 
 // ---- sound: the 48 kHz chunks queued a little ahead of the clock ----
-let ac = null, gain = null, at = 0;
-$("snd").onclick = () => {
+// The chunks go into mix, which feeds the speakers (through the volume)
+// and the recording; the context runs while either wants it.
+let ac = null, mix = null, gain = null, at = 0, sndOn = false;
+function audioCtx() {
   if (!ac) {
     ac = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
-    gain = ac.createGain(); gain.connect(ac.destination);
+    mix = ac.createGain();
+    gain = ac.createGain(); mix.connect(gain); gain.connect(ac.destination);
   }
-  if (ac.state === "running" && $("snd").classList.contains("on")) {
-    ac.suspend(); $("snd").classList.remove("on"); $("snd").textContent = "音を出す";
-  } else {
-    ac.resume(); at = 0; $("snd").classList.add("on"); $("snd").textContent = "音を止める";
-  }
+  return ac;
+}
+function audioState() {
+  if (!ac) return;
+  if (sndOn || rec) { if (ac.state !== "running") { ac.resume(); at = 0; } } else ac.suspend();
   setVol();
+}
+$("snd").onclick = () => {
+  audioCtx();
+  sndOn = !sndOn;
+  $("snd").classList.toggle("on", sndOn); $("snd").textContent = sndOn ? "音を止める" : "音を出す";
+  audioState();
 };
-const setVol = () => { if (gain) gain.gain.value = Math.pow($("vol").value / 100, 2); };
+const setVol = () => { if (gain) gain.gain.value = sndOn ? Math.pow($("vol").value / 100, 2) : 0; };
 $("vol").oninput = setVol;
 function play(samples) {
   if (!ac || ac.state !== "running") return;
@@ -158,9 +169,55 @@ function play(samples) {
   const now = ac.currentTime;
   if (at < now + 0.02 || at > now + 0.4) at = now + 0.08; // start / resync
   const n = ac.createBufferSource();
-  n.buffer = b; n.connect(gain); n.start(at);
+  n.buffer = b; n.connect(mix); n.start(at);
   at += b.duration;
 }
+
+// ---- recording: the canvas (and the sound, at full level whatever the
+// volume) into a video file, MP4 where the browser can, else WebM ----
+let rec = null, recT0 = 0, recTimer = 0;
+const recType = ["video/mp4;codecs=avc1,mp4a.40.2", "video/mp4;codecs=avc1,opus", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"]
+  .find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
+const SIZE_CTRLS = ["zoom", "gaps", "mode", "labels"]; // these resize or redraw the canvas
+function stamp() {
+  const d = new Date(), p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+$("rec").onclick = () => {
+  if (rec) { rec.stop(); return; }
+  if (!recType) { alert("このブラウザは録画 (MediaRecorder) に対応していません"); return; }
+  const stream = cv.captureStream(60);
+  audioCtx();
+  const dst = ac.createMediaStreamDestination();
+  mix.connect(dst);
+  stream.addTrack(dst.stream.getAudioTracks()[0]);
+  const chunks = [], name = `hub75emu-${stamp()}.${recType.startsWith("video/mp4") ? "mp4" : "webm"}`;
+  rec = new MediaRecorder(stream, { mimeType: recType, videoBitsPerSecond: 12e6, audioBitsPerSecond: 192e3 });
+  rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+  rec.onstop = () => {
+    mix.disconnect(dst);
+    stream.getTracks().forEach(t => t.stop());
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob(chunks, { type: recType.split(";")[0] }));
+    a.download = name; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    rec = null; clearInterval(recTimer);
+    $("rec").classList.remove("rec"); $("rec").textContent = "● 録画";
+    SIZE_CTRLS.forEach(k => $(k).disabled = false);
+    audioState();
+  };
+  rec.start(1000);
+  audioState();
+  dirty = true; // a first frame right away
+  SIZE_CTRLS.forEach(k => $(k).disabled = true);
+  recT0 = performance.now();
+  const show = () => {
+    const t = Math.floor((performance.now() - recT0) / 1000);
+    $("rec").textContent = `■ 停止 ${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+  };
+  $("rec").classList.add("rec"); show();
+  recTimer = setInterval(show, 500);
+};
 
 // ---- keys: sent back to the demo (hub75emu relays them over UDP), the
 // same as in its terminal; the demo repeats a held arrow itself
