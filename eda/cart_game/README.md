@@ -12,7 +12,7 @@
 GW_SH=~/gowin/1.9.12.03/IDE/bin/gw_sh make && make run                          # TP25K の SRAM へ
 cd ../../util/cart_emu && cargo build --release
 ./target/release/cart_emu game write game.gbc                                   # フラッシュ 0x400000 へ (違う 64 KiB ブロックだけ)
-./target/release/cart_emu game start game.gbc --cont [--sav game.sav]           # マッパー設定、バンク 0・RAM 読み込み、較正、応答開始
+./target/release/cart_emu game start game.gbc --cont [--sav game.sav]           # マッパー設定、バンク 0・RAM 読み込み、較正、応答開始 (セーブを入れるとき)
 openFPGALoader --cable gwu2x -r                                                 # Chromatic を公式ファームで起動し直す
 ./target/release/cart_emu game status | watch                                   # 遅れた読み出しの数、最も遅い読み出し
 ./target/release/cart_emu game save game.gbc -o game.sav                        # 電源を切る前にセーブを取り出す (BSRAM なので消える)
@@ -41,6 +41,20 @@ UART と同じコマンド列を USB でも受け付ける。Pmod USB HS Single 
 ./target/release/cart_emu --usb game start game.gbc --cont --sav game.sav
 ```
 
+## 自動起動 (ホストなし)
+リセット後、`GameCart` (`AUTO_BOOT=1`) が `game start --cont` と同じことを自分でする。セーブは入れない (RAM は FF)。
+1. JEDEC ID を単線で 2 回読む (1 回目は、ロジックだけリセットされたときに残っている連続読み出しモードを抜けるため)。2 回目が `EF/0B xx 17` でなければ止まる
+2. 0x400000 からバンク 0 (16 KiB) を単線で BSRAM に読む。ヘッダのカートタイプ (0147h)・ROM サイズ (0148h)・RAM サイズ (0149h) でマッパーとマスクを決め、
+   ヘッダチェックサム (014Dh) が合わない、または対応外のマッパーなら応答しない (空のフラッシュでも同じ)
+3. RAM を FF で埋め、SPI-Quad 連続読み出しモードにして、取り込みタイミング 0〜3 のそれぞれでバンク 0 全体を 4 本で読み、BSRAM と比べる。
+   合格したものの真ん中 (`cart_emu` と同じ選び方) を使う
+4. 次の /RST の立ち上がりでトレースを始めるようにして応答を始める
+
+- シミュレーション (`rtl/chromatic/test`, `make boot`、フラッシュのモデルは出力遅延 7 ns) では 13 ms。タイミング 1, 2 が合格して 2 を選んだ。
+  連続読み出しモードのままのリセット後の再起動、空のフラッシュで応答しないことも確かめた
+- `game status` の `boot from the flash` に結果が出る。ホストからの `game start` (セーブを入れるとき) はこれまでどおり使える
+- 本体と同時に電源が入る場合、FPGA のフラッシュからのコンフィグ (約 0.9 MiB) と自動起動が本体の最初の読み出しに間に合うかは未確認
+
 ## 時間の予算
 - 本体 (公式ファーム) がデータを取り込むまでの時間を `eda/cart_emu` の応答遅延で測った。
   同期後のアドレスから、等速は 500 ns まで合格 (600 ns で停止)、倍速は 230 ns まで合格 (240 ns で停止)
@@ -61,7 +75,7 @@ UART と同じコマンド列を USB でも受け付ける。Pmod USB HS Single 
   (先頭のビットストリームは消せない)
 - 書き込み前の 0x400000-0x7FFFFF はすべて FF だった (バックアップは `~/chromatic-backups/tp25k_flash_4M-8M.bin`)
 - ビットストリームをフラッシュに置くときは `openFPGALoader --board tangprimer25k --write-flash --unprotect-flash --verify build/tangprimer25k/impl/pnr/cart_game.fs`
-  (使うのは先頭の約 0.9 MiB で、0x400000 以降の ROM は消えない)。電源投入後は `cart_emu game start` が要る (バンク 0・マッパー・較正はホストから)。
+  (使うのは先頭の約 0.9 MiB で、0x400000 以降の ROM は消えない)。電源投入後は下の自動起動でそのまま遊べる。
   2026-11-19 に書き込み、フラッシュから起動して USB で応答することを確認。元の先頭 4 MiB は `~/chromatic-backups/tp25k_flash_0-4M_20261119.bin`
   (戻すときは `openFPGALoader --board tangprimer25k --write-flash --unprotect-flash` にこのファイルを `.bin` として渡す)
 

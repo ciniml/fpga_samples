@@ -231,6 +231,11 @@ fn print_status(g: &mut Game) -> Result<(), String> {
         s.u16(58),
         s.u16(62),
     );
+    let boot = s.raw[61];
+    println!(
+        "boot from the flash: {}",
+        if boot & 8 != 0 { "running" } else { ["off", "started by itself", "no valid image at 0x400000, silent", "no capture tick reads right, silent"][boot as usize & 3] }
+    );
     println!(
         "reads: ROM0 {} ROMX {} (late {}, no data {}, slowest {} ns) RAM {} | writes: MBC {} RAM {} | RAM while off {} | other rd {}",
         s.u32(14),

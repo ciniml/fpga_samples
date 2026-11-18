@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSL-1.0
 # Copyright Kenta Ida 2026.
 # make unit   : directed SV test (tb_cart_unit)
+# make boot   : GameCart AUTO_BOOT with QspiRom and a flash model (tb_game_boot)
 # make simexe : Verilator model with a stdin/stdout byte stream, for util/chromatic_cart_dump --sim
 #               (MBC / ROM_CODE / MBC1M / BAD_HDR / RAM_CODE / EEP_WORDS select the cartridge)
 VERYL_SV := ../cart_power.sv ../cart_bus.sv ../mbc7_eeprom.sv ../flash_engine.sv ../cart_cmd.sv
@@ -14,10 +15,14 @@ EEP_WORDS ?= 128
 FLASH ?= 0
 SIMDIR := obj_sim_mbc$(MBC)_r$(ROM_CODE)_m$(MBC1M)_h$(BAD_HDR)_s$(RAM_CODE)$(if $(filter-out 128,$(EEP_WORDS)),_e$(EEP_WORDS))$(if $(filter 1,$(FLASH)),_f)
 
-.PHONY: unit simexe clean
+.PHONY: unit boot simexe clean
 unit: $(VERYL_SV)
 	verilator --binary $(VFLAGS) --verilate-jobs 1 --build-jobs 0 --top-module tb_cart_unit -Mdir obj_unit $(VERYL_SV) gb_cart_model.sv cart_sim_top.sv tb_cart_unit.sv
 	./obj_unit/Vtb_cart_unit
+
+boot: ../game_cart.sv ../qspi_rom.sv
+	verilator --binary $(VFLAGS) --verilate-jobs 1 --build-jobs 0 --top-module tb_game_boot -Mdir obj_boot ../game_cart.sv ../qspi_rom.sv tb_game_boot.sv
+	./obj_boot/Vtb_game_boot
 
 simexe: $(VERYL_SV)
 	verilator --cc --exe --build -O2 $(VFLAGS) --verilate-jobs 1 --build-jobs 0 --top-module cart_sim_top -Mdir $(SIMDIR) \
@@ -25,8 +30,8 @@ simexe: $(VERYL_SV)
 	  $(VERYL_SV) gb_cart_model.sv cart_sim_top.sv sim_main.cpp -o cart_sim
 	@echo "$(SIMDIR)/cart_sim"
 
-$(VERYL_SV): $(wildcard ../*.veryl)
+$(VERYL_SV) ../game_cart.sv ../qspi_rom.sv: $(wildcard ../*.veryl)
 	cd .. && veryl build
 
 clean:
-	rm -rf obj_unit obj_sim_*
+	rm -rf obj_unit obj_boot obj_sim_*
