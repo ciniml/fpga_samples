@@ -60,6 +60,10 @@ UART と同じコマンド列を USB でも受け付ける。Pmod USB HS Single 
   それに 0x400000 以上へのページプログラムとセクタ/ブロック消去だけ。ステータスレジスタへの書き込みとチップ消去は通さない
   (先頭のビットストリームは消せない)
 - 書き込み前の 0x400000-0x7FFFFF はすべて FF だった (バックアップは `~/chromatic-backups/tp25k_flash_4M-8M.bin`)
+- ビットストリームをフラッシュに置くときは `openFPGALoader --board tangprimer25k --write-flash --unprotect-flash --verify build/tangprimer25k/impl/pnr/cart_game.fs`
+  (使うのは先頭の約 0.9 MiB で、0x400000 以降の ROM は消えない)。電源投入後は `cart_emu game start` が要る (バンク 0・マッパー・較正はホストから)。
+  2026-11-19 に書き込み、フラッシュから起動して USB で応答することを確認。元の先頭 4 MiB は `~/chromatic-backups/tp25k_flash_0-4M_20261119.bin`
+  (戻すときは `openFPGALoader --board tangprimer25k --write-flash --unprotect-flash` にこのファイルを `.bin` として渡す)
 
 ## 結果 (2026-11-15)
 | ゲーム | マッパー | 速度 | 結果 |
