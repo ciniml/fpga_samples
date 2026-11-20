@@ -1,0 +1,161 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file t1s_pcs_tx.veryl
+ * @brief 10BASE-T1S transmit PCS (802.3cg 147.3.2): MII nibbles -> 5B symbols.
+ *
+ * One MII nibble per 5B symbol (both 400 ns at 10 Mb/s / 12.5 MBd), so
+ * there is no buffering: o_sym is a combinational function of the state and
+ * the MII inputs, taken by the PMA on i_sym_req; o_tx_req marks the
+ * requests that consume a nibble (the MAC then presents the next one).
+ *
+ * Framing (draft D2.0 147.3.2 / OPEN Alliance PCS test 3.2.1):
+ *   TX_EN rises: the first four nibbles (preamble) are replaced by
+ *   SYNC SYNC SSD SSD (J J H H); then each nibble is scrambled and 4B/5B
+ *   encoded; TX_EN falls: ESD (T), then ESDOK (R) or ESDERR (K, a TX_ER was
+ *   seen), then SILENCE (I = 11111: the PMA stops driving).
+ *   Idle: i_cmd selects BEACON (N) or COMMIT (J) for the PLCA RS, else I.
+ * Scrambler (147.3.2.5 of D2.0): self-synchronizing, x^17 + x^14 + 1:
+ *   for each nibble bit i = 0..3 (LSB first) sd = txd[i] ^ s[13] ^ s[16],
+ *   s = {s[15:0], sd}; the scrambled nibble is 4B/5B encoded. Only data is
+ *   scrambled. The state is never all zero (reset value 17'h1ffff).
+ *
+ * Codes are written as in table 147-1 (J = 11000); the bit order on the
+ * line is chosen in the PMA.
+ */
+pub module T1sPcsTx (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_sym_req: input  logic   ,
+    o_sym    : output logic<5>,
+
+    o_tx_req: output logic   , // the nibble on i_tx_en / i_txd is taken on this clock
+    i_tx_en : input  logic   ,
+    i_tx_er : input  logic   ,
+    i_txd   : input  logic<4>,
+
+    i_cmd: input logic<2>, // 0 none, 1 BEACON, 2 COMMIT (only while not transmitting)
+
+    o_transmitting: output logic,
+) {
+    const SYM_I: logic<5> = 5'b11111;
+    const SYM_J: logic<5> = 5'b11000;
+    const SYM_K: logic<5> = 5'b10001;
+    const SYM_T: logic<5> = 5'b01101;
+    const SYM_R: logic<5> = 5'b00111;
+    const SYM_H: logic<5> = 5'b00100;
+    const SYM_N: logic<5> = 5'b01000;
+
+    function enc (
+        d: input logic<4>,
+    ) -> logic<5> {
+        case d {
+            4'h0   : return 5'b11110;
+            4'h1   : return 5'b01001;
+            4'h2   : return 5'b10100;
+            4'h3   : return 5'b10101;
+            4'h4   : return 5'b01010;
+            4'h5   : return 5'b01011;
+            4'h6   : return 5'b01110;
+            4'h7   : return 5'b01111;
+            4'h8   : return 5'b10010;
+            4'h9   : return 5'b10011;
+            4'ha   : return 5'b10110;
+            4'hb   : return 5'b10111;
+            4'hc   : return 5'b11010;
+            4'hd   : return 5'b11011;
+            4'he   : return 5'b11100;
+            default: return 5'b11101;
+        }
+    }
+
+    const ST_IDLE: logic<3> = 3'd0;
+    const ST_J2  : logic<3> = 3'd1;
+    const ST_H1  : logic<3> = 3'd2;
+    const ST_H2  : logic<3> = 3'd3;
+    const ST_DATA: logic<3> = 3'd4;
+    const ST_END : logic<3> = 3'd5; // ESD sent, ESDOK / ESDERR next
+
+    var state: logic<3> ;
+    var scr  : logic<17>;
+    var err  : logic    ;
+
+    // scrambler step for one nibble
+    var sd    : logic<4> ;
+    var scr_nx: logic<17>;
+    always_comb {
+        var s: logic<17>;
+        s = scr;
+        for i in 0..4 {
+            var b: logic;
+            b     = i_txd[i] ^ s[13] ^ s[16];
+            sd[i] = b;
+            s     = {s[15:0], b};
+        }
+        scr_nx = s;
+    }
+
+    always_comb {
+        o_sym    = SYM_I;
+        o_tx_req = 1'b0;
+        case state {
+            ST_IDLE: if i_tx_en {
+                o_sym    = SYM_J;
+                o_tx_req = i_sym_req;
+            } else if i_cmd == 2'd1 {
+                o_sym = SYM_N;
+            } else if i_cmd == 2'd2 {
+                o_sym = SYM_J;
+            }
+            ST_J2: {
+                o_sym    = SYM_J;
+                o_tx_req = i_sym_req;
+            }
+            ST_H1, ST_H2: {
+                o_sym    = SYM_H;
+                o_tx_req = i_sym_req;
+            }
+            ST_DATA: if i_tx_en {
+                o_sym    = enc(sd);
+                o_tx_req = i_sym_req;
+            } else {
+                o_sym = SYM_T;
+            }
+            ST_END : o_sym = if err ? SYM_K : SYM_R;
+            default: o_sym = SYM_I;
+        }
+    }
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            state = ST_IDLE;
+            scr   = 17'h1ffff;
+            err   = 1'b0;
+        } else if i_sym_req {
+            case state {
+                ST_IDLE: if i_tx_en {
+                    state = ST_J2;
+                    err   = i_tx_er;
+                }
+                ST_J2: state = ST_H1;
+                ST_H1: state = ST_H2;
+                ST_H2: state = ST_DATA;
+                ST_DATA: if i_tx_en {
+                    scr = scr_nx;
+                    if i_tx_er {
+                        err = 1'b1;
+                    }
+                } else {
+                    state = ST_END;
+                }
+                default: state = ST_IDLE;
+            }
+        }
+    }
+
+    assign o_transmitting = state != ST_IDLE;
+}

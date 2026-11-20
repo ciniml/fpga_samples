@@ -1,0 +1,48 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file tb_t1s.veryl
+ * @brief T1sPhy tests on a behavioural mixing segment (body: test/t1s_link_body.sv,
+ *        bus model test/t1s_bus.sv, MAC model test/t1s_mac_model.sv).
+ *  t1s_csma_*  : PLCA off, the nodes send one after the other
+ *  t1s_plca_*  : PLCA on (node 0 coordinator), all nodes send at once, no collision allowed
+ *  ppm = +-100 ppm (spec) / +-1000; isi = slow edges, small signal, noise; rl = rightmost bit first;
+ *  auto = receivers find the bit order themselves
+ */
+module TbT1s {}
+
+#[test(t1s_csma_2)]
+embed (inline) sv{{{
+module t1s_csma_2; t1s_link_body #(.N(2), .PPM0(100), .PPM1(-100), .RUN(1)) body(); endmodule
+}}}
+#[test(t1s_plca_3)]
+embed (inline) sv{{{
+module t1s_plca_3; t1s_link_body #(.N(3), .PLCA(1), .PPM0(80), .PPM1(-100), .PPM2(30), .RUN(1)) body(); endmodule
+}}}
+#[test(t1s_plca_ppm_big)]
+embed (inline) sv{{{
+module t1s_plca_ppm_big; t1s_link_body #(.N(3), .PLCA(1), .PPM0(-1000), .PPM1(1000), .PPM2(500), .NFRAMES(4), .RUN(1)) body(); endmodule
+}}}
+#[test(t1s_plca_isi)]
+embed (inline) sv{{{
+module t1s_plca_isi; t1s_link_body #(.N(3), .PLCA(1), .PPM0(50), .PPM1(-70), .TAU(12.0), .ATT(0.3), .TH(0.05), .NOISE(0.04), .NFRAMES(4), .RUN(1)) body(); endmodule
+}}}
+#[test(t1s_plca_rl)]
+embed (inline) sv{{{
+module t1s_plca_rl; t1s_link_body #(.N(2), .PLCA(1), .LEFT_FIRST(0), .RX_LEFT(0), .NFRAMES(4), .RUN(1)) body(); endmodule
+}}}
+#[test(t1s_plca_auto)]
+embed (inline) sv{{{
+module t1s_plca_auto; t1s_link_body #(.N(2), .PLCA(1), .LEFT_FIRST(0), .AUTO(1), .NFRAMES(4), .RUN(1)) body(); endmodule
+}}}
+#[test(t1s_plca_auto_lr)]
+embed (inline) sv{{{
+module t1s_plca_auto_lr; t1s_link_body #(.N(3), .PLCA(1), .LEFT_FIRST(1), .AUTO(1), .PPM1(100), .NFRAMES(3), .RUN(1)) body(); endmodule
+}}}
+#[test(t1s_plca_to24)]
+embed (inline) sv{{{
+module t1s_plca_to24; t1s_link_body #(.N(3), .PLCA(1), .TO(24), .PPM0(100), .PPM2(-100), .NFRAMES(3), .RUN(1)) body(); endmodule
+}}}

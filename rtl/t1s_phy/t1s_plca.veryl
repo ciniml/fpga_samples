@@ -1,0 +1,232 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file t1s_plca.veryl
+ * @brief PLCA (802.3cg Clause 148) transmit-opportunity scheduler, written
+ *        for a MAC that sits next to the PHY in the same FPGA.
+ *
+ * A standard PLCA RS delays the MAC's frame and signals logical collisions
+ * on the MII. Here the MAC is ours, so the scheduler simply tells it when
+ * to start (o_tx_go): the frame waits in the MAC until the node's transmit
+ * opportunity. On the wire this looks like any PLCA node (a frame starts
+ * right at the beginning of the node's opportunity; COMMIT is not needed).
+ *
+ * Coordinator (i_id == 0): sends a BEACON (BEACON_SYMS 'N' symbols, via
+ * o_cmd to the PCS) and starts opportunity 0 when its own transmitter has
+ * stopped. Followers wait for the end of a received BEACON (i_beacon_end)
+ * and then start opportunity 0.
+ * Each opportunity (cur_id) ends after i_to bit times (100 ns) of silence,
+ * or when a transmission that started in it ends; then cur_id advances.
+ * The node with cur_id == i_id transmits if a frame is pending at the start
+ * of its opportunity. After cur_id reaches i_cnt - 1 the coordinator sends
+ * the next BEACON (followers wait for it).
+ *
+ * i_en low: plain carrier sense (CSMA without collision detection): start
+ * when a frame is pending, the line has been quiet for IPG_BT bit times.
+ */
+pub module T1sPlca #(
+    param BT_CYCLES  : u32 = 10, // clocks per bit time (100 ns)
+    param BEACON_SYMS: u32 = 4 , // 'N' symbols per BEACON (20 bit times), >= 2
+    param IPG_BT     : u32 = 96, // CSMA mode: inter-packet gap
+    param TX_WAIT_BT : u32 = 20, // the MAC must start within this after o_tx_go
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_en : input logic   ,
+    i_id : input logic<8>,
+    i_cnt: input logic<8>, // coordinator: number of opportunities per cycle (node count)
+    i_to : input logic<8>, // transmit opportunity timer, bit times
+
+    i_sym_req   : input logic, // PMA symbol strobe (counts the BEACON symbols)
+    i_crs       : input logic, // receive carrier (PMA)
+    i_beacon_end: input logic, // PCS: end of a received BEACON
+    i_tx_active : input logic, // our transmitter is driving the line
+
+    i_pending: input  logic, // the MAC has a frame
+    o_tx_go  : output logic, // pulse: start the frame now
+
+    o_cmd   : output logic<2>, // to the PCS: 1 = BEACON
+    o_cur_id: output logic<8>,
+    o_state : output logic<3>,
+    o_synced: output logic   , // PLCA cycle running (a BEACON was sent / received)
+    o_beacon: output logic   , // pulse: a BEACON was sent (coordinator) / received (follower)
+) {
+    const ST_OFF    : logic<3> = 3'd0;
+    const ST_RESYNC : logic<3> = 3'd1;
+    const ST_BEACON : logic<3> = 3'd2; // sending the BEACON
+    const ST_BEND   : logic<3> = 3'd3; // BEACON symbols given, waiting for the transmitter to stop
+    const ST_WAIT   : logic<3> = 3'd4; // in an opportunity, nothing on the line yet
+    const ST_TX     : logic<3> = 3'd5;
+    const ST_RECV   : logic<3> = 3'd6;
+    const ST_RECV_E : logic<3> = 3'd7; // carrier just dropped: one clock to see i_beacon_end
+
+    var state  : logic<3> ;
+    var cur    : logic<8> ;
+    var btc    : logic<8> ; // clocks within the bit time
+    var to_cnt : logic<8> ;
+    var fresh  : logic    ; // first clock of an opportunity
+    var nsym   : logic<4> ;
+    var started: logic    ;
+    var ipg    : logic<8> ;
+
+    let tick   : logic = btc == BT_CYCLES - 1;
+    let busy   : logic = i_crs || i_tx_active;
+    let coord  : logic = i_id == 8'd0;
+    let last   : logic = cur + 8'd1 >= i_cnt;
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            state    = ST_OFF;
+            cur      = 0;
+            btc      = 0;
+            to_cnt   = 0;
+            fresh    = 1'b0;
+            nsym     = 0;
+            started  = 1'b0;
+            ipg      = 0;
+            o_tx_go  = 1'b0;
+            o_cmd    = 2'd0;
+            o_synced = 1'b0;
+            o_beacon = 1'b0;
+        } else {
+            o_tx_go  = 1'b0;
+            o_beacon = 1'b0;
+            btc      = if tick ? 8'd0 : btc + 8'd1;
+            if !i_en {
+                // ---- CSMA ----
+                state    = ST_OFF;
+                o_cmd    = 2'd0;
+                o_synced = 1'b0;
+                if busy {
+                    ipg = 0;
+                } else if tick && ipg != 8'hff {
+                    ipg = ipg + 8'd1;
+                }
+                if i_pending && !busy && ipg >= IPG_BT && !started {
+                    o_tx_go = 1'b1;
+                    started = 1'b1;
+                    ipg     = 0;
+                }
+                if i_tx_active || !i_pending {
+                    started = 1'b0;
+                }
+            } else {
+                case state {
+                    ST_OFF: {
+                        state   = if coord ? ST_BEACON : ST_RESYNC;
+                        nsym    = 0;
+                        started = 1'b0;
+                    }
+                    ST_RESYNC: {
+                        o_synced = 1'b0;
+                        if i_beacon_end && !coord {
+                            o_beacon = 1'b1;
+                            o_synced = 1'b1;
+                            cur      = 0;
+                            to_cnt   = 0;
+                            fresh    = 1'b1;
+                            state    = ST_WAIT;
+                        }
+                    }
+                    ST_BEACON: if !started {
+                        // wait for a quiet line, then request the BEACON
+                        o_cmd = 2'd0;
+                        if !busy {
+                            o_cmd   = 2'd1;
+                            started = 1'b1;
+                        }
+                    } else if i_sym_req && i_tx_active {
+                        // a strobe while sending loads the next symbol; o_cmd is seen from the next one
+                        nsym = nsym + 4'd1;
+                        if nsym == BEACON_SYMS - 2 {
+                            o_cmd   = 2'd0;
+                            started = 1'b0;
+                            state   = ST_BEND;
+                        }
+                    }
+                    ST_BEND: if !i_tx_active {
+                        o_beacon = 1'b1;
+                        o_synced = 1'b1;
+                        cur      = 0;
+                        to_cnt   = 0;
+                        fresh    = 1'b1;
+                        state    = ST_WAIT;
+                    }
+                    ST_WAIT: {
+                        fresh = 1'b0;
+                        if fresh && cur == i_id && i_pending && !busy {
+                            o_tx_go = 1'b1;
+                            started = 1'b0;
+                            to_cnt  = 0;
+                            state   = ST_TX;
+                        } else if busy {
+                            state = ST_RECV;
+                        } else if tick {
+                            if to_cnt + 8'd1 >= i_to {
+                                // opportunity yielded
+                                to_cnt = 0;
+                                if coord && last {
+                                    nsym  = 0;
+                                    state = ST_BEACON;
+                                } else {
+                                    cur   = cur + 8'd1;
+                                    fresh = 1'b1;
+                                }
+                            } else {
+                                to_cnt = to_cnt + 8'd1;
+                            }
+                        }
+                    }
+                    ST_TX: {
+                        if i_tx_active {
+                            started = 1'b1;
+                        }
+                        if tick && !started {
+                            to_cnt = to_cnt + 8'd1;
+                        }
+                        if (started && !busy) || (!started && to_cnt >= TX_WAIT_BT) {
+                            started = 1'b0;
+                            to_cnt  = 0;
+                            if coord && last {
+                                nsym  = 0;
+                                state = ST_BEACON;
+                            } else {
+                                cur   = cur + 8'd1;
+                                fresh = 1'b1;
+                                state = ST_WAIT;
+                            }
+                        }
+                    }
+                    ST_RECV: if !busy {
+                        state = ST_RECV_E;
+                    }
+                    default: {
+                        // ST_RECV_E: a BEACON (followers resync on it) or the end of a frame
+                        to_cnt = 0;
+                        if i_beacon_end && !coord {
+                            o_beacon = 1'b1;
+                            o_synced = 1'b1;
+                            cur      = 0;
+                            fresh    = 1'b1;
+                            state    = ST_WAIT;
+                        } else if coord && last {
+                            nsym  = 0;
+                            state = ST_BEACON;
+                        } else {
+                            cur   = cur + 8'd1;
+                            fresh = 1'b1;
+                            state = ST_WAIT;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    assign o_cur_id = cur;
+    assign o_state  = state;
+}

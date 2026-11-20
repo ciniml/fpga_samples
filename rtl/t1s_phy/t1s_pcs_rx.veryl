@@ -1,0 +1,297 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file t1s_pcs_rx.veryl
+ * @brief 10BASE-T1S receive PCS (802.3cg 147.3.3): DME bits -> MII nibbles,
+ *        PLCA BEACON / COMMIT indications.
+ *
+ * 5B alignment: the last 15 bits are compared with symbol sequences (in the
+ * bit order of i_left_first, see T1sPmaTx):
+ *   J H H -> frame data next (J J H H; the first J may be lost while the
+ *            receiver settles after silence)
+ *   N N N -> BEACON (the PLCA coordinator sends at least four N)
+ *   J J   -> SYNC / COMMIT, then H H
+ * Ten bits are not enough: H H (00100 00100) is a rotation of N N, so a
+ * BEACON would look like a frame start. J H H and N N N match no rotation
+ * of each other or of a J run, in either bit order.
+ * After the SSDs the first DESYNC data symbols are passed to the MII as
+ * 0x5 while the descrambler (x^17 + x^14 + 1, self-synchronizing) fills
+ * (17 bits); the rest is descrambled and decoded (preamble 5s, SFD D,
+ * frame). ESD (T) ends the frame: R = ESDOK, anything else = error. Loss of
+ * carrier inside a frame is an error too. An invalid code inside a frame
+ * sets o_rx_er with that nibble.
+ *
+ * o_order: which bit order the last frame start (J H H) matched (bit 1 =
+ * leftmost-first, bit 0 = rightmost-first); with i_auto both orders are
+ * searched and the frame is decoded in the matching one, else only
+ * i_left_first is tried. Diagnostic for the first contact with a real PHY.
+ */
+pub module T1sPcsRx #(
+    param DESYNC: u32 = 5, // data symbols replaced by 0x5 after the SSDs (>= 4: 17 bits)
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_left_first: input logic,
+    i_auto      : input logic,
+
+    i_bit_valid: input logic,
+    i_bit      : input logic,
+    i_crs      : input logic,
+
+    o_rx_valid: output logic   , // one clock per nibble (o_rx_dv high)
+    o_rx_data : output logic<4>,
+    o_rx_er   : output logic   ,
+    o_rx_sof  : output logic   , // with the first nibble of a frame
+    o_rx_eof  : output logic   , // pulse after the last nibble
+    o_rx_bad  : output logic   , // with o_rx_eof: no ESDOK / lost carrier / code error
+    o_rx_dv   : output logic   ,
+
+    o_beacon    : output logic   , // BEACON being received
+    o_beacon_end: output logic   , // pulse: end of a BEACON (carrier dropped)
+    o_commit    : output logic   , // SYNC / COMMIT being received
+    o_order     : output logic<2>,
+    o_viol      : output logic   , // pulse: unexpected symbol
+) {
+    const SYM_J: logic<5> = 5'b11000;
+    const SYM_T: logic<5> = 5'b01101;
+    const SYM_R: logic<5> = 5'b00111;
+    const SYM_H: logic<5> = 5'b00100;
+    const SYM_N: logic<5> = 5'b01000;
+
+    // 5B -> {valid, nibble}
+    function dec (
+        c: input logic<5>,
+    ) -> logic<5> {
+        case c {
+            5'b11110: return 5'h10;
+            5'b01001: return 5'h11;
+            5'b10100: return 5'h12;
+            5'b10101: return 5'h13;
+            5'b01010: return 5'h14;
+            5'b01011: return 5'h15;
+            5'b01110: return 5'h16;
+            5'b01111: return 5'h17;
+            5'b10010: return 5'h18;
+            5'b10011: return 5'h19;
+            5'b10110: return 5'h1a;
+            5'b10111: return 5'h1b;
+            5'b11010: return 5'h1c;
+            5'b11011: return 5'h1d;
+            5'b11100: return 5'h1e;
+            5'b11101: return 5'h1f;
+            default : return 5'h00;
+        }
+    }
+
+    function rev5 (
+        c: input logic<5>,
+    ) -> logic<5> {
+        return {c[0], c[1], c[2], c[3], c[4]};
+    }
+
+    const ST_HUNT  : logic<3> = 3'd0;
+    const ST_SYNC  : logic<3> = 3'd1; // J seen (COMMIT / SYNC), waiting for H
+    const ST_SSD2  : logic<3> = 3'd2; // first H seen after J J, second H next
+    const ST_DATA  : logic<3> = 3'd3;
+    const ST_END   : logic<3> = 3'd4; // T seen
+    const ST_BEACON: logic<3> = 3'd5;
+    const ST_WAIT  : logic<3> = 3'd6; // error: wait for silence
+
+    var state: logic<3> ;
+    var sh   : logic<15>; // last bits, newest at [0]
+    var bc   : logic<3> ; // bits of the current symbol
+    var lf   : logic    ; // bit order in use
+    var dcnt : logic<4> ; // data symbols since the SSDs
+    var scr  : logic<17>;
+    var bad  : logic    ;
+
+    // the symbol just completed (oldest bit first) and the two before it
+    let raw : logic<5> = {sh[3:0], i_bit};
+    let raw2: logic<5> = sh[8:4];
+    let raw3: logic<5> = sh[13:9];
+    let sym : logic<5> = if lf ? raw : rev5(raw);
+
+    function m3 (
+        a: input logic<5>,
+        b: input logic<5>,
+        c: input logic<5>,
+        x: input logic<5>,
+        y: input logic<5>,
+        z: input logic<5>,
+        l: input logic   ,
+    ) -> logic {
+        if l {
+            return a == x && b == y && c == z;
+        } else {
+            return rev5(a) == x && rev5(b) == y && rev5(c) == z;
+        }
+    }
+
+    function m2 (
+        b: input logic<5>,
+        c: input logic<5>,
+        y: input logic<5>,
+        z: input logic<5>,
+        l: input logic   ,
+    ) -> logic {
+        if l {
+            return b == y && c == z;
+        } else {
+            return rev5(b) == y && rev5(c) == z;
+        }
+    }
+
+    let m_jhh_l: logic = m3(raw3, raw2, raw, SYM_J, SYM_H, SYM_H, 1'b1);
+    let m_nnn_l: logic = m3(raw3, raw2, raw, SYM_N, SYM_N, SYM_N, 1'b1);
+    let m_jj_l : logic = m2(raw2, raw, SYM_J, SYM_J, 1'b1);
+    let m_jhh_r: logic = m3(raw3, raw2, raw, SYM_J, SYM_H, SYM_H, 1'b0);
+    let m_nnn_r: logic = m3(raw3, raw2, raw, SYM_N, SYM_N, SYM_N, 1'b0);
+    let m_jj_r : logic = m2(raw2, raw, SYM_J, SYM_J, 1'b0);
+    // J H H is the only sequence that fixes the bit order: J J and N N N of one order
+    // are rotations of the same in the other order. With i_auto the order is taken from
+    // J H H only, BEACONs are recognised in either order and J J is not used.
+    let use_l  : logic = i_auto || i_left_first;
+    let use_r  : logic = i_auto || !i_left_first;
+    let hit_jhh: logic = (use_l && m_jhh_l) || (use_r && m_jhh_r);
+    let hit_nnn: logic = if i_auto ? (m_nnn_l || m_nnn_r) : if i_left_first ? m_nnn_l : m_nnn_r;
+    let hit_jj : logic = !i_auto && (if i_left_first ? m_jj_l : m_jj_r);
+
+    // descrambler step on a decoded nibble
+    let dv : logic<5> = dec(sym);
+    var rd : logic<4> ;
+    var scr_nx: logic<17>;
+    always_comb {
+        var s: logic<17>;
+        s = scr;
+        for i in 0..4 {
+            rd[i] = dv[i] ^ s[13] ^ s[16];
+            s     = {s[15:0], dv[i]};
+        }
+        scr_nx = s;
+    }
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            state        = ST_HUNT;
+            sh           = 0;
+            bc           = 0;
+            lf           = 1'b1;
+            dcnt         = 0;
+            scr          = 17'h1ffff;
+            bad          = 1'b0;
+            o_rx_valid   = 1'b0;
+            o_rx_data    = 0;
+            o_rx_er      = 1'b0;
+            o_rx_sof     = 1'b0;
+            o_rx_eof     = 1'b0;
+            o_rx_bad     = 1'b0;
+            o_rx_dv      = 1'b0;
+            o_beacon     = 1'b0;
+            o_beacon_end = 1'b0;
+            o_commit     = 1'b0;
+            o_order      = 0;
+            o_viol       = 1'b0;
+        } else {
+            o_rx_valid   = 1'b0;
+            o_rx_sof     = 1'b0;
+            o_rx_eof     = 1'b0;
+            o_beacon_end = 1'b0;
+            o_viol       = 1'b0;
+            if !i_crs {
+                // silence: close whatever was open
+                if state == ST_DATA || state == ST_END {
+                    o_rx_eof = 1'b1;
+                    o_rx_bad = 1'b1;
+                }
+                if state == ST_BEACON {
+                    o_beacon_end = 1'b1;
+                }
+                state    = ST_HUNT;
+                o_rx_dv  = 1'b0;
+                o_beacon = 1'b0;
+                o_commit = 1'b0;
+                bc       = 0;
+                sh       = 0; // no stale bits in the next alignment
+            } else if i_bit_valid {
+                sh = {sh[13:0], i_bit};
+                bc = if bc == 3'd4 ? 3'd0 : bc + 3'd1;
+                case state {
+                    ST_HUNT: if hit_jhh {
+                        lf      = use_l && m_jhh_l;
+                        o_order = {use_l && m_jhh_l, use_r && m_jhh_r};
+                        bc      = 0;
+                        state   = ST_DATA;
+                        dcnt    = 0;
+                        bad     = 1'b0;
+                        o_rx_dv = 1'b1;
+                    } else if hit_nnn {
+                        bc       = 0;
+                        state    = ST_BEACON;
+                        o_beacon = 1'b1;
+                    } else if hit_jj {
+                        lf       = i_left_first;
+                        o_order  = {i_left_first, !i_left_first};
+                        bc       = 0;
+                        state    = ST_SYNC;
+                        o_commit = 1'b1;
+                    }
+                    ST_SYNC: if bc == 3'd4 {
+                        if sym == SYM_H {
+                            state    = ST_SSD2;
+                            o_commit = 1'b0;
+                        } else if sym != SYM_J {
+                            state    = ST_WAIT;
+                            o_commit = 1'b0;
+                            o_viol   = 1'b1;
+                        }
+                    }
+                    ST_SSD2: if bc == 3'd4 {
+                        if sym == SYM_H {
+                            state   = ST_DATA;
+                            dcnt    = 0;
+                            bad     = 1'b0;
+                            o_rx_dv = 1'b1;
+                        } else {
+                            state  = ST_WAIT;
+                            o_viol = 1'b1;
+                        }
+                    }
+                    ST_DATA: if bc == 3'd4 {
+                        if sym == SYM_T {
+                            state = ST_END;
+                        } else {
+                            scr        = scr_nx;
+                            o_rx_valid = 1'b1;
+                            o_rx_sof   = dcnt == 0;
+                            if dcnt != 4'hf {
+                                dcnt = dcnt + 4'd1;
+                            }
+                            if dcnt <: DESYNC {
+                                o_rx_data = 4'h5;
+                                o_rx_er   = 1'b0;
+                            } else {
+                                o_rx_data = rd;
+                                o_rx_er   = !dv[4];
+                                if !dv[4] {
+                                    bad = 1'b1;
+                                }
+                            }
+                        }
+                    }
+                    ST_END: if bc == 3'd4 {
+                        o_rx_eof = 1'b1;
+                        o_rx_bad = bad || sym != SYM_R;
+                        o_rx_dv  = 1'b0;
+                        state    = ST_WAIT;
+                    }
+                    ST_BEACON: {}
+                    default  : {}
+                }
+            }
+        }
+    }
+}

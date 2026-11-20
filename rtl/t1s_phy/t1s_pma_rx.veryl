@@ -1,0 +1,180 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file t1s_pma_rx.veryl
+ * @brief 10BASE-T1S receive PMA: two threshold comparators -> DME bits.
+ *
+ * Inputs are SPC samples per clock of the two comparators of the board
+ * (eda/pmod_10base_t1s): H = (v > +th), L = (v > -th); sample [0] is the
+ * earliest. An SR latch per sample (set by H, reset by !L) makes a +-th
+ * hysteresis comparator; both edges are delayed by the same amount, so
+ * the DME pulse widths are kept.
+ *
+ * DME has only two intervals between transitions: a half-bit (40 ns,
+ * "short") and a bit (80 ns, "long"). With S = HALF * SPC samples per
+ * half-bit the intervals are classified at 1.5 S and 2.5 S; no PLL is
+ * needed and the +-100 ppm of the far end is irrelevant (every interval is
+ * measured anew). A long interval always runs from a bit boundary to the
+ * next one (a "0"); two shorts after a boundary are a "1". The first long
+ * interval after silence fixes the bit boundaries.
+ *
+ * Silence: no transition for 2.5 S samples. The last bit of a burst has no
+ * closing boundary transition, so it is emitted on that timeout (a "1" if
+ * its mid-bit transition was seen). o_crs is high from the first valid
+ * interval until one clock after the timeout (so that the last bit comes
+ * with the carrier still high). Intervals shorter than S / 2 (noise) and a
+ * long interval after a mid-bit transition are DME violations: they reset
+ * the bit alignment and pulse o_viol.
+ *
+ * At most one transition per clock is expected (S >= 2 * SPC); two in one
+ * clock (a glitch) cancel and are counted as a violation.
+ */
+pub module T1sPmaRx #(
+    param HALF: u32 = 4, // clocks per half-bit
+    param SPC : u32 = 4, // samples per clock
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_h: input logic<SPC>,
+    i_l: input logic<SPC>,
+
+    o_bit_valid: output logic, // one clock per decoded bit
+    o_bit      : output logic,
+    o_crs      : output logic, // DME activity
+    o_level    : output logic, // hysteresis comparator output (last sample)
+    o_viol     : output logic, // pulse: DME violation
+) {
+    const S    : u32 = HALF * SPC;
+    const CW   : u32 = 10;
+    const T_GL : u32 = S / 2;
+    const T_SH : u32 = (3 * S) / 2;
+    const T_LG : u32 = (5 * S) / 2;
+    const T_MAX: u32 = 4 * S;
+
+    var lv     : logic    ; // latch state after the last sample of the previous clock
+    var cnt    : logic<CW>; // samples since the last transition (to the end of the last clock)
+    var aligned: logic    ;
+    var mid    : logic    ; // the last transition was a mid-bit one
+    var active : logic    ;
+    var crs_off: logic    ; // drop o_crs on the next clock (after the last bit)
+
+    // per-sample latch and the transition position of this clock
+    var lvs  : logic<SPC>;
+    var nedge: logic<2>  ;
+    var epos : logic<CW> ; // sample index of the (first) transition
+    always_comb {
+        var l: logic;
+        l     = lv;
+        nedge = 2'd0;
+        epos  = 0;
+        for k in 0..SPC {
+            var n: logic;
+            n = if i_h[k] ? 1'b1 : if !i_l[k] ? 1'b0 : l;
+            if n != l {
+                if nedge == 2'd0 {
+                    epos = k as CW;
+                }
+                if nedge != 2'd3 {
+                    nedge = nedge + 2'd1;
+                }
+            }
+            l      = n;
+            lvs[k] = n;
+        }
+    }
+
+    let interval: logic<CW> = cnt + epos + 1;
+    let is_glit : logic     = interval <: T_GL;
+    let is_short: logic     = interval <: T_SH;
+    let is_long : logic     = interval <: T_LG;
+    let cnt_inc : logic<CW> = if cnt >= T_MAX ? T_MAX as CW : cnt + SPC as CW;
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            lv          = 1'b0;
+            cnt         = T_MAX as CW;
+            aligned     = 1'b0;
+            mid         = 1'b0;
+            active      = 1'b0;
+            crs_off     = 1'b0;
+            o_bit_valid = 1'b0;
+            o_bit       = 1'b0;
+            o_crs       = 1'b0;
+            o_viol      = 1'b0;
+        } else {
+            o_bit_valid = 1'b0;
+            o_viol      = 1'b0;
+            lv          = lvs[SPC - 1];
+            if crs_off {
+                o_crs   = 1'b0;
+                crs_off = 1'b0;
+            }
+            if nedge == 2'd1 {
+                cnt = (SPC - 1) as CW - epos;
+                if !active {
+                    // first transition after silence
+                    active  = 1'b1;
+                    aligned = 1'b0;
+                    mid     = 1'b0;
+                } else if is_glit {
+                    o_viol  = 1'b1;
+                    aligned = 1'b0;
+                    mid     = 1'b0;
+                } else if is_short {
+                    o_crs = 1'b1;
+                    if aligned {
+                        if mid {
+                            o_bit_valid = 1'b1;
+                            o_bit       = 1'b1;
+                            mid         = 1'b0;
+                        } else {
+                            mid = 1'b1;
+                        }
+                    }
+                } else if is_long {
+                    // boundary to boundary: a "0"
+                    o_crs = 1'b1;
+                    if mid {
+                        o_viol  = 1'b1;
+                        aligned = 1'b0;
+                        mid     = 1'b0;
+                    } else {
+                        o_bit_valid = 1'b1;
+                        o_bit       = 1'b0;
+                        aligned     = 1'b1;
+                    }
+                } else {
+                    // longer than a bit but before the silence timeout: restart
+                    o_viol  = 1'b1;
+                    aligned = 1'b0;
+                    mid     = 1'b0;
+                }
+            } else if nedge != 2'd0 {
+                // two transitions in one clock: a glitch
+                cnt     = (SPC - 1) as CW - epos;
+                o_viol  = active;
+                aligned = 1'b0;
+                mid     = 1'b0;
+            } else {
+                cnt = cnt_inc;
+                if active && cnt_inc >= T_LG {
+                    // silence: the last bit has no closing transition
+                    if aligned {
+                        o_bit_valid = 1'b1;
+                        o_bit       = mid;
+                    }
+                    active  = 1'b0;
+                    aligned = 1'b0;
+                    mid     = 1'b0;
+                    crs_off = 1'b1;
+                }
+            }
+        }
+    }
+
+    assign o_level = lv;
+}

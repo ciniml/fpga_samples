@@ -1,0 +1,211 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file t1s_pma_tx.veryl
+ * @brief 10BASE-T1S transmit PMA: 5B symbols -> DME on two LVCMOS pins plus
+ *        the enable of the board's line switch (eda/pmod_10base_t1s).
+ *
+ * Timing: HALF clocks per DME half-bit (40 ns): 4 at 100 MHz, 6 at 150 MHz.
+ * A 5B symbol is 10 half-bits (400 ns = one MII nibble at 10 Mb/s).
+ *
+ * Symbol interface: o_sym_req is a strobe; i_sym must be valid on that
+ * clock (combinational from the PCS, which advances its state on the
+ * strobe). While idle the strobe comes every symbol time, so the PCS / PLCA
+ * cadence keeps running. A symbol other than SILENCE (11111) starts a
+ * transmission: TX_EN goes high and the pins are held equal (differential
+ * 0) for PRE half-bits while the analog switch closes, then the symbols are
+ * sent back to back until SILENCE is requested; after the last bit the pins
+ * are held equal for POST half-bits and TX_EN drops (high-Z).
+ *
+ * DME (802.3cg 147.4.2): the line toggles at the start of every bit, and
+ * also in the middle of a "1". i_left_first selects the bit order of a 5B
+ * code as written in table 147-1 (J = 11000): 1 = leftmost bit first,
+ * 0 = rightmost first. The standard says "LSB first"; which end of the
+ * written code that is has to be checked against a real PHY (the receiver
+ * reports the order it locks to).
+ *
+ * i_test (test modes, approximate): 0 normal, 1 continuous "1" bits
+ * (12.5 MHz square wave), 2 continuous "0" bits (6.25 MHz), 3 PRBS7 bits.
+ * The test patterns drive the line continuously while selected.
+ *
+ * Pins: line level 1 -> (P, N) = (1, 0), level 0 -> (0, 1); not driving ->
+ * (0, 0) with TX_EN low or during PRE / POST.
+ */
+pub module T1sPmaTx #(
+    param HALF: u32 = 4, // clocks per half-bit (40 ns)
+    param PRE : u32 = 2, // half-bits with the switch closed before the first bit
+    param POST: u32 = 2, // half-bits with the pins equal after the last bit
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_left_first: input logic   ,
+    i_test      : input logic<2>,
+
+    o_sym_req: output logic   ,
+    i_sym    : input  logic<5>,
+
+    o_tx_p  : output logic,
+    o_tx_n  : output logic,
+    o_tx_en : output logic,
+    o_active: output logic, // TX_EN high (PRE, data, POST, test)
+    o_data  : output logic, // data symbols on the line
+) {
+    const SILENCE: logic<5> = 5'b11111;
+
+    const ST_IDLE: logic<3> = 3'd0;
+    const ST_PRE : logic<3> = 3'd1;
+    const ST_DATA: logic<3> = 3'd2;
+    const ST_POST: logic<3> = 3'd3;
+    const ST_TEST: logic<3> = 3'd4;
+
+    var state: logic<3>;
+    var hcnt : logic<8>; // clock within the half-bit
+    var hb   : logic<4>; // half-bit within the symbol (0..9) / PRE, POST counter
+    var code : logic<5>; // current symbol, bit to send at [4]
+    var line : logic   ;
+    var prbs : logic<7>;
+
+    let half_end: logic = hcnt == HALF - 1;
+    let sym_end : logic = half_end && hb == 4'd9;
+
+    // the request: at the end of a symbol (data) or every symbol time (idle)
+    assign o_sym_req = sym_end && (state == ST_IDLE || state == ST_DATA);
+
+    // next symbol in sending order: [4] first
+    function order (
+        s : input logic<5>,
+        lf: input logic   ,
+    ) -> logic<5> {
+        if lf {
+            return s;
+        } else {
+            return {s[0], s[1], s[2], s[3], s[4]};
+        }
+    }
+
+    let test_bit: logic = case i_test {
+        2'd1   : 1'b1,
+        2'd2   : 1'b0,
+        default: prbs[6],
+    };
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            state   = ST_IDLE;
+            hcnt    = 0;
+            hb      = 0;
+            code    = SILENCE;
+            line    = 1'b0;
+            prbs    = 7'h7f;
+            o_tx_p  = 1'b0;
+            o_tx_n  = 1'b0;
+            o_tx_en = 1'b0;
+        } else {
+            hcnt = if half_end ? 8'd0 : hcnt + 8'd1;
+            case state {
+                ST_IDLE: {
+                    o_tx_p  = 1'b0;
+                    o_tx_n  = 1'b0;
+                    o_tx_en = 1'b0;
+                    if i_test != 2'd0 {
+                        state = ST_TEST;
+                        hcnt  = 0;
+                        hb    = 0;
+                    } else if half_end {
+                        hb = if hb == 4'd9 ? 4'd0 : hb + 4'd1;
+                        if hb == 4'd9 && i_sym != SILENCE {
+                            code    = order(i_sym, i_left_first);
+                            state   = ST_PRE;
+                            hb      = 0;
+                            o_tx_en = 1'b1;
+                        }
+                    }
+                }
+                ST_PRE: if half_end {
+                    if hb == PRE - 1 {
+                        // first bit: toggle at the start
+                        state  = ST_DATA;
+                        hb     = 0;
+                        line   = ~line;
+                        o_tx_p = ~line;
+                        o_tx_n = line;
+                    } else {
+                        hb = hb + 4'd1;
+                    }
+                }
+                ST_DATA: if half_end {
+                    if hb == 4'd9 {
+                        if i_sym == SILENCE {
+                            state  = ST_POST;
+                            hb     = 0;
+                            o_tx_p = 1'b0;
+                            o_tx_n = 1'b0;
+                        } else {
+                            code   = order(i_sym, i_left_first);
+                            hb     = 0;
+                            line   = ~line;
+                            o_tx_p = ~line;
+                            o_tx_n = line;
+                        }
+                    } else {
+                        hb = hb + 4'd1;
+                        // hb (old) even: end of the first half of a bit -> mid-bit toggle for a 1;
+                        // odd: end of a bit -> boundary toggle, next bit
+                        if !hb[0] {
+                            if code[4] {
+                                line   = ~line;
+                                o_tx_p = ~line;
+                                o_tx_n = line;
+                            }
+                        } else {
+                            code   = {code[3:0], 1'b1};
+                            line   = ~line;
+                            o_tx_p = ~line;
+                            o_tx_n = line;
+                        }
+                    }
+                }
+                ST_POST: if half_end {
+                    if hb == POST - 1 {
+                        state   = ST_IDLE;
+                        hb      = 0;
+                        o_tx_en = 1'b0;
+                    } else {
+                        hb = hb + 4'd1;
+                    }
+                }
+                default: {
+                    // test modes: a bit every two half-bits
+                    o_tx_en = 1'b1;
+                    if i_test == 2'd0 {
+                        state   = ST_IDLE;
+                        hb      = 0;
+                        o_tx_p  = 1'b0;
+                        o_tx_n  = 1'b0;
+                        o_tx_en = 1'b0;
+                    } else if half_end {
+                        hb = {3'd0, ~hb[0]};
+                        if hb[0] {
+                            // (old hb odd) bit boundary
+                            line   = ~line;
+                            o_tx_p = ~line;
+                            o_tx_n = line;
+                            prbs   = {prbs[5:0], prbs[6] ^ prbs[5]};
+                        } else if test_bit {
+                            line   = ~line;
+                            o_tx_p = ~line;
+                            o_tx_n = line;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    assign o_active = o_tx_en;
+    assign o_data   = state == ST_DATA;
+}

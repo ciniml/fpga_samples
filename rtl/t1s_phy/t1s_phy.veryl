@@ -1,0 +1,200 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file t1s_phy.veryl
+ * @brief 10BASE-T1S PHY without a PHY chip (board: eda/pmod_10base_t1s):
+ *        PMA (DME) + PCS (4B/5B, scrambler) + PLCA scheduler + threshold PWM.
+ *
+ *  MAC (MII nibbles, o_tx_req strobe) -> T1sPcsTx -> T1sPmaTx -> TX_P / TX_N / TX_EN
+ *  comparators H / L (SPC samples/clock) -> T1sPmaRx -> T1sPcsRx -> MII nibbles
+ *  T1sPlca: when to start a frame (o_tx_go), BEACONs as coordinator
+ *
+ * One clock domain, HALF clocks per 40 ns (100 MHz: HALF = 4). The MAC
+ * holds a frame (i_pending) until o_tx_go, then asserts i_tx_en with the
+ * first preamble nibble and follows o_tx_req.
+ *
+ * PWM: 10 bits, o_pwm = (counter < i_th); with the board's 5.6k / 1k / 1 uF
+ * filter th = (i_th / 1024 x 3.3 V - 1.165 V) x 0.152.
+ */
+pub module T1sPhy #(
+    param HALF: u32 = 4,
+    param SPC : u32 = 4,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    // board
+    i_h    : input  logic<SPC>,
+    i_l    : input  logic<SPC>,
+    o_tx_p : output logic     ,
+    o_tx_n : output logic     ,
+    o_tx_en: output logic     ,
+    o_pwm  : output logic     ,
+
+    // configuration
+    i_th        : input logic<10>,
+    i_left_first: input logic    ,
+    i_auto      : input logic    , // receive: align in either bit order
+    i_test      : input logic<2> ,
+    i_plca_en   : input logic    ,
+    i_plca_id   : input logic<8> ,
+    i_plca_cnt  : input logic<8> ,
+    i_plca_to   : input logic<8> ,
+
+    // MAC
+    i_pending : input  logic   ,
+    o_tx_go   : output logic   ,
+    o_tx_req  : output logic   ,
+    i_tx_en   : input  logic   ,
+    i_tx_er   : input  logic   ,
+    i_txd     : input  logic<4>,
+    o_rx_valid: output logic   ,
+    o_rx_data : output logic<4>,
+    o_rx_er   : output logic   ,
+    o_rx_sof  : output logic   ,
+    o_rx_eof  : output logic   ,
+    o_rx_bad  : output logic   ,
+    o_rx_dv   : output logic   ,
+    o_rx_own  : output logic   , // the frame started while we were transmitting (our own echo)
+
+    // status
+    o_crs       : output logic   ,
+    o_tx_active : output logic   ,
+    o_beacon_rx : output logic   ,
+    o_beacon_end: output logic   ,
+    o_commit    : output logic   ,
+    o_order     : output logic<2>,
+    o_viol_pma  : output logic   ,
+    o_viol_pcs  : output logic   ,
+    o_plca_cur  : output logic<8>,
+    o_plca_state: output logic<3>,
+    o_plca_sync : output logic   ,
+    o_plca_bcn  : output logic   ,
+) {
+    var sym_req  : logic   ;
+    var sym      : logic<5>;
+    var cmd      : logic<2>;
+    var tx_active: logic   ;
+    var bit_valid: logic   ;
+    var rbit     : logic   ;
+    var crs      : logic   ;
+    var bcn_end  : logic   ;
+
+    inst u_pcs_tx: T1sPcsTx (
+        i_clk                  ,
+        i_rst                  ,
+        i_sym_req     : sym_req,
+        o_sym         : sym    ,
+        o_tx_req               ,
+        i_tx_en                ,
+        i_tx_er                ,
+        i_txd                  ,
+        i_cmd         : cmd    ,
+        o_transmitting: _      ,
+    );
+
+    inst u_pma_tx: T1sPmaTx #(
+        HALF: HALF,
+    ) (
+        i_clk                  ,
+        i_rst                  ,
+        i_left_first           ,
+        i_test                 ,
+        o_sym_req   : sym_req  ,
+        i_sym       : sym      ,
+        o_tx_p                 ,
+        o_tx_n                 ,
+        o_tx_en                ,
+        o_active    : tx_active,
+        o_data      : _        ,
+    );
+
+    inst u_pma_rx: T1sPmaRx #(
+        HALF: HALF,
+        SPC : SPC ,
+    ) (
+        i_clk                  ,
+        i_rst                  ,
+        i_h                    ,
+        i_l                    ,
+        o_bit_valid: bit_valid ,
+        o_bit      : rbit      ,
+        o_crs      : crs       ,
+        o_level    : _         ,
+        o_viol     : o_viol_pma,
+    );
+
+    inst u_pcs_rx: T1sPcsRx (
+        i_clk                     ,
+        i_rst                     ,
+        i_left_first              ,
+        i_auto                    ,
+        i_bit_valid : bit_valid   ,
+        i_bit       : rbit        ,
+        i_crs       : crs         ,
+        o_rx_valid                ,
+        o_rx_data                 ,
+        o_rx_er                   ,
+        o_rx_sof                  ,
+        o_rx_eof                  ,
+        o_rx_bad                  ,
+        o_rx_dv                   ,
+        o_beacon    : o_beacon_rx ,
+        o_beacon_end: bcn_end     ,
+        o_commit                  ,
+        o_order                   ,
+        o_viol      : o_viol_pcs  ,
+    );
+
+    inst u_plca: T1sPlca #(
+        BT_CYCLES: (HALF * 5) / 2,
+    ) (
+        i_clk                      ,
+        i_rst                      ,
+        i_en        : i_plca_en    ,
+        i_id        : i_plca_id    ,
+        i_cnt       : i_plca_cnt   ,
+        i_to        : i_plca_to    ,
+        i_sym_req   : sym_req      ,
+        i_crs       : crs          ,
+        i_beacon_end: bcn_end      ,
+        i_tx_active : tx_active    ,
+        i_pending                  ,
+        o_tx_go                    ,
+        o_cmd       : cmd          ,
+        o_cur_id    : o_plca_cur   ,
+        o_state     : o_plca_state ,
+        o_synced    : o_plca_sync  ,
+        o_beacon    : o_plca_bcn   ,
+    );
+
+    // threshold PWM
+    var pwm_cnt: logic<10>;
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            pwm_cnt = 0;
+            o_pwm   = 1'b0;
+        } else {
+            pwm_cnt = pwm_cnt + 10'd1;
+            o_pwm   = pwm_cnt <: i_th;
+        }
+    }
+
+    // own echo: the receiver hears our transmitter too
+    var own: logic;
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            own = 1'b0;
+        } else if o_rx_sof {
+            own = tx_active;
+        }
+    }
+    assign o_rx_own = if o_rx_sof ? tx_active : own;
+
+    assign o_crs        = crs;
+    assign o_tx_active  = tx_active;
+    assign o_beacon_end = bcn_end;
+}

@@ -1,0 +1,34 @@
+[project]
+name    = "t1sphy"
+version = "0.1.0"
+
+[build]
+clock_type          = "posedge"
+reset_type          = "sync_high"
+omit_project_prefix = true
+
+[test]
+include_files = [
+    "test/t1s_bus.sv",
+    "test/t1s_mac_model.sv",
+    "test/t1s_link_body.sv",
+]
+
+[test.verilator]
+compile_args = [
+    "t1s_bus.sv",
+    "t1s_mac_model.sv",
+    "t1s_link_body.sv",
+    "-Wno-WIDTHEXPAND",
+    "-Wno-WIDTHTRUNC",
+    "-Wno-CASEINCOMPLETE",
+    "-Wno-UNUSEDSIGNAL",
+    "-Wno-UNDRIVEN",
+    "-Wno-PINMISSING",
+    "-Wno-INITIALDLY",
+    "-Wno-TIMESCALEMOD",
+    "-Wno-UNUSEDPARAM",
+    "-Wno-REALCVT",
+    "-Wno-UNSIGNED",
+    "-Wno-MULTIDRIVEN",
+]
