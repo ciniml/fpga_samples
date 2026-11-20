@@ -1,0 +1,36 @@
+// Tang Primer 25K + Pmod 10BASE-T1S (../../hw/Pmod_10BASE_T1S), board in the csv `pmod0` slot (Dock J6, bank 1).
+// The slot numbering of the user and of eda/targets/tangprimer25k/pmod_ports.csv differ
+// (dvi_loopback): check by ball name. Pmod pins 1..4 = differential P, 7..10 = N.
+IO_LOC "clk_in" E2;
+IO_PORT "clk_in" PULL_MODE=NONE DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC "reset_in" H11;
+IO_PORT "reset_in" IO_TYPE=LVCMOS33 PULL_MODE=DOWN DRIVE=OFF BANK_VCCIO=3.3;
+
+// Comparators: LVDS25 inputs, no on-die termination (the board biases each input
+// through 1k from VB / VTH taps; the line is terminated on the bus).
+IO_LOC "cmp_h_p" F5,G5;
+IO_PORT "cmp_h_p" IO_TYPE=LVDS25 PULL_MODE=NONE DIFF_RESISTOR=OFF BANK_VCCIO=3.3;
+IO_LOC "cmp_l_p" G7,G8;
+IO_PORT "cmp_l_p" IO_TYPE=LVDS25 PULL_MODE=NONE DIFF_RESISTOR=OFF BANK_VCCIO=3.3;
+
+// Threshold PWM (5.6k / 1k / 1 uF on the board)
+IO_LOC "pwm_th" H8;
+IO_PORT "pwm_th" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+// Line switch enable (10k pull-down on the board: off while unconfigured)
+IO_LOC "tx_en" H7;
+IO_PORT "tx_en" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+
+// Line driver: R1/R2 100 ohm + R5/R6 18 ohm on the board assume DRIVE=16 (~20 ohm per pin)
+IO_LOC "tx_p" H5;
+IO_PORT "tx_p" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=16 BANK_VCCIO=3.3;
+IO_LOC "tx_n" J5;
+IO_PORT "tx_n" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=16 BANK_VCCIO=3.3;
+
+IO_LOC "uart_txd" C3;
+IO_PORT "uart_txd" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "uart_rxd" B3;
+IO_PORT "uart_rxd" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC "led_crs" B2;
+IO_PORT "led_crs" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "led_rx" C2;
+IO_PORT "led_rx" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
