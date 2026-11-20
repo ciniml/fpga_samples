@@ -37,7 +37,7 @@ module t1s_bringup_body #(
             .o_crs(crs), .o_tx_active(), .o_beacon_rx(), .o_beacon_end(), .o_commit(), .o_order(order),
             .o_viol_pma(viol), .o_viol_pcs(), .o_plca_cur(), .o_plca_state(pst), .o_plca_sync(), .o_plca_bcn(bcn));
         T1sBringup #(.CLK_HZ(CLK_HZ), .BAUD(BAUD)) bu (
-            .i_clk(clk[i]), .i_rst(i == 0 ? rst : rst_b), .o_th(th), .o_left_first(lf), .o_auto(au), .o_test(tm), .o_plca_en(pe),
+            .i_clk(clk[i]), .i_rst(i == 0 ? rst : rst_b), .o_th(th), .o_left_first(lf), .o_auto(au), .o_test(tm), .o_drv_direct(), .o_plca_en(pe),
             .o_plca_id(id), .o_plca_cnt(cnt), .o_plca_to(to), .o_pending(pend), .i_tx_go(go), .i_tx_req(req),
             .o_tx_en(ten), .o_txd(txd), .i_rx_valid(rv), .i_rx_data(rd), .i_rx_er(rer), .i_rx_sof(rsof),
             .i_rx_eof(reof), .i_rx_bad(rbad), .i_rx_own(rown), .i_crs(crs), .i_beacon(bcn), .i_viol(viol),

@@ -1,7 +1,7 @@
 (kicad_sch (version 20250114) (generator "eeschema") (generator_version "9.0")
 	(uuid 7e87db69-d955-57c6-9b58-99c0c27010b6)
 	(paper "A3")
-	(title_block (title "Pmod 10BASE-T1S (PHY-less, IEEE 802.3cg)") (date "2026-11-20") (rev "A") (company "fpga_samples / eda/pmod_10base_t1s") (comment 1 "TX: LVCMOS + RC + TMUX1511; RX: two LVDS-input comparators; 200 uH CMC, 100 nF DC block, switchable 100R end termination"))
+	(title_block (title "Pmod 10BASE-T1S (PHY-less, IEEE 802.3cg)") (date "2026-11-21") (rev "A") (company "fpga_samples / eda/pmod_10base_t1s") (comment 1 "TX: LVCMOS + RC + TMUX1511 or series 1 uH (JP2/JP3); RX: two LVDS-input comparators; 200 uH CMC, 100 nF DC block, switchable 100R end termination"))
 	(lib_symbols (symbol "Connector_Generic:Conn_02x06_Top_Bottom"
 			(pin_names (offset 1.016) (hide yes))
 			(exclude_from_sim no)
@@ -747,6 +747,222 @@
 				)
 			)
 			(embedded_fonts no)
+		) (symbol "Device:L"
+			(pin_numbers (hide yes))
+			(pin_names (offset 1.016) (hide yes))
+			(exclude_from_sim no)
+			(in_bom yes)
+			(on_board yes)
+			(in_pos_files yes)
+			(duplicate_pin_numbers_are_jumpers no)
+			(property "Reference" "L"
+				(at -1.27 0 90)
+				(show_name no)
+				(do_not_autoplace no)
+				(effects (font (size 1.27 1.27)))
+			)
+			(property "Value" "L"
+				(at 1.905 0 90)
+				(show_name no)
+				(do_not_autoplace no)
+				(effects (font (size 1.27 1.27)))
+			)
+			(property "Footprint" ""
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects (font (size 1.27 1.27)))
+			)
+			(property "Datasheet" ""
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects (font (size 1.27 1.27)))
+			)
+			(property "Description" "Inductor"
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects (font (size 1.27 1.27)))
+			)
+			(property "ki_keywords" "inductor choke coil reactor magnetic"
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects (font (size 1.27 1.27)))
+			)
+			(property "ki_fp_filters" "Choke_* *Coil* Inductor_* L_*"
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects (font (size 1.27 1.27)))
+			)
+			(symbol "L_0_1"
+				(arc
+					(start 0 2.54)
+					(mid 0.6323 1.905)
+					(end 0 1.27)
+					(stroke (width 0) (type default))
+					(fill (type none))
+				)
+				(arc
+					(start 0 1.27)
+					(mid 0.6323 0.635)
+					(end 0 0)
+					(stroke (width 0) (type default))
+					(fill (type none))
+				)
+				(arc
+					(start 0 0)
+					(mid 0.6323 -0.635)
+					(end 0 -1.27)
+					(stroke (width 0) (type default))
+					(fill (type none))
+				)
+				(arc
+					(start 0 -1.27)
+					(mid 0.6323 -1.905)
+					(end 0 -2.54)
+					(stroke (width 0) (type default))
+					(fill (type none))
+				)
+			)
+			(symbol "L_1_1"
+				(pin passive line
+					(at 0 3.81 270)
+					(length 1.27)
+					(name "1" (effects (font (size 1.27 1.27))))
+					(number "1" (effects (font (size 1.27 1.27))))
+				)
+				(pin passive line
+					(at 0 -3.81 90)
+					(length 1.27)
+					(name "2" (effects (font (size 1.27 1.27))))
+					(number "2" (effects (font (size 1.27 1.27))))
+				)
+			)
+			(embedded_fonts no)
+		) (symbol "Jumper:SolderJumper_3_Bridged12"
+			(pin_names (offset 0) (hide yes))
+			(exclude_from_sim no)
+			(in_bom no)
+			(on_board yes)
+			(in_pos_files yes)
+			(duplicate_pin_numbers_are_jumpers no)
+			(property "Reference" "JP"
+				(at -2.54 -2.54 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(effects (font (size 1.27 1.27)))
+			)
+			(property "Value" "SolderJumper_3_Bridged12"
+				(at 0 2.794 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(effects (font (size 1.27 1.27)))
+			)
+			(property "Footprint" ""
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects (font (size 1.27 1.27)))
+			)
+			(property "Datasheet" ""
+				(at 0 -15.24 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects (font (size 1.27 1.27)))
+			)
+			(property "Description" "3-pole Solder Jumper, pins 1+2 closed/bridged"
+				(at 0 -12.7 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects (font (size 1.27 1.27)))
+			)
+			(property "ki_keywords" "Solder Jumper SPDT"
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects (font (size 1.27 1.27)))
+			)
+			(property "ki_fp_filters" "SolderJumper*Bridged12*"
+				(at 0 0 0)
+				(show_name no)
+				(do_not_autoplace no)
+				(hide yes)
+				(effects (font (size 1.27 1.27)))
+			)
+			(symbol "SolderJumper_3_Bridged12_0_1"
+				(polyline (pts (xy -2.54 0) (xy -2.032 0)) (stroke (width 0) (type default)) (fill (type none)))
+				(polyline
+					(pts (xy -1.016 1.016) (xy -1.016 -1.016))
+					(stroke (width 0) (type default))
+					(fill (type none))
+				)
+				(rectangle
+					(start -1.016 0.508)
+					(end -0.508 -0.508)
+					(stroke (width 0) (type default))
+					(fill (type outline))
+				)
+				(arc
+					(start -1.016 -1.016)
+					(mid -2.0276 0)
+					(end -1.016 1.016)
+					(stroke (width 0) (type default))
+					(fill (type outline))
+				)
+				(rectangle
+					(start -0.508 1.016)
+					(end 0.508 -1.016)
+					(stroke (width 0) (type default))
+					(fill (type outline))
+				)
+				(polyline (pts (xy 0 -1.27) (xy 0 -1.016)) (stroke (width 0) (type default)) (fill (type none)))
+				(arc
+					(start 1.016 1.016)
+					(mid 2.0276 0)
+					(end 1.016 -1.016)
+					(stroke (width 0) (type default))
+					(fill (type outline))
+				)
+				(polyline
+					(pts (xy 1.016 1.016) (xy 1.016 -1.016))
+					(stroke (width 0) (type default))
+					(fill (type none))
+				)
+				(polyline (pts (xy 2.54 0) (xy 2.032 0)) (stroke (width 0) (type default)) (fill (type none)))
+			)
+			(symbol "SolderJumper_3_Bridged12_1_1"
+				(pin passive line
+					(at -5.08 0 0)
+					(length 2.54)
+					(name "A" (effects (font (size 1.27 1.27))))
+					(number "1" (effects (font (size 1.27 1.27))))
+				)
+				(pin passive line
+					(at 0 -3.81 90)
+					(length 2.54)
+					(name "C" (effects (font (size 1.27 1.27))))
+					(number "2" (effects (font (size 1.27 1.27))))
+				)
+				(pin passive line
+					(at 5.08 0 180)
+					(length 2.54)
+					(name "B" (effects (font (size 1.27 1.27))))
+					(number "3" (effects (font (size 1.27 1.27))))
+				)
+			)
+			(embedded_fonts no)
 		) (symbol "Connector_Generic:Conn_01x02"
 			(pin_names (offset 1.016) (hide yes))
 			(exclude_from_sim no)
@@ -1472,7 +1688,7 @@
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
 		(property "Datasheet" "~" (at 96.52 45.72 0) (effects (font (size 1.27 1.27)) (hide yes)))
-		(property "Description" "220 pF 50 V X7R 0402 (TX+ edge rate ~10 ns 20-80 %, hidden by U1 when idle)"
+		(property "Description" "220 pF 50 V X7R 0402 (TX+ edge rate ~10 ns 20-80 %, hidden by U1 when idle; JP2 1-2)"
 			(at 96.52 45.72 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
@@ -1494,10 +1710,10 @@
 		(stroke (width 0) (type default))
 		(uuid cccb11d1-017b-589b-a57e-cfceb5bc6997)
 	)
-	(label "TXP_RC"
+	(label "TXP_C"
 		(at 96.52 39.37 90)
 		(effects (font (size 1.27 1.27)) (justify left bottom))
-		(uuid de649dd8-3965-5070-abf7-045eecc6c93b)
+		(uuid fd0b21ce-2327-5cde-9b79-0c2735ca3c84)
 	)
 	(wire
 		(pts (xy 96.52 49.53) (xy 96.52 52.07))
@@ -1541,7 +1757,7 @@
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
 		(property "Datasheet" "~" (at 106.68 45.72 0) (effects (font (size 1.27 1.27)) (hide yes)))
-		(property "Description" "220 pF 50 V X7R 0402 (TX- edge rate)"
+		(property "Description" "220 pF 50 V X7R 0402 (TX- edge rate; JP3 1-2)"
 			(at 106.68 45.72 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
@@ -1563,10 +1779,10 @@
 		(stroke (width 0) (type default))
 		(uuid e874ef42-049f-5797-8aa2-048356e52d29)
 	)
-	(label "TXN_RC"
+	(label "TXN_C"
 		(at 106.68 39.37 90)
 		(effects (font (size 1.27 1.27)) (justify left bottom))
-		(uuid 89d13cd3-0b1c-5a2a-808d-8bfffada9cf6)
+		(uuid d1dd9911-b56d-5191-b327-df5924d87206)
 	)
 	(wire
 		(pts (xy 106.68 49.53) (xy 106.68 52.07))
@@ -1595,110 +1811,228 @@
 		)
 	)
 	(symbol
-		(lib_id "Device:R")
-		(at 116.84 45.72 0)
+		(lib_id "Jumper:SolderJumper_3_Bridged12")
+		(at 116.84 33.02 0)
 		(unit 1)
 		(exclude_from_sim no)
-		(in_bom yes)
+		(in_bom no)
 		(on_board yes)
-		(dnp yes)
-		(uuid f869d68e-9cbd-5744-8707-3dc3799f3518)
-		(property "Reference" "R3" (at 119.38 44.45 0) (effects (font (size 1.27 1.27))))
-		(property "Value" "0" (at 119.38 46.99 0) (effects (font (size 1.27 1.27))))
-		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
-			(at 116.84 45.72 0)
+		(dnp no)
+		(uuid 9ad4c02b-e6d7-50be-a21a-426f33f1e2b9)
+		(property "Reference" "JP2" (at 116.84 26.67 0) (effects (font (size 1.27 1.27))))
+		(property "Value" "SW/L" (at 116.84 38.10 0) (effects (font (size 1.27 1.27))))
+		(property "Footprint" "Jumper:SolderJumper-3_P1.3mm_Bridged12_RoundedPad1.0x1.5mm_NumberLabels"
+			(at 116.84 33.02 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
-		(property "Datasheet" "~" (at 116.84 45.72 0) (effects (font (size 1.27 1.27)) (hide yes)))
-		(property "Description" "0R 0402 (bypass U1 switch 1, NOT FITTED: variant A, remove C1 too)"
-			(at 116.84 45.72 0)
+		(property "Datasheet" "~" (at 116.84 33.02 0) (effects (font (size 1.27 1.27)) (hide yes)))
+		(property "Description" "TX+ path: 1-2 (bridged) = C + TMUX1511 switch, 2-3 = series 1 uH (cut 1-2 first)"
+			(at 116.84 33.02 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
-		(property "LCSC" "C17168" (at 116.84 45.72 0) (effects (font (size 1.27 1.27)) (hide yes)))
-		(property "MPN" "UNI-ROYAL 0402WGF0000TCE"
-			(at 116.84 45.72 0)
-			(effects (font (size 1.27 1.27)) (hide yes))
-		)
-		(pin "1" (uuid 2e6f9a23-6d42-5b81-a00b-3e3481c1cc09))
-		(pin "2" (uuid b8ba1086-7e27-556d-a26d-f8edb8d1e937))
+		(pin "1" (uuid 58f44fc1-4ab7-55da-8f68-e0f2d351c8b1))
+		(pin "2" (uuid 838cb5ef-c0d6-51c6-b970-72bd86f9dfcf))
+		(pin "3" (uuid 45d1807e-77c2-5ca1-8e49-de9167927f36))
 		(instances
 			(project "Pmod_10BASE_T1S"
-				(path "/7e87db69-d955-57c6-9b58-99c0c27010b6" (reference "R3") (unit 1))
+				(path "/7e87db69-d955-57c6-9b58-99c0c27010b6" (reference "JP2") (unit 1))
 			)
 		)
 	)
 	(wire
-		(pts (xy 116.84 41.91) (xy 116.84 39.37))
+		(pts (xy 111.76 33.02) (xy 109.22 33.02))
 		(stroke (width 0) (type default))
-		(uuid 26177a3f-59ef-5adf-944a-bdf4ddf236d8)
+		(uuid f9619a6e-4935-5991-82c0-c7572b5e639f)
+	)
+	(label "TXP_C"
+		(at 109.22 33.02 180)
+		(effects (font (size 1.27 1.27)) (justify right bottom))
+		(uuid dde7b0e8-01f6-5bf4-81fe-302622bc269b)
+	)
+	(wire
+		(pts (xy 116.84 36.83) (xy 116.84 39.37))
+		(stroke (width 0) (type default))
+		(uuid 57cf3c9a-569a-5067-baf1-3e4ec438a3ee)
 	)
 	(label "TXP_RC"
-		(at 116.84 39.37 90)
-		(effects (font (size 1.27 1.27)) (justify left bottom))
-		(uuid 2e9c7aa4-0323-53a7-8c4e-b0e5fd46073f)
+		(at 116.84 39.37 270)
+		(effects (font (size 1.27 1.27)) (justify right bottom))
+		(uuid 9636c17c-bfe3-5c30-92b7-67d7abcdccb8)
 	)
 	(wire
-		(pts (xy 116.84 49.53) (xy 116.84 52.07))
+		(pts (xy 121.92 33.02) (xy 124.46 33.02))
 		(stroke (width 0) (type default))
-		(uuid 9df82f97-7433-5e5d-a16c-404ff0d68c2c)
+		(uuid d0a2c433-2d35-562d-8dea-0fa5754038ea)
 	)
-	(label "TXP_SW"
-		(at 116.84 52.07 270)
-		(effects (font (size 1.27 1.27)) (justify right bottom))
-		(uuid 31867891-8a34-55ea-94d8-f77fd2136ab7)
+	(label "TXP_L"
+		(at 124.46 33.02 0)
+		(effects (font (size 1.27 1.27)) (justify left bottom))
+		(uuid 0fea12b7-543d-57b4-928e-28021b3a0451)
 	)
 	(symbol
-		(lib_id "Device:R")
-		(at 127.00 45.72 0)
+		(lib_id "Jumper:SolderJumper_3_Bridged12")
+		(at 139.70 33.02 0)
 		(unit 1)
 		(exclude_from_sim no)
-		(in_bom yes)
+		(in_bom no)
 		(on_board yes)
-		(dnp yes)
-		(uuid c13ccbe4-d804-54fd-a43d-dad005b9dd01)
-		(property "Reference" "R4" (at 129.54 44.45 0) (effects (font (size 1.27 1.27))))
-		(property "Value" "0" (at 129.54 46.99 0) (effects (font (size 1.27 1.27))))
-		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
-			(at 127.00 45.72 0)
+		(dnp no)
+		(uuid 3f7b1b5f-162d-571f-be16-e8d5cee7c544)
+		(property "Reference" "JP3" (at 139.70 26.67 0) (effects (font (size 1.27 1.27))))
+		(property "Value" "SW/L" (at 139.70 38.10 0) (effects (font (size 1.27 1.27))))
+		(property "Footprint" "Jumper:SolderJumper-3_P1.3mm_Bridged12_RoundedPad1.0x1.5mm_NumberLabels"
+			(at 139.70 33.02 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
-		(property "Datasheet" "~" (at 127.00 45.72 0) (effects (font (size 1.27 1.27)) (hide yes)))
-		(property "Description" "0R 0402 (bypass U1 switch 2, NOT FITTED)"
-			(at 127.00 45.72 0)
+		(property "Datasheet" "~" (at 139.70 33.02 0) (effects (font (size 1.27 1.27)) (hide yes)))
+		(property "Description" "TX- path: 1-2 (bridged) = C + TMUX1511 switch, 2-3 = series 1 uH (cut 1-2 first)"
+			(at 139.70 33.02 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
-		(property "LCSC" "C17168" (at 127.00 45.72 0) (effects (font (size 1.27 1.27)) (hide yes)))
-		(property "MPN" "UNI-ROYAL 0402WGF0000TCE"
-			(at 127.00 45.72 0)
-			(effects (font (size 1.27 1.27)) (hide yes))
-		)
-		(pin "1" (uuid ca259238-f8e3-58d6-ae3d-ae68d559551c))
-		(pin "2" (uuid ee6e7d6c-db39-587c-b357-b7fe11d72c24))
+		(pin "1" (uuid 9c6a809c-2f5b-54b8-964d-fc07a2fc922c))
+		(pin "2" (uuid 08c4626d-58da-5a61-816f-37867bf9460d))
+		(pin "3" (uuid 3ef6ffc8-9a64-5c34-8c1b-a2d9b40aefa5))
 		(instances
 			(project "Pmod_10BASE_T1S"
-				(path "/7e87db69-d955-57c6-9b58-99c0c27010b6" (reference "R4") (unit 1))
+				(path "/7e87db69-d955-57c6-9b58-99c0c27010b6" (reference "JP3") (unit 1))
 			)
 		)
 	)
 	(wire
-		(pts (xy 127.00 41.91) (xy 127.00 39.37))
+		(pts (xy 134.62 33.02) (xy 132.08 33.02))
 		(stroke (width 0) (type default))
-		(uuid 1f5e063c-df2a-5d37-9bb1-d13dea15aed3)
+		(uuid 012b4f3f-00db-592d-a8cd-3da428f6ff34)
 	)
-	(label "TXN_RC"
-		(at 127.00 39.37 90)
-		(effects (font (size 1.27 1.27)) (justify left bottom))
-		(uuid ec6c683a-9e67-5350-b8ac-3d10ab3d5373)
+	(label "TXN_C"
+		(at 132.08 33.02 180)
+		(effects (font (size 1.27 1.27)) (justify right bottom))
+		(uuid 4d08a9fa-242e-5320-a3f3-c001d149517d)
 	)
 	(wire
-		(pts (xy 127.00 49.53) (xy 127.00 52.07))
+		(pts (xy 139.70 36.83) (xy 139.70 39.37))
 		(stroke (width 0) (type default))
-		(uuid 7405b8de-aa9c-5cc9-bad8-60af06d27865)
+		(uuid 8c5d4eea-0b61-51c8-905c-f2cefd99afef)
 	)
-	(label "TXN_SW"
-		(at 127.00 52.07 270)
+	(label "TXN_RC"
+		(at 139.70 39.37 270)
 		(effects (font (size 1.27 1.27)) (justify right bottom))
-		(uuid bbefa19e-e67d-57ae-bc25-92ef08fad3be)
+		(uuid 95c36b3d-154a-5aca-9a90-ed5ea663fb09)
+	)
+	(wire
+		(pts (xy 144.78 33.02) (xy 147.32 33.02))
+		(stroke (width 0) (type default))
+		(uuid 264178d8-16c2-542d-9ccd-ca1e02d57ed5)
+	)
+	(label "TXN_L"
+		(at 147.32 33.02 0)
+		(effects (font (size 1.27 1.27)) (justify left bottom))
+		(uuid d9ca2b55-045c-55f0-bce4-4cdedf09bc9c)
+	)
+	(symbol
+		(lib_id "Device:L")
+		(at 162.56 33.02 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(uuid b5acb9e4-b123-55e8-a197-fd043aa0c931)
+		(property "Reference" "L2" (at 165.10 31.75 0) (effects (font (size 1.27 1.27))))
+		(property "Value" "1u" (at 165.10 34.29 0) (effects (font (size 1.27 1.27))))
+		(property "Footprint" "Inductor_SMD:L_0805_2012Metric"
+			(at 162.56 33.02 0)
+			(effects (font (size 1.27 1.27)) (hide yes))
+		)
+		(property "Datasheet" "~" (at 162.56 33.02 0) (effects (font (size 1.27 1.27)) (hide yes)))
+		(property "Description" "1 uH 0805 multilayer, 50 mA (TX+ series-L path, edge rate with R1)"
+			(at 162.56 33.02 0)
+			(effects (font (size 1.27 1.27)) (hide yes))
+		)
+		(property "LCSC" "C1042" (at 162.56 33.02 0) (effects (font (size 1.27 1.27)) (hide yes)))
+		(property "MPN" "Sunlord SDFL2012Q1R0KTF"
+			(at 162.56 33.02 0)
+			(effects (font (size 1.27 1.27)) (hide yes))
+		)
+		(pin "1" (uuid 6ea275ae-3f4a-56e7-ac77-a134fbb69161))
+		(pin "2" (uuid e5877629-1fdf-544a-979c-062bdc609b2e))
+		(instances
+			(project "Pmod_10BASE_T1S"
+				(path "/7e87db69-d955-57c6-9b58-99c0c27010b6" (reference "L2") (unit 1))
+			)
+		)
+	)
+	(wire
+		(pts (xy 162.56 29.21) (xy 162.56 26.67))
+		(stroke (width 0) (type default))
+		(uuid 3a597f80-d9a7-5975-8a1c-b7b04edfc7af)
+	)
+	(label "TXP_L"
+		(at 162.56 26.67 90)
+		(effects (font (size 1.27 1.27)) (justify left bottom))
+		(uuid 04a0adc8-3652-5807-b18f-d49b38a3df7d)
+	)
+	(wire
+		(pts (xy 162.56 36.83) (xy 162.56 39.37))
+		(stroke (width 0) (type default))
+		(uuid 23b47f39-3cb6-5473-ad2e-1a8d20a962e4)
+	)
+	(label "TRX_P"
+		(at 162.56 39.37 270)
+		(effects (font (size 1.27 1.27)) (justify right bottom))
+		(uuid 75ed948d-1985-5fd5-99e5-4330dfe198b9)
+	)
+	(symbol
+		(lib_id "Device:L")
+		(at 172.72 33.02 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(uuid dcb0ce37-78a2-5e99-b53d-3ed92f5fce69)
+		(property "Reference" "L3" (at 175.26 31.75 0) (effects (font (size 1.27 1.27))))
+		(property "Value" "1u" (at 175.26 34.29 0) (effects (font (size 1.27 1.27))))
+		(property "Footprint" "Inductor_SMD:L_0805_2012Metric"
+			(at 172.72 33.02 0)
+			(effects (font (size 1.27 1.27)) (hide yes))
+		)
+		(property "Datasheet" "~" (at 172.72 33.02 0) (effects (font (size 1.27 1.27)) (hide yes)))
+		(property "Description" "1 uH 0805 multilayer (TX- series-L path)"
+			(at 172.72 33.02 0)
+			(effects (font (size 1.27 1.27)) (hide yes))
+		)
+		(property "LCSC" "C1042" (at 172.72 33.02 0) (effects (font (size 1.27 1.27)) (hide yes)))
+		(property "MPN" "Sunlord SDFL2012Q1R0KTF"
+			(at 172.72 33.02 0)
+			(effects (font (size 1.27 1.27)) (hide yes))
+		)
+		(pin "1" (uuid 0723d19b-9d63-5eea-86e3-c4b33b6705bd))
+		(pin "2" (uuid 3062a4b7-ecfe-55cc-b0b7-fde121899db5))
+		(instances
+			(project "Pmod_10BASE_T1S"
+				(path "/7e87db69-d955-57c6-9b58-99c0c27010b6" (reference "L3") (unit 1))
+			)
+		)
+	)
+	(wire
+		(pts (xy 172.72 29.21) (xy 172.72 26.67))
+		(stroke (width 0) (type default))
+		(uuid 7f01462e-5577-5c7e-b1b7-010c89565e3d)
+	)
+	(label "TXN_L"
+		(at 172.72 26.67 90)
+		(effects (font (size 1.27 1.27)) (justify left bottom))
+		(uuid 0441d0d5-7caf-555c-b759-4363db2d1e4b)
+	)
+	(wire
+		(pts (xy 172.72 36.83) (xy 172.72 39.37))
+		(stroke (width 0) (type default))
+		(uuid 7fada560-f961-57bd-89ea-c4bb7c9095e8)
+	)
+	(label "TRX_N"
+		(at 172.72 39.37 270)
+		(effects (font (size 1.27 1.27)) (justify right bottom))
+		(uuid eab12ca8-9f59-5ebe-bca4-03657388cc50)
 	)
 	(symbol
 		(lib_id "Device:R")
@@ -1710,18 +2044,18 @@
 		(dnp no)
 		(uuid 3bf6e86d-246a-563c-a60b-7c39bbaa3cb8)
 		(property "Reference" "R5" (at 139.70 44.45 0) (effects (font (size 1.27 1.27))))
-		(property "Value" "18" (at 139.70 46.99 0) (effects (font (size 1.27 1.27))))
+		(property "Value" "22" (at 139.70 46.99 0) (effects (font (size 1.27 1.27))))
 		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
 			(at 137.16 45.72 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
 		(property "Datasheet" "~" (at 137.16 45.72 0) (effects (font (size 1.27 1.27)) (hide yes)))
-		(property "Description" "18R 1% 0402 (TX+ series, line side of the switch)"
+		(property "Description" "22R 1% 0402 (TX+ series, line side of the switch)"
 			(at 137.16 45.72 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
-		(property "LCSC" "C25084" (at 137.16 45.72 0) (effects (font (size 1.27 1.27)) (hide yes)))
-		(property "MPN" "UNI-ROYAL 0402WGF180JTCE"
+		(property "LCSC" "C25092" (at 137.16 45.72 0) (effects (font (size 1.27 1.27)) (hide yes)))
+		(property "MPN" "UNI-ROYAL 0402WGF220JTCE"
 			(at 137.16 45.72 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
@@ -1763,18 +2097,18 @@
 		(dnp no)
 		(uuid 16ed47c6-cb02-522e-bef1-39aeafc74d11)
 		(property "Reference" "R6" (at 149.86 44.45 0) (effects (font (size 1.27 1.27))))
-		(property "Value" "18" (at 149.86 46.99 0) (effects (font (size 1.27 1.27))))
+		(property "Value" "22" (at 149.86 46.99 0) (effects (font (size 1.27 1.27))))
 		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
 			(at 147.32 45.72 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
 		(property "Datasheet" "~" (at 147.32 45.72 0) (effects (font (size 1.27 1.27)) (hide yes)))
-		(property "Description" "18R 1% 0402 (TX- series)"
+		(property "Description" "22R 1% 0402 (TX- series)"
 			(at 147.32 45.72 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
-		(property "LCSC" "C25084" (at 147.32 45.72 0) (effects (font (size 1.27 1.27)) (hide yes)))
-		(property "MPN" "UNI-ROYAL 0402WGF180JTCE"
+		(property "LCSC" "C25092" (at 147.32 45.72 0) (effects (font (size 1.27 1.27)) (hide yes)))
+		(property "MPN" "UNI-ROYAL 0402WGF220JTCE"
 			(at 147.32 45.72 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
@@ -2850,18 +3184,18 @@
 		(dnp no)
 		(uuid 354da7c7-6be4-59c8-a133-a00c4ce8e0cd)
 		(property "Reference" "R16" (at 78.74 161.29 0) (effects (font (size 1.27 1.27))))
-		(property "Value" "2.2k" (at 78.74 163.83 0) (effects (font (size 1.27 1.27))))
+		(property "Value" "3.3k" (at 78.74 163.83 0) (effects (font (size 1.27 1.27))))
 		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
 			(at 76.20 162.56 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
 		(property "Datasheet" "~" (at 76.20 162.56 0) (effects (font (size 1.27 1.27)) (hide yes)))
-		(property "Description" "2.2k 1% 0402 (VB = 1.165 V with R17)"
+		(property "Description" "3.3k 1% 0402 (VB = 1.245 V with R17)"
 			(at 76.20 162.56 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
-		(property "LCSC" "C25879" (at 76.20 162.56 0) (effects (font (size 1.27 1.27)) (hide yes)))
-		(property "MPN" "UNI-ROYAL 0402WGF2201TCE"
+		(property "LCSC" "C25890" (at 76.20 162.56 0) (effects (font (size 1.27 1.27)) (hide yes)))
+		(property "MPN" "UNI-ROYAL 0402WGF3301TCE"
 			(at 76.20 162.56 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
@@ -2919,18 +3253,18 @@
 		(dnp no)
 		(uuid 597f7fed-8653-531c-aa8c-0a96fb70d3ef)
 		(property "Reference" "R17" (at 88.90 161.29 0) (effects (font (size 1.27 1.27))))
-		(property "Value" "1.2k" (at 88.90 163.83 0) (effects (font (size 1.27 1.27))))
+		(property "Value" "2k" (at 88.90 163.83 0) (effects (font (size 1.27 1.27))))
 		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
 			(at 86.36 162.56 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
 		(property "Datasheet" "~" (at 86.36 162.56 0) (effects (font (size 1.27 1.27)) (hide yes)))
-		(property "Description" "1.2k 1% 0402 (VB divider)"
+		(property "Description" "2k 1% 0402 (VB divider)"
 			(at 86.36 162.56 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
-		(property "LCSC" "C25862" (at 86.36 162.56 0) (effects (font (size 1.27 1.27)) (hide yes)))
-		(property "MPN" "UNI-ROYAL 0402WGF1201TCE"
+		(property "LCSC" "C4109" (at 86.36 162.56 0) (effects (font (size 1.27 1.27)) (hide yes)))
+		(property "MPN" "UNI-ROYAL 0402WGF2001TCE"
 			(at 86.36 162.56 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
@@ -3126,18 +3460,18 @@
 		(dnp no)
 		(uuid e1b642c1-d90d-5dc5-b6c7-5664880af0e4)
 		(property "Reference" "R18" (at 119.38 161.29 0) (effects (font (size 1.27 1.27))))
-		(property "Value" "5.6k" (at 119.38 163.83 0) (effects (font (size 1.27 1.27))))
+		(property "Value" "5.1k" (at 119.38 163.83 0) (effects (font (size 1.27 1.27))))
 		(property "Footprint" "Resistor_SMD:R_0402_1005Metric"
 			(at 116.84 162.56 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
 		(property "Datasheet" "~" (at 116.84 162.56 0) (effects (font (size 1.27 1.27)) (hide yes)))
-		(property "Description" "5.6k 1% 0402 (PWM filter: th = (D x 3.3 V - VB) x 0.152)"
+		(property "Description" "5.1k 1% 0402 (PWM filter: th = (D x 3.3 V - VB) x 0.164)"
 			(at 116.84 162.56 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
-		(property "LCSC" "C25908" (at 116.84 162.56 0) (effects (font (size 1.27 1.27)) (hide yes)))
-		(property "MPN" "UNI-ROYAL 0402WGF5601TCE"
+		(property "LCSC" "C25905" (at 116.84 162.56 0) (effects (font (size 1.27 1.27)) (hide yes)))
+		(property "MPN" "UNI-ROYAL 0402WGF5101TCE"
 			(at 116.84 162.56 0)
 			(effects (font (size 1.27 1.27)) (hide yes))
 		)
@@ -4410,17 +4744,17 @@
 		(effects (font (size 1.27 1.27)) (justify left))
 		(uuid 4561caed-02fb-5805-bb1d-a43929bba1e3)
 	)
-	(text "TX: LVCMOS33 x2 -> 100R -> 220p (edge rate) -> TMUX1511 (TX_EN) -> 18R: 1.0 Vpp into 50R, ~10 ns, high-Z when idle and when unpowered. R3 / R4 bypass the switch (also remove C1 / C2)."
+	(text "TX: LVCMOS33 x2 -> 100R -> JP2 / JP3. 1-2 (default): 220p (edge rate) -> TMUX1511 (TX_EN) -> 22R, high-Z when idle and when unpowered. 2-3: series 1 uH (L2 / L3) -> TRX, FPGA tristate when idle, TX_EN low. ~1.0 Vpp into 50R, ~10 ns."
 		(exclude_from_sim no)
 		(at 25.40 237.49 0)
 		(effects (font (size 1.27 1.27)) (justify left))
-		(uuid 757673a9-bd45-571d-8e83-c781b3e4c18c)
+		(uuid 9ecc10fa-c545-5312-a1ed-0094fac3a371)
 	)
-	(text "RX: comparator H (1/7) = v > +th, L (2/8) = v > -th, th = VTH - VB from PWM_TH (-176 ... +324 mV). Hysteresis (SR latch) and DME decoding in the FPGA."
+	(text "RX: comparator H (1/7) = v > +th, L (2/8) = v > -th, th = VTH - VB from PWM_TH (-204 ... +337 mV). Hysteresis (SR latch) and DME decoding in the FPGA."
 		(exclude_from_sim no)
 		(at 25.40 241.30 0)
 		(effects (font (size 1.27 1.27)) (justify left))
-		(uuid b276db74-133c-59ed-9fe7-33eebb915d64)
+		(uuid 40d4cca5-8134-50d5-b27a-363a3cd90683)
 	)
 	(text "Line: ESD (transceiver side) -> 200 uH CMC -> 100 nF DC block -> J2. JP1: 100R end termination (fit at both ends of the segment). R23 / R24: common-mode termination (option). No PoDL."
 		(exclude_from_sim no)

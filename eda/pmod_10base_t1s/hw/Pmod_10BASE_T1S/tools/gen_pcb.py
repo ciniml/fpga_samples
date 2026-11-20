@@ -44,7 +44,7 @@ VIA_S = (0.45, 0.2)
 JT = (7.91, H - 4.7)           # J2 pin 1 (body 10.7 x 8.0, wire entry on the bottom edge)
 
 # 0402s in the dense rows: designators on the Fab layer only (as Pmod_DVI / Pmod_GbE)
-FAB_ONLY = {'R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'C1', 'C2', 'C13', 'R8', 'R9', 'R10', 'R11', 'R12', 'R13',
+FAB_ONLY = {'R1', 'R2', 'C3', 'R5', 'R6', 'R7', 'C1', 'C2', 'C13', 'R8', 'R9', 'R10', 'R11', 'R12', 'R13',
             'R14', 'R15', 'R16', 'R17', 'R18', 'R19', 'C4', 'C5', 'C7', 'C8', 'R20', 'R21', 'R22'}
 
 # (x, y, rotation) per reference
@@ -55,9 +55,10 @@ PLACE = {
     # TX chain under Pmod 4 / 10
     'R1': (7.6, 9.7, 90), 'R2': (8.9, 9.7, 90),
     'C1': (7.6, 11.9, 90), 'C2': (8.9, 11.9, 90),
-    'U1': (4.6, 16.0, 180), 'C3': (2.0, 20.0, 0),
-    'R3': (9.7, 15.0, 90), 'R4': (9.7, 17.0, 90),
-    'R5': (5.6, 20.4, 90), 'R6': (7.0, 20.4, 90),
+    'JP2': (2.15, 14.6, 270), 'JP3': (4.75, 14.6, 270),
+    'L2': (7.0, 15.6, 90), 'L3': (8.85, 15.6, 90),
+    'U1': (3.6, 22.2, 270), 'C3': (6.95, 25.4, 90),
+    'R5': (7.0, 19.0, 90), 'R6': (8.1, 19.0, 90),
     # RX: 1k series resistors right under the Pmod pins, then the taps and the bias network
     'R18': (11.4, 9.7, 90), 'R15': (13.2, 9.7, 90), 'R11': (14.5, 9.7, 90), 'R10': (16.5, 9.7, 90),
     'R13': (17.8, 9.7, 90),
@@ -306,7 +307,7 @@ def build():
         track([l, (l[0], l[1] + 0.6), (c[0], l[1] + 0.6 + abs(c[0] - l[0])), c], nm, 0.3)
 
     # ---- silkscreen ----
-    silk('TERM', 2.0, 25.6, size=0.8, thick=0.12)
+    silk('TERM', 4.4, 29.3, size=0.8, thick=0.12, rot=90)
     silk('+', JT[0], JT[1] - 5.0, size=1.0, thick=0.15)
     silk('-', JT[0] + 5.0, JT[1] - 5.0, size=1.0, thick=0.15)
     silk_back.apply(board, silk_back.load_logo(PRJ))   # logo, name / Rev / date / author, pinout

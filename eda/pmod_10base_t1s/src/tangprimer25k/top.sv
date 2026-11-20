@@ -9,6 +9,9 @@
 //   Comparators: TLVDS_IBUF -> IDES4 = 4 samples / clock (400 MS/s), Q0 the oldest
 //   UART C3 (TX) / B3 (RX) 115200: status line every 0.5 s, commands in t1s_bringup.veryl
 //   B2 = carrier (bus activity), C2 = toggles on every good received frame
+//   TX drive mode (UART 'd', default 0): 0 = TX_EN closes the board's TMUX1511 and the TX pins always drive;
+//   1 = direct (board solder jumpers JP2 / JP3 on the L side): TX_EN stays low and TX_P / TX_N are released
+//   (high-Z) whenever they are equal, i.e. idle and the PMA's PRE / POST half-bits
 module top (
     input  wire clk_in,      // 50 MHz
     input  wire reset_in,    // button, active high
@@ -55,6 +58,7 @@ module top (
     wire [1:0] test_mode, order;
     wire [3:0] txd, rx_data;
     wire [2:0] plca_state;
+    wire drv_direct;
     wire left_first, auto_order, plca_en, pending, tx_go, tx_req, m_tx_en;
     wire rx_valid, rx_er, rx_sof, rx_eof, rx_bad, rx_own, crs, beacon, viol;
     wire p_tx_p, p_tx_n, p_tx_en, p_pwm;
@@ -73,7 +77,7 @@ module top (
 
     T1sBringup #(.CLK_HZ(100_000_000), .BAUD(115200)) u_bu (
         .i_clk(pclk), .i_rst(rst),
-        .o_th(th), .o_left_first(left_first), .o_auto(auto_order), .o_test(test_mode), .o_plca_en(plca_en),
+        .o_th(th), .o_left_first(left_first), .o_auto(auto_order), .o_test(test_mode), .o_drv_direct(drv_direct), .o_plca_en(plca_en),
         .o_plca_id(plca_id), .o_plca_cnt(plca_cnt), .o_plca_to(plca_to), .o_pending(pending), .i_tx_go(tx_go),
         .i_tx_req(tx_req), .o_tx_en(m_tx_en), .o_txd(txd), .i_rx_valid(rx_valid), .i_rx_data(rx_data),
         .i_rx_er(rx_er), .i_rx_sof(rx_sof), .i_rx_eof(rx_eof), .i_rx_bad(rx_bad), .i_rx_own(rx_own),
@@ -83,15 +87,17 @@ module top (
     // ---- outputs: registered in the IOBs (equal delay on TX_P / TX_N) ----
     reg tx_p_r /* synthesis syn_useioff=1 */;
     reg tx_n_r /* synthesis syn_useioff=1 */;
+    reg tx_oe_r /* synthesis syn_useioff=1 */;
     reg tx_en_r, pwm_r;
     always @(posedge pclk) begin
         tx_p_r  <= p_tx_p;
         tx_n_r  <= p_tx_n;
-        tx_en_r <= p_tx_en;
+        tx_oe_r <= !drv_direct || (p_tx_p ^ p_tx_n);
+        tx_en_r <= p_tx_en && !drv_direct;
         pwm_r   <= p_pwm;
     end
-    assign tx_p    = tx_p_r;
-    assign tx_n    = tx_n_r;
+    assign tx_p    = tx_oe_r ? tx_p_r : 1'bz;
+    assign tx_n    = tx_oe_r ? tx_n_r : 1'bz;
     assign tx_en   = tx_en_r;
     assign pwm_th  = pwm_r;
     assign led_crs = crs;

@@ -17,16 +17,16 @@ def tx(r_pin, r1, r_on, r2, c1, vcc=VCCIO):
     tau = rth * c1
     return rt, 2 * vpk, tau * math.log(4) , 2 * rt   # Vpp, t20-80, 出力インピーダンス(差動)
 
-print("== 送信: 振幅と立ち上がり (R1=100, Ron=2, R2=18, C1=220p)")
+print("== 送信 SW 経路: 振幅と立ち上がり (R1=100, Ron=2, R2=22, C1=220p)")
 for r_pin in (15, 20, 30):
     for vcc in (3.135, 3.3, 3.465):
-        rt, vpp, t2080, zout = tx(r_pin, 100, 2, 18, 220e-12, vcc)
+        rt, vpp, t2080, zout = tx(r_pin, 100, 2, 22, 220e-12, vcc)
         print(f"  Rpin={r_pin:2d} VCCIO={vcc:.3f}: Vpp={vpp:.3f} V (規格 0.8-1.2)  "
               f"t20-80={t2080*1e9:4.1f} ns (OA 7.5-15)  Zout={zout:.0f} Ω")
 
-print("== 送信: C1 と立ち上がり (Rpin=20)")
+print("== 送信 SW 経路: C1 と立ち上がり (Rpin=20)")
 for c1 in (100e-12, 150e-12, 220e-12, 330e-12):
-    print(f"  C1={c1*1e12:.0f} pF: t20-80={tx(20,100,2,18,c1)[2]*1e9:.1f} ns")
+    print(f"  C1={c1*1e12:.0f} pF: t20-80={tx(20,100,2,22,c1)[2]*1e9:.1f} ns")
 
 # ---- 休止中 (high-Z) のインピーダンス: 差動 ----
 def z_limit(f):            # 802.3cg 式 147-8 (OA PMA 試験仕様 5.3.1): 10 kΩ || 25 pF
@@ -55,9 +55,25 @@ for f in (0.3e6, 1e6, 5e6, 12.5e6, 25e6, 40e6):
     print(f"  {f/1e6:5.1f} MHz: |Z|={zn:7.0f} Ω  下限={zl:7.0f} Ω  {'OK' if zn >= zl else 'NG'}")
 print(f"  差動容量の合計 {c_wire/2 + C_CMC:.1f} pF (OA の上限 CMDI 25 pF)")
 
+# L 経路 (JP2 / JP3 = 2-3): TMUX の COFF の代わりに、FPGA の TX ピン (トライステート、容量 Cp) が R1 100 Ω + 1 µH 越しに見える。
+# 直列共振 (1/(2π√(L Cp))) に近づくほど見かけの容量が増える。ピン容量は推定値
+def z_l_path(f, cp, r=100.0, l=1e-6):
+    w = 2 * math.pi * f
+    y_branch = 1 / (r + 1j * w * l + 1 / (1j * w * cp))
+    c_rest = (c_wire - C_PARTS["TMUX1511 COFF (最大)"]) * 1e-12
+    y_wire = 1j * w * c_rest + y_branch
+    y = 1 / r_par + 1 / (2 / y_wire) + 1j * w * C_CMC * 1e-12
+    return abs(1 / y)
+for cp in (5e-12, 10e-12):
+    f0 = 1 / (2 * math.pi * math.sqrt(1e-6 * cp))
+    print(f"== 休止中のインピーダンス L 経路 (TX ピン容量 {cp*1e12:.0f} pF、直列共振 {f0/1e6:.0f} MHz)")
+    for f in (0.3e6, 1e6, 5e6, 12.5e6, 25e6, 40e6):
+        zn, zl = z_l_path(f, cp), z_limit(f)
+        print(f"  {f/1e6:5.1f} MHz: |Z|={zn:7.0f} Ω  下限={zl:7.0f} Ω  {'OK' if zn >= zl else 'NG'}")
+
 # ---- 受信: しきい値 (PWM → Vth) ----
-VB = 3.3 * 1.2 / (2.2 + 1.2)
-RP1, RP2 = 5.6e3, 1e3
+VB = 3.3 * 2.0 / (3.3 + 2.0)      # R16 3.3k / R17 2k
+RP1, RP2 = 5.1e3, 1e3             # R18 / R19
 k = RP2 / (RP1 + RP2)
 print(f"== 受信しきい値: VB={VB:.3f} V, k={k:.3f}")
 print(f"  th = (D*3.3 - VB)*k: D=0 → {(-VB)*k*1e3:.0f} mV, D=1 → {(3.3-VB)*k*1e3:.0f} mV, "

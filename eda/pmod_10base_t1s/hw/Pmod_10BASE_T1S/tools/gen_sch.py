@@ -13,15 +13,21 @@ switch, the CMC and an ESD array. Design study: ../../README.md.
   as eda/pmod_100base_tx except pin 9 (TX_EN instead of a second PWM).
   1 / 7 CMP_HP / CMP_HN (comparator H, LVDS25 input), 2 / 8 CMP_LP / CMP_LN
   (comparator L), 3 PWM_TH, 9 TX_EN, 4 / 10 TX_P / TX_N (LVCMOS33).
-- TX: TX_P / TX_N -> 100R -> 220 pF to GND (edge rate, ~10 ns 20-80 %) ->
-  TMUX1511 (switch 1 / 2, SEL = TX_EN, 10k pull-down: off while the FPGA
-  is unconfigured; isolated when unpowered) -> 18R -> TRX_P / TRX_N.
-  ~140R per side incl. the pin and Ron: 1.0 Vpp into the 50R of the two
-  100R end terminations. R3 / R4 (0R, not fitted) bypass the switch
-  (variant A of the study: remove C1 / C2 as well).
+- TX, two paths selected per side by a 3-pad solder jumper (JP2 = +, JP3 = -;
+  centre pad = TXx_RC after the 100R):
+  1-2 (default, bridged by a copper strip): switch path. 220 pF to GND (edge
+  rate, ~10 ns 20-80 %) -> TMUX1511 (switch 1 / 2, SEL = TX_EN, 10k
+  pull-down: off while the FPGA is unconfigured; isolated when unpowered) ->
+  22R -> TRX_P / TRX_N. ~145R per side incl. the pin and Ron: ~1.0 Vpp into
+  the 50R of the two 100R end terminations.
+  2-3 (cut the 1-2 strip, bridge 2-3): series-L path. 1 uH (L2 / L3) straight
+  to TRX_P / TRX_N, the 220 pF is disconnected: 100R + 1 uH give ~1.0-1.1 Vpp
+  and 10.5-12 ns 20-80 % (ngspice, 50R || 15 pF). The FPGA keeps TX_EN low
+  (U1 open; U1 may also be left off) and releases the TX pins while idle
+  (T1sBringup command 'd'). No Extended part on this path.
 - RX: comparator H = (VB + v+) vs (VTH + v-) -> v > +th, comparator L =
   (VTH + v+) vs (VB + v-) -> v > -th, th = VTH - VB set by PWM_TH
-  (5.6k / 1k to VB, 1 uF): -176 ... +324 mV. TRX_P / TRX_N are biased to VB
+  (5.1k / 1k to VB, 1 uF): -204 ... +337 mV. TRX_P / TRX_N are biased to VB
   (20k each); the VTH taps are AC coupled (100 nF) and biased to VTH (20k).
   1k in series with every FPGA pin (hides the pin capacitance from the
   bus, limits ESD current).
@@ -181,28 +187,30 @@ C100N50 = ('C14663', 'YAGEO CC0603KRX7R9BB104')
 C1U = ('C52923', 'Samsung CL05A105KA5NQNC')
 C10U = ('C19702', 'Samsung CL10A106KP8NNNC')
 C220P = ('C1530', 'FH 0402B221K500NT')
-R0 = ('C17168', 'UNI-ROYAL 0402WGF0000TCE')
-R18 = ('C25084', 'UNI-ROYAL 0402WGF180JTCE')
+R22R = ('C25092', 'UNI-ROYAL 0402WGF220JTCE')
 R49 = ('C25120', 'UNI-ROYAL 0402WGF499JTCE')
 R100 = ('C25076', 'UNI-ROYAL 0402WGF1000TCE')
 R1K = ('C11702', 'UNI-ROYAL 0402WGF1001TCE')
-R1K2 = ('C25862', 'UNI-ROYAL 0402WGF1201TCE')
+R2K = ('C4109', 'UNI-ROYAL 0402WGF2001TCE')
 R1K5 = ('C22843', 'UNI-ROYAL 0603WAF1501T5E')
-R2K2 = ('C25879', 'UNI-ROYAL 0402WGF2201TCE')
-R5K6 = ('C25908', 'UNI-ROYAL 0402WGF5601TCE')
+R3K3 = ('C25890', 'UNI-ROYAL 0402WGF3301TCE')
+R5K1 = ('C25905', 'UNI-ROYAL 0402WGF5101TCE')
+L1U = ('C1042', 'Sunlord SDFL2012Q1R0KTF')
 R10K = ('C25744', 'UNI-ROYAL 0402WGF1002TCE')
 R20K = ('C25765', 'UNI-ROYAL 0402WGF2002TCE')
 R100K = ('C25741', 'UNI-ROYAL 0402WGF1003TCE')
-# not fitted: switch bypass (variant A), common-mode termination (drop node option), probe header
-DNP = {'R3', 'R4', 'R23', 'R24', 'J3'}
+# not fitted: common-mode termination (drop node option), probe header
+DNP = {'R23', 'R24', 'J3'}
+# copper solder jumpers (the footprints exclude themselves from the BOM / placement)
+NO_BOM = {'JP2', 'JP3'}
 PARTS = {
     'U1': ('C2866750', 'TI TMUX1511PWR'),
     'U2': ('C106794', 'TI TPD4E02B04DQAR'),
     'L1': ('C131444', 'TDK ACT1210L-201-2P-TL00'),
     'J2': ('C474881', 'Cixi Kefa KF301-5.0-2P'),
-    'R1': R100, 'R2': R100, 'R3': R0, 'R4': R0, 'R5': R18, 'R6': R18, 'R7': R10K,
+    'R1': R100, 'R2': R100, 'L2': L1U, 'L3': L1U, 'R5': R22R, 'R6': R22R, 'R7': R10K,
     'R8': R20K, 'R9': R20K, 'R10': R1K, 'R11': R1K, 'R12': R20K, 'R13': R1K, 'R14': R20K, 'R15': R1K,
-    'R16': R2K2, 'R17': R1K2, 'R18': R5K6, 'R19': R1K,
+    'R16': R3K3, 'R17': R2K, 'R18': R5K1, 'R19': R1K,
     'R20': R49, 'R21': R49, 'R22': R100K, 'R23': R1K5, 'R24': R1K5,
     'C1': C220P, 'C2': C220P, 'C3': C100N, 'C4': C100N, 'C5': C100N, 'C6': C10U, 'C7': C100N, 'C8': C1U,
     'C9': C100N50, 'C10': C100N50, 'C11': C100N50, 'C12': C10U, 'C13': C100N,
@@ -225,7 +233,7 @@ def place(lib_id, ref, value, x, y, footprint='', rot=0, ref_xy=None, val_xy=Non
         props.append(prop(k, v, x, y, hide=True))
     pin_s = ' '.join(f'(pin {q(n)} (uuid {uid(ref, "pin", n)}))' for n in pins)
     txt = (f'(symbol (lib_id {q(lib_id)}) (at {x:.2f} {y:.2f} {rot}) (unit 1) (exclude_from_sim no) '
-           f'(in_bom {"no" if power else "yes"}) (on_board {"no" if power else "yes"}) (dnp {"yes" if ref in DNP else "no"}) (uuid {uid(ref)}) '
+           f'(in_bom {"no" if power or ref in NO_BOM else "yes"}) (on_board {"no" if power else "yes"}) (dnp {"yes" if ref in DNP else "no"}) (uuid {uid(ref)}) '
            + ' '.join(props) + ' ' + pin_s +
            f' (instances (project {q(NAME)} (path {q("/" + ROOT)} (reference {q(ref)}) (unit 1)))))')
     items.append(sexp.parse(txt)[0])
@@ -320,7 +328,7 @@ def build():
     add_lib('Connector_Generic:Conn_02x06_Top_Bottom', libsym('Connector_Generic', 'Conn_02x06_Top_Bottom'))
     for n in CUSTOM:
         add_lib(f'local:{n}', local_sym(n))
-    for lid in ('Power_Protection:TPD4E02B04DQA', 'Device:R', 'Device:C', 'Connector_Generic:Conn_01x02',
+    for lid in ('Power_Protection:TPD4E02B04DQA', 'Device:R', 'Device:C', 'Device:L', 'Jumper:SolderJumper_3_Bridged12', 'Connector_Generic:Conn_01x02',
                 'Connector_Generic:Conn_01x03', 'power:GND', 'power:+3V3', 'power:PWR_FLAG'):
         add_lib(lid, libsym(*lid.split(':')))
 
@@ -345,12 +353,22 @@ def build():
     # ---- TX: series R, edge-rate C, switch, series R ----
     two('R1', '100', 76.2, 45.72, 'TX_P', 'TXP_RC', '100R 1% 0402 (TX+ series; tune R1 / R2 for 1.0 Vpp)')
     two('R2', '100', 86.36, 45.72, 'TX_N', 'TXN_RC', '100R 1% 0402 (TX- series)')
-    cap('C1', '220p', 96.52, 45.72, 'TXP_RC', '220 pF 50 V X7R 0402 (TX+ edge rate ~10 ns 20-80 %, hidden by U1 when idle)')
-    cap('C2', '220p', 106.68, 45.72, 'TXN_RC', '220 pF 50 V X7R 0402 (TX- edge rate)')
-    two('R3', '0', 116.84, 45.72, 'TXP_RC', 'TXP_SW', '0R 0402 (bypass U1 switch 1, NOT FITTED: variant A, remove C1 too)')
-    two('R4', '0', 127.0, 45.72, 'TXN_RC', 'TXN_SW', '0R 0402 (bypass U1 switch 2, NOT FITTED)')
-    two('R5', '18', 137.16, 45.72, 'TXP_SW', 'TRX_P', '18R 1% 0402 (TX+ series, line side of the switch)')
-    two('R6', '18', 147.32, 45.72, 'TXN_SW', 'TRX_N', '18R 1% 0402 (TX- series)')
+    cap('C1', '220p', 96.52, 45.72, 'TXP_C', '220 pF 50 V X7R 0402 (TX+ edge rate ~10 ns 20-80 %, hidden by U1 when idle; JP2 1-2)')
+    cap('C2', '220p', 106.68, 45.72, 'TXN_C', '220 pF 50 V X7R 0402 (TX- edge rate; JP3 1-2)')
+    for ref, x, c, rc, l, sign in (('JP2', 116.84, 'TXP_C', 'TXP_RC', 'TXP_L', '+'), ('JP3', 139.7, 'TXN_C', 'TXN_RC', 'TXN_L', '-')):
+        jp = place('Jumper:SolderJumper_3_Bridged12', ref, 'SW/L', x, 33.02,
+                   footprint='Jumper:SolderJumper-3_P1.3mm_Bridged12_RoundedPad1.0x1.5mm_NumberLabels',
+                   ref_xy=(x, 26.67), val_xy=(x, 38.1),
+                   desc=f'TX{sign} path: 1-2 (bridged) = C + TMUX1511 switch, 2-3 = series 1 uH (cut 1-2 first)')
+        connect(jp, '1', c)
+        connect(jp, '2', rc)
+        connect(jp, '3', l)
+    two('L2', '1u', 162.56, 33.02, 'TXP_L', 'TRX_P', '1 uH 0805 multilayer, 50 mA (TX+ series-L path, edge rate with R1)',
+        fp='Inductor_SMD:L_0805_2012Metric', lib_id='Device:L')
+    two('L3', '1u', 172.72, 33.02, 'TXN_L', 'TRX_N', '1 uH 0805 multilayer (TX- series-L path)',
+        fp='Inductor_SMD:L_0805_2012Metric', lib_id='Device:L')
+    two('R5', '22', 137.16, 45.72, 'TXP_SW', 'TRX_P', '22R 1% 0402 (TX+ series, line side of the switch)')
+    two('R6', '22', 147.32, 45.72, 'TXN_SW', 'TRX_N', '22R 1% 0402 (TX- series)')
     two('R7', '10k', 157.48, 45.72, 'TX_EN', 'GND', '10k 1% 0402 (TX_EN pull-down: switch off while the FPGA is unconfigured)')
     u1 = place('local:TMUX1511', 'U1', 'TMUX1511', 101.6, 88.9, footprint=CUSTOM['TMUX1511'][2],
                ref_xy=(101.6, 73.66), val_xy=(101.6, 104.14), desc=CUSTOM['TMUX1511'][3])
@@ -375,11 +393,11 @@ def build():
     two('R15', '1k', 167.64, 127.0, 'TAP_LP', 'CMP_LP', '1k 1% 0402 (comparator L +: VTH + v+)')
 
     # ---- VB and VTH ----
-    two('R16', '2.2k', 76.2, 162.56, '+3V3', 'VB', '2.2k 1% 0402 (VB = 1.165 V with R17)')
-    two('R17', '1.2k', 86.36, 162.56, 'VB', 'GND', '1.2k 1% 0402 (VB divider)')
+    two('R16', '3.3k', 76.2, 162.56, '+3V3', 'VB', '3.3k 1% 0402 (VB = 1.245 V with R17)')
+    two('R17', '2k', 86.36, 162.56, 'VB', 'GND', '2k 1% 0402 (VB divider)')
     cap('C6', '10u', 96.52, 162.56, 'VB', '10 uF 10 V X5R 0603 (VB)', fp=C0603)
     cap('C7', '100n', 106.68, 162.56, 'VB', '100 nF 16 V X7R 0402 (VB)')
-    two('R18', '5.6k', 116.84, 162.56, 'PWM_TH', 'VTH', '5.6k 1% 0402 (PWM filter: th = (D x 3.3 V - VB) x 0.152)')
+    two('R18', '5.1k', 116.84, 162.56, 'PWM_TH', 'VTH', '5.1k 1% 0402 (PWM filter: th = (D x 3.3 V - VB) x 0.164)')
     two('R19', '1k', 127.0, 162.56, 'VTH', 'VB', '1k 1% 0402 (PWM filter to VB)')
     cap('C8', '1u', 137.16, 162.56, 'VTH', '1 uF 25 V X5R 0402 (VTH, tau 0.85 ms)')
 
@@ -447,9 +465,9 @@ def build():
     notes = [
         'Pmod 10BASE-T1S: IEEE 802.3cg 10BASE-T1S without a PHY chip (PCS / PMA / PLCA in the FPGA). '
         'Tang Primer 25K pmod0 (J6, bank 1) or Tang Nano 9K Pmod base Rev.C pmod0.',
-        'TX: LVCMOS33 x2 -> 100R -> 220p (edge rate) -> TMUX1511 (TX_EN) -> 18R: 1.0 Vpp into 50R, ~10 ns, high-Z when idle '
-        'and when unpowered. R3 / R4 bypass the switch (also remove C1 / C2).',
-        'RX: comparator H (1/7) = v > +th, L (2/8) = v > -th, th = VTH - VB from PWM_TH (-176 ... +324 mV). '
+        'TX: LVCMOS33 x2 -> 100R -> JP2 / JP3. 1-2 (default): 220p (edge rate) -> TMUX1511 (TX_EN) -> 22R, high-Z when idle '
+        'and when unpowered. 2-3: series 1 uH (L2 / L3) -> TRX, FPGA tristate when idle, TX_EN low. ~1.0 Vpp into 50R, ~10 ns.',
+        'RX: comparator H (1/7) = v > +th, L (2/8) = v > -th, th = VTH - VB from PWM_TH (-204 ... +337 mV). '
         'Hysteresis (SR latch) and DME decoding in the FPGA.',
         'Line: ESD (transceiver side) -> 200 uH CMC -> 100 nF DC block -> J2. JP1: 100R end termination '
         '(fit at both ends of the segment). R23 / R24: common-mode termination (option). No PoDL.',
@@ -464,7 +482,7 @@ def write_sch():
     txt = f'''(kicad_sch (version 20250114) (generator "eeschema") (generator_version "9.0")
 \t(uuid {ROOT})
 \t(paper "A3")
-\t(title_block (title "Pmod 10BASE-T1S (PHY-less, IEEE 802.3cg)") (date "2026-11-20") (rev "A") (company "fpga_samples / eda/pmod_10base_t1s") (comment 1 "TX: LVCMOS + RC + TMUX1511; RX: two LVDS-input comparators; 200 uH CMC, 100 nF DC block, switchable 100R end termination"))
+\t(title_block (title "Pmod 10BASE-T1S (PHY-less, IEEE 802.3cg)") (date "2026-11-21") (rev "A") (company "fpga_samples / eda/pmod_10base_t1s") (comment 1 "TX: LVCMOS + RC + TMUX1511 or series 1 uH (JP2/JP3); RX: two LVDS-input comparators; 200 uH CMC, 100 nF DC block, switchable 100R end termination"))
 \t{lib_s}
 \t{body}
 \t(sheet_instances (path "/" (page "1")))

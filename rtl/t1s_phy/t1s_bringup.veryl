@@ -21,16 +21,19 @@
  *   v<violations> h<th> m<mode> i<id> n<count> T<to> O<order> s<plca state>
  *   S<src last byte> L<len>
  *   mode bits: 0 periodic send, 1 PLCA on, 2 left-first, 3 auto order,
- *              5:4 test mode
+ *              5:4 test mode, 6 TX drive mode (1 = direct)
  * Commands: + / -  threshold +-8      p send one frame     s periodic send (toggle)
  *           e PLCA on/off   i node id +1 (wraps at the node count)   n node count +1 (2..8)
  *           o TO 32 / 24    l bit order (toggle)   a auto order (toggle)
  *           0-3 test mode   z clear counters
+ *           d TX drive mode (toggle): 0 = through the board's TMUX1511 (TX_EN), 1 = direct
+ *             (series L path, solder jumpers JP2 / JP3 in the L position: TX_EN stays low, the
+ *             TX pins are released while they are equal)
  */
 pub module T1sBringup #(
-    param CLK_HZ: u32 = 100_000_000,
-    param BAUD  : u32 = 115200     ,
-    param TH_INIT: u32 = 560       , // ~ +0.07 V with the board's PWM network
+    param CLK_HZ : u32 = 100_000_000,
+    param BAUD   : u32 = 115200     ,
+    param TH_INIT: u32 = 560        , // ~ +0.09 V with the board's PWM network (R18 5.1k / R19 1k, VB 1.245 V)
 ) (
     i_clk: input clock,
     i_rst: input reset,
@@ -40,6 +43,7 @@ pub module T1sBringup #(
     o_left_first: output logic    ,
     o_auto      : output logic    ,
     o_test      : output logic<2> ,
+    o_drv_direct: output logic    , // TX drive mode, see 'd'
     o_plca_en   : output logic    ,
     o_plca_id   : output logic<8> ,
     o_plca_cnt  : output logic<8> ,
@@ -110,14 +114,14 @@ pub module T1sBringup #(
     }
 
     // ------------------------------------------------------------ UART RX
-    const DIV: u32 = CLK_HZ / BAUD;
-    var rx_s   : logic<3> ;
-    var rx_busy: logic    ;
-    var rx_cnt : logic<16>;
-    var rx_bit : logic<4> ;
-    var rx_sh  : logic<8> ;
-    var c_valid: logic    ;
-    var c_data : logic<8> ;
+    const DIV    : u32       = CLK_HZ / BAUD;
+    var   rx_s   : logic<3> ;
+    var   rx_busy: logic    ;
+    var   rx_cnt : logic<16>;
+    var   rx_bit : logic<4> ;
+    var   rx_sh  : logic<8> ;
+    var   c_valid: logic    ;
+    var   c_data : logic<8> ;
     always_ff (i_clk, i_rst) {
         if_reset {
             rx_s    = 3'b111;
@@ -166,6 +170,7 @@ pub module T1sBringup #(
             o_left_first = 1'b1;
             o_auto       = 1'b1;
             o_test       = 2'd0;
+            o_drv_direct = 1'b0;
             o_plca_en    = 1'b0;
             o_plca_id    = 8'd1;
             o_plca_cnt   = 8'd8;
@@ -178,21 +183,22 @@ pub module T1sBringup #(
             clear    = 1'b0;
             if c_valid {
                 case c_data {
-                    8'h2b: o_th = o_th + 10'd8; // +
-                    8'h2d: o_th = o_th - 10'd8; // -
-                    8'h70: send_one = 1'b1; // p
-                    8'h73: periodic = ~periodic; // s
-                    8'h65: o_plca_en = ~o_plca_en; // e
-                    8'h69: o_plca_id = if o_plca_id + 8'd1 >= o_plca_cnt ? 8'd0 : o_plca_id + 8'd1; // i
-                    8'h6e: o_plca_cnt = if o_plca_cnt >= 8'd8 ? 8'd2 : o_plca_cnt + 8'd1; // n
-                    8'h6f: o_plca_to = if o_plca_to == 8'd32 ? 8'd24 : 8'd32; // o
-                    8'h6c: o_left_first = ~o_left_first; // l
-                    8'h61: o_auto = ~o_auto; // a
-                    8'h30: o_test = 2'd0;
-                    8'h31: o_test = 2'd1;
-                    8'h32: o_test = 2'd2;
-                    8'h33: o_test = 2'd3;
-                    8'h7a: clear = 1'b1; // z
+                    8'h2b  : o_th         = o_th + 10'd8; // +
+                    8'h2d  : o_th         = o_th - 10'd8; // -
+                    8'h70  : send_one     = 1'b1; // p
+                    8'h73  : periodic     = ~periodic; // s
+                    8'h65  : o_plca_en    = ~o_plca_en; // e
+                    8'h69  : o_plca_id    = if o_plca_id + 8'd1 >= o_plca_cnt ? 8'd0 : o_plca_id + 8'd1; // i
+                    8'h6e  : o_plca_cnt   = if o_plca_cnt >= 8'd8 ? 8'd2 : o_plca_cnt + 8'd1; // n
+                    8'h6f  : o_plca_to    = if o_plca_to == 8'd32 ? 8'd24 : 8'd32; // o
+                    8'h6c  : o_left_first = ~o_left_first; // l
+                    8'h61  : o_auto       = ~o_auto; // a
+                    8'h64  : o_drv_direct = ~o_drv_direct; // d
+                    8'h30  : o_test       = 2'd0;
+                    8'h31  : o_test       = 2'd1;
+                    8'h32  : o_test       = 2'd2;
+                    8'h33  : o_test       = 2'd3;
+                    8'h7a  : clear        = 1'b1; // z
                     default: {}
                 }
             }
@@ -465,28 +471,21 @@ pub module T1sBringup #(
     var s_src  : logic<8> ;
     var s_len  : logic<12>;
 
-    const NUSED: u32 = 3 + 7 * 6 + 5 + 4 * 4 + 3 + 3 + 4 + 5 + 2; // characters
-    var line: logic<NUSED * 8>;
+    const NUSED: u32              = 3 + 7 * 6 + 5 + 4 * 4 + 3 + 3 + 4 + 5 + 2; // characters
+    var   line : logic<NUSED * 8>;
     always_comb {
         line = {
             8'h54, 8'h31, 8'h53, // T1S
-            8'h20, 8'h72, hx(s_good[15:12]), hx(s_good[11:8]), hx(s_good[7:4]), hx(s_good[3:0]),
-            8'h20, 8'h62, hx(s_bad[15:12]), hx(s_bad[11:8]), hx(s_bad[7:4]), hx(s_bad[3:0]),
-            8'h20, 8'h6f, hx(s_own[15:12]), hx(s_own[11:8]), hx(s_own[7:4]), hx(s_own[3:0]),
-            8'h20, 8'h74, hx(s_tx[15:12]), hx(s_tx[11:8]), hx(s_tx[7:4]), hx(s_tx[3:0]),
-            8'h20, 8'h42, hx(s_bcn[15:12]), hx(s_bcn[11:8]), hx(s_bcn[7:4]), hx(s_bcn[3:0]),
-            8'h20, 8'h63, hx(s_crs[15:12]), hx(s_crs[11:8]), hx(s_crs[7:4]), hx(s_crs[3:0]),
-            8'h20, 8'h76, hx(s_viol[15:12]), hx(s_viol[11:8]), hx(s_viol[7:4]), hx(s_viol[3:0]),
-            8'h20, 8'h68, hx(s_th[11:8]), hx(s_th[7:4]), hx(s_th[3:0]),
-            8'h20, 8'h6d, hx(s_mode[7:4]), hx(s_mode[3:0]),
-            8'h20, 8'h69, hx(s_id[7:4]), hx(s_id[3:0]),
-            8'h20, 8'h6e, hx(s_cnt[7:4]), hx(s_cnt[3:0]),
-            8'h20, 8'h54, hx(s_to[7:4]), hx(s_to[3:0]),
-            8'h20, 8'h4f, hx(s_order),
-            8'h20, 8'h73, hx(s_state),
-            8'h20, 8'h53, hx(s_src[7:4]), hx(s_src[3:0]),
-            8'h20, 8'h4c, hx(s_len[11:8]), hx(s_len[7:4]), hx(s_len[3:0]),
-            8'h0d, 8'h0a
+            8'h20, 8'h72, hx(s_good[15:12]), hx(s_good[11:8]), hx(s_good[7:4]), hx(s_good[3:0]), 8'h20, 8'h62,
+            hx(s_bad[15:12]), hx(s_bad[11:8]), hx(s_bad[7:4]), hx(s_bad[3:0]), 8'h20, 8'h6f, hx(s_own[15:12]),
+            hx(s_own[11:8]), hx(s_own[7:4]), hx(s_own[3:0]), 8'h20, 8'h74, hx(s_tx[15:12]), hx(s_tx[11:8]),
+            hx(s_tx[7:4]), hx(s_tx[3:0]), 8'h20, 8'h42, hx(s_bcn[15:12]), hx(s_bcn[11:8]), hx(s_bcn[7:4]),
+            hx(s_bcn[3:0]), 8'h20, 8'h63, hx(s_crs[15:12]), hx(s_crs[11:8]), hx(s_crs[7:4]), hx(s_crs[3:0]), 8'h20,
+            8'h76, hx(s_viol[15:12]), hx(s_viol[11:8]), hx(s_viol[7:4]), hx(s_viol[3:0]), 8'h20, 8'h68, hx(s_th[11:8]),
+            hx(s_th[7:4]), hx(s_th[3:0]), 8'h20, 8'h6d, hx(s_mode[7:4]), hx(s_mode[3:0]), 8'h20, 8'h69, hx(s_id[7:4]),
+            hx(s_id[3:0]), 8'h20, 8'h6e, hx(s_cnt[7:4]), hx(s_cnt[3:0]), 8'h20, 8'h54, hx(s_to[7:4]), hx(s_to[3:0]),
+            8'h20, 8'h4f, hx(s_order), 8'h20, 8'h73, hx(s_state), 8'h20, 8'h53, hx(s_src[7:4]), hx(s_src[3:0]), 8'h20,
+            8'h4c, hx(s_len[11:8]), hx(s_len[7:4]), hx(s_len[3:0]), 8'h0d, 8'h0a
         };
     }
 
@@ -539,7 +538,7 @@ pub module T1sBringup #(
                     s_crs   = crs_cnt;
                     s_viol  = viol_cnt;
                     s_th    = {2'd0, o_th};
-                    s_mode  = {2'd0, o_test, o_auto, o_left_first, o_plca_en, periodic};
+                    s_mode  = {1'd0, o_drv_direct, o_test, o_auto, o_left_first, o_plca_en, periodic};
                     s_id    = o_plca_id;
                     s_cnt   = o_plca_cnt;
                     s_to    = o_plca_to;

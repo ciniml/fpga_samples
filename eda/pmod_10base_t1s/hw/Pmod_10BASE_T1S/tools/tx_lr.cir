@@ -1,0 +1,35 @@
+* L path of the TX (JP2 / JP3 = 2-3): FPGA pin (Rout 30R) -> R1 100R -> 1 uH (C1042: 0.4R, SRF 75 MHz) -> line,
+* OA load 50R || 15 pF (25R + 30 pF per side to the centre). ngspice -b tools/tx_lr.cir -> vpp, tr (20-80 %)
+* Rout 20 / 30 / 40R: 1.13 / 1.06 / 1.00 Vpp, 11.8 / 11.1 / 10.5 ns
+VP inp 0 PULSE(0 3.3 0 1n 1n 79n 160n)
+VN inn 0 PULSE(3.3 0 0 1n 1n 79n 160n)
+RoP inp a1 30
+RoN inn b1 30
+LP a1 a2 1u
+RLP a2 a3 0.4
+CLP a1 a3 4.5p
+LN b1 b2 1u
+RLN b2 b3 0.4
+CLN b1 b3 4.5p
+RsP a3 tp 100
+RsN b3 tn 100
+CpP tp 0 30p
+CpN tn 0 30p
+RtP tp ct 25
+RtN tn ct 25
+Rct ct 0 1m
+.tran 0.05n 640n
+.control
+run
+let vd = v(tp)-v(tn)
+meas tran vmax max vd from=400n to=640n
+meas tran vmin min vd from=400n to=640n
+let lo = vmin + 0.2*(vmax-vmin)
+let hi = vmin + 0.8*(vmax-vmin)
+meas tran t1 when vd=lo rise=3
+meas tran t2 when vd=hi rise=3
+let tr = t2 - t1
+let vpp = vmax - vmin
+print vpp tr
+.endc
+.end

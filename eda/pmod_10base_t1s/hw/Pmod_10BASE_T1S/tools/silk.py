@@ -9,7 +9,7 @@ import os
 import pcbnew
 
 OX, OY = 100.0, 80.0       # board origin (gen_pcb.py)
-REV, DATE = 'Rev.A', '2026-11-20'
+REV, DATE = 'Rev.A', '2026-11-21'
 LOGO = (10.16, 26.0)        # logo centre (back)
 TITLE = ('Pmod 10BASE-T1S ' + REV + '\n' + DATE + '\nKenta Ida (@ciniml)', 16.5, 33.6)
 TITLE_SIZE = 0.8
@@ -21,7 +21,7 @@ NOTES = [  # (text, x, y, size) - x is the text centre, board coordinates from t
     ('no PHY: PCS/PMA in FPGA', 10.16, 16.3, 0.8),
     ('JP1 = 100R end term.', 10.16, 18.1, 0.8),
     ('TP25K: J6 (pmod0)', 10.16, 19.9, 0.8),
-    ('no PoDL', 10.16, 21.2, 0.8),
+    ('JP2/3: 1-2 SW, 2-3 L', 10.16, 21.2, 0.8),
 ]
 
 def P(x, y):
