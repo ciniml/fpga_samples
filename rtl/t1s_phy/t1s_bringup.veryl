@@ -1,0 +1,578 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file t1s_bringup.veryl
+ * @brief Bring-up logic for T1sPhy on a board: test frames, receive
+ *        counters, UART status line and single-letter commands.
+ *
+ * TX: a 60-byte broadcast frame + FCS once per second (or on 'p'):
+ *   dst ff:ff:ff:ff:ff:ff, src 02:00:00:00:01:<id> (locally administered),
+ *   EtherType 0x88B5 (IEEE local experimental), payload "T1S #" + 32-bit
+ *   sequence number (big endian), zero padding.
+ *   On a Linux host: tcpdump -e -i <if> ether proto 0x88b5
+ * RX: CRC-32 check after the SFD; good / bad / own-echo counters and the
+ *   source MAC (last byte) and length of the last good frame.
+ *
+ * UART (8N1, CLK_HZ / BAUD), one status line every 0.5 s (hex):
+ *   T1S r<good> b<bad> o<own> t<sent> B<beacons> c<carrier bursts>
+ *   v<violations> h<th> m<mode> i<id> n<count> T<to> O<order> s<plca state>
+ *   S<src last byte> L<len>
+ *   mode bits: 0 periodic send, 1 PLCA on, 2 left-first, 3 auto order,
+ *              5:4 test mode
+ * Commands: + / -  threshold +-8      p send one frame     s periodic send (toggle)
+ *           e PLCA on/off   i node id +1 (wraps at the node count)   n node count +1 (2..8)
+ *           o TO 32 / 24    l bit order (toggle)   a auto order (toggle)
+ *           0-3 test mode   z clear counters
+ */
+pub module T1sBringup #(
+    param CLK_HZ: u32 = 100_000_000,
+    param BAUD  : u32 = 115200     ,
+    param TH_INIT: u32 = 560       , // ~ +0.07 V with the board's PWM network
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    // to / from T1sPhy
+    o_th        : output logic<10>,
+    o_left_first: output logic    ,
+    o_auto      : output logic    ,
+    o_test      : output logic<2> ,
+    o_plca_en   : output logic    ,
+    o_plca_id   : output logic<8> ,
+    o_plca_cnt  : output logic<8> ,
+    o_plca_to   : output logic<8> ,
+    o_pending   : output logic    ,
+    i_tx_go     : input  logic    ,
+    i_tx_req    : input  logic    ,
+    o_tx_en     : output logic    ,
+    o_txd       : output logic<4> ,
+    i_rx_valid  : input  logic    ,
+    i_rx_data   : input  logic<4> ,
+    i_rx_er     : input  logic    ,
+    i_rx_sof    : input  logic    ,
+    i_rx_eof    : input  logic    ,
+    i_rx_bad    : input  logic    ,
+    i_rx_own    : input  logic    ,
+    i_crs       : input  logic    ,
+    i_beacon    : input  logic    , // pulse: BEACON sent / received (T1sPhy o_plca_bcn)
+    i_viol      : input  logic    ,
+    i_order     : input  logic<2> ,
+    i_plca_state: input  logic<3> ,
+
+    o_led_rx: output logic, // toggles on every good frame
+    o_txd_u : output logic, // UART
+    i_rxd_u : input  logic,
+) {
+    function crc8 (
+        c: input logic<32>,
+        d: input logic<8> ,
+    ) -> logic<32> {
+        var r: logic<32>;
+        r = c;
+        for i in 0..8 {
+            r = if r[0] ^ d[i] ? (r >> 1) ^ 32'hEDB88320 : r >> 1;
+        }
+        return r;
+    }
+
+    function hx (
+        n: input logic<4>,
+    ) -> logic<8> {
+        return if n <: 4'd10 ? 8'h30 + {4'd0, n} : 8'h57 + {4'd0, n};
+    }
+
+    // ------------------------------------------------------------ timers
+    var tick_cnt : logic<28>;
+    var tick_half: logic    ;
+    var tick_sec : logic    ;
+    var half_ph  : logic    ;
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            tick_cnt  = 0;
+            tick_half = 1'b0;
+            tick_sec  = 1'b0;
+            half_ph   = 1'b0;
+        } else {
+            tick_half = 1'b0;
+            tick_sec  = 1'b0;
+            if tick_cnt == (CLK_HZ / 2 - 1) as 28 {
+                tick_cnt  = 0;
+                tick_half = 1'b1;
+                half_ph   = ~half_ph;
+                tick_sec  = half_ph;
+            } else {
+                tick_cnt = tick_cnt + 28'd1;
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ UART RX
+    const DIV: u32 = CLK_HZ / BAUD;
+    var rx_s   : logic<3> ;
+    var rx_busy: logic    ;
+    var rx_cnt : logic<16>;
+    var rx_bit : logic<4> ;
+    var rx_sh  : logic<8> ;
+    var c_valid: logic    ;
+    var c_data : logic<8> ;
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            rx_s    = 3'b111;
+            rx_busy = 1'b0;
+            rx_cnt  = 0;
+            rx_bit  = 0;
+            rx_sh   = 0;
+            c_valid = 1'b0;
+            c_data  = 0;
+        } else {
+            rx_s    = {rx_s[1:0], i_rxd_u};
+            c_valid = 1'b0;
+            if !rx_busy {
+                if !rx_s[2] {
+                    rx_busy = 1'b1;
+                    rx_cnt  = (DIV / 2) as 16;
+                    rx_bit  = 0;
+                }
+            } else if rx_cnt == 0 {
+                rx_cnt = (DIV - 1) as 16;
+                if rx_bit == 4'd0 {
+                    if rx_s[2] {
+                        rx_busy = 1'b0; // false start
+                    }
+                } else if rx_bit == 4'd9 {
+                    rx_busy = 1'b0;
+                    c_valid = rx_s[2];
+                    c_data  = rx_sh;
+                } else {
+                    rx_sh = {rx_s[2], rx_sh[7:1]};
+                }
+                rx_bit = rx_bit + 4'd1;
+            } else {
+                rx_cnt = rx_cnt - 16'd1;
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ commands
+    var periodic: logic;
+    var send_one: logic;
+    var clear   : logic;
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            o_th         = TH_INIT as 10;
+            o_left_first = 1'b1;
+            o_auto       = 1'b1;
+            o_test       = 2'd0;
+            o_plca_en    = 1'b0;
+            o_plca_id    = 8'd1;
+            o_plca_cnt   = 8'd8;
+            o_plca_to    = 8'd32;
+            periodic     = 1'b1;
+            send_one     = 1'b0;
+            clear        = 1'b0;
+        } else {
+            send_one = 1'b0;
+            clear    = 1'b0;
+            if c_valid {
+                case c_data {
+                    8'h2b: o_th = o_th + 10'd8; // +
+                    8'h2d: o_th = o_th - 10'd8; // -
+                    8'h70: send_one = 1'b1; // p
+                    8'h73: periodic = ~periodic; // s
+                    8'h65: o_plca_en = ~o_plca_en; // e
+                    8'h69: o_plca_id = if o_plca_id + 8'd1 >= o_plca_cnt ? 8'd0 : o_plca_id + 8'd1; // i
+                    8'h6e: o_plca_cnt = if o_plca_cnt >= 8'd8 ? 8'd2 : o_plca_cnt + 8'd1; // n
+                    8'h6f: o_plca_to = if o_plca_to == 8'd32 ? 8'd24 : 8'd32; // o
+                    8'h6c: o_left_first = ~o_left_first; // l
+                    8'h61: o_auto = ~o_auto; // a
+                    8'h30: o_test = 2'd0;
+                    8'h31: o_test = 2'd1;
+                    8'h32: o_test = 2'd2;
+                    8'h33: o_test = 2'd3;
+                    8'h7a: clear = 1'b1; // z
+                    default: {}
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ TX frame generator
+    // bytes 0..7 preamble + SFD, 8..67 frame, 68..71 FCS
+    var tx_go    : logic    ; // a frame is waiting
+    var tx_active: logic    ;
+    var tx_b     : logic<7> ;
+    var tx_h     : logic    ;
+    var tx_crc   : logic<32>;
+    var tx_seq   : logic<32>;
+    var tx_count : logic<16>;
+
+    function frame_byte (
+        b  : input logic<7> ,
+        seq: input logic<32>,
+        fcs: input logic<32>,
+        id : input logic<8> ,
+    ) -> logic<8> {
+        if b <: 7'd7 {
+            return 8'h55;
+        } else if b == 7'd7 {
+            return 8'hd5;
+        } else if b <: 7'd14 {
+            return 8'hff;
+        } else if b == 7'd14 {
+            return 8'h02;
+        } else if b == 7'd18 {
+            return 8'h01;
+        } else if b == 7'd19 {
+            return id;
+        } else if b == 7'd20 {
+            return 8'h88;
+        } else if b == 7'd21 {
+            return 8'hb5;
+        } else if b == 7'd22 {
+            return 8'h54; // T
+        } else if b == 7'd23 {
+            return 8'h31; // 1
+        } else if b == 7'd24 {
+            return 8'h53; // S
+        } else if b == 7'd25 {
+            return 8'h20;
+        } else if b == 7'd26 {
+            return 8'h23; // #
+        } else if b == 7'd27 {
+            return seq[31:24];
+        } else if b == 7'd28 {
+            return seq[23:16];
+        } else if b == 7'd29 {
+            return seq[15:8];
+        } else if b == 7'd30 {
+            return seq[7:0];
+        } else if b == 7'd68 {
+            return fcs[7:0];
+        } else if b == 7'd69 {
+            return fcs[15:8];
+        } else if b == 7'd70 {
+            return fcs[23:16];
+        } else if b == 7'd71 {
+            return fcs[31:24];
+        } else {
+            return 8'h00;
+        }
+    }
+
+    var tx_crc_n: logic<32>;
+    var nb_b    : logic<7> ;
+    var nb_h    : logic    ;
+    var nb_byte : logic<8> ;
+    always_comb {
+        tx_crc_n = tx_crc;
+        if tx_h && tx_b >= 7'd8 && tx_b <: 7'd68 {
+            tx_crc_n = crc8(tx_crc, frame_byte(tx_b, tx_seq, ~tx_crc, o_plca_id));
+        }
+        nb_b    = if tx_h ? tx_b + 7'd1 : tx_b;
+        nb_h    = ~tx_h;
+        nb_byte = frame_byte(nb_b, tx_seq, ~tx_crc_n, o_plca_id);
+    }
+
+    assign o_pending = tx_go && !tx_active;
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            tx_go     = 1'b0;
+            tx_active = 1'b0;
+            o_tx_en   = 1'b0;
+            o_txd     = 0;
+            tx_b      = 0;
+            tx_h      = 1'b0;
+            tx_crc    = '1;
+            tx_seq    = 0;
+            tx_count  = 0;
+        } else {
+            if clear {
+                tx_count = 0;
+            }
+            if (tick_sec && periodic) || send_one {
+                tx_go = 1'b1;
+            }
+            if !tx_active {
+                if i_tx_go && tx_go {
+                    tx_go     = 1'b0;
+                    tx_active = 1'b1;
+                    o_tx_en   = 1'b1;
+                    tx_b      = 0;
+                    tx_h      = 1'b0;
+                    tx_crc    = '1;
+                    o_txd     = 4'h5;
+                }
+            } else if i_tx_req {
+                if tx_h && tx_b == 7'd71 {
+                    tx_active = 1'b0;
+                    o_tx_en   = 1'b0;
+                    tx_count  = tx_count + 16'd1;
+                    tx_seq    = tx_seq + 32'd1;
+                } else {
+                    tx_b   = nb_b;
+                    tx_h   = nb_h;
+                    tx_crc = tx_crc_n;
+                    o_txd  = if nb_h ? nb_byte[7:4] : nb_byte[3:0];
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ RX check
+    var rx_in    : logic    ;
+    var rx_dat   : logic    ; // after the SFD
+    var rx_hi    : logic    ;
+    var rx_lo    : logic<4> ;
+    var rx_prev  : logic<4> ;
+    var rx_crc   : logic<32>;
+    var rx_badf  : logic    ;
+    var rx_len   : logic<11>;
+    var rx_src   : logic<8> ;
+    var rx_crc_ok: logic    ;
+    var last_len : logic<11>;
+    var last_src : logic<8> ;
+    var rx_good  : logic<16>;
+    var rx_bad   : logic<16>;
+    var rx_own   : logic<16>;
+    always_ff (i_clk) {
+        rx_crc_ok = rx_crc == 32'hDEBB20E3;
+    }
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            rx_in    = 1'b0;
+            rx_dat   = 1'b0;
+            rx_hi    = 1'b0;
+            rx_lo    = 0;
+            rx_prev  = 0;
+            rx_crc   = '1;
+            rx_badf  = 1'b0;
+            rx_len   = 0;
+            rx_src   = 0;
+            last_len = 0;
+            last_src = 0;
+            rx_good  = 0;
+            rx_bad   = 0;
+            rx_own   = 0;
+            o_led_rx = 1'b0;
+        } else {
+            if i_rx_valid {
+                if i_rx_sof {
+                    rx_in   = 1'b1;
+                    rx_dat  = 1'b0;
+                    rx_hi   = 1'b0;
+                    rx_badf = i_rx_er;
+                    rx_crc  = '1;
+                    rx_len  = 0;
+                    rx_prev = i_rx_data;
+                } else if rx_in {
+                    if i_rx_er {
+                        rx_badf = 1'b1;
+                    }
+                    if !rx_dat {
+                        if rx_prev == 4'h5 && i_rx_data == 4'hd {
+                            rx_dat = 1'b1;
+                            rx_hi  = 1'b0;
+                        } else if i_rx_data != 4'h5 {
+                            rx_badf = 1'b1;
+                        }
+                        rx_prev = i_rx_data;
+                    } else if !rx_hi {
+                        rx_lo = i_rx_data;
+                        rx_hi = 1'b1;
+                    } else {
+                        rx_hi  = 1'b0;
+                        rx_crc = crc8(rx_crc, {i_rx_data, rx_lo});
+                        if rx_len == 11'd11 {
+                            rx_src = {i_rx_data, rx_lo};
+                        }
+                        if rx_len != 11'h7ff {
+                            rx_len = rx_len + 11'd1;
+                        }
+                    }
+                }
+            }
+            if i_rx_eof && rx_in {
+                rx_in = 1'b0;
+                if i_rx_own {
+                    rx_own = rx_own + 16'd1;
+                } else if !i_rx_bad && !rx_badf && rx_dat && !rx_hi && rx_crc_ok && rx_len >= 11'd64 {
+                    rx_good  = rx_good + 16'd1;
+                    o_led_rx = ~o_led_rx;
+                    last_len = rx_len;
+                    last_src = rx_src;
+                } else {
+                    rx_bad = rx_bad + 16'd1;
+                }
+            }
+            if clear {
+                rx_good = 0;
+                rx_bad  = 0;
+                rx_own  = 0;
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ event counters
+    var bcn_cnt : logic<16>;
+    var crs_cnt : logic<16>;
+    var viol_cnt: logic<16>;
+    var crs_d   : logic    ;
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            bcn_cnt  = 0;
+            crs_cnt  = 0;
+            viol_cnt = 0;
+            crs_d    = 1'b0;
+        } else {
+            crs_d = i_crs;
+            if clear {
+                bcn_cnt  = 0;
+                crs_cnt  = 0;
+                viol_cnt = 0;
+            } else {
+                if i_beacon {
+                    bcn_cnt = bcn_cnt + 16'd1;
+                }
+                if i_crs && !crs_d {
+                    crs_cnt = crs_cnt + 16'd1;
+                }
+                if i_viol {
+                    viol_cnt = viol_cnt + 16'd1;
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ UART status line
+    var s_good : logic<16>;
+    var s_bad  : logic<16>;
+    var s_own  : logic<16>;
+    var s_tx   : logic<16>;
+    var s_bcn  : logic<16>;
+    var s_crs  : logic<16>;
+    var s_viol : logic<16>;
+    var s_th   : logic<12>;
+    var s_mode : logic<8> ;
+    var s_id   : logic<8> ;
+    var s_cnt  : logic<8> ;
+    var s_to   : logic<8> ;
+    var s_order: logic<4> ;
+    var s_state: logic<4> ;
+    var s_src  : logic<8> ;
+    var s_len  : logic<12>;
+
+    const NUSED: u32 = 3 + 7 * 6 + 5 + 4 * 4 + 3 + 3 + 4 + 5 + 2; // characters
+    var line: logic<NUSED * 8>;
+    always_comb {
+        line = {
+            8'h54, 8'h31, 8'h53, // T1S
+            8'h20, 8'h72, hx(s_good[15:12]), hx(s_good[11:8]), hx(s_good[7:4]), hx(s_good[3:0]),
+            8'h20, 8'h62, hx(s_bad[15:12]), hx(s_bad[11:8]), hx(s_bad[7:4]), hx(s_bad[3:0]),
+            8'h20, 8'h6f, hx(s_own[15:12]), hx(s_own[11:8]), hx(s_own[7:4]), hx(s_own[3:0]),
+            8'h20, 8'h74, hx(s_tx[15:12]), hx(s_tx[11:8]), hx(s_tx[7:4]), hx(s_tx[3:0]),
+            8'h20, 8'h42, hx(s_bcn[15:12]), hx(s_bcn[11:8]), hx(s_bcn[7:4]), hx(s_bcn[3:0]),
+            8'h20, 8'h63, hx(s_crs[15:12]), hx(s_crs[11:8]), hx(s_crs[7:4]), hx(s_crs[3:0]),
+            8'h20, 8'h76, hx(s_viol[15:12]), hx(s_viol[11:8]), hx(s_viol[7:4]), hx(s_viol[3:0]),
+            8'h20, 8'h68, hx(s_th[11:8]), hx(s_th[7:4]), hx(s_th[3:0]),
+            8'h20, 8'h6d, hx(s_mode[7:4]), hx(s_mode[3:0]),
+            8'h20, 8'h69, hx(s_id[7:4]), hx(s_id[3:0]),
+            8'h20, 8'h6e, hx(s_cnt[7:4]), hx(s_cnt[3:0]),
+            8'h20, 8'h54, hx(s_to[7:4]), hx(s_to[3:0]),
+            8'h20, 8'h4f, hx(s_order),
+            8'h20, 8'h73, hx(s_state),
+            8'h20, 8'h53, hx(s_src[7:4]), hx(s_src[3:0]),
+            8'h20, 8'h4c, hx(s_len[11:8]), hx(s_len[7:4]), hx(s_len[3:0]),
+            8'h0d, 8'h0a
+        };
+    }
+
+    var u_busy: logic    ;
+    var u_idx : logic<8> ;
+    var u_char: logic<8> ;
+    var u_sh  : logic<10>;
+    var u_cnt : logic<16>;
+    var u_bits: logic<4> ;
+    var u_load: logic<2> ; // 2 -> 1 -> load: u_char follows u_idx one clock later
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            u_busy  = 1'b0;
+            u_idx   = 0;
+            u_char  = 0;
+            u_sh    = '1;
+            u_cnt   = 0;
+            u_bits  = 0;
+            u_load  = 0;
+            o_txd_u = 1'b1;
+            s_good  = 0;
+            s_bad   = 0;
+            s_own   = 0;
+            s_tx    = 0;
+            s_bcn   = 0;
+            s_crs   = 0;
+            s_viol  = 0;
+            s_th    = 0;
+            s_mode  = 0;
+            s_id    = 0;
+            s_cnt   = 0;
+            s_to    = 0;
+            s_order = 0;
+            s_state = 0;
+            s_src   = 0;
+            s_len   = 0;
+        } else {
+            u_char = line[(NUSED - 1) as 8 - u_idx step 8];
+            if !u_busy {
+                if tick_half {
+                    u_busy  = 1'b1;
+                    u_idx   = 0;
+                    u_load  = 2'd2;
+                    u_bits  = 0;
+                    s_good  = rx_good;
+                    s_bad   = rx_bad;
+                    s_own   = rx_own;
+                    s_tx    = tx_count;
+                    s_bcn   = bcn_cnt;
+                    s_crs   = crs_cnt;
+                    s_viol  = viol_cnt;
+                    s_th    = {2'd0, o_th};
+                    s_mode  = {2'd0, o_test, o_auto, o_left_first, o_plca_en, periodic};
+                    s_id    = o_plca_id;
+                    s_cnt   = o_plca_cnt;
+                    s_to    = o_plca_to;
+                    s_order = {2'd0, i_order};
+                    s_state = {1'd0, i_plca_state};
+                    s_src   = last_src;
+                    s_len   = {1'd0, last_len};
+                }
+            } else if u_load == 2'd2 {
+                u_load = 2'd1;
+            } else if u_load == 2'd1 {
+                // u_char now belongs to u_idx
+                u_load = 2'd0;
+                u_sh   = {1'b1, u_char, 1'b0};
+                u_cnt  = (DIV - 1) as 16;
+                u_bits = 0;
+            } else if u_cnt == 0 {
+                o_txd_u = u_sh[0];
+                u_sh    = {1'b1, u_sh[9:1]};
+                u_cnt   = (DIV - 1) as 16;
+                if u_bits == 4'd10 {
+                    if u_idx == (NUSED - 1) as 8 {
+                        u_busy = 1'b0;
+                    } else {
+                        u_idx  = u_idx + 8'd1;
+                        u_load = 2'd2;
+                    }
+                } else {
+                    u_bits = u_bits + 4'd1;
+                }
+            } else {
+                u_cnt = u_cnt - 16'd1;
+            }
+        }
+    }
+}

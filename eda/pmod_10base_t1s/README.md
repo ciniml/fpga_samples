@@ -4,7 +4,8 @@
 ロジックで 10BASE-T1S (IEEE 802.3cg、Clause 147 / 148) の PCS・PMA・PLCA を実装し、Pmod 基板には
 汎用部品 (抵抗、コンデンサ、コモンモードチョーク、アナログスイッチ、ESD) だけを載せる案の検討。
 
-状態: **机上検討のみ** (2026-11-20)。回路・RTL・基板は未着手。数値の根拠は `tools/calc.py`。
+状態 (2026-11-20): 検討 → **基板 Rev.A の設計 (未発注)、RTL とシミュレーション、TP25K のビットストリームまで完了。実機未確認**。
+数値の根拠は `tools/calc.py`。基板は [`hw/Pmod_10BASE_T1S`](hw/Pmod_10BASE_T1S/README.md)、PHY コアは [`rtl/t1s_phy`](../../rtl/t1s_phy/README.md)、実機用デザインは §8。
 
 ## 0. 結論 (要約)
 
@@ -334,11 +335,54 @@ FPGA の LVDS 入力のピン容量 (5 pF/ピンと仮定) が最大の不確定
 - MikroElektronika「Two-Wire ETH Click」(LAN8651 MAC-PHY、SPI) + Raspberry Pi などでも相手になる。
 - onsemi NCN26010 (MAC-PHY) の評価ボード。
 
-## 8. 次の段階 (ユーザーの確認後)
+## 8. 実装 (2026-11-20)
 
-1. 回路図と基板 (KiCad、シングル Pmod、JLC 実装)。スイッチの 0 Ω 迂回、CM 終端 DNP、エンド終端ジャンパ、プローブ用ピン。
-2. RTL (`rtl/t1s_phy`) と SV テストベンチ: PCS の TX→RX、スクランブラの自己同期、PLCA の 2〜3 ノードのシミュレーション。
-3. 規格本文 (802.3-2022 Clause 147/148) で §1.3 の要確認事項を確定。
+| 部分 | 場所 | 状態 |
+|---|---|---|
+| 基板 Rev.A | `hw/Pmod_10BASE_T1S` (KiCad 10、2 層、20.32 × 44 mm) | ERC / DRC 違反 0、製造データ (`fab/`) あり。未発注 |
+| PHY コア | `rtl/t1s_phy` (Veryl: T1sPmaTx / T1sPmaRx / T1sPcsTx / T1sPcsRx / T1sPlca / T1sPhy) | `veryl test` 9 本合格 (PLCA 3 ノードで物理衝突 0、±1000 ppm、小振幅 + 雑音、ビット順 2 通り + 自動判定) |
+| 試験ロジック | `rtl/t1s_phy/t1s_bringup.veryl` (T1sBringup) | 2 ノードのシミュレーションで試験フレームと UART 状態行を確認 |
+| TP25K トップ | `src/tangprimer25k` (PLLA 200 MHz → IDES4 400 MS/s、論理 100 MHz) | Gowin 1.9.12.03 で配置配線済み: Fmax 156.6 MHz (制約 100 MHz)、ロジック 8% |
+
+回路と部品は §6 の案どおり (基板の README に部品表)。検討からの変更点:
+
+- 5B 記号の割り当てを D2.0 / 2022 年版に合わせた (SSD = H、ESDERR = K。§1.3)
+- 受信の 5B 整列は 15 ビット (J H H / N N N)。10 ビットでは BEACON の中に H H が回転として現れ、フレーム開始と誤認した (シミュレーションで発覚)
+- ビット順の自動判定 (`a` コマンド、既定で有効) は J H H でだけ行う (J J と N N N は逆順の列にも回転として現れる)
+
+### 8.1 ビルドと書き込み
+
+```
+cd eda/pmod_10base_t1s
+env -u DISPLAY QT_QPA_PLATFORM=offscreen make GW_SH=~/gowin/1.9.12.03/IDE/bin/gw_sh   # rtl/t1s_phy の veryl build も行う
+make run                                                                             # openFPGALoader で SRAM に書く
+make sim                                                                             # veryl test
+```
+
+基板は Dock の J6 (csv の pmod0)。UART は USB_Debugger の if01 (115200)。状態行 (0.5 s ごと、16 進):
+
+```
+T1S r<受信 良> b<受信 不良> o<自分のエコー> t<送信> B<BEACON> c<搬送波の回数> v<DME 違反> h<しきい値 PWM> m<モード> i<ID> n<ノード数> T<TO> O<ビット順> s<PLCA 状態> S<送信元 末尾> L<長さ>
+```
+
+コマンド: `+`/`-` しきい値、`p` 1 フレーム送信、`s` 周期送信 (1 秒ごと) の入/切、`e` PLCA の入/切、`i` ID、`n` ノード数、`o` TO 32/24、
+`l` 送信のビット順、`a` 受信のビット順自動判定、`0`〜`3` テストモード、`z` カウンタのクリア。
+既定は PLCA 切 (CSMA、衝突検出なし)、ID 1 / ノード数 8 / TO 32、しきい値 PWM 560 (約 +70 mV)、ビット順は左端から + 自動判定。
+
+### 8.2 実機での最初の手順 (§7.2 の具体化)
+
+1. `s` で周期送信を止め、`0` (通常) のまま EVB-LAN8670-USB-D と 2 線でつなぐ。両端終端 (本基板 JP1 + EVB J1/J2)。
+2. EVB 側で `ethtool --set-plca-cfg <if> enable on node-id 0 node-cnt 8 to-tmr 32`。本基板は受信だけで B (BEACON) が増えること、
+   `ping -I <if> -b 255.255.255.255` 等で r が増え b が 0 のままであることを見る。O が 2 なら左端から、1 なら右端から (以後 `l` を合わせる)。
+3. `e` で PLCA を入れ (ID 1)、`s` で周期送信。PC で `tcpdump -e -i <if> ether proto 0x88b5` に「T1S #」と連番が並ぶこと、
+   `ip -s link` の受信エラーが増えないことを見る。
+4. `+`/`-` でしきい値を振り、r が増えなくなる上下限を記録する (ノイズ余裕)。送信波形はテストモード `1` (1 の連続) / `3` で測る。
+
+## 9. 次の段階
+
+1. 基板のレビューと発注 (parts-ledger への登録はユーザーの確認後)。
+2. 規格本文 (802.3-2022 Clause 147/148) で §1.3 の要確認事項 (ビット順、スクランブラ、PLCA の細部) を確定。
+3. 実機: §8.2。その後 Tang Nano 9K (Rev.C ベース基板の pmod0、150 MHz = HALF 6) で 3 ノード目。
 
 ## 出典
 

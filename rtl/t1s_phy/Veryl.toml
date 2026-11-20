@@ -12,6 +12,7 @@ include_files = [
     "test/t1s_bus.sv",
     "test/t1s_mac_model.sv",
     "test/t1s_link_body.sv",
+    "test/t1s_bringup_body.sv",
 ]
 
 [test.verilator]
@@ -19,6 +20,7 @@ compile_args = [
     "t1s_bus.sv",
     "t1s_mac_model.sv",
     "t1s_link_body.sv",
+    "t1s_bringup_body.sv",
     "-Wno-WIDTHEXPAND",
     "-Wno-WIDTHTRUNC",
     "-Wno-CASEINCOMPLETE",
