@@ -55,13 +55,14 @@ SYNC/SSD の数、PLCA のタイミング)。本書の PCS の記述は 802.3cg 
 | 記号 | 5B | 用途 |
 |---|---|---|
 | SYNC | J (11000) | 送信開始。TX_EN の立ち上がりで 2 個 |
-| SSD | K (10001) | SYNC の後に 2 個。プリアンブルの先頭 16 ビットを置き換える |
+| SSD | **H (00100)** | SYNC の後に 2 個。プリアンブルの先頭 16 ビットを置き換える |
 | ESD | T (01101) | 送信終了 |
-| ESDOK / ESDERR | R (00111) / H (00100) | ESD の後に送り、正常終了か送信エラーかを示す |
+| ESDOK (ESDBRS) / ESDERR | R (00111) / **K (10001)** | ESD の後に送り、正常終了か送信エラーかを示す。ESDJAB (ジャバーで打ち切り) の符号は公開資料では未確認 |
 | BEACON | N (01000) | PLCA のコーディネータが送る (4 個以上) |
 | COMMIT | J の連続 | PLCA の送信機会を確保する |
 
-- 出典: 記号の割り当ては [D0.3] の表 (5B の値は 100BASE-X と同じ J/K/T/R/H)。SYNC/SSD の数は最終版で 3+1 から **2+2** に変わった
+- 出典: 5B の値は 100BASE-X と同じ。記号の割り当ては [D2.0] 表 147–1 と、2022 年版の表 147–1 の差分を載せた [OA-SLEEP] (K = ESDERR、
+  T = ESD/HB/SUSPEND、R = ESDOK/ESDBRS)。[D0.3] では SSD = K / ESDERR = H だったが入れ替わっている。SYNC/SSD の数は 3+1 から **2+2** に変わった
   ([D2.0] 147.3.3.1、[OA-PCS] 3.2.1 「two SYNC symbols … followed by two SSD symbols」)。
 - データは**自己同期スクランブラ**を通してから 5B に変換する。生成多項式は **x¹⁷ + x¹⁴ + 1** (Scr[16] と Scr[13] の XOR、LSB から)
   ([D2.0] 147.3.2.5 と [Beruto-scr])。受信側は SSD の後の 9 シンボルで同期し、その間は MII に 0x5 を出してプリアンブルを作り直す ([D2.0] 147.3.3.1)。
@@ -348,6 +349,7 @@ FPGA の LVDS 入力のピン容量 (5 pF/ピンと仮定) が最大の不確定
 - [OA-PCS] OPEN Alliance, 10BASE-T1S PCS Compliance Test Specification v1 (2025): https://opensig.org/wp-content/uploads/2025/08/10BASE-T1S-PCS-Compliance-Test-Specification_v1.pdf
 - [OA-PLCA] OPEN Alliance, 10BASE-T1S PLCA Conformance Test Suite v1.3: https://opensig.org/wp-content/uploads/2024/01/OA_10BASE-T1S_PLCA-Conformance-Test-Suite_v1.3.pdf
 - [OA-SYS] OPEN Alliance, IEEE 10BASE-T1S System Implementation Specification v1.0 (2023-02): https://opensig.org/wp-content/uploads/2023/12/20230215_10BASE-T1S_system_implementation_V1_0.pdf
+- [OA-SLEEP] OPEN Alliance, 10BASE-T1S Sleep/Wake-up Specification 1.0 (表 147–1 の差分を含む): https://opensig.org/wp-content/uploads/2024/01/TC14_TC10_JWG_10BASE-T1S-Sleep-Wake-up-Specification_1.0_final.pdf
 - [OA-PMD] OPEN Alliance, 10BASE-T1S PMD Transceiver Interface v1.5 (2022-11): https://opensig.org/wp-content/uploads/2024/01/OPEN_Alliance_10BASE-T1S_PMD_Transceiver_Interface_1p5_Final.pdf
 - [NCN26000] onsemi NCN26000 データシート: https://www.onsemi.com/download/data-sheet/pdf/ncn26000-d.pdf
 - [LAN8670] Microchip LAN8670/1/2 データシート DS60001573: https://www.farnell.com/datasheets/3979468.pdf
