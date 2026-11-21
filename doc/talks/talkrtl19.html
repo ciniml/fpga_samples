@@ -546,7 +546,8 @@
        オーバーサンプリング型: 自分のクロックは固定のまま、1 ビットを 4 回サンプルして、選ぶサンプルを動かす。全部デジタル。
        UART の考え方を、スタートビットなしで連続して追いかけるもの。そのぶん変化点が必要なので 8b10b で符号化する。
        GW5A-25 の I/O 自体は、受信のギアボックスが 1:8 以上 (IDES10 や OSIDES32 も含む) なら 1600Mbps までサポート (DS1103 Table 3-33)。
-       今回の実測の上限は 1.2Gbps (1.3Gbps で BER 1e-4 台)。限界を決めたのは GPIO の速度ではなく、モジュールとケーブルを通るループバック経路のアイ (後の「結果と測定の構成」)。
+       今回の実測 (純正 IP、PRBS31) は終端抵抗付きの直結配線で 1.3Gbps まで誤り 0 (1.4Gbps で 1e-7、1.4875Gbps で 1e-4 台)。
+       モジュール + USB-C ケーブルの経路では 1.2Gbps で 1.5e-8 と早く悪化したので、効いているのは GPIO の速度より経路のアイ (後の「結果と測定の構成」)。
        (起源は Yang ら 1998。AMD XAPP523、Intel Soft-CDR も同じ系統。NOTE.md 参照) -->
   <section class="slide">
     <h2><span class="no">03</span>ほかの方式との違い</h2>
@@ -555,7 +556,7 @@
       <tr><td>合わせ方</td><td>スタートビットで<br>毎回やり直す</td><td>受信クロック<br>自体を動かす</td><td>選ぶサンプルを<br>動かす</td></tr>
       <tr><td>1 ビットに</td><td>16 回</td><td>1 回 (真ん中)</td><td>4 回</td></tr>
       <tr><td>回路</td><td>カウンタ</td><td>アナログ PLL<br><span class="muted">(専用 SERDES)</span></td><td>汎用 I/O +<br>ロジック</td></tr>
-      <tr><td>速さ</td><td>〜数 Mbps</td><td>数 Gbps〜</td><td>〜1.2Gbps (実測)<br><span class="muted" style="font-size:32px; font-weight:400;">I/O は受信 1600Mbps</span></td></tr>
+      <tr><td>速さ</td><td>〜数 Mbps</td><td>数 Gbps〜</td><td>〜1.3Gbps (実測)<br><span class="muted" style="font-size:32px; font-weight:400;">I/O は受信 1600Mbps</span></td></tr>
     </table>
     <div class="callout">UART を<strong>スタートビットなしで追いかけ続ける</strong>イメージ</div>
     <div class="foot"><span>03 / オーバーサンプリング CDR</span><span>RTLを語る会 (19)</span></div>
@@ -1137,12 +1138,16 @@
        測定は BERT (PRBS の送信と照合、誤りの注入) で行い、構成は 2 つ。どちらも Pmod の差動ペアを USB-C に出す自作モジュール (ExtEasyCDR) と市販の USB-C ケーブルでつなぐ。
        1) Tang Primer 25K 1 台の自己ループ: pmod0 から OSER8 で送り (G7/G8)、ExtEasyCDR モジュール → USB-C ケーブル (パッシブ、約 10cm) → ExtEasyCDR モジュール
           → pmod2 (G11/G10) で受ける。ボードは 1 台、モジュールは 2 枚。
-          送受信が同じ水晶なので、受信側 (自前 CDR) の位相を凍結して、送信側 PLL の位相を 125ps ずつ (VCO 周期 / 8) 動かすとアイスキャンになる (1Gbps で開口 0.375 UI 以上)。
+          自前 CDR は 1Gbps 固定: PRBS31 30 秒で 3.0×10¹⁰ ビット誤りゼロ (95% 信頼で BER < 1e-10)。
+          送受信が同じ水晶なので、受信側 (自前 CDR) の位相を凍結して、送信側 PLL の位相を 125ps ずつ (VCO 周期 / 8) 動かすとアイスキャンになる (1Gbps で開口 約 0.5UI = 500ps)。
           純正 IP は位相を凍結できないので、アイスキャンは自前 CDR 版だけ。
-          レート変種 (純正 IP 版) の BER もこの構成 (PRBS31 30 秒): 1.0Gbps は 3×10¹⁰ ビット誤りゼロ、1.2Gbps で 1.5e-8、1.3Gbps で 1.4e-4、1.4Gbps で 1e-2 (実質不成立)、1.4875 · 1.6Gbps はロックせず。
+          速度の上限は純正 IP 版のレート変種で測った (自前 CDR はタップが 1Gbps 固定のため)。
+          この USB-C 経路 (PRBS31 30 秒): 1.0Gbps 誤りゼロ、1.2Gbps で 1.5e-8、1.3Gbps で 1.4e-4、1.4Gbps で 1e-2 (実質不成立)、1.4875 · 1.6Gbps はロックせず。
           OSIDES32 の遅延を 8〜24 段で振っても平坦なので、サンプル位相ではなく経路のアイが閉じている。
-          モジュールなしのジャンパ線直結や、送信を真の LVDS にした場合はかえって悪く、モジュール + USB-C + LVPECL33E 出力が最良で 1.2Gbps が限界。
-          限界は GPIO の速度 (受信 1600Mbps) ではなく、このループバック経路のアイ。
+          終端なしのジャンパ線直結や、送信を真の LVDS にした場合はこれより悪い。
+          ところが終端抵抗付きの直結配線 (LVPECL33E 出力) に替えると、1.0 / 1.2 / 1.3Gbps 誤りゼロ、1.4Gbps 1.8e-7、1.4875Gbps 1e-4 台、1.6Gbps 1.3e-2 (PRBS31 10 秒)。
+          つまり「1.2Gbps 上限」は経路の限界で、GPIO 受信 (仕様 1600Mbps) + ブラインド 4 倍オーバーサンプリングでは 1.3Gbps までクリーン。
+          (出典: eda/easycdr_bert/README.md、EASYCDR_WORKLOG.md 4.37〜4.41)
        2) 2 ボード: Tang Nano 9K が PRBS7 を 999Mbps (27MHz 水晶 → 499.5MHz の PLL) で送り、ExtEasyCDR モジュール ×2 + USB-C で Tang Primer 25K の自前 CDR が受ける。
           別の水晶で −1000ppm (約 4 スリップ / 1000 ビット)。Tang Primer 25K を 2 台使った構成はない。
           周波数差の追従をここで確認: 10 秒 1×10¹⁰ ビット誤りゼロ、アンロック 0。同じリンクの 60 秒の比較で、純正 IP は誤り 0、自前は 6 と 1 (BER ≈ 1e-10)。
@@ -1152,10 +1157,11 @@
     <h2><span class="no">03</span>自前 CDR — 結果と測定の構成</h2>
     <table class="spec">
       <tr><th>構成</th><th>測ったもの</th></tr>
-      <tr><td>25K 1 台の自己ループ<br><span class="muted" style="font-weight:400;">pmod0 → USB-C → pmod2</span></td><td>アイスキャン (送信 PLL を 125ps ずつ)<br>レートごとの BER → 1.2Gbps まで</td></tr>
+      <tr><td>25K 1 台の自己ループ<br><span class="muted" style="font-weight:400;">pmod0 → USB-C → pmod2</span></td><td>自前 CDR: 1Gbps で 3×10¹⁰ ビット誤り 0<br>(BER &lt; 1e-10)、アイ開口 約 0.5UI</td></tr>
       <tr class="me"><td>Nano 9K 送信 → 25K 受信<br><span class="muted" style="font-weight:400;">別の水晶 −1000ppm</span></td><td>周波数差の追従<br>BER ≈ 1e-10 (純正 IP は 0)</td></tr>
     </table>
-    <div class="callout">上限を決めたのは GPIO ではなく<strong>経路のアイ</strong></div>
+    <p class="muted" style="font-size:32px; margin-top:28px;">速度の上限は純正 IP で測定: USB-C 経路は 1.2Gbps で 1.5e-8、終端付き直結なら 1.3Gbps まで誤り 0</p>
+    <div class="callout">1.2Gbps で止まったのは経路のせい。<strong>配線を良くすると 1.3Gbps まで誤り 0</strong></div>
     <div class="foot"><span>03 / オーバーサンプリング CDR</span><span>RTLを語る会 (19)</span></div>
   </section>
 
