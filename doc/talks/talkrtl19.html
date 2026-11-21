@@ -1658,10 +1658,13 @@
   <!-- 04 USB 2.0 HS: 受信方式の比較 (45秒)
        1 ビット 1 サンプル (IDES8): 列挙 (短いパケットのやりとり) はできるが、HS の最大長 512 バイトのバルク転送が 4 回に 1 回しか成功しない。
        パケットが長いほど、途中で位相がずれてビットを取りこぼす確率が上がる。
-       1 行目の IDES8 (240MHz の両エッジで 1 ビット 1 サンプル) は GOWIN の USB 2.0 SoftPHY IP と同じ構成。位相を追従しないので、ホストとの周波数差 (最大 ±500ppm) で
+       1 行目の IDES8 (240MHz の両エッジで 1 ビット 1 サンプル) は GOWIN の USB 2.0 SoftPHY IP のユーザーガイド (IPUG781) のブロック図どおりの構成。
+       ただし IP 本体 (暗号化) は違う: 生成したネットリスト (GW2A-18、EDA V1.9.9 Beta-2) では、差動受信を IODELAY 0 段 / 25 段の 2 経路に分け、
+       それぞれ IDES8 (480MHz の両エッジ) で取るので 1 ビット 4 サンプル (ブロック名 DRU_500M_Top)。単端 D+ / D− にも IDES8 が 1 個ずつあるが、用途は暗号化で追えない。
+       自前の 1 行目は位相を追従しないので、ホストとの周波数差 (最大 ±500ppm) で
        512 バイト (約 4100 ビット) のパケットの途中で判定点が約 2 ビットずれる。SOF の受信率は約 80%、バルク転送は 8B 100% / 64B 90% / 512B 25%。
        2 行目の「3 系統」は、回路図の 3 つの受信入力 (差動受信、比較 D+、比較 D−)。それぞれに動的な IODELAY を入れ、比較の 2 本を差動受信に対して 1/3 UI と 2/3 UI ずらして、
-       合わせて 1 ビット 3 サンプルにした (自前の構成で、GOWIN の IP とは違う)。これを OsCdr で 1 UI 3 サンプルとして処理。シミュレーションは ±200ppm でも良好だったが、
+       合わせて 1 ビット 3 サンプルにした (自前の構成で、GOWIN の IP とは違う)。各系統は 1 行目と同じ IDES8 (240MHz 両エッジ = 480Msps) なので、1 系統では 1 ビット 1 サンプル。これを OsCdr で 1 UI 3 サンプルとして処理。シミュレーションは ±200ppm でも良好だったが、
        実機では SOF 受信率 91〜95% で不安定。
        単端コンパレータのエッジが極性で前後にずれるので、位相検出に使えなかった。
        最後に EasyCDR と同じく OSIDES32 へ。480MHz の 4 相 × IODELAY 2 経路で 1 ビット 8 サンプル (3.84Gsps)。
@@ -1670,8 +1673,8 @@
     <h2><span class="no">04</span>USB 2.0 HS — 受信方式の比較</h2>
     <table class="spec">
       <tr><th>方式</th><th>サンプル/ビット</th><th>結果</th></tr>
-      <tr><td>IDES8<br><span class="muted" style="font-weight:400;">GOWIN の SoftPHY IP と同じ</span></td><td>1</td><td class="warn">512 バイト転送の<br>成功率 25%</td></tr>
-      <tr><td>3 系統 + IODELAY<br><span class="muted" style="font-weight:400;">差動 · 比較 D+ · 比較 D− を<br>1/3 ビットずつずらす</span></td><td>3</td><td class="warn">SOF の受信率<br>91〜95%</td></tr>
+      <tr><td>IDES8<br><span class="muted" style="font-weight:400;">IP の図どおり (IP 本体は 4 サンプル)</span></td><td>1</td><td class="warn">512 バイト転送の<br>成功率 25%</td></tr>
+      <tr><td>3 系統 + IODELAY<br><span class="muted" style="font-weight:400;">差動 · 比較 D+ · 比較 D− の IDES8<br>(各 1 サンプル) を 1/3 ビットずつずらす</span></td><td>3</td><td class="warn">SOF の受信率<br>91〜95%</td></tr>
       <tr class="me"><td>OSIDES32</td><td>8</td><td class="green">列挙 · 転送とも安定</td></tr>
     </table>
     <div class="callout">EasyCDR と同じ <strong>OSIDES32</strong>。480Mbps なら 1 ビット 8 サンプル</div>
