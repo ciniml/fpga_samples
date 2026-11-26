@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 660" width="1400" height="660" font-family="'Noto Sans JP','Hiragino Sans','Yu Gothic',sans-serif" font-size="14">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#333"/>
+    </marker>
+    <style>
+      .grp{fill:none;stroke:#888;stroke-width:1.5;stroke-dasharray:6 4;}
+      .chip{fill:#f4f8ff;stroke:#4a6fa5;stroke-width:1.5}
+      .blk{fill:#fff;stroke:#4a6fa5;stroke-width:1.5}
+      .cam{fill:#fff6e8;stroke:#c48a2c;stroke-width:1.5}
+      .ext{fill:#f2f2f2;stroke:#555;stroke-width:1.5}
+      .mem{fill:#eef7ee;stroke:#4c8a4c;stroke-width:1.5}
+      .w{stroke:#333;stroke-width:1.6;fill:none}
+      .b{marker-end:url(#a)}
+      .bb{marker-start:url(#a);marker-end:url(#a)}
+      .t{text-anchor:middle}
+      .h{font-weight:bold}
+      .s{font-size:12px;fill:#444}
+      .l{font-size:12px;fill:#222}
+      .lg{font-size:13px;fill:#666}
+    </style>
+  </defs>
+  <rect width="1400" height="660" fill="#fff"/>
+
+  <!-- Chromatic and the adapter -->
+  <rect class="ext" x="10" y="270" width="140" height="150" rx="10"/>
+  <text class="t h" x="80" y="300">ModRetro</text>
+  <text class="t h" x="80" y="318">Chromatic</text>
+  <text class="t s" x="80" y="345">公式ファームのまま</text>
+  <text class="t s" x="80" y="365">GB / GBC コアが</text>
+  <text class="t s" x="80" y="383">gbcam.gbc を実行</text>
+
+  <rect class="ext" x="210" y="290" width="140" height="110" rx="10"/>
+  <text class="t h" x="280" y="320" font-size="13">gb_fpga_cart_de0</text>
+  <text class="t s" x="280" y="345">カートアダプタ</text>
+  <text class="t s" x="280" y="365">5 V ⇔ 3.3 V 変換</text>
+
+  <path class="w bb" d="M150,345 H210"/>
+  <text class="t l" x="180" y="337">カート</text><text class="t l" x="180" y="363">バス</text>
+  <path class="w bb" d="M350,345 H400"/>
+  <text class="t l" x="375" y="335">J3</text>
+
+  <!-- Tang Primer 25K -->
+  <rect class="grp" x="370" y="20" width="790" height="620" rx="12"/>
+  <text class="lg" x="384" y="42">Tang Primer 25K + Dock</text>
+  <rect class="chip" x="385" y="55" width="760" height="420" rx="8"/>
+  <text class="lg" x="398" y="76">FPGA GW5A-25</text>
+
+  <!-- camera path -->
+  <rect class="cam" x="945" y="90" width="180" height="70" rx="6"/>
+  <text class="t h" x="1035" y="112" font-size="13">csi_phy_gw5a</text><text class="t h" x="1035" y="130" font-size="13">+ Csi2Rx</text>
+  <text class="t s" x="1035" y="150">ソフト D-PHY 2 レーン</text>
+
+  <rect class="cam" x="725" y="90" width="180" height="70" rx="6"/>
+  <text class="t h" x="815" y="112">IspRaw10Unpack</text>
+  <text class="t h" x="815" y="130">+ IspGbScale</text>
+  <text class="t s" x="815" y="150">縮小・白合わせ・sRGB</text>
+
+  <rect class="mem" x="525" y="90" width="160" height="70" rx="6"/>
+  <text class="t h" x="605" y="117">フレームバッファ</text>
+  <text class="t s" x="605" y="140">128x112 輝度 + RGB565</text>
+
+  <path class="w b" d="M945,125 H905"/>
+  <path class="w b" d="M725,125 H685"/>
+
+  <rect class="cam" x="945" y="200" width="180" height="60" rx="6"/>
+  <text class="t h" x="1035" y="225">csi_ctrl</text>
+  <text class="t s" x="1035" y="245">OV5640 の初期化 (I2C)</text>
+
+  <!-- GbCamera (with GbColorQuant inside) -->
+  <rect class="blk" x="445" y="190" width="460" height="90" rx="6"/>
+  <text class="h" x="458" y="210">GbCamera</text>
+  <text class="s" x="545" y="210">レジスタ 0xA000-0xA036、撮影</text>
+  <rect class="blk" x="458" y="220" width="210" height="48" rx="4"/>
+  <text class="t s" x="563" y="240">白黒: ゲイン・露出</text>
+  <text class="t s" x="563" y="258">輪郭強調・ディザ</text>
+  <rect class="blk" x="680" y="220" width="212" height="48" rx="4"/>
+  <text class="t h" x="786" y="240" font-size="13">GbColorQuant</text>
+  <text class="t s" x="786" y="258">カラー: タイル行ごとに 4 パレット</text>
+  <path class="w b" d="M605,160 V190"/>
+
+  <!-- GameCart, QspiRom, USB -->
+  <rect class="blk" x="400" y="305" width="170" height="90" rx="6"/>
+  <text class="t h" x="485" y="330">GameCart</text>
+  <text class="t s" x="485" y="352">マッパー 6 (FCh)</text>
+  <text class="t s" x="485" y="370">バンク 0・カート RAM</text>
+  <text class="t s" x="485" y="388">(BSRAM)</text>
+  <path class="w bb" d="M485,280 V305"/>
+  <text class="l" x="492" y="297">撮影結果を RAM へ</text>
+
+  <rect class="blk" x="415" y="427" width="140" height="38" rx="6"/>
+  <text class="t h" x="485" y="451">QspiRom</text>
+  <path class="w bb" d="M485,395 V427"/>
+
+  <rect class="blk" x="745" y="330" width="160" height="60" rx="6"/>
+  <text class="t h" x="825" y="355">UsbDevice</text>
+  <text class="t s" x="825" y="375">+ usb_phy_gowin_sl</text>
+  <path class="w bb" d="M570,350 H745"/>
+  <text class="t l" x="657" y="342">HOST_UART=0</text>
+
+  <!-- on the board -->
+  <rect class="mem" x="395" y="510" width="180" height="90" rx="6"/>
+  <text class="t h" x="485" y="535">SPI フラッシュ</text>
+  <text class="t s" x="485" y="558">0x000000 ビットストリーム</text>
+  <text class="t s" x="485" y="578">0x400000 GB の ROM</text>
+  <path class="w bb" d="M485,465 V510"/>
+  <text class="l" x="492" y="492">Quad SPI</text>
+
+  <rect class="ext" x="945" y="515" width="180" height="70" rx="6"/>
+  <text class="t h" x="1035" y="542">FT2232</text>
+  <text class="t s" x="1035" y="565">JTAG / USB-UART</text>
+  <path class="w bb" d="M570,380 H690 V555 H945"/>
+  <text class="t l" x="800" y="547">UART (HOST_UART=1)</text>
+  <path class="w bb" d="M1075,260 V515"/>
+  <text class="l" x="1082" y="300">UART</text>
+  <text class="l" x="1082" y="316">(HOST_UART=0)</text>
+
+  <!-- outside -->
+  <rect class="ext" x="1200" y="85" width="180" height="80" rx="10"/>
+  <text class="t h" x="1290" y="113">Pcam 5C</text>
+  <text class="t s" x="1290" y="135">OV5640</text>
+  <text class="t s" x="1290" y="153">1280x720 30 fps RAW10</text>
+  <path class="w b" d="M1200,125 H1125"/>
+  <text class="t l" x="1162" y="117">CSI-2</text>
+  <text class="t l" x="1162" y="143">pmod0</text>
+  <path class="w b" d="M1125,230 H1290 V165"/>
+  <text class="l" x="1200" y="222">I2C</text>
+
+  <rect class="ext" x="1200" y="320" width="180" height="80" rx="10"/>
+  <text class="t h" x="1290" y="352">Pmod USB HS</text>
+  <text class="t h" x="1290" y="370">Single</text>
+  <path class="w bb" d="M905,360 H1200"/>
+  <text class="t l" x="1140" y="352">pmod2</text>
+
+  <rect class="ext" x="1200" y="505" width="180" height="90" rx="10"/>
+  <text class="t h" x="1290" y="535">PC (任意)</text>
+  <text class="t s" x="1290" y="558">cart_emu</text>
+  <text class="t s" x="1290" y="576">openFPGALoader</text>
+  <path class="w bb" d="M1125,550 H1200"/>
+  <text class="t l" x="1162" y="542">USB</text>
+  <path class="w bb" d="M1290,400 V505"/>
+  <text class="l" x="1298" y="458">USB 2.0 HS</text>
+</svg>

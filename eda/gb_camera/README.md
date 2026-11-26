@@ -4,6 +4,21 @@ ModRetro Chromatic (公式ファームのまま) に挿す、Game Boy Camera と
 Tang Primer 25K がカートのバスに応答し、Digilent Pcam 5C (OV5640、MIPI CSI-2) の画像を Game Boy Camera のレジスタと RAM で見せる。
 GB 側のソフト ([`gb/`](gb/)) は CGB 専用で、タイル行ごとに 4 パレットを HBlank で切り替えてフルカラーで表示する。
 
+<img src="doc/chromatic_gb_camera.jpg" alt="Chromatic で gb_camera を動かしている様子" width="480">
+
+動作確認中の様子 (2026-11-26)。Chromatic に挿した `gb_fpga_cart_de0` の上に Tang Primer 25K と Dock が載る。
+左の Pmod が Pmod USB HS Single、右の Pmod が Pmod_RPiCamera (FFC の先が Pcam 5C)。画面はカラーのファインダー。
+
+## システム構成
+![システム構成](doc/system.svg)
+
+- 撮影: GB が 0xA000 に 1 を書くと、GbCamera が次のフレームを待ってフレームバッファから処理し、カート RAM (バンク 0) に
+  タイルを書く。カラー撮影では、続けて GbColorQuant が BG 属性とパレットを書く
+- 切り替えバンク (0x4000-0x7FFF) の ROM は、アクセスのたびに SPI フラッシュから読む。バンク 0 とカート RAM は BSRAM
+- 電源投入時、FPGA はフラッシュのビットストリームでコンフィグされ、0x400000 の ROM のヘッダを読んで自分で応答を始める
+- PC は ROM の書き込み、状態の表示、カメラ画像の取り出しに使う。動かすだけなら不要
+
+### FPGA 内のデータの流れとクロック
 ```
 pmod0: Pcam 5C ─► csi_phy_gw5a ─► Csi2Rx ─► IspRaw10Unpack ─► IspGbScale ──► 128x112 輝度 + RGB565 (BSRAM)
                                                               [pclk 125 MHz]          │
