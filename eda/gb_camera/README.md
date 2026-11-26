@@ -20,7 +20,7 @@ csi_ctrl: OV5640 の初期化 (起動の約 20 ms 後に自動)、UART のコマ
 | もの | 備考 |
 |---|---|
 | ModRetro Chromatic | 公式ファームのまま。改造しない |
-| `gb_fpga_cart_de0` | Chromatic のカートスロットに挿し、Tang Primer 25K をつなぐ FPGA カートアダプタ (レベル変換付き)。Dock の 40 ピンヘッダ (J3) につなぐ |
+| [`gb_fpga_cart_de0`](https://github.com/ciniml/chromatic-extensions/tree/master/cartridge/gb_fpga_cart_de0) | Chromatic のカートスロットに挿し、Tang Primer 25K をつなぐ FPGA カートアダプタ (レベル変換付き)。Dock の 40 ピンヘッダ (J3) につなぐ。基板データ・製造ファイルとケースの生成スクリプトは [ciniml/chromatic-extensions](https://github.com/ciniml/chromatic-extensions) |
 | Sipeed Tang Primer 25K + Dock | GW5A-LV25MG121。ビットストリームと GB の ROM はコア基板の SPI フラッシュに置く |
 | Digilent Pcam 5C | OV5640。15 ピン FFC |
 | Pmod_RPiCamera | Pmod 1 個で 15 ピン FFC のカメラを受ける変換基板。[`../csi_capture/hw/Pmod_RPiCamera`](../csi_capture/hw/Pmod_RPiCamera/) |
