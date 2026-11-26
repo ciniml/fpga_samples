@@ -6,7 +6,7 @@ HS まで動かす。残る 1 本は VBUS 検出に使う。
 
 状態:
 - RTL (`rtl/usb/gowin/usb_phy_gowin_sl.v` の `CMP1=1`) は Sipeed SLogic16U3 で HS 実機確認済み (2026-10-12、§6)。
-- 回路図と基板: [`hw/Pmod_USB_HS_Single`](hw/Pmod_USB_HS_Single/README.md) (KiCad 10、22.86 × 27.94 mm 2 層、2026-10-18)。未発注で、Tang Primer 25K での動作も未確認。
+- 回路図と基板: [`hw/Pmod_USB_HS_Single`](hw/Pmod_USB_HS_Single/README.md) (KiCad 10、22.86 × 27.94 mm 2 層、2026-10-18)。JLCPCB に発注 (発注番号 Y118)・組み立て済みで、Tang Primer 25K の pmod1 で HS を実機確認 (2026-11-09、FS での通信は未確認)。
 
 ## 1. 9 本 → 7 本にできる理由
 
