@@ -19,7 +19,8 @@
 //
 // Host links (HOST_UART, project.tcl from the environment):
 //   0 (default): the Dock USB-UART is csi_ctrl's (115200, eda/csi_capture/host/csictl.py; 'X' / 'Y'
-//                the design registers below); GameCart only on the Pmod USB HS Single (cart_emu --usb)
+//                the design registers below); GameCart only on the Pmod USB HS Single (cart_emu --usb),
+//                in pmod2 (USB_PMOD): the camera board in pmod0 is wider than a Pmod and covers pmod1
 //   1:           the USB-UART is GameCart's (1 Mbaud, as eda/cart_game), csi_ctrl has no host
 // Design registers ('X' a, 'Y' a): 0 black level (10 bits, default 16), 1 gain (8.8, 0x100),
 //   2 {flip, mirror}; read only: 0x10 frames (16 bits, pclk domain, for debugging)

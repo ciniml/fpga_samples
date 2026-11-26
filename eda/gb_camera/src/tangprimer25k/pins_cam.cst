@@ -1,4 +1,5 @@
-// Pcam 5C on Pmod_RPiCamera (eda/csi_capture/hw) in pmod0 (bank 1, as eda/csi_capture), appended to
+// Pcam 5C on Pmod_RPiCamera (eda/csi_capture/hw) in pmod0, the slot with F5 (bank 1, as eda/csi_capture; the
+// board is wider than a Pmod and covers pmod1, so the USB Pmod goes to pmod2), appended to
 // eda/cart_game's pins.cst by project.tcl. The Dock LEDs (B2 / C2) are cartridge data lines here.
 IO_LOC "csi_clk_p" G7,G8;
 IO_PORT "csi_clk_p" IO_TYPE=LVDS25 PULL_MODE=NONE DIFF_RESISTOR=ON BANK_VCCIO=3.3;

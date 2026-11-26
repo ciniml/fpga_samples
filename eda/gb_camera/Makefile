@@ -3,12 +3,13 @@
 PROJECT_NAME := gb_camera
 TARGET ?= tangprimer25k
 
-# USB_PMOD: Dock slot (pmod1 | pmod2) of the Pmod USB HS Single (pmod0 is the camera)
-USB_PMOD ?= pmod1
+# USB_PMOD: Dock slot of the Pmod USB HS Single. pmod0 (the slot with F5) is the camera; Pmod_RPiCamera is wider
+# than a Pmod and leaves only pmod2 free next to it, so pmod2 (pmod1 builds, but the boards do not fit together)
+USB_PMOD ?= pmod2
 # HOST_UART=1: the Dock USB-UART goes to GameCart (as eda/cart_game) instead of the camera's csi_ctrl
 HOST_UART ?= 0
 export USB_PMOD HOST_UART
-BUILD_SUFFIX := $(if $(filter-out pmod1,$(USB_PMOD)),_$(USB_PMOD))$(if $(filter 1,$(HOST_UART)),_hostuart)
+BUILD_SUFFIX := $(if $(filter-out pmod2,$(USB_PMOD)),_$(USB_PMOD))$(if $(filter 1,$(HOST_UART)),_hostuart)
 
 RTL := ../../rtl
 CHROMATIC_VERYL_SV := $(addprefix $(RTL)/chromatic/,game_cart.sv qspi_rom.sv byte_afifo.sv gb_camera.sv)

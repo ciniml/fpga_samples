@@ -62,7 +62,7 @@ foreach f {i2c_reg16 imx219_init_rom ov5640_init_rom ov5640_720p30_init_rom csi_
 }
 
 # pins: the adapter (cart_game pins.cst) + the camera (pins_cam.cst) + the USB Pmod in slot USB_PMOD
-set PMOD [expr {[info exists ::env(USB_PMOD)] ? $::env(USB_PMOD) : "pmod1"}]
+set PMOD [expr {[info exists ::env(USB_PMOD)] ? $::env(USB_PMOD) : "pmod2"}]
 if {${PMOD} == "pmod0"} { error "pmod0 is the camera" }
 set fh [open ${EDA_DIR}/targets/${TARGET}/pmod_ports.csv r]
 array set BALL {}

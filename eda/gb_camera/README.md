@@ -26,8 +26,10 @@ openFPGALoader --cable gwu2x -r                                # Chromatic を�
 ./target/release/cart_emu --usb game cam-status                # フレーム数、撮影数、レジスタ
 ./target/release/cart_emu --usb game cam-frame -o frame.pgm    # カメラのフレーム (128x112、8 ビット)
 ```
+- 挿す場所: カメラ (Pmod_RPiCamera) は **pmod0** (F5 がある側)、Pmod USB HS Single は **pmod2**。
+  Pmod_RPiCamera は基板の幅が Pmod の規格より広く、隣の pmod1 にかかるため (`USB_PMOD`、既定 pmod2)
 - `HOST_UART=0` (既定): Dock の USB-UART はカメラの `csi_ctrl` (115200、`../csi_capture/host/csictl.py`)。
-  GameCart は Pmod USB HS Single (`USB_PMOD`、既定 pmod1) だけで、`cart_emu --usb` を使う
+  GameCart は Pmod USB HS Single だけで、`cart_emu --usb` を使う
 - `make HOST_UART=1`: USB-UART を GameCart に回す (`cart_emu` を UART で使う。`csi_ctrl` にはホストがない)
 - フラッシュにビットストリームと ROM を置けば、`cart_game` と同じく電源投入だけで起動する (AUTO_BOOT)
 
@@ -60,7 +62,25 @@ Game Boy Camera と同じレジスタにした。SameBoy (`Core/camera.c`) の�
 - 画角は 1280x720 の中央を切り抜くので、元の画角の 60% (横) x 93% (縦)
 
 ## 資源とタイミング
-<!-- 段階 0 の結果をここに書く -->
+Gowin 1.9.12.03、既定の構成 (USB pmod2、HOST_UART=0)、2026-11-26:
+| 資源 | 使用量 |
+|---|---|
+| ロジック | 11402 / 23040 (50%)、CLS 71% |
+| BSRAM | 55 / 56 (GameCart の RAM と複製、バンク 0、フレームバッファ 8、USB など。トレースは外した) |
+| PLLA | 4 / 6 (100/200 MHz、USB 2 個、カメラ 500 MHz 4 相) |
+| PRIMARY クロック | 8 / 8 (clk_in、clk、clk2、pll_60m、os_f480、clk60、カメラの pclk、USB の pclk) |
+
+| クロック | 目標 | Fmax |
+|---|---|---|
+| clk (GameCart、GbCamera) | 100 MHz | 100.4 MHz |
+| clk2 (QspiRom) | 200 MHz | 201.2 MHz |
+| pclk (カメラ) | 125 MHz | 127.7 MHz |
+| clk60 (USB) | 60 MHz | 60.5 MHz |
+| os_pclk (USB) | 120 MHz | 141.2 MHz |
+
+- 余裕はどれも小さい。最初の版は累算器がフリップフロップになって pclk 108 MHz、clk 89 MHz だったので、
+  累算器を BSRAM (1 クロックで読んで次で書く) にし、ゲインとしきい値の段を分けた
+- BSRAM の残りは 1。PRIMARY クロックは使い切ったので、クロックを増やすなら USB をやめる (HOST_UART=1) しかない
 
 ## 試験
 - `rtl/chromatic/test`: `make camera` (GbCamera の撮影 6 通りを `gb_camera_ref.py` とビット一致で照合)、
