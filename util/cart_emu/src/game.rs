@@ -230,7 +230,7 @@ fn print_status(g: &mut Game) -> Result<(), String> {
         if f & 1 != 0 { "answering" } else { "silent" },
         s.raw[9] as u32 * 10,
         if f & 8 != 0 { "high" } else { "LOW" },
-        ["none", "MBC1", "?", "MBC3", "?", "MBC5", "?", "?"][s.raw[7] as usize & 7],
+        ["none", "MBC1", "?", "MBC3", "?", "MBC5", "camera", "?"][s.raw[7] as usize & 7],
         if f & 4 != 0 { "on" } else { "off" },
         s.raw[6],
         if s.raw[8] & 8 != 0 { if s.raw[8] & 32 != 0 { "continuous" } else if s.raw[8] & 16 != 0 { "SPI-Quad" } else { "QPI" } } else if s.raw[8] & 4 != 0 { "starting" } else { "single" },
