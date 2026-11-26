@@ -13,6 +13,16 @@
  * Everything runs in the sampler's clock domain (i_clk = the oversampling
  * word clock, e.g. 125 MHz for OSIDES32 at 500 MHz). See the sub-modules
  * for the details; o_dbg_* expose per-stage events for statistics.
+ *
+ * Early lock: the aligners keep looking for a sync until a header is
+ * accepted (false syncs before the real one). Through the merge FIFO and
+ * the parser that verdict comes several bytes into the payload, and a
+ * payload starting with a zero run and 0xB8 restarted a lane there (seen
+ * on the hardware at 672 Mbps: one CRC error per ~20 k lines, the lanes'
+ * sync counts one apart per error). The header is therefore also checked
+ * right at the aligner outputs (first two bytes of each lane: DI, WC high
+ * on lane 0, WC low, ECC on lane 1); a long-packet header with a zero
+ * syndrome locks the aligners one clock after its last byte.
  */
 pub module Csi2Rx #(
     param SAMPLES: u32 = 32,
@@ -110,6 +120,39 @@ pub module Csi2Rx #(
     var beat : logic<16>;
     var bvld : logic;
     var bsot : logic;
+    // ---- early lock: header check at the aligner outputs ----
+    var hn0  : logic<2>;      // header bytes seen on lane 0 (0..2)
+    var hn1  : logic<2>;
+    var hb0  : logic<2, 8>;   // lane 0: [0] DI, [1] WC high
+    var hb1  : logic<2, 8>;   // lane 1: [0] WC low, [1] ECC
+    var early: logic;
+    var plock: logic;         // the parser's lock
+    always_comb {
+        early = hn0 == 2'd2 && hn1 == 2'd2 && hb0[0][5:4] != 2'b00
+            && (csi2_pkg::ecc6({hb0[1], hb1[0], hb0[0]}) ^ hb1[1][5:0]) == 6'h00;
+        lock = plock || early;
+    }
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            hn0 = 0;
+            hn1 = 0;
+            hb0 = 0;
+            hb1 = 0;
+        } else if hunt {
+            hn0 = 0;
+            hn1 = 0;
+        } else {
+            if vld0 && (fst0 || hn0 == 2'd1) {
+                hb0[if fst0 ? 0 : 1] = byte0;
+                hn0                  = if fst0 ? 2'd1 : 2'd2;
+            }
+            if vld1 && (fst1 || hn1 == 2'd1) {
+                hb1[if fst1 ? 0 : 1] = byte1;
+                hn1                  = if fst1 ? 2'd1 : 2'd2;
+            }
+        }
+    }
+
     inst u_merge: Csi2LaneMerge (
         i_clk              ,
         i_rst              ,
@@ -145,6 +188,6 @@ pub module Csi2Rx #(
         o_ecc_err          ,
         o_abort            ,
         o_hunt : hunt      ,
-        o_lock : lock      ,
+        o_lock : plock     ,
     );
 }

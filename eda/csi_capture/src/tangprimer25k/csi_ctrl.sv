@@ -13,16 +13,24 @@
  *   'P'                -> 'p' VERSION
  *   'W' ah al d        -> 'w' nack          sensor register write
  *   'R' ah al          -> 'r' d nack        sensor register read
- *   'D' dev            -> 'd'               7-bit I2C address (default 0x10)
+ *   'D' dev            -> 'd'               7-bit I2C address (default I2C_DEV)
  *   'C' ofs inv        -> 'c'               ofs = {lane1, lane0} sample offsets
  *                                           (+8 = at the clock edge), inv[1:0]
- *   'I'                -> 'i' nacks         run the init ROM (imx219_init_rom)
+ *   'I'                -> 'i' nacks         run the init ROM (SENSOR: imx219_init_rom
+ *                                           or ov5640_init_rom)
  *   'S'                -> 'S' 25 x u32      counter snapshot (csi_stats)
  *   'A' mode           -> 'a'               arm the raw capture (trigger mode)
  *   'G'                -> 'G' 1024 x 12 B   capture memory, address order
  *   'E' at_fs          -> 'e'               arm the event log
  *   'L' nl nh          -> 'L' n x 8 B       first n log records
+ *   'X' a dl dh        -> 'x'               write register a of the design (o_x*)
+ *   'Y' a              -> 'y' dl dh         read register a of the design (i_xrdata)
  * The init ROM also runs once ~20 ms after configuration (AUTO_INIT).
+ * ROM index 128 and above end the init of the 7-bit ROMs (up to 128 entries);
+ * the 720p30 ROM (SENSOR 2) has an 8-bit index.
+ * Aux port: a toggle of i_aux_tgl (this clock domain) asks for one sensor
+ * register write (i_aux_addr, i_aux_data) when no command / init is
+ * running; o_aux_ack follows i_aux_tgl when it is done (no UART reply).
  */
 `default_nettype none
 module csi_ctrl #(
@@ -31,7 +39,10 @@ module csi_ctrl #(
     parameter bit AUTO_INIT    = 1'b1,
     parameter int BOOT_CYCLES  = CLOCK_HZ / 50,  // auto init after ~20 ms
     parameter int MS_CYCLES    = CLOCK_HZ / 1000,
-    parameter logic [7:0] VERSION = 8'h01
+    parameter logic [7:0] VERSION = 8'h01,
+    parameter int SENSOR       = 0,              // init ROM: 0 IMX219 (RPi Camera v2), 1 OV5640 (Pcam 5C),
+                                                 // 2 OV5640 720p30 display lock (eda/camera_dvi)
+    parameter logic [6:0] I2C_DEV = 7'h10        // sensor 7-bit I2C address (IMX219 0x10, OV5640 0x3C)
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -62,15 +73,47 @@ module csi_ctrl #(
     output logic       o_log_tgl,
     output logic       o_log_at_fs,
     output logic [9:0] o_log_raddr,
-    input  wire [63:0] i_log_rdata
+    input  wire [63:0] i_log_rdata,
+
+    // design registers ('X' / 'Y')
+    output logic       o_xwr,
+    output logic [7:0] o_xaddr,
+    output logic [15:0] o_xdata,
+    input  wire [15:0] i_xrdata,
+
+    // sensor register writes from the design
+    input  wire        i_aux_tgl,
+    input  wire [15:0] i_aux_addr,
+    input  wire [7:0]  i_aux_data,
+    output logic       o_aux_ack
 );
     // ---------------- UART ----------------
+    // 16-byte receive FIFO: a command may arrive while an aux sensor
+    // write (or the init) keeps the FSM busy (bytes were overwritten).
+    logic       u_valid;
+    logic [7:0] u_data;
     logic       rx_valid;
     logic [7:0] rx_data;
     logic       rx_ready;
     uart_rx #(.BAUD_DIVIDER(BAUD_DIVIDER)) u_rx (
-        .clock(clk), .reset(rst), .data_valid(rx_valid), .data_ready(rx_ready),
-        .data_bits(rx_data), .rx(uart_rxd), .overrun());
+        .clock(clk), .reset(rst), .data_valid(u_valid), .data_ready(1'b1),
+        .data_bits(u_data), .rx(uart_rxd), .overrun());
+    (* syn_ramstyle = "registers" *) logic [7:0] rxq [0:15];   // (LUT RAM lost bit 4 on the hardware)
+    logic [4:0] rxq_w, rxq_r;
+    assign rx_valid = rxq_w != rxq_r;
+    assign rx_data  = rxq[rxq_r[3:0]];
+    always_ff @(posedge clk) begin
+        if (rst) begin
+            rxq_w <= '0;
+            rxq_r <= '0;
+        end else begin
+            if (u_valid && (rxq_w - rxq_r) != 5'd16) begin
+                rxq[rxq_w[3:0]] <= u_data;
+                rxq_w           <= rxq_w + 1'b1;
+            end
+            if (rx_valid && rx_ready) rxq_r <= rxq_r + 1'b1;
+        end
+    end
     logic       tx_valid;
     logic [7:0] tx_data;
     logic       tx_ready;
@@ -90,14 +133,23 @@ module csi_ctrl #(
         .o_rdata(i2c_rdata), .o_nack(i2c_nack), .o_scl_oe(o_scl_oe), .o_sda_oe(o_sda_oe),
         .i_sda(i_sda), .i_scl(i_scl));
 
-    logic [6:0]  rom_idx;
-    logic [23:0] rom_entry;
-    imx219_init_rom u_rom (.i_idx(rom_idx), .o_entry(rom_entry));
+    logic [7:0]  rom_idx;
+    logic [23:0] rom_q, rom_entry;
+    generate
+        if (SENSOR == 2) begin : g_ov5640_720p30
+            ov5640_720p30_init_rom u_rom (.i_idx(rom_idx), .o_entry(rom_q));   // (8-bit index)
+        end else if (SENSOR == 1) begin : g_ov5640
+            ov5640_init_rom u_rom (.i_idx(rom_idx[6:0]), .o_entry(rom_q));
+        end else begin : g_imx219
+            imx219_init_rom u_rom (.i_idx(rom_idx[6:0]), .o_entry(rom_q));
+        end
+    endgenerate
+    assign rom_entry = (SENSOR != 2 && rom_idx[7]) ? {16'hFFFE, 8'h00} : rom_q;
 
     // ---------------- command FSM ----------------
     typedef enum logic [3:0] {
         S_BOOT, S_IDLE, S_ARGS, S_EXEC, S_I2C, S_INIT, S_INIT_WAIT, S_DELAY, S_SNAP,
-        S_HDR, S_FETCH, S_BYTES
+        S_HDR, S_FETCH, S_BYTES, S_XRD, S_AUX
     } state_t;
     state_t      st;
     logic [7:0]  cmd;
@@ -119,9 +171,9 @@ module csi_ctrl #(
     // arguments per command
     function automatic logic [1:0] nargs(input logic [7:0] c);
         case (c)
-            "W": return 2'd3;
+            "W", "X": return 2'd3;
             "R": return 2'd2;
-            "D", "A", "E": return 2'd1;
+            "D", "A", "E", "Y": return 2'd1;
             "C", "L": return 2'd2;
             default: return 2'd0;
         endcase
@@ -135,11 +187,12 @@ module csi_ctrl #(
 
     always_ff @(posedge clk) begin
         i2c_start <= 1'b0;
+        o_xwr     <= 1'b0;
         if (tx_accept) tx_valid <= 1'b0;
         if (rst) begin
             st          <= AUTO_INIT ? S_BOOT : S_IDLE;
             tx_valid    <= 1'b0;
-            i2c_dev     <= 7'h10;
+            i2c_dev     <= I2C_DEV;
             o_ofs0      <= 4'd8;
             o_ofs1      <= 4'd8;
             o_inv       <= 2'b00;
@@ -152,6 +205,9 @@ module csi_ctrl #(
             init_reply  <= 1'b0;
             nacks       <= '0;
             rom_idx     <= '0;
+            o_xaddr     <= '0;
+            o_xdata     <= '0;
+            o_aux_ack   <= 1'b0;
         end else begin
             case (st)
                 S_BOOT: begin            // ~20 ms after configuration: sensor init
@@ -168,6 +224,16 @@ module csi_ctrl #(
                     argn <= '0;
                     argc <= nargs(rx_data);
                     st   <= (nargs(rx_data) == 2'd0) ? S_EXEC : S_ARGS;
+                end else if (i_aux_tgl != o_aux_ack) begin
+                    i2c_read  <= 1'b0;
+                    i2c_addr  <= i_aux_addr;
+                    i2c_wdata <= i_aux_data;
+                    i2c_start <= 1'b1;
+                    st        <= S_AUX;
+                end
+                S_AUX: if (i2c_done) begin
+                    o_aux_ack <= ~o_aux_ack;
+                    st        <= S_IDLE;
                 end
                 S_ARGS: if (rx_valid) begin
                     arg[argn] <= rx_data;
@@ -192,6 +258,8 @@ module csi_ctrl #(
                             st        <= S_I2C;
                         end
                         "D": i2c_dev <= arg[0][6:0];
+                        "X": begin o_xaddr <= arg[0]; o_xdata <= {arg[2], arg[1]}; o_xwr <= 1'b1; end
+                        "Y": begin o_xaddr <= arg[0]; st <= S_XRD; end
                         "C": begin o_ofs0 <= arg[0][3:0]; o_ofs1 <= arg[0][7:4]; o_inv <= arg[1][1:0]; end
                         "I": begin rom_idx <= '0; nacks <= '0; init_reply <= 1'b1; st <= S_INIT; end
                         "S": begin o_snap_tgl <= ~o_snap_tgl; st <= S_SNAP; end
@@ -204,6 +272,12 @@ module csi_ctrl #(
                         end
                         default: hdr[0] <= "?";
                     endcase
+                end
+                S_XRD: begin              // i_xrdata follows o_xaddr (set last clock)
+                    hdr[1]  <= i_xrdata[7:0];
+                    hdr[2]  <= i_xrdata[15:8];
+                    hdr_len <= 2'd3;
+                    st      <= S_HDR;
                 end
                 S_I2C: if (i2c_done) begin
                     if (i2c_read) begin hdr[1] <= i2c_rdata; hdr[2] <= {7'd0, i2c_nack}; hdr_len <= 2'd3; end

@@ -340,33 +340,33 @@ module Ddr3Ctrl #(
             if (ctl.valid && ctl.we && ctl.addr[5:2] == 4'd10 && ctl.wstrb[0]) begin
                 recal_en <= ctl.wdata[0];
             end
-            ctl_rdata <= (((ctl.addr[5:2]) ==? (4'd0)) ? (
+            ctl_rdata <= (((ctl.addr[5:2]) == (4'd0)) ? (
                 {29'b0, cal_fail_s2, cal_ok_s2, init_done_s2}
-            ) : ((ctl.addr[5:2]) ==? (4'd1)) ? (
+            ) : ((ctl.addr[5:2]) == (4'd1)) ? (
                 {10'b0, sel_odd_eff, 4'b0, lat_eff, 2'b0, sel_eff}
-            ) : ((ctl.addr[5:2]) ==? (4'd2)) ? (
+            ) : ((ctl.addr[5:2]) == (4'd2)) ? (
                 dbg_dqsl[31:0]
-            ) : ((ctl.addr[5:2]) ==? (4'd3)) ? (
+            ) : ((ctl.addr[5:2]) == (4'd3)) ? (
                 dbg_dqsl[63:32]
-            ) : ((ctl.addr[5:2]) ==? (4'd4)) ? (
+            ) : ((ctl.addr[5:2]) == (4'd4)) ? (
                 dbg_dqsu[31:0]
-            ) : ((ctl.addr[5:2]) ==? (4'd5)) ? (
+            ) : ((ctl.addr[5:2]) == (4'd5)) ? (
                 dbg_dqsu[63:32]
-            ) : ((ctl.addr[5:2]) ==? (4'd6)) ? (
+            ) : ((ctl.addr[5:2]) == (4'd6)) ? (
                 dbg_dq0[31:0]
-            ) : ((ctl.addr[5:2]) ==? (4'd7)) ? (
+            ) : ((ctl.addr[5:2]) == (4'd7)) ? (
                 dbg_dq0[63:32]
-            ) : ((ctl.addr[5:2]) ==? (4'd8)) ? (
+            ) : ((ctl.addr[5:2]) == (4'd8)) ? (
                 dbg_dq8[31:0]
-            ) : ((ctl.addr[5:2]) ==? (4'd9)) ? (
+            ) : ((ctl.addr[5:2]) == (4'd9)) ? (
                 dbg_dq8[63:32]
-            ) : ((ctl.addr[5:2]) ==? (4'd10)) ? (
+            ) : ((ctl.addr[5:2]) == (4'd10)) ? (
                 {31'b0, recal_en}
-            ) : ((ctl.addr[5:2]) ==? (4'd11)) ? (
+            ) : ((ctl.addr[5:2]) == (4'd11)) ? (
                 recal_count_c
-            ) : ((ctl.addr[5:2]) ==? (4'd12)) ? (
+            ) : ((ctl.addr[5:2]) == (4'd12)) ? (
                 recal_fail_c
-            ) : ((ctl.addr[5:2]) ==? (4'd13)) ? (
+            ) : ((ctl.addr[5:2]) == (4'd13)) ? (
                 recal_range_c
             ) : (
                 32'b0

@@ -144,18 +144,18 @@ module TangPrimer20kTop #(
     );
 
     // ---- core ----
-    var row     : logic<5>;
-    var r       : logic<4>;
-    var g       : logic<4>;
-    var b       : logic<4>;
-    var oe      : logic   ;
-    var lat     : logic   ;
-    var hclk    : logic   ;
-    var frame   : logic   ;
-    var ev_video: logic   ;
-    var ev_net  : logic   ;
-    var ev_drop : logic   ;
-    var ev_flip : logic   ;
+    var row     : 's logic<5>;
+    var r       : 's logic<4>;
+    var g       : 's logic<4>;
+    var b       : 's logic<4>;
+    var oe      : 's logic   ;
+    var lat     : 's logic   ;
+    var hclk    : 's logic   ;
+    var frame   : 's logic   ;
+    var ev_video: 's logic   ;
+    var ev_net  : 's logic   ;
+    var ev_drop : 's logic   ;
+    var ev_flip : 's logic   ;
 
     unsafe (cdc) {
         inst u_core: EthernetHub75Core #(

@@ -31,7 +31,7 @@ add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_tx.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_rx.sv]
 # 500 MHz 4-phase PLL shared with eda/easycdr_bert (defaults: 50 MHz x 20 / 2)
 add_file -type verilog [file normalize ${SRC_DIR}/../../../easycdr_bert/src/${TARGET}/pll_rx_500m_4ph/pll_rx_500m_4ph.v]
-foreach f {reset_seq i2c_reg16 imx219_init_rom csi_ctrl csi_stats csi_phy_gw5a top} {
+foreach f {reset_seq i2c_reg16 imx219_init_rom ov5640_init_rom ov5640_720p30_init_rom csi_ctrl csi_stats csi_phy_gw5a top} {
     add_file -type verilog [file normalize ${SRC_DIR}/${f}.sv]
 }
 add_file -type cst [file normalize ${SRC_DIR}/pins.cst]

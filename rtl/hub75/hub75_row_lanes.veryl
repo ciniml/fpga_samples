@@ -141,7 +141,7 @@ pub module Hub75RowLanes #(
     if PAIR :g_pair {
         for m in 0..(NUM_LANES + 1) / 2 :g_mem {
             #[sv("ram_style=\"block\"")]
-            var mem: logic<PX_BITS> [2 * DEPTH];
+            var mem: 'f logic<PX_BITS> [2 * DEPTH];
             always_ff (i_fclk) {
                 if i_we && (i_wlane >> 1) == m {
                     mem[{i_waddr, i_wlane[0]}] = i_wdata;

@@ -121,7 +121,7 @@ pub module Hub75Lanes #(
 
     for i in 0..NUM_LANES :g_lane {
         #[sv("ram_style=\"block\"")]
-        var mem: logic<PX_BITS> [DEPTH];
+        var mem: 'w logic<PX_BITS> [DEPTH];
         always_ff (i_wclk) {
             if i_we && i_wlane == i {
                 mem[{wbank, i_waddr}] = i_wdata;

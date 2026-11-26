@@ -1,0 +1,119 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file isp_genlock.veryl
+ * @brief Locks the camera's frames to the display by its frame length
+ *        (VTS), display clock domain.
+ *
+ * The display timing is fixed (the monitor sees a standard mode). The
+ * camera's row 0 header (i_r0, synchronised) should arrive i_target lines
+ * before the first active display line, i.e. on display line
+ * VT - i_target. Once per display frame, half a frame away from that
+ * line (so that a measurement never straddles the update), the error e (display lines, wrapped to +-VT/2; > 0 = the
+ * camera is late) of the last measurement sets the camera's frame length
+ * for one frame: VTS = i_vts0 - clamp(e / 2, +-i_maxstep), |e| / 2 rounded
+ * up (a 1-line error is corrected too: with a dead band the error sat at its
+ * edge, on the hardware a lead of 5..6 lines), sent as a new o_vts with a
+ * toggle of o_req. After a correction the next frame is sent i_vts0 without
+ * looking at its error (the sensor applies a new VTS a frame or so later:
+ * correcting again before that overshoots, a +-1 line limit cycle).
+ * The ring of raw lines allows a lead of 2..6 lines (row y + 1 written
+ * before display line y, row y - 1 not yet overwritten), so the default
+ * target is 4.
+ */
+pub module IspGenlock #(
+    param VT: u32 = 750,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_y : input logic<12>, // display line, 0 = first active line
+    i_x : input logic<12>,
+    i_r0: input logic    , // pulse: camera row 0 header
+
+    i_en     : input logic    ,
+    i_target : input logic<8> ,
+    i_vts0   : input logic<16>,
+    i_maxstep: input logic<8> ,
+
+    o_vts   : output logic<16>,
+    o_req   : output logic    , // toggles with every new o_vts
+    o_err   : output logic<16>, // last error (signed, lines)
+    o_vr0   : output logic<12>, // display line of the last row 0 header
+    o_locked: output logic    , // |e| <= 2 for the last 16 frames
+) {
+    var have : logic    ;
+    var hold : logic    ; // the last frame carried a correction
+    var vr0  : logic<12>;
+    var good : logic<5> ;
+    var d    : signed logic<14>;
+    var e    : signed logic<14>;
+    var ae   : logic<14>;
+    var stp : logic<14>;
+    var mstep: logic<14>;
+    var vt   : signed logic<14>; // (signed operands for the signed compares)
+    var half : signed logic<14>;
+    var mhalf: signed logic<14>;
+    var cline: logic<12>;        // update line: VT - i_target + VT / 2, wrapped
+    var csum : logic<13>;
+    always_comb {
+        csum  = (VT as 13) - (i_target as 13) + ((VT / 2) as 13);
+        cline = if csum >= VT as 13 ? (csum - VT as 13) as 12 : csum as 12;
+        vt    = VT as 14;
+        half  = (VT / 2) as 14;
+        mhalf = 0 - half;
+        d     = (vr0 as 14) - (vt - (i_target as 14));
+        e     = if d >= half ? d - vt : if d <: mhalf ? d + vt : d;
+        ae    = if e[13] ? 0 - e : e;
+        mstep = i_maxstep as 14;
+        stp  = if ((ae + 14'd1) >> 1) >: mstep ? mstep : (ae + 14'd1) >> 1;
+    }
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            have     = 0;
+            hold     = 0;
+            vr0      = 0;
+            good     = 0;
+            o_vts    = 0;
+            o_req    = 0;
+            o_err    = 0;
+            o_vr0    = 0;
+            o_locked = 0;
+        } else {
+            if i_r0 {
+                vr0  = i_y;
+                have = 1;
+            }
+            if i_x == 12'd0 && i_y == cline {
+                if have {
+                    have  = 0;
+                    o_err = e as 16;
+                    o_vr0 = vr0;
+                    if hold || stp == 14'd0 {
+                        o_vts = i_vts0;
+                        hold  = 0;
+                    } else {
+                        o_vts = if e[13] ? i_vts0 + (stp as 16) : i_vts0 - (stp as 16);
+                        hold  = 1;
+                    }
+                    if i_en {
+                        o_req = ~o_req;
+                    }
+                    if ae <= 14'd2 {
+                        if good != 5'd16 {
+                            good = good + 5'd1;
+                        }
+                    } else {
+                        good = 0;
+                    }
+                } else {
+                    good = 0;
+                }
+                o_locked = good == 5'd16;
+            }
+        }
+    }
+}

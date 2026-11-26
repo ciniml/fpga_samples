@@ -16,6 +16,8 @@
  *   USB-UART 115200: csi_ctrl (host/csictl.py) — sensor registers, init,
  *   receiver trims, readouts. The sensor is initialised automatically
  *   ~20 ms after configuration (640x480 RAW10, 2 x 456 Mbps).
+ *   With CSI_SENSOR_OV5640 defined (eda/csi_capture_pcam5c) the sensor is a
+ *   Digilent Pcam 5C (OV5640, I2C 0x3C, 1280x720 RAW10 30 fps, 280 Mbps).
  *
  * LEDs: led_rx = long packets with good CRC within ~0.1 s,
  *       led_err = CRC / ECC error or abort within ~0.1 s.
@@ -107,13 +109,19 @@ module top (
     IOBUF u_scl (.O(scl_in), .IO(cam_scl), .I(1'b0), .OEN(!scl_oe));
     IOBUF u_sda (.O(sda_in), .IO(cam_sda), .I(1'b0), .OEN(!sda_oe));
     logic init_busy;
+`ifdef CSI_SENSOR_OV5640
+    csi_ctrl #(.SENSOR(1), .I2C_DEV(7'h3C), .VERSION(8'h51)) u_ctrl (
+`else
     csi_ctrl u_ctrl (
+`endif
         .clk(clock), .rst(reset_sys), .uart_rxd(uart_rxd), .uart_txd(uart_txd),
         .o_scl_oe(scl_oe), .o_sda_oe(sda_oe), .i_scl(scl_in), .i_sda(sda_in),
         .o_ofs0(ofs0), .o_ofs1(ofs1), .o_inv(inv), .o_init_busy(init_busy),
         .o_snap_tgl(snap_tgl), .i_snap_ack(snap_ack), .o_snap_idx(snap_idx), .i_snap_data(snap_data),
         .o_cap_tgl(cap_tgl), .o_cap_mode(cap_mode), .o_cap_raddr(cap_raddr), .i_cap_rdata(cap_rdata),
-        .o_log_tgl(log_tgl), .o_log_at_fs(log_at_fs), .o_log_raddr(log_raddr), .i_log_rdata(log_rdata));
+        .o_log_tgl(log_tgl), .o_log_at_fs(log_at_fs), .o_log_raddr(log_raddr), .i_log_rdata(log_rdata),
+        .o_xwr(), .o_xaddr(), .o_xdata(), .i_xrdata(16'h0000),
+        .i_aux_tgl(1'b0), .i_aux_addr(16'h0000), .i_aux_data(8'h00), .o_aux_ack());
 
     // ---------------- LEDs / scope taps ----------------
     logic [23:0] ok_st, err_st;    // ~0.13 s at 125 MHz
