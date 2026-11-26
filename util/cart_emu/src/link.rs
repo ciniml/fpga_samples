@@ -67,16 +67,13 @@ impl UsbLink {
                 if id.len() != 4 || id[2] != b'C' || id[3] != b'G' {
                     return Err(format!("{VID:04x}:{PID:04x} is not eda/cart_game (id {id:02x?})"));
                 }
-                let out = iface
-                    .endpoint::<Bulk, Out>(0x01)
-                    .map_err(|e| format!("EP1 OUT: {e}"))?
-                    .writer(16384)
-                    .with_write_timeout(Duration::from_secs(3));
-                let inp = iface
-                    .endpoint::<Bulk, In>(0x81)
-                    .map_err(|e| format!("EP1 IN: {e}"))?
-                    .reader(16384)
-                    .with_read_timeout(Duration::from_secs(3));
+                // clear any halt left by an earlier run: host and device data toggles back to DATA0
+                let mut ep_out = iface.endpoint::<Bulk, Out>(0x01).map_err(|e| format!("EP1 OUT: {e}"))?;
+                ep_out.clear_halt().wait().map_err(|e| format!("EP1 OUT clear halt: {e}"))?;
+                let mut ep_in = iface.endpoint::<Bulk, In>(0x81).map_err(|e| format!("EP1 IN: {e}"))?;
+                ep_in.clear_halt().wait().map_err(|e| format!("EP1 IN clear halt: {e}"))?;
+                let out = ep_out.writer(16384).with_write_timeout(Duration::from_secs(3));
+                let inp = ep_in.reader(16384).with_read_timeout(Duration::from_secs(3));
                 Ok(UsbLink { _dev: dev, _iface: iface, out, inp, high_speed: id[0] & 1 != 0 })
             })();
             match r {
@@ -93,7 +90,11 @@ impl UsbLink {
         Err(last)
     }
 
-    /// Throw away what an interrupted earlier run left in the IN direction.
+    /// Throw away what an interrupted earlier run left in the IN direction. Not on Windows: a read
+    /// cancelled by its timeout there left the endpoint stalled / out of step (2026-11-26).
+    #[cfg(windows)]
+    fn drain(&mut self) {}
+    #[cfg(not(windows))]
     fn drain(&mut self) {
         self.inp.set_read_timeout(Duration::from_millis(50));
         let mut b = [0u8; 4096];
