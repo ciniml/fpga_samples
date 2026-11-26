@@ -114,8 +114,11 @@ static void dma(uint16_t src, uint16_t dst, uint8_t n) {
     HDMA5_REG = n - 1;
 }
 
-// 3 tile rows a VBlank: attributes (48 bytes), then the tiles (48 blocks of DMA, ~0.37 ms)
-#define ROWS_PER_VBL 2u
+// tile rows a VBlank: attributes (16 bytes a row), then the tiles (16 blocks of DMA a row). SameBoy
+// takes 2 rows, the Chromatic only 1 (2 overran VBlank there: broken tiles in the middle, 2026-11-26)
+#ifndef ROWS_PER_VBL
+#define ROWS_PER_VBL 1u
+#endif
 
 void screen_picture(uint16_t tiles, const uint8_t *attr, const uint8_t *pal) {
     uint8_t q, r;

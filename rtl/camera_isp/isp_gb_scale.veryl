@@ -281,14 +281,18 @@ pub module IspGbScale #(
     ) -> logic<10> {
         return if a[26:18] != 9'd0 ? 10'h3FF : a[17:8];
     }
-    // sRGB as 8 segments: knot, value, slope numerator, log2 width
+    // sRGB as 8 segments: knot, value, slope (the value step << (9 - log2 width), a fixed >> 9)
     var g_v   : logic    ;
     var g_wa  : logic<14>;
     var g_last: logic    ;
     var g_y0  : logic<8> [4];
     var g_dx  : logic<9> [4];
-    var g_dy  : logic<7> [4];
-    var g_sh  : logic<4> [4];
+    var g_m   : logic<11> [4]; // slope, x 512
+    var p_v   : logic     ; // the curve's product (p), then the value (h)
+    var p_wa  : logic<14> ;
+    var p_last: logic     ;
+    var p_y0  : logic<8>  [4];
+    var p_m   : logic<20> [4];
     var h_v   : logic    ;
     var h_wa  : logic<14>;
     var h_c   : logic<8> [4];
@@ -335,8 +339,12 @@ pub module IspGbScale #(
             g_last = 0;
             g_y0   = '{0, 0, 0, 0};
             g_dx   = '{0, 0, 0, 0};
-            g_dy   = '{0, 0, 0, 0};
-            g_sh   = '{0, 0, 0, 0};
+            g_m    = '{0, 0, 0, 0};
+            p_v    = 0;
+            p_wa   = 0;
+            p_last = 0;
+            p_y0   = '{0, 0, 0, 0};
+            p_m    = '{0, 0, 0, 0};
             h_v    = 0;
             h_wa   = 0;
             h_c    = '{0, 0, 0, 0};
@@ -381,50 +389,49 @@ pub module IspGbScale #(
                 if d_c[c] <: 10'd8 {
                     g_y0[c] = 8'd0;
                     g_dx[c] = d_c[c][8:0];
-                    g_dy[c] = 7'd22;
-                    g_sh[c] = 4'd3;
+                    g_m[c]  = 11'd1408;
                 } else if d_c[c] <: 10'd16 {
                     g_y0[c] = 8'd22;
                     g_dx[c] = d_c[c][8:0] - 9'd8;
-                    g_dy[c] = 7'd12;
-                    g_sh[c] = 4'd3;
+                    g_m[c]  = 11'd768;
                 } else if d_c[c] <: 10'd32 {
                     g_y0[c] = 8'd34;
                     g_dx[c] = d_c[c][8:0] - 9'd16;
-                    g_dy[c] = 7'd15;
-                    g_sh[c] = 4'd4;
+                    g_m[c]  = 11'd480;
                 } else if d_c[c] <: 10'd64 {
                     g_y0[c] = 8'd49;
                     g_dx[c] = d_c[c][8:0] - 9'd32;
-                    g_dy[c] = 7'd22;
-                    g_sh[c] = 4'd5;
+                    g_m[c]  = 11'd352;
                 } else if d_c[c] <: 10'd128 {
                     g_y0[c] = 8'd71;
                     g_dx[c] = d_c[c][8:0] - 9'd64;
-                    g_dy[c] = 7'd28;
-                    g_sh[c] = 4'd6;
+                    g_m[c]  = 11'd224;
                 } else if d_c[c] <: 10'd256 {
                     g_y0[c] = 8'd99;
                     g_dx[c] = d_c[c][8:0] - 9'd128;
-                    g_dy[c] = 7'd38;
-                    g_sh[c] = 4'd7;
+                    g_m[c]  = 11'd152;
                 } else if d_c[c] <: 10'd512 {
                     g_y0[c] = 8'd137;
                     g_dx[c] = d_c[c][8:0] - 9'd256;
-                    g_dy[c] = 7'd51;
-                    g_sh[c] = 4'd8;
+                    g_m[c]  = 11'd102;
                 } else {
                     g_y0[c] = 8'd188;
                     g_dx[c] = d_c[c][8:0];
-                    g_dy[c] = 7'd67;
-                    g_sh[c] = 4'd9;
+                    g_m[c]  = 11'd67;
                 }
             }
-            h_v    = g_v;
-            h_wa   = g_wa;
-            h_last = g_last;
+            p_v    = g_v;
+            p_wa   = g_wa;
+            p_last = g_last;
             for c in 0..4 {
-                h_c[c] = g_y0[c] + ((((g_dx[c] as 16) * (g_dy[c] as 16)) >> g_sh[c]) as 8);
+                p_y0[c] = g_y0[c];
+                p_m[c]  = (g_dx[c] as 20) * (g_m[c] as 20);
+            }
+            h_v    = p_v;
+            h_wa   = p_wa;
+            h_last = p_last;
+            for c in 0..4 {
+                h_c[c] = p_y0[c] + (p_m[c][16:9]);
             }
             if h_last {
                 o_frame = !o_frame;

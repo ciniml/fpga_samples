@@ -193,7 +193,8 @@ pub module GbCamera #(
     var x    : logic<3> ; // pixel in the row
     var n    : logic<3> ; // read: 0 the pixel, 1 left, 2 right, 3 up, 4 down
     var drn  : logic<4> ;
-    var q_go : logic    ; // GbColorQuant
+    var q_go : logic    ; // GbColorQuant (held until it is busy)
+    var q_ce : logic    ; // its clock enable: every other clock
     var q_bz : logic    ;
     var q_ra : logic<14>;
     var q_we : logic    ;
@@ -228,6 +229,7 @@ pub module GbCamera #(
     inst u_quant: GbColorQuant (
         i_clk           ,
         i_rst           ,
+        i_ce   : q_ce   ,
         i_start: q_go   ,
         o_busy : q_bz   ,
         o_ra   : q_ra   ,
@@ -317,6 +319,7 @@ pub module GbCamera #(
             n     = 0;
             drn   = 0;
             q_go  = 0;
+            q_ce  = 0;
             n_frm = 0;
             n_sht = 0;
             n_tmo = 0;
@@ -457,7 +460,8 @@ pub module GbCamera #(
                     }
                 }
             }
-            if q_go {
+            q_ce = !q_ce;
+            if q_go && q_bz {
                 q_go = 0;
             }
 

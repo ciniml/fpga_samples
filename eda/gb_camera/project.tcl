@@ -15,8 +15,12 @@ set_option -output_base_name ${PROJECT_NAME}
 set_option -top_module top
 set_option -verilog_std sysv2017
 set_option -print_all_synthesis_warning 1
-# placement: eda/camera_dvi missed pclk (125 MHz) with the default algorithm
-set_option -place_option 1
+# placement: eda/camera_dvi missed pclk (125 MHz) with the default algorithm (PLACE_OPTION / ROUTE_OPTION
+# from the environment to try others)
+# route_option 2 closed every clock (2026-11-26; the defaults missed clk / clk2 / pclk by ~0.2 ns)
+proc env_or {name dflt} { expr {[info exists ::env($name)] && $::env($name) ne "" ? $::env($name) : $dflt} }
+set_option -place_option [env_or PLACE_OPTION 1]
+set_option -route_option [env_or ROUTE_OPTION 2]
 set_option -use_cpu_as_gpio 1
 set_option -use_i2c_as_gpio 1
 set_option -use_sspi_as_gpio 1

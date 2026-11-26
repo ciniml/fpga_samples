@@ -11,7 +11,7 @@
 #define PIC_PAL   448u                    // 14 rows x 4 palettes x 4 colours, RGB555
 
 void screen_init(void);
-// a picture to the screen over 5 frames, the tile rows switched with their palettes and attributes
+// a picture to the screen over 14 frames (a tile row a VBlank), the tile rows switched with their palettes and attributes
 // (tiles: an address in cart RAM or WRAM, 16-byte aligned)
 void screen_picture(uint16_t tiles, const uint8_t *attr, const uint8_t *pal);
 void screen_text(uint8_t x, uint8_t y, const char *s);

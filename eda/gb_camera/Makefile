@@ -9,7 +9,8 @@ USB_PMOD ?= pmod2
 # HOST_UART=1: the Dock USB-UART goes to GameCart (as eda/cart_game) instead of the camera's csi_ctrl
 HOST_UART ?= 0
 export USB_PMOD HOST_UART
-BUILD_SUFFIX := $(if $(filter-out pmod2,$(USB_PMOD)),_$(USB_PMOD))$(if $(filter 1,$(HOST_UART)),_hostuart)
+BUILD_SUFFIX := $(if $(filter-out pmod2,$(USB_PMOD)),_$(USB_PMOD))$(if $(filter 1,$(HOST_UART)),_hostuart)$(if $(PLACE_OPTION),_p$(PLACE_OPTION))$(if $(ROUTE_OPTION),_r$(ROUTE_OPTION))
+export PLACE_OPTION ROUTE_OPTION
 
 RTL := ../../rtl
 CHROMATIC_VERYL_SV := $(addprefix $(RTL)/chromatic/,game_cart.sv qspi_rom.sv byte_afifo.sv gb_camera.sv gb_color_quant.sv)

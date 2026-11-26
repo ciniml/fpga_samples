@@ -19,7 +19,9 @@ module tb_gb_color;
     logic [7:0]  wd;
     always @(posedge clk) rq <= fb[ra];
     always @(posedge clk) if (we) ram[wa] <= wd;
-    GbColorQuant dut (.i_clk(clk), .i_rst(rst), .i_start(start), .o_busy(busy), .o_ra(ra), .i_rq(rq),
+    logic ce = 0;
+    always @(posedge clk) ce <= ~ce;                  // every other clock, as in GbCamera
+    GbColorQuant dut (.i_clk(clk), .i_rst(rst), .i_ce(ce), .i_start(start), .o_busy(busy), .o_ra(ra), .i_rq(rq),
                       .o_we(we), .o_wa(wa), .o_wd(wd));
 
     int fo, nf, t0;
@@ -33,7 +35,8 @@ module tb_gb_color;
             for (int i = 0; i < FB; i++) fb[i] = in_mem[1 + f * FB + i];
             for (int a = 0; a < 8192; a++) ram[a] = 8'h55;
             @(posedge clk); start <= 1;
-            @(posedge clk); start <= 0;
+            while (!busy) @(posedge clk);
+            start <= 0;
             t0 = $time;
             @(posedge clk);
             while (busy) @(posedge clk);

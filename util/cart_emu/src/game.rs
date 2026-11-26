@@ -80,9 +80,9 @@ pub enum GameCmd {
     CamFrame {
         #[arg(short, long)]
         out: String,
-        /// also the 16x14 tile colours (R G B averages, linear, no white balance) as a PPM file
+        /// also the colour frame (RGB565, 14336 x 2 bytes little endian) as a binary file
         #[arg(long)]
-        colour: Option<String>,
+        rgb: Option<String>,
     },
     /// (eda/gb_camera) the camera's registers and counters
     CamStatus,
@@ -484,16 +484,11 @@ pub fn run(tty: &str, baud: u32, cmd: &GameCmd) -> Result<bool, String> {
             println!("after exit: SR1 {:#04x} SR2 {:#04x} SR3 {:#04x}, single: {:02x?}", sr[0], sr[1], sr[2], g.read(*addr, 4)?);
             Ok(true)
         }
-        GameCmd::CamFrame { out, colour } => {
-            if let Some(c) = colour {
-                let p = g.e.read(4, 0x3800, 0x300)?;
-                let mut ppm = b"P6\n16 14\n255\n".to_vec();
-                for t in 0..224 {
-                    ppm.extend_from_slice(&[p[t], p[0x100 + t], p[0x200 + t]]);
-                }
-                std::fs::write(c, &ppm).map_err(|e| format!("{c}: {e}"))?;
-                let avg = |o: usize| p[o..o + 224].iter().map(|&v| v as u32).sum::<u32>() / 224;
-                println!("{c}: 16x14 tile colours, mean R {} G {} B {}", avg(0), avg(0x100), avg(0x200));
+        GameCmd::CamFrame { out, rgb } => {
+            if let Some(c) = rgb {
+                let p = g.e.read(4, 0x8000, 128 * 112 * 2)?;
+                std::fs::write(c, &p).map_err(|e| format!("{c}: {e}"))?;
+                println!("{c}: 128x112 RGB565");
             }
             let f = g.e.read(4, 0, 128 * 112)?;
             let mut pgm = b"P5\n128 112\n255\n".to_vec();

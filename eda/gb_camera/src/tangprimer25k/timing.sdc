@@ -31,3 +31,7 @@ set_false_path -from [get_clocks {pclk}] -to [get_clocks {clk_in}]
 // camera word clock <-> GameCart / GbCamera: the frame buffer (read after the frame-complete
 // toggle, written again a frame later) and that toggle (3 flip-flops)
 set_clock_groups -asynchronous -group [get_clocks {pclk rxclk_500m_0 rxclk_500m_90 rxclk_500m_180 rxclk_500m_270}] -group [get_clocks {clk clk2}]
+
+// GbColorQuant moves only every other clock (GbCamera's q_ce): 2 clocks between its registers
+set_multicycle_path -from [get_regs {u_cam/u_quant/*}] -to [get_regs {u_cam/u_quant/*}] -setup -end 2
+set_multicycle_path -from [get_regs {u_cam/u_quant/*}] -to [get_regs {u_cam/u_quant/*}] -hold -end 1
