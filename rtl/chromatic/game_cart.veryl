@@ -109,7 +109,7 @@ pub module GameCart #(
     i_cam_reg0  : input  logic<8> ,
     i_cam_busy  : input  logic    ,
     i_cam_ram_we: input  logic    ,
-    i_cam_ram_wa: input  logic<12>,
+    i_cam_ram_wa: input  logic<13>,
     i_cam_ram_wd: input  logic<8> ,
     o_cam_hra   : output logic<16>,
     i_cam_hq    : input  logic<8> ,
@@ -648,7 +648,7 @@ pub module GameCart #(
             // the camera's shot into RAM bank 0 (GameBoy writes to RAM are dropped meanwhile)
             if CAMERA && i_cam_ram_we {
                 ram_we = 1;
-                ram_wa = {3'b000, i_cam_ram_wa};
+                ram_wa = {2'b00, i_cam_ram_wa};
                 ram_wd = i_cam_ram_wd;
             }
 

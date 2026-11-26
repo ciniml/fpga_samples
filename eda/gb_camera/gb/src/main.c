@@ -5,11 +5,13 @@
 // The camera as the Game Boy Camera's: RAM bank 10h maps its registers at 0xA000; writing 1 to
 // 0xA000 shoots, 0xA000 bit 0 reads 1 until the 128x112 picture (16x14 tiles, 2 bpp) is in RAM
 // bank 0 at 0xA100-0xAEFF. The tiles go to VRAM bank 1 by general purpose DMA, a quarter of the
-// picture in each VBlank.
+// picture in each VBlank. Colour (register 36h bit 0, not in the Game Boy Camera): the camera also
+// leaves its tile colours in RAM bank 0 at 0xAF00, and color.c gives every tile a palette.
 //
-//   A        keep the picture (6 places: RAM banks 1-3, two pictures each)
+//   A        keep the picture (6 places: RAM banks 1-3, two pictures each, with their colours)
 //   UP/DOWN  exposure     LEFT/RIGHT contrast
-//   SELECT   edge enhancement on / off     B  invert
+//   SELECT   colour on / off
+//   B        effect: none, edge enhancement, invert, both
 //   START    pictures kept (LEFT/RIGHT to look through, START or B back)
 #include <gb/gb.h>
 #include <gb/cgb.h>
@@ -18,6 +20,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <gbdk/console.h>
+#include "color.h"
 
 #define CAM ((volatile uint8_t *)0xA000)
 #define PIC_SIZE 0x0E00u
@@ -27,6 +30,7 @@ static uint16_t exposure = 0x1000;
 static uint8_t contrast = 6;     // 0..15
 static uint8_t edge = 0;
 static uint8_t invert = 0;
+static uint8_t colour = 1;
 static uint8_t nkept = 0;
 static uint8_t buf[PIC_SIZE];
 static uint8_t pad, latch;
@@ -50,6 +54,7 @@ static void set_registers(void) {
     CAM[2] = exposure >> 8;
     CAM[3] = exposure & 0xFF;
     CAM[4] = 0x20 | (invert ? 0x08 : 0x00);    // edge ratio 1
+    CAM[0x36] = colour;                         // tile colours
     for (i = 0; i < 16; i++) {
         for (lev = 0; lev < 3; lev++) {
             int16_t a = lo + (hi - lo) * lev / 3;
@@ -100,8 +105,11 @@ static void status(void) {
     gotoxy(0, 16);
     printf("EXP %04X  CON %2u", exposure, contrast);
     gotoxy(0, 17);
-    printf("EDGE %c INV %c  %u/%u", edge ? 'Y' : 'N', invert ? 'Y' : 'N', nkept < NSLOT ? nkept : NSLOT, NSLOT);
+    printf("%s E%c I%c  %u/%u", colour ? "COLOR" : "GREY ", edge ? 'Y' : 'N', invert ? 'Y' : 'N', nkept < NSLOT ? nkept : NSLOT, NSLOT);
 }
+
+// a kept picture's colours: after the two pictures of its bank (0x1C00), 0x120 bytes each
+#define COL_SAVE(s) ((uint8_t *)(0xBC00 + ((s) & 1) * 0x120))
 
 static void keep(void) {
     uint8_t s = nkept % NSLOT;
@@ -109,6 +117,8 @@ static void keep(void) {
     memcpy(buf, (const uint8_t *)0xA100, PIC_SIZE);
     SWITCH_RAM(1 + s / 2);
     memcpy((uint8_t *)(0xA000 + (s & 1) * PIC_SIZE), buf, PIC_SIZE);
+    memcpy(COL_SAVE(s), col_attr, NTILE);
+    memcpy(COL_SAVE(s) + NTILE, col_pal, sizeof col_pal);
     if (nkept < 255) nkept++;
 }
 
@@ -122,6 +132,9 @@ static void gallery(void) {
         if (redraw && n) {
             SWITCH_RAM(1 + s / 2);
             show(0xA000 + (s & 1) * PIC_SIZE);
+            memcpy(col_attr, COL_SAVE(s), NTILE);
+            memcpy(col_pal, COL_SAVE(s) + NTILE, sizeof col_pal);
+            color_apply();
             gotoxy(12, 16);
             printf("%u/%u ", s + 1, n);
             redraw = 0;
@@ -142,13 +155,14 @@ static void screen_init(void) {
     set_bkg_palette(0, 1, grey);
     printf(" ");                                // the console loads its font into VRAM bank 0
     cls();
+    color_grey();
     // the picture: tiles 0-223 of VRAM bank 1 at (2, 1)
     for (y = 0; y < 14; y++) {
         for (x = 0; x < 16; x++) row[x] = y * 16 + x;
         set_bkg_tiles(2, 1 + y, 16, 1, row);
     }
     VBK_REG = 1;
-    for (x = 0; x < 16; x++) row[x] = 0x08;     // attributes: tile bank 1, palette 0
+    for (x = 0; x < 16; x++) row[x] = 0x09;     // attributes: tile bank 1, palette 1
     for (y = 0; y < 14; y++) set_bkg_tiles(2, 1 + y, 16, 1, row);
     VBK_REG = 0;
     gotoxy(5, 0);
@@ -170,15 +184,24 @@ void main(void) {
             sample();
         }
         SWITCH_RAM(0);
+        if (colour) color_compute();
+        else color_grey();
+        sample();
         show(0xA100);
+        color_apply();
+        sample();
 
         if (pressed(J_A)) keep();
         if (pressed(J_UP) && exposure < 0xE000) exposure += exposure >> 3;
         if (pressed(J_DOWN) && exposure > 0x0100) exposure -= exposure >> 3;
         if (pressed(J_RIGHT) && contrast < 15) contrast++;
         if (pressed(J_LEFT) && contrast > 0) contrast--;
-        if (pressed(J_SELECT)) edge = !edge;
-        if (pressed(J_B)) invert = !invert;
+        if (pressed(J_SELECT)) colour = !colour;
+        if (pressed(J_B)) {
+            uint8_t fx = (edge | invert << 1) + 1;
+            edge = fx & 1;
+            invert = (fx >> 1) & 1;
+        }
         if (pressed(J_START)) gallery();
         if (latch) status();
         latch = 0;

@@ -20,7 +20,7 @@ module tb_gb_camera;
     logic [7:0]  reg_d = 0;
     logic [7:0]  reg0;
     logic        busy, ram_we;
-    logic [11:0] ram_wa;
+    logic [12:0] ram_wa;
     logic [7:0]  ram_wd;
     logic [15:0] h_ra = 0;
     logic [7:0]  h_q;
@@ -32,7 +32,7 @@ module tb_gb_camera;
         .i_h_ra(h_ra), .o_h_q(h_q));
 
     logic [7:0] in_mem [0:NCASE*REC-1];
-    logic [7:0] ram [0:4095];
+    logic [7:0] ram [0:8191];
     int nwr;
     always @(posedge clk) if (ram_we) begin
         ram[ram_wa] <= ram_wd;
@@ -59,6 +59,11 @@ module tb_gb_camera;
                 @(posedge pclk);
                 fb_we <= 1; fb_wa <= 14'(i); fb_wd <= in_mem[c*REC + i];
             end
+            // the tile colours (0x3800-0x3AFF)
+            for (int i = 0; i < 768; i++) begin
+                @(posedge pclk);
+                fb_we <= 1; fb_wa <= 14'(14'h3800 + i); fb_wd <= 8'(i * 7 + c * 31);
+            end
             @(posedge pclk);
             fb_we <= 0;
             // host read of the frame
@@ -69,7 +74,8 @@ module tb_gb_camera;
                 errs++;
             end
             for (int a = 1; a < 54; a++) wreg(a, in_mem[c*REC + FB + a]);
-            for (int a = 0; a < 4096; a++) ram[a] = 8'h55;
+            wreg(54, c & 1);                    // colour on odd cases
+            for (int a = 0; a < 8192; a++) ram[a] = 8'h55;
             nwr = 0;
             // shoot, then the frame completes
             wreg(0, 8'h01);
@@ -80,7 +86,12 @@ module tb_gb_camera;
             t0 = $time;
             while (busy) @(posedge clk);
             $display("case %0d: shot took %0d ns, %0d RAM writes", c, $time - t0, nwr);
-            if (nwr != 3584) errs++;
+            if (nwr != 3584 + ((c & 1) ? 672 : 0)) errs++;
+            for (int ch = 0; ch < 3; ch++) for (int t = 0; t < 224; t++)
+                if (ram['hF00 + ch * 256 + t] !== ((c & 1) ? 8'(ch * 256 + t) * 8'd7 + 8'(c * 31) : 8'h55)) begin
+                    if (errs < 10) $display("case %0d: colour %0d tile %0d: %02x", c, ch, t, ram['hF00 + ch * 256 + t]);
+                    errs++;
+                end
             for (int a = 'h100; a < 'hF00; a++) $fwrite(fo, "%02x\n", ram[a]);
         end
         // status: shots

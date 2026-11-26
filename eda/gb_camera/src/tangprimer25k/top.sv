@@ -249,7 +249,7 @@ module top (
     IspGbScale u_scale (
         .i_clk(pclk), .i_rst(prst),
         .i_we(rw_we), .i_waddr(rw_addr), .i_wdata(rw_data), .i_row(rw_row),
-        .i_black(black_p[1]), .i_gain(gain_p[1]), .i_mirror(orient_p[1][0]), .i_flip(orient_p[1][1]),
+        .i_black(black_p[1]), .i_cfa(2'd3), .i_gain(gain_p[1]), .i_mirror(orient_p[1][0]), .i_flip(orient_p[1][1]),
         .o_we(fb_we), .o_wa(fb_wa), .o_wd(fb_wd), .o_frame(frame_tgl));
     logic [15:0] n_frames;
     logic        frame_q;
@@ -294,7 +294,7 @@ module top (
     wire        cam_we, cam_busy, cam_ram_we;
     wire [6:0]  cam_wa;
     wire [7:0]  cam_wd, cam_reg0, cam_ram_wd, cam_hq;
-    wire [11:0] cam_ram_wa;
+    wire [12:0] cam_ram_wa;
     wire [15:0] cam_hra;
     GameCart #(.CLK_HZ(100000000), .CAMERA(1'b1), .TRACE(1'b0)) u_cart (
         .i_clk(clk), .i_rst(rst),

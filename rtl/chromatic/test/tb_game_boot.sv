@@ -133,7 +133,7 @@ module tb_game_boot;
     logic       cam_we, cam_busy, cam_ram_we;
     logic [6:0] cam_wa;
     logic [7:0] cam_wd, cam_reg0, cam_ram_wd, cam_hq;
-    logic [11:0] cam_ram_wa;
+    logic [12:0] cam_ram_wa;
     logic [15:0] cam_hra;
     GbCamera #(.TIMEOUT(1000000)) u_cam (
         .i_clk(clk), .i_rst(rst),
@@ -145,7 +145,7 @@ module tb_game_boot;
     logic       cam_we, cam_busy = 0, cam_ram_we = 0;
     logic [6:0] cam_wa;
     logic [7:0] cam_wd, cam_reg0 = 0, cam_ram_wd = 0, cam_hq = 0;
-    logic [11:0] cam_ram_wa = 0;
+    logic [12:0] cam_ram_wa = 0;
     logic [15:0] cam_hra;
     localparam bit CAM = 0;
 `endif

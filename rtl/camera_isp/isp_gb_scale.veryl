@@ -19,6 +19,12 @@
  * the frame (band 111, column 127) has been written.
  *
  *   i_mirror: x = 127 - column, i_flip: y = 111 - band
+ *
+ * Colour: the R, G and B pixels of every tile (16x14 tiles of 48x48 pixels, 8x8 blocks) are summed
+ * separately (CFA as IspDisplay: base RGGB, i_cfa[0] flips the column parity, i_cfa[1] the row
+ * parity). After the last row of a tile row, the averages (black level off, 8 bits, linear, no
+ * white balance) go into the frame buffer at 0x3800 + c * 0x100 + tile (c: 0 R, 1 G, 2 B; tile =
+ * y * 16 + x, mirrored and flipped as the picture), one byte whenever the picture is not writing.
  */
 pub module IspGbScale #(
     param X0W: u32 = 64, // first word of the window (4 pixels per word): pixel 256 of 1280
@@ -33,6 +39,7 @@ pub module IspGbScale #(
     i_row  : input logic<12>,
 
     i_black : input logic<10>,
+    i_cfa   : input logic<2> ,
     i_gain  : input logic<16>, // 8.8
     i_mirror: input logic    ,
     i_flip  : input logic    ,
@@ -261,11 +268,149 @@ pub module IspGbScale #(
             }
         }
     }
+    // ---- colour: R, G, B per tile ----
+    let sev: logic<11> = (p0 as 11) + (p2 as 11); // even columns
+    let sod: logic<11> = (p1 as 11) + (p3 as 11);
+    let cpy: logic     = i_row[0] ^ i_cfa[1]; // 0: an R G row, 1: a G B row
+    let dr : logic<11> = if cpy ? 11'd0 : (if i_cfa[0] ? sod : sev);
+    let dg : logic<11> = if cpy ? (if i_cfa[0] ? sod : sev) : (if i_cfa[0] ? sev : sod);
+    let db : logic<11> = if !cpy ? 11'd0 : (if i_cfa[0] ? sev : sod);
+    var tw : logic<4> ; // word in the tile, 0..11
+    var tc : logic<4> ; // tile column
+    var pr : logic<15>;
+    var pg : logic<15>;
+    var pb : logic<15>;
+    let ctw: logic<4>  = if k == 9'd0 ? 4'd0 : tw;
+    let ctc: logic<4>  = if k == 9'd0 ? 4'd0 : tc;
+    let npr: logic<15> = (if ctw == 4'd0 ? 15'd0 : pr) + (dr as 15);
+    let npg: logic<15> = (if ctw == 4'd0 ? 15'd0 : pg) + (dg as 15);
+    let npb: logic<15> = (if ctw == 4'd0 ? 15'd0 : pb) + (db as 15);
+    // a tile's sums of one row, after its twelfth word
+    var t_v    : logic    ;
+    var t_c    : logic<4> ;
+    var t_r    : logic<15>;
+    var t_g    : logic<15>;
+    var t_b    : logic<15>;
+    var t_first: logic    ; // first row of the tile row
+    var t_last : logic    ; // last row of the tile row
+    var t_ty   : logic<4> ;
+    always_ff {
+        if_reset {
+            tw      = 0;
+            tc      = 0;
+            pr      = 0;
+            pg      = 0;
+            pb      = 0;
+            t_v     = 0;
+            t_c     = 0;
+            t_r     = 0;
+            t_g     = 0;
+            t_b     = 0;
+            t_first = 0;
+            t_last  = 0;
+            t_ty    = 0;
+        } else {
+            t_v = 0;
+            if take {
+                pr = npr;
+                pg = npg;
+                pb = npb;
+                if ctw == 4'd11 {
+                    t_v     = 1;
+                    t_c     = ctc;
+                    t_r     = npr;
+                    t_g     = npg;
+                    t_b     = npb;
+                    t_first = n_band[2:0] == 3'd0 && n_rsub == 3'd0;
+                    t_last  = n_band[2:0] == 3'd7 && n_rsub == 3'd5;
+                    t_ty    = n_band[6:3];
+                    tw      = 0;
+                    tc      = ctc + 4'd1;
+                } else {
+                    tw = ctw + 4'd1;
+                    tc = ctc;
+                }
+            }
+        }
+    }
+    var ar: logic<20> [16];
+    var ag: logic<21> [16];
+    var ab: logic<20> [16];
+    always_ff (i_clk) {
+        if t_v {
+            ar[t_c] = if t_first ? (t_r as 20) : ar[t_c] + (t_r as 20);
+            ag[t_c] = if t_first ? (t_g as 21) : ag[t_c] + (t_g as 21);
+            ab[t_c] = if t_first ? (t_b as 20) : ab[t_c] + (t_b as 20);
+        }
+    }
+    // the tile row's 48 averages into the frame buffer
+    enum Sq: logic<2> {
+        Idle,
+        Sel,
+        Mul,
+        Wr,
+    }
+    var sq   : Sq       ;
+    var sq_i : logic<6> ; // {channel, tile column}
+    var sq_ty: logic<4> ;
+    var sq_v : logic<21>;
+    var sq_p : logic<32>;
+    let sq_ch : logic<2>  = sq_i[5:4];
+    let sq_tc : logic<4>  = sq_i[3:0];
+    let sq_a10: logic<11> = if sq_ch == 2'd1 ? sq_p[31:21] : sq_p[30:20];
+    let sq_net: logic<11> = if sq_a10 >: (i_black as 11) ? sq_a10 - (i_black as 11) : 11'd0;
+    let sq_x  : logic<4>  = if i_mirror ? 4'd15 - sq_tc : sq_tc;
+    let sq_y  : logic<4>  = if i_flip ? 4'd13 - sq_ty : sq_ty;
+    let cw_we : logic     = sq == Sq::Wr && !g_v;
+    let cw_a  : logic<14> = {4'b1110, sq_ch, sq_y, sq_x}; // 0x3800 + c * 0x100 + tile
+    let cw_d  : logic<8>  = if sq_net[10] ? 8'hFF : sq_net[9:2];
+    always_ff {
+        if_reset {
+            sq    = Sq::Idle;
+            sq_i  = 0;
+            sq_ty = 0;
+            sq_v  = 0;
+            sq_p  = 0;
+        } else {
+            case sq {
+                Sq::Idle: {
+                    if t_v && t_last && t_c == 4'd15 {
+                        sq_i  = 0;
+                        sq_ty = t_ty;
+                        sq    = Sq::Sel;
+                    }
+                }
+                Sq::Sel: {
+                    sq_v = case sq_ch {
+                        2'd0   : ar[sq_tc] as 21,
+                        2'd1   : ag[sq_tc],
+                        default: ab[sq_tc] as 21,
+                    };
+                    sq = Sq::Mul;
+                }
+                Sq::Mul: {
+                    // average: R and B are 576 pixels a tile (x 1821 >> 20 ~ / 576), G 1152
+                    sq_p = (sq_v as 32) * 32'd1821;
+                    sq   = Sq::Wr;
+                }
+                default: {
+                    if cw_we {
+                        sq_i += 1;
+                        sq   =  if sq_i == 6'd47 ? Sq::Idle : Sq::Sel;
+                    }
+                }
+            }
+        }
+    }
+
+    var g_q: logic<8>;
     inst u_gamma: IspGamma (
         i_clk         ,
         i_a  : d_lin  ,
-        o_q  : o_wd   ,
+        o_q  : g_q    ,
     );
-    assign o_we = g_v;
-    assign o_wa = g_wa;
+    // the picture first; the colour bytes in the gaps
+    assign o_we = g_v || cw_we;
+    assign o_wa = if g_v ? g_wa : cw_a;
+    assign o_wd = if g_v ? g_q : cw_d;
 }

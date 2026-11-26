@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: BSL-1.0
 // Copyright Kenta Ida 2026.
 // tb_gb_scale: IspGbScale with a synthetic 1280x720 RAW10 frame (run_gb_scale.sh checks it with gb_scale_ref.py)
-//   frame 0: black 16, gain 1.0; frame 1: black 0, gain 1.5, mirrored and flipped. out/gb_scale.hex: 2 x 14336 bytes
+//   frame 0: black 16, gain 1.0; frame 1: black 0, gain 1.5, mirrored and flipped (CFA 3, BGGR).
+//   out/gb_scale.hex: 2 x 16384 bytes (the picture and the colour planes at 0x3800)
 `timescale 1ns/1ps
 module tb_gb_scale;
     logic clk = 0, rst = 1;
@@ -19,7 +20,7 @@ module tb_gb_scale;
     logic [7:0]  o_wd;
     IspGbScale dut (
         .i_clk(clk), .i_rst(rst), .i_we(we), .i_waddr(waddr), .i_wdata(wdata), .i_row(row),
-        .i_black(black), .i_gain(gain), .i_mirror(mirror), .i_flip(flip),
+        .i_black(black), .i_cfa(2'd3), .i_gain(gain), .i_mirror(mirror), .i_flip(flip),
         .o_we(o_we), .o_wa(o_wa), .o_wd(o_wd), .o_frame(o_frame));
 
     function automatic logic [9:0] pix(input int x, input int y);
@@ -54,10 +55,10 @@ module tb_gb_scale;
                 end
                 repeat (20) @(posedge clk);
             end
-            repeat (20) @(posedge clk);
+            repeat (400) @(posedge clk);
             $display("frame %0d: %0d writes, frame toggle %0d", f, nwr, o_frame != frame_q);
-            if (nwr != 14336 || o_frame == frame_q) errs++;
-            for (int a = 0; a < 14336; a++) $fwrite(fo, "%02x\n", fb[a]);
+            if (nwr != 14336 + 3 * 224 || o_frame == frame_q) errs++;
+            for (int a = 0; a < 16384; a++) $fwrite(fo, "%02x\n", fb[a]);
         end
         $fclose(fo);
         if (errs) $display("TB FAIL (%0d)", errs);

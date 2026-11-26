@@ -15,6 +15,9 @@
  *   0x02  exposure [15:8], 0x03 exposure [7:0] (0x1000 = x1)
  *   0x04  bits 6-4 edge ratio (0.5 0.75 1 1.25 2 3 4 5), bit 3 invert
  *   0x06-0x35  dither thresholds: 4x4 pixels x 3 levels, ((x & 3) + (y & 3) * 4) * 3
+ *   0x36  (not in the Game Boy Camera) bit 0: colour; each shot also copies the camera's tile colours
+ *         (16x14 tiles, R G B averages, linear, no white balance: IspGbScale) into RAM bank 0 at
+ *         0x0F00 (R), 0x1000 (G), 0x1100 (B), byte y * 16 + x
  * A shot waits for the next complete frame (or TIMEOUT clocks without one: the frame as it is),
  * then for every pixel, as SameBoy's camera.c does it in integers:
  *   p(x, y) = (v * gain[0x01 & 0x1F] * exposure) >> 20, v = the frame (255 - v when inverted),
@@ -25,7 +28,7 @@
  * One frame buffer read per clock: 14336 clocks a shot, 5 x that with edge enhancement.
  *
  * Host reads (i_h_ra, one clock): 0x0000-0x37FF the frame (y * 128 + x; while a shot reads the
- * frame the data is the shot's), 0x4000-0x4035 the registers, 0x4040 status: frames u32,
+ * frame the data is the shot's), 0x3800-0x3AFF the tile colours, 0x4000-0x4036 the registers, 0x4040 status: frames u32,
  * shots u32, timeouts u16, last shot in clocks u32, {busy}.
  */
 pub module GbCamera #(
@@ -48,7 +51,7 @@ pub module GbCamera #(
     o_reg0  : output logic<8> ,
     o_busy  : output logic    ,
     o_ram_we: output logic    ,
-    o_ram_wa: output logic<12>,
+    o_ram_wa: output logic<13>,
     o_ram_wd: output logic<8> ,
 
     // host reads
@@ -85,8 +88,8 @@ pub module GbCamera #(
     let frame_ev: logic = fr_s[2] != fr_s[1];
 
     // ---- registers ----
-    var regs: logic<8> [54];
-    for i in 0..54 :g_reg {
+    var regs: logic<8> [55];
+    for i in 0..55 :g_reg {
         always_ff (i_clk, i_rst) {
             if_reset {
                 regs[i] = 0;
@@ -152,11 +155,13 @@ pub module GbCamera #(
     }
 
     // ---- shot ----
-    enum Shot: logic<2> {
+    enum Shot: logic<3> {
         Idle,
         Wait,
         Run,
         Drain,
+        Col,
+        Fin,
     }
     var st   : Shot     ;
     var tmo  : logic<24>;
@@ -170,6 +175,10 @@ pub module GbCamera #(
     var x    : logic<3> ; // pixel in the row
     var n    : logic<3> ; // read: 0 the pixel, 1 left, 2 right, 3 up, 4 down
     var drn  : logic<4> ;
+    var cch  : logic<2> ; // colour copy: plane
+    var ct   : logic<8> ; // ... tile
+    var c1_v : logic    ;
+    var c1_wa: logic<13>;
     var n_frm: logic<32>;
     var n_sht: logic<32>;
     var n_tmo: logic<16>;
@@ -191,9 +200,10 @@ pub module GbCamera #(
         default: py,
     };
     let issue : logic     = st == Shot::Run;
+    let cissue: logic     = st == Shot::Col;
     let reg0_w: logic     = i_reg_we && i_reg_a == 7'd0;
     let h_isfb: logic     = !i_h_ra[14];
-    assign fb_ra = if issue ? {ry, rx} : i_h_ra[13:0];
+    assign fb_ra = if issue ? {ry, rx} : if cissue ? {4'b1110, cch, ct} : i_h_ra[13:0];
 
     // pipeline tags: {first, last read of the pixel, end of a tile row, dither index, byte address}
     // s1: fb_q; s2: v * gain; s3: * exposure; s4: sums; s5: edge term, thresholds; s6: the pixel; then the colour
@@ -202,33 +212,33 @@ pub module GbCamera #(
     var s1_l : logic    ;
     var s1_e : logic    ;
     var s1_di: logic<4> ;
-    var s1_ba: logic<12>;
+    var s1_ba: logic<13>;
     var s2_v : logic    ;
     var s2_f : logic    ;
     var s2_l : logic    ;
     var s2_e : logic    ;
     var s2_di: logic<4> ;
-    var s2_ba: logic<12>;
+    var s2_ba: logic<13>;
     var s2_m : logic<17>;
     var s3_v : logic    ;
     var s3_f : logic    ;
     var s3_l : logic    ;
     var s3_e : logic    ;
     var s3_di: logic<4> ;
-    var s3_ba: logic<12>;
+    var s3_ba: logic<13>;
     var s3_p : logic<14>;
     var c0   : logic<14>;
     var sum4 : logic<16>;
     var s4_v : logic    ;
     var s4_e : logic    ;
     var s4_di: logic<4> ;
-    var s4_ba: logic<12>;
+    var s4_ba: logic<13>;
     var s4_c0: logic<14>;
     var s4_s : logic<16>;
     var s5_v : logic    ;
     var s5_e : logic    ;
     var s5_di: logic<4> ;
-    var s5_ba: logic<12>;
+    var s5_ba: logic<13>;
     var s5_c0: logic<14>;
     var s5_neg: logic   ;
     var s5_dq: logic<20>;
@@ -237,7 +247,7 @@ pub module GbCamera #(
     var s5_t2: logic<8> ;
     var s6_v : logic    ;
     var s6_e : logic    ;
-    var s6_ba: logic<12>;
+    var s6_ba: logic<13>;
     var s6_c : logic<22>;
     var s6_t0: logic<8> ;
     var s6_t1: logic<8> ;
@@ -245,7 +255,7 @@ pub module GbCamera #(
     var plo  : logic<8> ;
     var phi  : logic<8> ;
     var w_hi : logic    ; // second byte of the tile row next clock
-    var w_ba : logic<12>;
+    var w_ba : logic<13>;
 
     let vin : logic<8>  = if inv ? ~fb_q : fb_q;
     let m3  : logic<33> = (s2_m as 33) * (expo as 33);
@@ -274,6 +284,10 @@ pub module GbCamera #(
             x     = 0;
             n     = 0;
             drn   = 0;
+            cch   = 0;
+            ct    = 0;
+            c1_v  = 0;
+            c1_wa = 0;
             n_frm = 0;
             n_sht = 0;
             n_tmo = 0;
@@ -385,9 +399,31 @@ pub module GbCamera #(
                         st  = Shot::Drain;
                     }
                 }
-                default: {
+                Shot::Drain: {
+                    // the pipeline's last RAM writes, then the colours
                     drn += 1;
                     if drn == 4'd10 {
+                        cch = 0;
+                        ct  = 0;
+                        drn = 0;
+                        st  = if regs[54][0] ? Shot::Col : Shot::Fin;
+                    }
+                }
+                Shot::Col: {
+                    // one frame buffer read per clock, written to RAM a clock later
+                    if ct == 8'd223 {
+                        ct  = 0;
+                        cch += 1;
+                        if cch == 2'd2 {
+                            st = Shot::Fin;
+                        }
+                    } else {
+                        ct += 1;
+                    }
+                }
+                default: {
+                    drn += 1;
+                    if drn == 4'd3 {
                         n_sht  += 1;
                         last   =  cyc;
                         o_busy =  0;
@@ -395,6 +431,8 @@ pub module GbCamera #(
                     }
                 }
             }
+            c1_v  = cissue;
+            c1_wa = 13'h0F00 + ({cch, ct} as 13);
 
             // s1: the read's data is in fb_q
             s1_v  = issue;
@@ -402,7 +440,7 @@ pub module GbCamera #(
             s1_l  = nlast;
             s1_e  = x == 3'd7 && nlast;
             s1_di = {py[1:0], px[1:0]};
-            s1_ba = 12'h100 + {t, r, 1'b0};
+            s1_ba = 13'h100 + ({t, r, 1'b0} as 13);
             // s2: v * gain
             s2_v  = s1_v;
             s2_f  = s1_f;
@@ -455,10 +493,15 @@ pub module GbCamera #(
             s6_t2 = s5_t2;
             // colour into the tile row's two bytes, then RAM
             o_ram_we = 0;
+            if c1_v {
+                o_ram_we = 1;
+                o_ram_wa = c1_wa;
+                o_ram_wd = fb_q;
+            }
             if w_hi {
                 w_hi     = 0;
                 o_ram_we = 1;
-                o_ram_wa = w_ba + 12'd1;
+                o_ram_wa = w_ba + 13'd1;
                 o_ram_wd = phi;
             }
             if s6_v {
@@ -487,7 +530,7 @@ pub module GbCamera #(
         } else {
             h_fb = h_isfb;
             if !i_h_ra[6] {
-                h_st = if ha <: 7'd54 ? regs[ha[5:0]] : 8'h00;
+                h_st = if ha <: 7'd55 ? regs[ha[5:0]] : 8'h00;
             } else {
                 h_st = case ha[5:0] {
                     6'd0   : n_frm[7:0],
