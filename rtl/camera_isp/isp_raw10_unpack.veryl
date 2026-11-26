@@ -1,0 +1,107 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file isp_raw10_unpack.veryl
+ * @brief CSI-2 RAW10 lines (Csi2Rx payload) -> 4-pixel words for the line ring.
+ *
+ * RAW10 packs four pixels in five bytes: P0[9:2] P1[9:2] P2[9:2] P3[9:2]
+ * {P3[1:0] P2[1:0] P1[1:0] P0[1:0]}. Payload beats carry up to two bytes
+ * (i_be, byte 0 first). Every completed group is one write of
+ * {P3, P2, P1, P0} (40 bits) at word address x / 4 of the current row.
+ * Rows count RAW10 headers from the frame start (FS short packet):
+ * o_row is the row being written; o_r0 pulses at the header of row 0
+ * (the genlock reference). Other data types are ignored.
+ */
+pub module IspRaw10Unpack #(
+    param AW: u32 = 9, // word address bits (4 pixels per word)
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_hdr  : input logic    ,
+    i_short: input logic    ,
+    i_dt   : input logic<6> ,
+    i_data : input logic<16>,
+    i_be   : input logic<2> ,
+    i_vld  : input logic    ,
+
+    o_we   : output logic    ,
+    o_waddr: output logic<AW>,
+    o_wdata: output logic<40>,
+    o_row  : output logic<12>,
+    o_r0   : output logic    , // pulse: header of row 0 of a frame
+    o_fs   : output logic    , // pulse: frame start
+) {
+    var in_line: logic    ;
+    var first  : logic    ; // next RAW10 header is row 0
+    var nrow   : logic<12>;
+    var acc    : logic<32>; // bytes of the group so far, byte 0 lowest
+    var cnt    : logic<3> ; // 0..4
+    var x4     : logic<AW>;
+
+    var nb : logic<2> ;
+    var nw : logic<16>;
+    var tmp: logic<48>;
+    var tc : logic<3> ;
+    var grp: logic<40>;
+    always_comb {
+        nb  = (i_be[0] as 2) + (i_be[1] as 2);
+        nw  = if i_be[0] ? i_data : {8'h00, i_data[15:8]};
+        tmp = ({16'h0, acc} | ((nw as 48) << ({cnt, 3'b000} as 6)));
+        tc  = cnt + (nb as 3);
+        grp = tmp[39:0];
+    }
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            in_line = 0;
+            first   = 0;
+            nrow    = 0;
+            acc     = 0;
+            cnt     = 0;
+            x4      = 0;
+            o_we    = 0;
+            o_waddr = 0;
+            o_wdata = 0;
+            o_row   = 0;
+            o_r0    = 0;
+            o_fs    = 0;
+        } else {
+            o_we = 0;
+            o_r0 = 0;
+            o_fs = 0;
+            if i_hdr {
+                in_line = 0;
+                if i_short && i_dt == 6'h00 {
+                    first = 1;
+                    nrow  = 0;
+                    o_fs  = 1;
+                } else if !i_short && i_dt == 6'h2B {
+                    in_line = 1;
+                    acc     = 0;
+                    cnt     = 0;
+                    x4      = 0;
+                    o_row   = nrow;
+                    nrow    = nrow + 12'd1;
+                    o_r0    = first;
+                    first   = 0;
+                }
+            } else if i_vld && in_line && nb != 2'd0 {
+                if tc >= 3'd5 {
+                    o_we    = 1;
+                    o_waddr = x4;
+                    o_wdata = {grp[31:24], grp[39:38], grp[23:16], grp[37:36], grp[15:8], grp[35:34], grp[7:0], grp[33:32]};
+                    x4      = x4 + 1;
+                    acc     = {24'h0, tmp[47:40]};
+                    cnt     = tc - 3'd5;
+                } else {
+                    acc = tmp[31:0];
+                    cnt = tc;
+                }
+            }
+        }
+    }
+}

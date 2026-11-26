@@ -1,0 +1,231 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file mbc7_eeprom.veryl
+ * @brief Read-only access to the 93LC56 / 93LC66 serial EEPROM of an MBC7
+ *        cartridge (the save data of Kirby Tilt 'n' Tumble etc.).
+ *
+ * The EEPROM is bit-banged through the MBC7 register at 0xA080 (bit 7 CS,
+ * bit 6 CLK, bit 1 DI, bit 0 DO), which takes /CS + /WR writes. Only this
+ * module may issue those writes (CartBus accepts them as "privileged"
+ * requests, which CartCmd gives to this module alone), and the only
+ * command it can clock out is READ: the start bit and the opcode are
+ * constants here, only the address comes from the host. EWEN, which every
+ * EEPROM write / erase command needs first, can therefore never be sent.
+ *
+ * Sequence (one bus cycle each, 1 us):
+ *   0x4000 <- 0x40 (MBC7 RAM enable 2; RAM enable 1, 0x0000 <- 0x0A, is
+ *   written by the host in RAM mode)
+ *   per word: A080 <- 00 (CS Low), 80 (CS High), 11 command bits
+ *     1 1 0 A7..A0 as (80 | DI<<1) then (C0 | DI<<1) (CLK rising edge),
+ *     16 data bits as 80, C0, read A080 bit 0 (D15 first; the dummy 0
+ *     comes with the last address bit), A080 <- 00; then the word goes
+ *     out high byte first
+ *   0x4000 <- 0x00
+ * A refused request or a bus that is not ready sets o_err; every bus
+ * operation after that is skipped and the remaining words read as FFFF.
+ * i_dry starts in that state (no bus activity at all).
+ */
+pub module Mbc7Eeprom (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_start : input  logic   ,
+    i_dry   : input  logic   , // no bus access, FFFF words only
+    i_addr  : input  logic<8>, // first word
+    i_count : input  logic<9>, // words, 1-256
+    i_bus_ok: input  logic   , // CartBus can take requests (powered, /RST released)
+    o_busy  : output logic   ,
+    o_err   : output logic   , // valid when not busy, cleared by i_start
+
+    o_req_valid : output logic    ,
+    o_req_write : output logic    ,
+    o_req_addr  : output logic<16>,
+    o_req_wdata : output logic<8> ,
+    i_req_ready : input  logic    ,
+    i_rsp_valid : input  logic    ,
+    i_rsp_data  : input  logic<8> ,
+    i_rsp_reject: input  logic    ,
+
+    o_tx_valid: output logic   ,
+    o_tx_data : output logic<8>,
+    i_tx_ready: input  logic   ,
+) {
+    enum St: logic<3> {
+        Idle,
+        Req,
+        Rsp,
+        Hi,
+        Lo,
+    }
+    enum Seg: logic<3> {
+        Begin,
+        CsLow,
+        CsHigh,
+        Cmd,
+        Dat,
+        CsEnd,
+        Finish,
+    }
+
+    var st   : St       ;
+    var seg  : Seg      ;
+    var bitn : logic<4> ;
+    var ph   : logic<2> ;
+    var waddr: logic<8> ;
+    var left : logic<9> ;
+    var sr   : logic<16>;
+    var err  : logic    ;
+
+    // READ: start bit, opcode 10, address (constants except the address)
+    let cmd_bits: logic<11> = {1'b1, 2'b10, waddr};
+    let cmd_bit : logic     = cmd_bits[4'd10 - bitn];
+
+    var r_write: logic    ;
+    var r_addr : logic<16>;
+    var r_data : logic<8> ;
+    always_comb {
+        r_write = 1;
+        r_addr  = 16'hA080;
+        r_data  = 8'h00;
+        case seg {
+            Seg::Begin: {
+                r_addr = 16'h4000;
+                r_data = 8'h40;
+            }
+            Seg::CsHigh: {
+                r_data = 8'h80;
+            }
+            Seg::Cmd: {
+                r_data = {1'b1, ph[0], 4'b0000, cmd_bit, 1'b0};
+            }
+            Seg::Dat: {
+                r_write = ph != 2'd2;
+                r_data  = if ph == 2'd0 ? 8'h80 : 8'hC0;
+            }
+            Seg::Finish: {
+                r_addr = 16'h4000;
+                r_data = 8'h00;
+            }
+            default: {}
+        }
+    }
+
+    assign o_req_valid = st == St::Req && !err && i_bus_ok;
+    assign o_req_write = r_write;
+    assign o_req_addr  = r_addr;
+    assign o_req_wdata = r_data;
+    assign o_busy      = st != St::Idle;
+    assign o_err       = err;
+    assign o_tx_valid  = st == St::Hi || st == St::Lo;
+    assign o_tx_data   = if st == St::Hi ? sr[15:8] : sr[7:0];
+
+    // one bus operation done (or skipped); op_bit: bit 0 of its read data (1 when skipped / refused)
+    var done_op: logic;
+    var op_bit : logic;
+    always_comb {
+        done_op = 0;
+        op_bit  = 1;
+        if st == St::Req && (err || !i_bus_ok) {
+            done_op = 1;
+        } else if st == St::Rsp && i_rsp_valid {
+            done_op = 1;
+            op_bit  = i_rsp_reject | i_rsp_data[0];
+        }
+    }
+
+    always_ff {
+        if_reset {
+            st    = St::Idle;
+            seg   = Seg::Begin;
+            bitn  = 0;
+            ph    = 0;
+            waddr = 0;
+            left  = 0;
+            sr    = 0;
+            err   = 0;
+        } else {
+            case st {
+                St::Idle: {
+                    if i_start {
+                        st    = St::Req;
+                        seg   = Seg::Begin;
+                        bitn  = 0;
+                        ph    = 0;
+                        waddr = i_addr;
+                        left  = i_count;
+                        err   = i_dry;
+                    }
+                }
+                St::Req, St::Rsp: {
+                    if st == St::Req && o_req_valid && i_req_ready {
+                        st = St::Rsp;
+                    }
+                    if done_op {
+                        st = St::Req;
+                        if (st == St::Rsp && i_rsp_reject) || (st == St::Req && !err) {
+                            err = 1;
+                        }
+                        case seg {
+                            Seg::Begin : seg = Seg::CsLow;
+                            Seg::CsLow : seg = Seg::CsHigh;
+                            Seg::CsHigh: {
+                                seg  = Seg::Cmd;
+                                bitn = 0;
+                                ph   = 0;
+                            }
+                            Seg::Cmd: {
+                                if ph == 2'd0 {
+                                    ph = 2'd1;
+                                } else if bitn == 4'd10 {
+                                    seg  = Seg::Dat;
+                                    bitn = 0;
+                                    ph   = 0;
+                                } else {
+                                    bitn += 1;
+                                    ph   =  0;
+                                }
+                            }
+                            Seg::Dat: {
+                                if ph == 2'd2 {
+                                    sr = {sr[14:0], op_bit};
+                                    ph = 0;
+                                    if bitn == 4'd15 {
+                                        seg = Seg::CsEnd;
+                                    } else {
+                                        bitn += 1;
+                                    }
+                                } else {
+                                    ph += 1;
+                                }
+                            }
+                            Seg::CsEnd: st = St::Hi;
+                            default   : st = St::Idle; // Finish
+                        }
+                    }
+                }
+                St::Hi: {
+                    if i_tx_ready {
+                        st = St::Lo;
+                    }
+                }
+                St::Lo: {
+                    if i_tx_ready {
+                        st = St::Req;
+                        if left == 9'd1 {
+                            seg = Seg::Finish;
+                        } else {
+                            left  -= 1;
+                            waddr += 1;
+                            seg   =  Seg::CsLow;
+                        }
+                    }
+                }
+                default: st = St::Idle;
+            }
+        }
+    }
+}

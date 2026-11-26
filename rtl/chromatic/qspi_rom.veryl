@@ -1,0 +1,448 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file qspi_rom.veryl
+ * @brief Random byte reads from a Winbond W25Q (W25Q64 on the Tang Primer 25K) in QPI mode at
+ *        SCLK = i_clk / 2, for serving a cartridge ROM: one read is 16 SCLK (EBh, 6 address
+ *        nibbles, 6 dummy, 2 data nibbles), started as soon as the wanted address changes and
+ *        abandoned (CS high, then a new start) when it changes again.
+ *        Also single-line SPI bytes at i_clk / 8 for the host (ID, read, erase, program).
+ *
+ * Clock: i_clk is 200 MHz, synchronous to the 100 MHz domain of the controls (same PLL); every
+ * control input comes from a register of that domain and every output is a register here.
+ *
+ * Quad mode (i_quad rising): a continuous read mode reset (16 clocks of all lines High), 50h, 31h 02h (QE, volatile status register only), 38h (enter QPI),
+ * then C0h 20h in QPI (6 dummy clocks, up to 104 MHz); o_ready. i_quad falling: FFh in QPI (exit).
+ * The flash stays in QPI mode while o_ready: a reconfiguration of the FPGA from this flash then
+ * needs a power cycle first.
+ *
+ * Read capture: the flash shifts a nibble out after each SCLK fall; i_cap selects which 200 MHz
+ * sample after the fall is taken (calibrated against single-line reads).
+ */
+pub module QspiRom (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_quad : input  logic    ,
+    o_ready: output logic    ,
+    i_cap  : input  logic<2> ,
+    i_spiq : input  logic    , // read in SPI-Quad (EBh on one line) instead of QPI
+    i_cont : input  logic    , // SPI-Quad: continuous read mode (EBh only for the first read)
+    i_want : input  logic    ,
+    i_addr : input  logic<24>,
+    o_data : output logic<8> ,
+    o_daddr: output logic<24>,
+    o_dval : output logic    ,
+
+    // single-line SPI byte (only while !o_ready and !i_quad): CS is Low while i_raw_cs
+    i_raw_cs  : input  logic   ,
+    i_raw_go  : input  logic   , // toggle: shift i_raw_tx out, o_raw_rx in
+    i_raw_tx  : input  logic<8>,
+    o_raw_rx  : output logic<8>,
+    o_raw_done: output logic   , // toggle
+
+    o_sclk : output logic   ,
+    o_cs_n : output logic   ,
+    o_io   : output logic<4>,
+    o_io_oe: output logic<4>,
+    i_io   : input  logic<4>,
+) {
+    enum St: logic<3> {
+        Idle,
+        Raw,
+        Seq,
+        Gap,
+        Read,
+    }
+    var st    : St       ;
+    var in_q  : logic<4> ; // the pins one tick ago
+    var t     : logic<6> ; // ticks since the start of the current transfer
+    var cur   : logic<24>;
+    var hi    : logic<4> ;
+    var go_q  : logic    ;
+    var sh    : logic<16>; // Seq / Raw: bits (or nibbles) to send, MSB first
+    var nb    : logic<5> ; // Seq / Raw: bits (or nibbles) left
+    var sq    : logic    ; // Seq: QPI nibbles
+    var seq_i : logic<3> ; // init / exit sequence index
+    var div   : logic<2> ;
+    var rx    : logic<8> ;
+    var quad_q: logic    ;
+
+    // inputs from the 100 MHz domain, registered first (5 ns paths)
+    var q_quad  : logic    ;
+    var q_want  : logic    ;
+    var q_addr  : logic<24>;
+    var q_cap   : logic<2> ;
+    var q_spiq  : logic    ;
+    var q_raw_cs: logic    ;
+    var q_raw_go: logic    ;
+    var q_raw_tx: logic<8> ;
+    var m_spiq  : logic    ; // the mode the flash was set up for
+    var q_cont  : logic    ;
+    var m_cont  : logic    ;
+    var cont_on : logic    ; // the flash is in continuous read mode (M5-4 = 10 was sent)
+    var tm      : logic<2> ; // this read: 0 QPI, 1 SPI-Quad with EBh, 2 SPI-Quad continuous
+    var mx      : logic<4> ; // this read's M[7:4] (A: stay continuous, 0: leave)
+    var mexit   : logic    ; // this read leaves continuous mode (then not ready)
+    var chg     : logic    ; // the wanted address is no longer cur (one tick late)
+    var t_hi    : logic<6> ;
+    var t_lo    : logic<6> ;
+    var t_stop  : logic<6> ;
+    var gend    : logic    ; // Gap: last tick
+    var nn      : logic<4> ; // Read: nibble for the next SCLK fall
+    var nn_off  : logic    ; // Read: ... and the pins released
+
+    // nibble sent at SCLK cycle c of a read: QPI (EBh in 2 nibbles, address, M = 0), SPI-Quad
+    // (EBh on IO0 in 8 cycles, address, M = m:0) or SPI-Quad continuous (address, M = m:0)
+    function rd_nib (
+        c : input logic<5> ,
+        a : input logic<24>,
+        md: input logic<2> ,
+        m : input logic<4> ,
+    ) -> logic<4> {
+        if md == 2'd1 {
+            case c {
+                5'd0   : return 4'hF; // EBh = 1110_1011 on IO0
+                5'd1   : return 4'hF;
+                5'd2   : return 4'hF;
+                5'd3   : return 4'hE;
+                5'd4   : return 4'hF;
+                5'd5   : return 4'hE;
+                5'd6   : return 4'hF;
+                5'd7   : return 4'hF;
+                5'd8   : return a[23:20];
+                5'd9   : return a[19:16];
+                5'd10  : return a[15:12];
+                5'd11  : return a[11:8];
+                5'd12  : return a[7:4];
+                5'd13  : return a[3:0];
+                5'd14  : return m;
+                default: return 4'h0;
+            }
+        } else if md == 2'd2 {
+            case c {
+                5'd0   : return a[23:20];
+                5'd1   : return a[19:16];
+                5'd2   : return a[15:12];
+                5'd3   : return a[11:8];
+                5'd4   : return a[7:4];
+                5'd5   : return a[3:0];
+                5'd6   : return m;
+                default: return 4'h0;
+            }
+        } else {
+            case c {
+                5'd0   : return 4'hE;
+                5'd1   : return 4'hB;
+                5'd2   : return a[23:20];
+                5'd3   : return a[19:16];
+                5'd4   : return a[15:12];
+                5'd5   : return a[11:8];
+                5'd6   : return a[7:4];
+                5'd7   : return a[3:0];
+                default: return 4'h0;
+            }
+        }
+    }
+
+    always_ff {
+        if_reset {
+            st         = St::Idle;
+            q_quad     = 0;
+            q_want     = 0;
+            q_addr     = 0;
+            q_cap      = 0;
+            q_spiq     = 0;
+            q_cont     = 0;
+            m_cont     = 0;
+            cont_on    = 0;
+            tm         = 0;
+            mx         = 0;
+            mexit      = 0;
+            m_spiq     = 0;
+            t_stop     = 0;
+            q_raw_cs   = 0;
+            q_raw_go   = 0;
+            q_raw_tx   = 0;
+            chg        = 0;
+            t_hi       = 0;
+            t_lo       = 0;
+            gend       = 0;
+            nn         = 0;
+            nn_off     = 0;
+            in_q       = 0;
+            t          = 0;
+            cur        = 0;
+            hi         = 0;
+            go_q       = 0;
+            sh         = 0;
+            nb         = 0;
+            sq         = 0;
+            seq_i      = 0;
+            div        = 0;
+            rx         = 0;
+            quad_q     = 0;
+            o_ready    = 0;
+            o_data     = 0;
+            o_daddr    = 0;
+            o_dval     = 0;
+            o_raw_rx   = 0;
+            o_raw_done = 0;
+            o_sclk     = 0;
+            o_cs_n     = 1;
+            o_io       = 4'hF;
+            o_io_oe    = 4'b0000;
+        } else {
+            in_q     = i_io;
+            q_quad   = i_quad;
+            q_want   = i_want;
+            q_addr   = i_addr;
+            q_cap    = i_cap;
+            q_spiq   = i_spiq;
+            q_cont   = i_cont;
+            q_raw_cs = i_raw_cs;
+            q_raw_go = i_raw_go;
+            q_raw_tx = i_raw_tx;
+            chg      = (!q_want || q_addr != cur || !q_quad) && !mexit;
+            t_hi     = (case tm {
+                    2'd1   : 6'd41,
+                    2'd2   : 6'd25,
+                    default: 6'd29,
+                }) + {4'd0, q_cap};
+            t_lo = (case tm {
+                    2'd1   : 6'd43,
+                    2'd2   : 6'd27,
+                    default: 6'd31,
+                }) + {4'd0, q_cap};
+            t_stop = case tm {
+                2'd1   : 6'd40,
+                2'd2   : 6'd24,
+                default: 6'd28,
+            };
+            gend   = st == St::Gap && t == 6'd19;
+            nn     = rd_nib(t[5:1] + 5'd1, cur, tm, mx);
+            nn_off = t[5:1] + 5'd1
+                >= (case tm {
+                    2'd1   : 5'd16,
+                    2'd2   : 5'd8,
+                    default: 5'd10,
+                });
+            case st {
+                St::Idle: {
+                    o_sclk = 0;
+                    if o_ready && !q_quad && m_spiq && cont_on {
+                        // leave continuous mode: one read with M = 0
+                        cur     = 0;
+                        tm      = 2'd2;
+                        mx      = 4'h0;
+                        mexit   = 1;
+                        chg     = 0;
+                        seq_i   = 3'd4;
+                        t       = 0;
+                        o_cs_n  = 0;
+                        o_io    = 4'h0;
+                        o_io_oe = 4'b1111;
+                        st      = St::Read;
+                    } else if o_ready && !q_quad && m_spiq {
+                        o_ready = 0;
+                        o_dval  = 0;
+                    } else if o_ready && !q_quad {
+                        // exit QPI: FFh
+                        sh     = 16'hFF00;
+                        nb     = 2;
+                        sq     = 1;
+                        seq_i  = 3'd4;
+                        o_cs_n = 0;
+                        div    = 0;
+                        st     = St::Seq;
+                    } else if !o_ready && q_quad && !quad_q {
+                        // continuous read mode reset (all lines High for 16 clocks), then 50h
+                        m_spiq  = q_spiq;
+                        m_cont  = q_cont && q_spiq;
+                        cont_on = 0;
+                        sh      = 16'hFFFF;
+                        nb      = 16;
+                        sq      = 0;
+                        seq_i   = 3'd5;
+                        o_cs_n  = 0;
+                        div     = 0;
+                        st      = St::Seq;
+                    } else if o_ready && q_want {
+                        cur     = q_addr;
+                        chg     = 0;
+                        t       = 0;
+                        o_cs_n  = 0;
+                        tm      = if !m_spiq ? 2'd0 : if cont_on ? 2'd2 : 2'd1;
+                        mx      = if m_cont ? 4'hA : 4'h0;
+                        o_io    = if !m_spiq ? 4'hE : if cont_on ? q_addr[23:20] : 4'hF;
+                        o_io_oe = 4'b1111;
+                        st      = St::Read;
+                    } else if !o_ready {
+                        o_cs_n = !q_raw_cs;
+                        if q_raw_go != go_q && q_raw_cs {
+                            go_q = q_raw_go;
+                            sh   = {q_raw_tx, 8'h00};
+                            nb   = 8;
+                            div  = 0;
+                            st   = St::Raw;
+                        }
+                    }
+                    if !q_quad {
+                        quad_q = 0;
+                    }
+                }
+                St::Raw: {
+                    // single line, SCLK = clk / 8, mode 0: IO0 out, IO1 in at the rising edge
+                    o_io_oe =  4'b1101; // WP#, HOLD# High
+                    o_io    =  {2'b11, 1'b1, sh[15]};
+                    div     += 1;
+                    if div == 2'd3 {
+                        o_sclk = !o_sclk;
+                        if o_sclk {
+                            // falling: next bit
+                            sh =  {sh[14:0], 1'b0};
+                            nb -= 1;
+                            if nb == 5'd1 {
+                                o_raw_rx   = rx;
+                                o_raw_done = !o_raw_done;
+                                st         = St::Idle;
+                            }
+                        } else {
+                            rx = {rx[6:0], in_q[1]};
+                        }
+                    }
+                }
+                St::Seq: {
+                    // init / exit transfers at clk / 8, single line or QPI
+                    o_io_oe =  4'b1111;
+                    o_io    =  if sq ? sh[15:12] : {3'b111, sh[15]};
+                    div     += 1;
+                    if div == 2'd3 {
+                        o_sclk = !o_sclk;
+                        if o_sclk {
+                            sh =  if sq ? {sh[11:0], 4'h0} : {sh[14:0], 1'b0};
+                            nb -= 1;
+                            if nb == 5'd1 {
+                                st = St::Gap;
+                                t  = 0;
+                            }
+                        }
+                    }
+                }
+                St::Gap: {
+                    // CS high between transfers (>= 50 ns after a status register write)
+                    o_cs_n  =  1;
+                    o_sclk  =  0;
+                    o_io_oe =  4'b0000;
+                    t       += 1;
+                    if gend {
+                        st = St::Idle;
+                        case seq_i {
+                            3'd5: { // 50h
+                                sh     = 16'h5000;
+                                nb     = 8;
+                                sq     = 0;
+                                seq_i  = 3'd0;
+                                o_cs_n = 0;
+                                div    = 0;
+                                st     = St::Seq;
+                            }
+                            3'd0: { // 31h 02h
+                                sh     = 16'h3102;
+                                nb     = 16;
+                                sq     = 0;
+                                seq_i  = 3'd1;
+                                o_cs_n = 0;
+                                div    = 0;
+                                st     = St::Seq;
+                            }
+                            3'd1: { // 38h (or done for SPI-Quad)
+                                sh     = 16'h3800;
+                                nb     = 8;
+                                sq     = 0;
+                                seq_i  = 3'd2;
+                                o_cs_n = 0;
+                                div    = 0;
+                                st     = St::Seq;
+                                if m_spiq {
+                                    st      = St::Idle;
+                                    o_cs_n  = 1;
+                                    seq_i   = 3'd3;
+                                    o_ready = 1;
+                                    quad_q  = 1;
+                                }
+                            }
+                            3'd2: { // C0h 20h in QPI
+                                sh     = 16'hC020;
+                                nb     = 4;
+                                sq     = 1;
+                                seq_i  = 3'd3;
+                                o_cs_n = 0;
+                                div    = 0;
+                                st     = St::Seq;
+                            }
+                            3'd3: {
+                                o_ready = 1;
+                                quad_q  = 1;
+                            }
+                            default: { // after the exit
+                                o_ready = 0;
+                                quad_q  = 0;
+                                o_dval  = 0;
+                            }
+                        }
+                    }
+                }
+                St::Read: {
+                    // t even: SCLK Low (the flash shifts out), t odd: SCLK High (it samples)
+                    t += 1;
+                    if t <= t_stop {
+                        o_sclk = !t[0];
+                    } else {
+                        o_sclk = 0;
+                    }
+                    if !t[0] {
+                        // the next tick is the falling edge of cycle (t+1)/2
+                    }
+                    if t[0] {
+                        // SCLK falls now: drive cycle (t+1)/2
+                        o_io = nn;
+                        if nn_off {
+                            o_io_oe = 4'b0000;
+                        }
+                    }
+                    if t == t_hi {
+                        hi = in_q;
+                    }
+                    if t == t_lo {
+                        o_data  = {hi, in_q};
+                        o_daddr = cur;
+                        o_dval  = !mexit;
+                        o_cs_n  = 1;
+                        o_io_oe = 4'b0000;
+                        st      = St::Gap;
+                        t       = 6'd18; // 2 ticks of CS high
+                        cont_on = m_cont && !mexit;
+                        mexit   = 0;
+                    }
+                    if chg {
+                        // abandon (a continuous-mode read abandoned in its address keeps the mode;
+                        // a read with EBh counts once the M bits are in)
+                        if tm == 2'd1 && t >= 6'd31 {
+                            cont_on = m_cont;
+                        }
+                        o_cs_n  = 1;
+                        o_sclk  = 0;
+                        o_io_oe = 4'b0000;
+                        st      = St::Gap;
+                        t       = 6'd18;
+                    }
+                }
+                default: st = St::Idle;
+            }
+        }
+    }
+}

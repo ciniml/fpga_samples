@@ -1,0 +1,144 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file cart_power.veryl
+ * @brief ModRetro Chromatic cartridge slot power / isolation sequencer.
+ *
+ * Board facts (from the pin usage of ModRetro/oss-chromatic-console-fpga
+ * v18.14, GPL-3.0; this is an independent implementation):
+ *   - CART_PWR_EN (High = slot 5 V on) and CART_CTRL_OE (High = control
+ *     line level shifters enabled) exist on newer boards.
+ *   - VERSION_DET is pulled Low on newer boards. On older ("legacy")
+ *     boards it reads High: the slot is powered with the power switch and
+ *     the FPGA has no power control, the shifter OE follows the switch.
+ *
+ * New boards: Off -> PowerUp (50 ms, 5 V on, shifters off) -> Settle
+ * (10 ms, shifters on) -> Running (bus passes through). Leaving any
+ * powered state goes through PowerDown (10 ms: 5 V and shifters off, bus
+ * idle with the data lines released) before Off. In Off the bus must be driven Low (o_drive_low) so that no
+ * current flows from the signal lines into the unpowered cartridge.
+ *
+ * Legacy boards: o_ready follows i_enable after a short settle; the bus
+ * is never driven Low (the cartridge is powered whenever the console is).
+ */
+pub module CartPower #(
+    param CLK_HZ: u32 = 33_554_432,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_enable     : input logic, // request slot power (gate with "switch on" outside)
+    i_version_det: input logic, // VERSION_DET pin (1 = legacy board)
+
+    o_legacy   : output logic, // latched board type
+    o_ready    : output logic, // bus may be used
+    o_pwr_en   : output logic, // CART_PWR_EN
+    o_ctrl_oe  : output logic, // CART_CTRL_OE
+    o_drive_low: output logic, // drive every cartridge line Low (new board, Off)
+) {
+    const POWER_UP_CYCLES  : u32 = CLK_HZ / 20; // 50 ms
+    const SETTLE_CYCLES    : u32 = CLK_HZ / 100; // 10 ms
+    const POWER_DOWN_CYCLES: u32 = CLK_HZ / 100; // 10 ms
+
+    enum State: logic<3> {
+        Off,
+        PowerUp,
+        Settle,
+        Running,
+        PowerDown,
+    }
+
+    var state  : State   ;
+    var timer  : logic<32>;
+    var en_sync: logic<2>;
+    var vd_sync: logic<2>;
+    var vd_cnt : logic<3>;
+    var legacy : logic   ;
+
+    always_ff {
+        if_reset {
+            en_sync = 0;
+            vd_sync = 0;
+            vd_cnt  = 0;
+            legacy  = 0;
+        } else {
+            en_sync = {en_sync[0], i_enable};
+            vd_sync = {vd_sync[0], i_version_det};
+            // the strap is static: latch it once after synchronisation
+            if vd_cnt != 3'd7 {
+                vd_cnt = vd_cnt + 3'd1;
+                legacy = vd_sync[1];
+            }
+        }
+    }
+
+    let strap_valid: logic = vd_cnt == 3'd7;
+
+    always_ff {
+        if_reset {
+            state = State::Off;
+            timer = 0;
+        } else {
+            case state {
+                State::Off: {
+                    timer = 0;
+                    if strap_valid && en_sync[1] {
+                        state = State::PowerUp;
+                    }
+                }
+                State::PowerUp: {
+                    if !en_sync[1] {
+                        state = State::PowerDown;
+                        timer = 0;
+                    } else if timer == (if legacy ? SETTLE_CYCLES : POWER_UP_CYCLES) - 1 {
+                        state = State::Settle;
+                        timer = 0;
+                    } else {
+                        timer += 1;
+                    }
+                }
+                State::Settle: {
+                    if !en_sync[1] {
+                        state = State::PowerDown;
+                        timer = 0;
+                    } else if timer == SETTLE_CYCLES - 1 {
+                        state = State::Running;
+                        timer = 0;
+                    } else {
+                        timer += 1;
+                    }
+                }
+                State::Running: {
+                    if !en_sync[1] {
+                        state = State::PowerDown;
+                        timer = 0;
+                    }
+                }
+                State::PowerDown: {
+                    // finish the shutdown even if re-enabled meanwhile
+                    if timer == POWER_DOWN_CYCLES - 1 {
+                        state = State::Off;
+                        timer = 0;
+                    } else {
+                        timer += 1;
+                    }
+                }
+                default: {
+                    state = State::Off;
+                    timer = 0;
+                }
+            }
+        }
+    }
+
+    let on_new: logic = state == State::PowerUp || state == State::Settle || state == State::Running;
+
+    assign o_legacy    = legacy;
+    assign o_ready     = state == State::Running;
+    assign o_pwr_en    = !legacy && on_new;
+    assign o_ctrl_oe   = if legacy ? en_sync[1] : (state == State::Settle || state == State::Running);
+    assign o_drive_low = !legacy && (state == State::Off || !strap_valid);
+}

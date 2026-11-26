@@ -1,0 +1,594 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file gb_camera.veryl
+ * @brief The camera of a Game Boy Camera style cartridge (GameCart mapper 6): the registers at
+ *        0xA000 (RAM bank 10h-1Fh), a 128x112 8-bit frame from the camera clock domain, and the
+ *        shot: the frame turned into 2 bpp tiles in cartridge RAM bank 0 at 0xA100-0xAEFF.
+ *
+ * Registers (as the Game Boy Camera; 0x00-0x35, the rest ignored):
+ *   0x00  bit 0: write 1 to shoot, reads 1 until the image is in RAM (only register read back)
+ *   0x01  bits 4-0 gain, bits 7-5 = 111: edge enhancement
+ *   0x02  exposure [15:8], 0x03 exposure [7:0] (0x1000 = x1)
+ *   0x04  bits 6-4 edge ratio (0.5 0.75 1 1.25 2 3 4 5), bit 3 invert
+ *   0x06-0x35  dither thresholds: 4x4 pixels x 3 levels, ((x & 3) + (y & 3) * 4) * 3
+ *   0x36  (not in the Game Boy Camera) bit 0: colour; a shot quantises the colour frame (RGB565 from
+ *         IspGbScale) with GbColorQuant instead: the tiles hold colour indices, RAM bank 0 0x0F00 the
+ *         BG attributes, 0x1000 the 4 palettes of every tile row (registers 0x01-0x35 not used)
+ * A shot waits for the next complete frame (or TIMEOUT clocks without one: the frame as it is),
+ * then for every pixel, as SameBoy's camera.c does it in integers:
+ *   p(x, y) = (v * gain[0x01 & 0x1F] * exposure) >> 20, v = the frame (255 - v when inverted),
+ *             x and y clamped to the image
+ *   c = p + trunc(r * (4 p - p(x-1, y) - p(x+1, y) - p(x, y-1) - p(x, y+1))) with edge enhancement
+ *   colour 3 if c < t0, 2 if c < t1, 1 if c < t2, else 0 (t = the pixel's dither thresholds)
+ * and writes each tile row as its two bytes at 0x100 + tile * 16 + row * 2.
+ * One frame buffer read per clock: 14336 clocks a shot, 5 x that with edge enhancement.
+ *
+ * Host reads (i_h_ra, one clock): 0x0000-0x37FF the frame (y * 128 + x; while a shot reads the
+ * frame the data is the shot's), 0x4000-0x4036 the registers, 0x8000-0xEFFF the colour frame
+ * (RGB565, pixel * 2, low byte first), 0x4040 status: frames u32,
+ * shots u32, timeouts u16, last shot in clocks u32, {busy}.
+ */
+pub module GbCamera #(
+    param TIMEOUT: u32 = 10_000_000, // clocks to wait for a frame
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    // frame buffer writes and the frame-complete toggle (camera clock domain)
+    i_pclk : input 'p clock    ,
+    i_fb_we: input 'p logic    ,
+    i_fb_wa: input 'p logic<14>,
+    i_fb_wd: input 'p logic<8> ,
+    i_fb_cwd: input 'p logic<16>,
+    i_frame: input 'p logic    ,
+
+    // GameCart: register writes, register 0, shot in progress, RAM bank 0 writes
+    i_reg_we: input  logic    ,
+    i_reg_a : input  logic<7> ,
+    i_reg_d : input  logic<8> ,
+    o_reg0  : output logic<8> ,
+    o_busy  : output logic    ,
+    o_ram_we: output logic    ,
+    o_ram_wa: output logic<13>,
+    o_ram_wd: output logic<8> ,
+
+    // host reads
+    i_h_ra: input  logic<16>,
+    o_h_q : output logic<8> ,
+) {
+    // ---- frame buffers: 7 blocks of 2048 each (14336, not 16384: 7 + 14 block RAMs) ----
+    var fb_ra : logic<14>     ;
+    var cfb_ra: logic<14>     ;
+    var fb_qs : logic<8>  [7] ;
+    var cfb_qs: logic<16> [7] ;
+    var fb_bk : logic<3>      ; // the block read the clock before
+    var cfb_bk: logic<3>      ;
+    for b in 0..7 :g_fb {
+        #[sv("syn_ramstyle = \"block_ram\"")]
+        var mem: 'p logic<8> [2048];
+        #[sv("syn_ramstyle = \"block_ram\"")]
+        var cmem: 'p logic<16> [2048];
+        always_ff (i_pclk) {
+            if i_fb_we && i_fb_wa[13:11] == b as 3 {
+                mem[i_fb_wa[10:0]]  = i_fb_wd;
+                cmem[i_fb_wa[10:0]] = i_fb_cwd;
+            }
+        }
+        unsafe (cdc) {
+            always_ff (i_clk) {
+                fb_qs[b]  = mem[fb_ra[10:0]];
+                cfb_qs[b] = cmem[cfb_ra[10:0]];
+            }
+        }
+    }
+    always_ff (i_clk) {
+        fb_bk  = fb_ra[13:11];
+        cfb_bk = cfb_ra[13:11];
+    }
+    let fb_q : logic<8>  = fb_qs[fb_bk];
+    let cfb_q: logic<16> = cfb_qs[cfb_bk];
+
+    // ---- frame toggle ----
+    var fr_s: logic<3>;
+    unsafe (cdc) {
+        always_ff (i_clk, i_rst) {
+            if_reset {
+                fr_s = 0;
+            } else {
+                fr_s = {fr_s[1:0], i_frame};
+            }
+        }
+    }
+    let frame_ev: logic = fr_s[2] != fr_s[1];
+
+    // ---- registers ----
+    var regs: logic<8> [55];
+    for i in 0..55 :g_reg {
+        always_ff (i_clk, i_rst) {
+            if_reset {
+                regs[i] = 0;
+            } else if i_reg_we && i_reg_a == i as 7 {
+                regs[i] = i_reg_d;
+            }
+        }
+    }
+
+    function gain_q (
+        g: input logic<5>,
+    ) -> logic<9> {
+        case g {
+            5'd0   : return 9'd226;
+            5'd1   : return 9'd234;
+            5'd2   : return 9'd242;
+            5'd3   : return 9'd249;
+            5'd4   : return 9'd256;
+            5'd5   : return 9'd262;
+            5'd6   : return 9'd268;
+            5'd7   : return 9'd273;
+            5'd8   : return 9'd278;
+            5'd9   : return 9'd288;
+            5'd10  : return 9'd296;
+            5'd11  : return 9'd304;
+            5'd12  : return 9'd311;
+            5'd13  : return 9'd317;
+            5'd14  : return 9'd326;
+            5'd15  : return 9'd337;
+            5'd16  : return 9'd346;
+            5'd17  : return 9'd355;
+            5'd18  : return 9'd362;
+            5'd19  : return 9'd370;
+            5'd20  : return 9'd376;
+            5'd21  : return 9'd382;
+            5'd22  : return 9'd388;
+            5'd23  : return 9'd393;
+            5'd24  : return 9'd398;
+            5'd25  : return 9'd403;
+            5'd26  : return 9'd407;
+            5'd27  : return 9'd412;
+            5'd28  : return 9'd416;
+            5'd29  : return 9'd419;
+            5'd30  : return 9'd423;
+            default: return 9'd427;
+        }
+    }
+
+    // edge ratio in quarters
+    function ratio_q (
+        e: input logic<3>,
+    ) -> logic<5> {
+        case e {
+            3'd0   : return 5'd2;
+            3'd1   : return 5'd3;
+            3'd2   : return 5'd4;
+            3'd3   : return 5'd5;
+            3'd4   : return 5'd8;
+            3'd5   : return 5'd12;
+            3'd6   : return 5'd16;
+            default: return 5'd20;
+        }
+    }
+
+    // ---- shot ----
+    enum Shot: logic<3> {
+        Idle,
+        Wait,
+        Run,
+        Drain,
+        Quant,
+        Fin,
+    }
+    var st   : Shot     ;
+    var tmo  : logic<24>;
+    var gq   : logic<9> ; // shot parameters, taken when the frame is there
+    var expo : logic<16>;
+    var edg  : logic    ;
+    var rq   : logic<5> ;
+    var inv  : logic    ;
+    var t    : logic<8> ; // tile 0..223 (ty = t[7:4], tx = t[3:0])
+    var r    : logic<3> ; // row in the tile
+    var x    : logic<3> ; // pixel in the row
+    var n    : logic<3> ; // read: 0 the pixel, 1 left, 2 right, 3 up, 4 down
+    var drn  : logic<4> ;
+    var q_go : logic    ; // GbColorQuant (held until it is busy)
+    var q_ce : logic    ; // its clock enable: every other clock
+    var q_bz : logic    ;
+    var q_ra : logic<14>;
+    var q_we : logic    ;
+    var q_wa : logic<13>;
+    var q_wd : logic<8> ;
+    var n_frm: logic<32>;
+    var n_sht: logic<32>;
+    var n_tmo: logic<16>;
+    var cyc  : logic<32>;
+    var last : logic<32>;
+
+    let px    : logic<7> = {t[3:0], x};
+    let py    : logic<7> = {t[7:4], r};
+    let nlast : logic    = !edg || n == 3'd4;
+    let i_last: logic    = t == 8'd223 && r == 3'd7 && x == 3'd7 && nlast;
+    let rx    : logic<7> = case n {
+        3'd1   : if px == 7'd0 ? 7'd0 : px - 7'd1,
+        3'd2   : if px == 7'd127 ? 7'd127 : px + 7'd1,
+        default: px,
+    };
+    let ry: logic<7> = case n {
+        3'd3   : if py == 7'd0 ? 7'd0 : py - 7'd1,
+        3'd4   : if py == 7'd111 ? 7'd111 : py + 7'd1,
+        default: py,
+    };
+    let issue : logic     = st == Shot::Run;
+
+    let reg0_w: logic     = i_reg_we && i_reg_a == 7'd0;
+    let h_isfb: logic     = !i_h_ra[15] && !i_h_ra[14];
+    assign fb_ra  = if issue ? {ry, rx} : i_h_ra[13:0];
+    assign cfb_ra = if q_bz ? q_ra : i_h_ra[14:1];
+    inst u_quant: GbColorQuant (
+        i_clk           ,
+        i_rst           ,
+        i_ce   : q_ce   ,
+        i_start: q_go   ,
+        o_busy : q_bz   ,
+        o_ra   : q_ra   ,
+        i_rq   : cfb_q  ,
+        o_we   : q_we   ,
+        o_wa   : q_wa   ,
+        o_wd   : q_wd   ,
+    );
+
+    // pipeline tags: {first, last read of the pixel, end of a tile row, dither index, byte address}
+    // s1: fb_q; s2: v * gain; s3: * exposure; s4: sums; s5: edge term, thresholds; s6: the pixel; then the colour
+    var s1_v : logic    ;
+    var s1_f : logic    ;
+    var s1_l : logic    ;
+    var s1_e : logic    ;
+    var s1_di: logic<4> ;
+    var s1_ba: logic<13>;
+    var s2_v : logic    ;
+    var s2_f : logic    ;
+    var s2_l : logic    ;
+    var s2_e : logic    ;
+    var s2_di: logic<4> ;
+    var s2_ba: logic<13>;
+    var s2_m : logic<17>;
+    var s3_v : logic    ;
+    var s3_f : logic    ;
+    var s3_l : logic    ;
+    var s3_e : logic    ;
+    var s3_di: logic<4> ;
+    var s3_ba: logic<13>;
+    var s3_p : logic<14>;
+    var c0   : logic<14>;
+    var sum4 : logic<16>;
+    var s4_v : logic    ;
+    var s4_e : logic    ;
+    var s4_di: logic<4> ;
+    var s4_ba: logic<13>;
+    var s4_c0: logic<14>;
+    var s4_s : logic<16>;
+    var s5_v : logic    ;
+    var s5_e : logic    ;
+    var s5_di: logic<4> ;
+    var s5_ba: logic<13>;
+    var s5_c0: logic<14>;
+    var s5_neg: logic   ;
+    var s5_dq: logic<20>;
+    var s5_t0: logic<8> ;
+    var s5_t1: logic<8> ;
+    var s5_t2: logic<8> ;
+    var s6_v : logic    ;
+    var s6_e : logic    ;
+    var s6_ba: logic<13>;
+    var s6_c : logic<22>;
+    var s6_t0: logic<8> ;
+    var s6_t1: logic<8> ;
+    var s6_t2: logic<8> ;
+    var plo  : logic<8> ;
+    var phi  : logic<8> ;
+    var w_hi : logic    ; // second byte of the tile row next clock
+    var w_ba : logic<13>;
+
+    let vin : logic<8>  = if inv ? ~fb_q : fb_q;
+    let m3  : logic<33> = (s2_m as 33) * (expo as 33);
+    let p3  : logic<14> = m3[32:20] as 14; // at most 255 * 427 * 65535 >> 20 = 6805
+    // edge enhancement: d = 4 c0 - sum (s4), dq = trunc(|d| * r / 4) (s5), c = c0 +- dq (s6)
+    let d   : logic<18> = ({s4_c0, 2'b00} as 18) - (s4_s as 18);
+    let dneg: logic     = d[17];
+    let dmag: logic<17> = if dneg ? (0 as 17) - d[16:0] : d[16:0];
+    let dprd: logic<22> = (dmag as 22) * (rq as 22);
+    let cs  : logic<22> = if !edg ? (s5_c0 as 22) : if s5_neg ? (s5_c0 as 22) - (s5_dq as 22) : (s5_c0 as 22) + (s5_dq as 22);
+    let tb  : logic<6>  = 6'd6 + ({s4_di, 1'b0} as 6) + (s4_di as 6); // 6 + di * 3
+    let cneg: logic     = s6_c[21];
+    let col : logic<2>  = if cneg || s6_c <: (s6_t0 as 22) ? 2'd3 : if s6_c <: (s6_t1 as 22) ? 2'd2 : if s6_c <: (s6_t2 as 22) ? 2'd1 : 2'd0;
+
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            st    = Shot::Idle;
+            tmo   = 0;
+            gq    = 0;
+            expo  = 0;
+            edg   = 0;
+            rq    = 0;
+            inv   = 0;
+            t     = 0;
+            r     = 0;
+            x     = 0;
+            n     = 0;
+            drn   = 0;
+            q_go  = 0;
+            q_ce  = 0;
+            n_frm = 0;
+            n_sht = 0;
+            n_tmo = 0;
+            cyc   = 0;
+            last  = 0;
+            o_busy = 0;
+            s1_v  = 0;
+            s1_f  = 0;
+            s1_l  = 0;
+            s1_e  = 0;
+            s1_di = 0;
+            s1_ba = 0;
+            s2_v  = 0;
+            s2_f  = 0;
+            s2_l  = 0;
+            s2_e  = 0;
+            s2_di = 0;
+            s2_ba = 0;
+            s2_m  = 0;
+            s3_v  = 0;
+            s3_f  = 0;
+            s3_l  = 0;
+            s3_e  = 0;
+            s3_di = 0;
+            s3_ba = 0;
+            s3_p  = 0;
+            c0    = 0;
+            sum4  = 0;
+            s4_v  = 0;
+            s4_e  = 0;
+            s4_di = 0;
+            s4_ba = 0;
+            s4_c0 = 0;
+            s4_s  = 0;
+            s5_v  = 0;
+            s5_e  = 0;
+            s5_di = 0;
+            s5_ba = 0;
+            s5_c0 = 0;
+            s5_neg = 0;
+            s5_dq = 0;
+            s5_t0 = 0;
+            s5_t1 = 0;
+            s5_t2 = 0;
+            s6_v  = 0;
+            s6_e  = 0;
+            s6_ba = 0;
+            s6_c  = 0;
+            s6_t0 = 0;
+            s6_t1 = 0;
+            s6_t2 = 0;
+            plo   = 0;
+            phi   = 0;
+            w_hi  = 0;
+            w_ba  = 0;
+            o_ram_we = 0;
+            o_ram_wa = 0;
+            o_ram_wd = 0;
+        } else {
+            if frame_ev {
+                n_frm += 1;
+            }
+            if st != Shot::Idle {
+                cyc += 1;
+            }
+            case st {
+                Shot::Idle: {
+                    if reg0_w && i_reg_d[0] {
+                        o_busy = 1;
+                        cyc    = 0;
+                        tmo    = 0;
+                        st     = Shot::Wait;
+                    }
+                }
+                Shot::Wait: {
+                    tmo += 1;
+                    if frame_ev || tmo == TIMEOUT[23:0] {
+                        if !frame_ev {
+                            n_tmo += 1;
+                        }
+                        gq   = gain_q(regs[1][4:0]);
+                        expo = {regs[2], regs[3]};
+                        edg  = regs[1][7:5] == 3'b111;
+                        rq   = ratio_q(regs[4][6:4]);
+                        inv  = regs[4][3];
+                        t    = 0;
+                        r    = 0;
+                        x    = 0;
+                        n    = 0;
+                        if regs[54][0] {
+                            q_go = 1;
+                            st   = Shot::Quant;
+                        } else {
+                            st = Shot::Run;
+                        }
+                    }
+                }
+                Shot::Quant: {
+                    if !q_go && !q_bz {
+                        drn = 0;
+                        st  = Shot::Fin;
+                    }
+                }
+                Shot::Run: {
+                    // one frame buffer read per clock
+                    if nlast {
+                        n = 0;
+                        x += 1;
+                        if x == 3'd7 {
+                            r += 1;
+                            if r == 3'd7 {
+                                t += 1;
+                            }
+                        }
+                    } else {
+                        n += 1;
+                    }
+                    if i_last {
+                        drn = 0;
+                        st  = Shot::Drain;
+                    }
+                }
+                Shot::Drain: {
+                    // the pipeline's last RAM writes
+                    drn += 1;
+                    if drn == 4'd10 {
+                        drn = 0;
+                        st  = Shot::Fin;
+                    }
+                }
+                default: {
+                    drn += 1;
+                    if drn == 4'd3 {
+                        n_sht  += 1;
+                        last   =  cyc;
+                        o_busy =  0;
+                        st     =  Shot::Idle;
+                    }
+                }
+            }
+            q_ce = !q_ce;
+            if q_go && q_bz {
+                q_go = 0;
+            }
+
+            // s1: the read's data is in fb_q
+            s1_v  = issue;
+            s1_f  = n == 3'd0;
+            s1_l  = nlast;
+            s1_e  = x == 3'd7 && nlast;
+            s1_di = {py[1:0], px[1:0]};
+            s1_ba = 13'h100 + ({t, r, 1'b0} as 13);
+            // s2: v * gain
+            s2_v  = s1_v;
+            s2_f  = s1_f;
+            s2_l  = s1_l;
+            s2_e  = s1_e;
+            s2_di = s1_di;
+            s2_ba = s1_ba;
+            s2_m  = (vin as 17) * (gq as 17);
+            // s3: * exposure
+            s3_v  = s2_v;
+            s3_f  = s2_f;
+            s3_l  = s2_l;
+            s3_e  = s2_e;
+            s3_di = s2_di;
+            s3_ba = s2_ba;
+            s3_p  = p3;
+            // s4: the pixel and the sum of its neighbours
+            if s3_v {
+                if s3_f {
+                    c0   = s3_p;
+                    sum4 = 0;
+                } else {
+                    sum4 += (s3_p as 16);
+                }
+            }
+            s4_v  = s3_v && s3_l;
+            s4_e  = s3_e;
+            s4_di = s3_di;
+            s4_ba = s3_ba;
+            s4_c0 = if s3_f ? s3_p : c0;
+            s4_s  = if s3_f ? 16'd0 : sum4 + (s3_p as 16);
+            // s5: the edge term
+            s5_v   = s4_v;
+            s5_e   = s4_e;
+            s5_di  = s4_di;
+            s5_ba  = s4_ba;
+            s5_c0  = s4_c0;
+            s5_neg = dneg;
+            s5_dq  = dprd[21:2];
+            s5_t0  = regs[tb];
+            s5_t1  = regs[tb + 6'd1];
+            s5_t2  = regs[tb + 6'd2];
+            // s6: the pixel with the edge term, and its thresholds
+            s6_v  = s5_v;
+            s6_e  = s5_e;
+            s6_ba = s5_ba;
+            s6_c  = cs;
+            s6_t0 = s5_t0;
+            s6_t1 = s5_t1;
+            s6_t2 = s5_t2;
+            // colour into the tile row's two bytes, then RAM
+            o_ram_we = 0;
+            if q_we {
+                o_ram_we = 1;
+                o_ram_wa = q_wa;
+                o_ram_wd = q_wd;
+            }
+            if w_hi {
+                w_hi     = 0;
+                o_ram_we = 1;
+                o_ram_wa = w_ba + 13'd1;
+                o_ram_wd = phi;
+            }
+            if s6_v {
+                plo = {plo[6:0], col[0]};
+                phi = {phi[6:0], col[1]};
+                if s6_e {
+                    o_ram_we = 1;
+                    o_ram_wa = s6_ba;
+                    o_ram_wd = {plo[6:0], col[0]};
+                    w_hi     = 1;
+                    w_ba     = s6_ba;
+                }
+            }
+        }
+    }
+    assign o_reg0 = {regs[0][7:1], o_busy};
+
+    // ---- host reads ----
+    var h_fb : logic   ;
+    var h_cf : logic   ; // the colour frame
+    var h_hb : logic   ; // ... its high byte
+    var h_st : logic<8>;
+    let ha   : logic<7> = i_h_ra[6:0];
+    always_ff (i_clk, i_rst) {
+        if_reset {
+            h_fb = 0;
+            h_cf = 0;
+            h_hb = 0;
+            h_st = 0;
+        } else {
+            h_fb = h_isfb;
+            h_cf = i_h_ra[15];
+            h_hb = i_h_ra[0];
+            if !i_h_ra[6] {
+                h_st = if ha <: 7'd55 ? regs[ha[5:0]] : 8'h00;
+            } else {
+                h_st = case ha[5:0] {
+                    6'd0   : n_frm[7:0],
+                    6'd1   : n_frm[15:8],
+                    6'd2   : n_frm[23:16],
+                    6'd3   : n_frm[31:24],
+                    6'd4   : n_sht[7:0],
+                    6'd5   : n_sht[15:8],
+                    6'd6   : n_sht[23:16],
+                    6'd7   : n_sht[31:24],
+                    6'd8   : n_tmo[7:0],
+                    6'd9   : n_tmo[15:8],
+                    6'd10  : last[7:0],
+                    6'd11  : last[15:8],
+                    6'd12  : last[23:16],
+                    6'd13  : last[31:24],
+                    6'd14  : {6'd0, st == Shot::Wait, o_busy},
+                    default: 8'h00,
+                };
+            }
+        }
+    }
+    assign o_h_q = if h_cf ? (if h_hb ? cfb_q[15:8] : cfb_q[7:0]) : if h_fb ? fb_q : h_st;
+}

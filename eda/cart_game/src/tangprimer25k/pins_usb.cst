@@ -1,0 +1,16 @@
+// Pmod USB HS Single (eda/pmod_usb_hs/hw/Pmod_USB_HS_Single) in the Dock slot USB_PMOD: project.tcl fills
+// the @...@ balls from eda/targets/tangprimer25k/pmod_ports.csv and appends this to pins.cst (pins_gen.cst).
+// As eda/usb_device/src/tangprimer25k/pins_sl.cst.
+IO_LOC "usb_dp" @DX_P@,@DX_N@;
+IO_PORT "usb_dp" IO_TYPE=LVCMOS33D PULL_MODE=NONE DIFF_RESISTOR=OFF DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "usb_cmp_dp" @CMP_P@,@CMP_N@;
+IO_PORT "usb_cmp_dp" IO_TYPE=LVDS25 PULL_MODE=NONE DIFF_RESISTOR=OFF BANK_VCCIO=3.3;
+IO_LOC "usb_term_dp" @TERM_DP@;
+IO_PORT "usb_term_dp" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "usb_term_dn" @TERM_DN@;
+IO_PORT "usb_term_dn" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "usb_pullup" @PULLUP@;
+IO_PORT "usb_pullup" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+IO_LOC "vbus_det" @VBUS@;
+// no internal pull-down: it would load the board's 100k / 150k divider below VIH
+IO_PORT "vbus_det" IO_TYPE=LVCMOS33 PULL_MODE=NONE BANK_VCCIO=3.3;

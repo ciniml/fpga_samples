@@ -31,6 +31,9 @@ PROJECT_ADDITIONAL_CLEAN ?=
 
 PROGRAMMER_FLASH_OP_INDEX ?= 6
 OPENFPGA_LOADER_DEVICE_OVERRIDE ?=
+# extra options of the openFPGALoader flash write (deploy), and targets run before it (target.mk)
+OPENFPGA_LOADER_FLASH_OPTS ?= --unprotect-flash
+DEPLOY_PREREQ ?=
 
 PROJECT_TCL ?= ../../project.tcl
 
@@ -55,12 +58,12 @@ else
 	$(OPENFPGA_LOADER) $(OPENFPGA_LOADER_TARGET) $(OPENFPGA_LOADER_DEVICE_OVERRIDE) --write-sram $(abspath $(BITSTREAM))
 endif
 
-deploy: $(BITSTREAM)
+deploy: $(BITSTREAM) $(DEPLOY_PREREQ)
 ifeq ($(USE_OPENFPGA_LOADER),0)
 	if lsmod | grep ftdi_sio; then sudo modprobe -r ftdi_sio; fi
 	cd $(PROGRAMMER_CLI_DIR); ./programmer_cli $(PROGRAMMER_CABLE) $(CABLE_INDEX_OPT) --device $(DEVICE) --run $(PROGRAMMER_FLASH_OP_INDEX) --fsFile $(abspath $(BITSTREAM))
 else
-	$(OPENFPGA_LOADER) $(OPENFPGA_LOADER_TARGET) $(OPENFPGA_LOADER_DEVICE_OVERRIDE) --write-flash $(abspath $(BITSTREAM)) --unprotect-flash
+	$(OPENFPGA_LOADER) $(OPENFPGA_LOADER_TARGET) $(OPENFPGA_LOADER_DEVICE_OVERRIDE) --write-flash $(abspath $(BITSTREAM)) $(OPENFPGA_LOADER_FLASH_OPTS)
 endif
 
 clean:
@@ -71,3 +74,6 @@ endif
 
 $(MAPPMOD):
 	cd $(MAPPMOD_DIR); cargo build --release
+
+# optional target-specific rules (kept out of target.mk so that they do not become the default goal)
+-include $(TARGET_DEF_DIR)/rules.mk

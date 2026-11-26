@@ -14,6 +14,9 @@
  *  csi2_cont     : continuous clock
  *  csi2_trim     : lane 1 1.5 ns late, fixed by its sample offset (+6)
  *  csi2_912_long : 15 frames (150 packets) at 912 Mbps, +300 ppm, jitter
+ *  csi2_672_psync: 672 Mbps continuous clock (Pcam 5C 1080p), zero payload
+ *                  with 0xB8 at every early offset: no restart mid-packet
+ *  csi2_912_psync: the same at 912 Mbps, non-continuous clock, LP chatter
  */
 module TbCsi2 {}
 
@@ -48,4 +51,12 @@ module csi2_trim; csi2_rx_body #(.SKEW1_NS(1.5), .OFS1(14), .SEED(6), .RUN(1)) b
 #[test(csi2_912_long)]
 embed (inline) sv{{{
 module csi2_912_long; csi2_rx_body #(.UI_NS(1.0965), .NFRAMES(15), .PPM(300), .JITTER(0.05), .SEED(14), .RUN(1)) body(); endmodule
+}}}
+#[test(csi2_672_psync)]
+embed (inline) sv{{{
+module csi2_672_psync; csi2_rx_body #(.UI_NS(1.4881), .CONT_CLK(1), .PAYLOAD_SYNC(1), .NLINES(16), .LP_NOISE(0), .SEED(21), .RUN(1)) body(); endmodule
+}}}
+#[test(csi2_912_psync)]
+embed (inline) sv{{{
+module csi2_912_psync; csi2_rx_body #(.UI_NS(1.0965), .PAYLOAD_SYNC(1), .NLINES(16), .SEED(22), .RUN(1)) body(); endmodule
 }}}

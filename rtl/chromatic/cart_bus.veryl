@@ -1,0 +1,365 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file cart_bus.veryl
+ * @brief Game Boy cartridge bus master for ROM reading (ModRetro Chromatic
+ *        slot: every line through level shifters, CART_DATA_DIR_E selects
+ *        the data shifter direction, 0 = FPGA -> cartridge).
+ *
+ * One request = one bus cycle of CYCLE clocks (60 at 60 MHz = 1 us, the
+ * speed of a single-speed Game Boy), starting at the clock the request is
+ * taken. PHI (o_clk) is High for the first half of every cycle and keeps
+ * running while the bus is ready (an idle gap stretches it slightly).
+ *
+ * Read (t = clock within the cycle):
+ *   t0 address, /RD High ... t1 /RD Low (and /CS Low for a cartridge RAM
+ *   read, see below) ... t(CYCLE-3) sample D ... t(CYCLE-1) /RD, /CS High
+ * Write (MBC register only):
+ *   t0 address, /RD High; t1 DIR_E = 0 (FPGA -> cart); t2 drive D;
+ *   t(CYCLE/2-2) /WR Low; t(CYCLE-4) /WR High (the MBC latches here);
+ *   t(CYCLE-3) release D; t(CYCLE-2) DIR_E = 1
+ * (CYCLE >= 16; the times are the clocks at which the registered pins
+ * change, relative to each other)
+ *
+ * Safety, enforced here whatever the requester asks for:
+ *   - A write cycle is generated only for these MBC register addresses:
+ *       0x0000 with data 0x00 (RAM / RTC disable), or 0x0A (RAM enable)
+ *              only while i_ram_mode
+ *       0x2000, 0x2100 (MBC2 ROM bank), 0x3000 (MBC5 bank bit 8),
+ *       0x4000 with data 0x00-0x0F (MBC1 upper bits / RAM bank; keeps
+ *              the Pocket Camera registers (0x10) and MBC7 (0x40) out)
+ *       0x6000
+ *     Anything else is refused (o_rsp_reject, no bus activity). The AMD
+ *     flash command addresses (0x0555 / 0x0AAA / 0x2AAA / 0x5555) and
+ *     cartridge RAM (0xA000-0xBFFF) can thus never be written.
+ *   - /CS (the cartridge RAM select) is asserted only for reads of
+ *     0xA000-0xBFFF while i_ram_mode, together with /RD; never with /WR.
+ *     A cycle in progress drops /CS as soon as i_ram_mode falls.
+ *   - Privileged requests (i_req_priv, only from Mbc7Eeprom through
+ *     CartCmd) may additionally write, while i_ram_mode and o_ram_on:
+ *       0x4000 <- 0x40 / 0x00 (MBC7 RAM enable 2)
+ *       0xA080 <- CS / CLK / DI bits only (the MBC7 EEPROM register), the
+ *              only write cycle ever made with /CS Low (/CS around /WR)
+ *   - Flash-class requests (i_req_flash, only from FlashEngine through
+ *     CartCmd) may write any address below 0x8000 while i_flash_mode
+ *     (the AMD command sequences of a flash cartridge; never with /CS).
+ *     After such a write (o_flash_dirty) this module writes 0x0000 <- 0xF0
+ *     (flash reset) itself as soon as i_flash_mode falls, before any other
+ *     request; the requester keeps the slot powered until then.
+ *   - After a RAM enable (o_ram_on), the RAM is disabled again by this
+ *     module itself (a 0x0000 <- 0x00 cycle of its own, before any other
+ *     request) as soon as i_ram_mode falls. The requester keeps the slot
+ *     powered while o_ram_on, so the power never goes down with the
+ *     cartridge RAM enabled (unless the cartridge is pulled out).
+ *
+ * Pin states outside the ready state:
+ *   i_drive_low (newer board, slot off): every line Low, D driven Low,
+ *   DIR_E = 0 (so that the shifter's slot side is not driven by the FPGA
+ *   pins of an unpowered slot), /RST Low.
+ *   otherwise (powering up / down, legacy board idle): A = 0, PHI, /RD,
+ *   /WR, /CS High, D released, DIR_E = 1, /RST Low.
+ *   ready: /RST released after RST_RELEASE_CYCLES (the cartridge may keep
+ *   it Low itself, see i_rst_in).
+ */
+pub module CartBus #(
+    param CYCLE: u32 = 60,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_ready      : input  logic, // CartPower o_ready
+    i_drive_low  : input  logic, // CartPower o_drive_low
+    i_ram_mode   : input  logic, // cartridge RAM reads allowed (see above)
+    o_ram_on     : output logic, // a RAM enable was written and not yet undone
+    i_flash_mode : input  logic, // flash-class writes allowed (see above)
+    o_flash_dirty: output logic, // a flash-class write was made, the reset is not yet written
+
+    // request: accepted when o_req_ready (one bus cycle each)
+    i_req_valid: input  logic    ,
+    i_req_write: input  logic    ,
+    i_req_addr : input  logic<16>,
+    i_req_wdata: input  logic<8> ,
+    i_req_priv : input  logic    , // from Mbc7Eeprom (see above)
+    i_req_flash: input  logic    , // from FlashEngine (see above)
+    o_req_ready: output logic    ,
+    // response: one per accepted request
+    o_rsp_valid : output logic   ,
+    o_rsp_data  : output logic<8>,
+    o_rsp_reject: output logic   , // write refused (not whitelisted)
+
+    // pins
+    o_a       : output logic<16>,
+    o_d_out   : output logic<8> ,
+    o_d_oe    : output logic    ,
+    i_d_in    : input  logic<8> ,
+    o_clk     : output logic    ,
+    o_rd_n    : output logic    ,
+    o_wr_n    : output logic    ,
+    o_cs_n    : output logic    ,
+    o_dir_e   : output logic    , // 1: cartridge -> FPGA
+    o_rst_low : output logic    , // drive /RST Low (else released, pulled up)
+    o_rst_done: output logic    , // /RST released by us
+) {
+    const T_LAST    : u32 = CYCLE - 1;
+    const T_PHI_FALL: u32 = CYCLE / 2 - 1; // PHI (registered) is High for output clocks 0 .. CYCLE/2-1
+    const T_SAMPLE  : u32 = CYCLE - 3;
+    const T_DIR_TX  : u32 = 1;
+    const T_D_ON    : u32 = 2;
+    const T_WR_ON   : u32 = CYCLE / 2 - 2;
+    const T_WR_OFF  : u32 = CYCLE - 4;
+    const T_D_OFF   : u32 = CYCLE - 3;
+    const T_DIR_RX  : u32 = CYCLE - 2;
+    // /RST is released 1000 bus cycles (1 ms at 1 MHz) after the slot is ready
+    const RST_RELEASE_CYCLES: u32 = 1000;
+
+    function allowed (
+        a : input logic<16>,
+        d : input logic<8> ,
+        rm: input logic    ,
+    ) -> logic {
+        return (a == 16'h0000 && (d == 8'h00 || (d == 8'h0A && rm))) || a == 16'h2000 || a == 16'h2100 || a == 16'h3000
+            || (a == 16'h4000 && d <: 8'h10) || a == 16'h6000;
+    }
+
+    function allowed_priv (
+        a: input logic<16>,
+        d: input logic<8> ,
+    ) -> logic {
+        return (a == 16'h4000 && (d == 8'h40 || d == 8'h00)) || (a == 16'hA080 && (d & 8'h3D) == 8'h00);
+    }
+
+    var t       : logic<8> ;
+    var busy    : logic    ;
+    var is_write: logic    ;
+    var addr    : logic<16>;
+    var wdata   : logic<8> ;
+    var d_sync  : logic<8> ;
+    var rst_cnt : logic<10>;
+    var rst_done: logic    ;
+
+    var a_q        : logic<16>;
+    var dout_q     : logic<8> ;
+    var doe_q      : logic    ;
+    var clk_q      : logic    ;
+    var rd_q       : logic    ;
+    var wr_q       : logic    ;
+    var dir_q      : logic    ;
+    var cs_q       : logic    ;
+    var rsp_v      : logic    ;
+    var rsp_d      : logic<8> ;
+    var rsp_rej    : logic    ;
+    var cs_sel     : logic    ; // the cycle in progress is a cartridge RAM read
+    var internal   : logic    ; // the cycle in progress is our own RAM disable (no response)
+    var ram_on     : logic    ;
+    var flash_dirty: logic    ;
+
+    // a request is taken whenever the bus is idle; its cycle starts there (t restarts)
+    // our own RAM disable goes first
+    let need_off: logic = (ram_on && !i_ram_mode) || (flash_dirty && !i_flash_mode);
+    assign o_req_ready = i_ready && rst_done && !busy && !need_off;
+    let take    : logic = i_req_valid && o_req_ready;
+    let take_off: logic = i_ready && rst_done && !busy && need_off;
+
+    always_ff {
+        if_reset {
+            t           = 0;
+            busy        = 0;
+            is_write    = 0;
+            addr        = 0;
+            wdata       = 0;
+            d_sync      = 0;
+            rst_cnt     = 0;
+            rst_done    = 0;
+            a_q         = 0;
+            dout_q      = 0;
+            doe_q       = 1;
+            clk_q       = 0;
+            rd_q        = 0;
+            wr_q        = 0;
+            dir_q       = 0;
+            cs_q        = 0;
+            rsp_v       = 0;
+            rsp_d       = 0;
+            rsp_rej     = 0;
+            cs_sel      = 0;
+            internal    = 0;
+            ram_on      = 0;
+            flash_dirty = 0;
+        } else {
+            d_sync = i_d_in;
+            rsp_v  = 0;
+            // /CS: Low as part of "every line Low", or during a RAM read (below)
+            cs_q = !(!i_ready && i_drive_low);
+            if !i_ready {
+                t           = 0;
+                busy        = 0;
+                cs_sel      = 0;
+                internal    = 0;
+                ram_on      = 0;
+                flash_dirty = 0;
+                rst_cnt     = 0;
+                rst_done    = 0;
+                a_q         = 0;
+                if i_drive_low {
+                    dout_q = 0;
+                    doe_q  = 1;
+                    clk_q  = 0;
+                    rd_q   = 0;
+                    wr_q   = 0;
+                    dir_q  = 0;
+                } else {
+                    doe_q = 0;
+                    clk_q = 1;
+                    rd_q  = 1;
+                    wr_q  = 1;
+                    dir_q = 1;
+                }
+            } else {
+                // cycle counter: free-running while idle (PHI keeps going), restarted by a request
+                if take || take_off {
+                    t = 1;
+                } else if t == T_LAST {
+                    t = 0;
+                } else {
+                    t += 1;
+                }
+                clk_q = (t <: T_PHI_FALL as 8) || (t == T_LAST as 8);
+                if t == T_LAST && !rst_done {
+                    if rst_cnt == RST_RELEASE_CYCLES - 1 {
+                        rst_done = 1;
+                    } else {
+                        rst_cnt += 1;
+                    }
+                }
+                if take_off {
+                    busy     = 1;
+                    internal = 1;
+                    is_write = 1;
+                    cs_sel   = 0;
+                    addr     = 16'h0000;
+                    // RAM disable first, then the flash reset (0xF0 also disables the RAM)
+                    wdata = if ram_on && !i_ram_mode ? 8'h00 : 8'hF0;
+                    a_q   = 16'h0000;
+                    rd_q  = 1;
+                    wr_q  = 1;
+                    dir_q = 1;
+                    doe_q = 0;
+                } else if take {
+                    if i_req_write
+                        && !(if i_req_flash ?
+                            (i_flash_mode && !i_req_addr[15])
+                        : if i_req_priv ?
+                            (i_ram_mode && ram_on && allowed_priv(i_req_addr, i_req_wdata))
+                        :
+                            allowed(i_req_addr, i_req_wdata, i_ram_mode)
+                        ) {
+                        // refused: answer at once, no bus cycle
+                        rsp_v   = 1;
+                        rsp_d   = 8'hFF;
+                        rsp_rej = 1;
+                    } else {
+                        busy     = 1;
+                        internal = 0;
+                        is_write = i_req_write;
+                        // RAM read, or the privileged EEPROM register write
+                        cs_sel = i_ram_mode && i_req_addr[15:13] == 3'b101 && (!i_req_write || i_req_priv);
+                        addr   = i_req_addr;
+                        wdata  = i_req_wdata;
+                        a_q    = i_req_addr;
+                        rd_q   = 1;
+                        wr_q   = 1;
+                        dir_q  = 1;
+                        doe_q  = 0;
+                        if i_req_write && i_req_flash {
+                            flash_dirty = 1;
+                        }
+                        // counted as enabled from the moment the enable cycle starts
+                        if i_req_write && !i_req_flash && i_req_addr == 16'h0000 && i_req_wdata == 8'h0A {
+                            ram_on = 1;
+                        }
+                    }
+                } else if busy {
+                    // t is the clock just reached
+                    if is_write {
+                        if t == T_DIR_TX as 8 {
+                            dir_q = 0;
+                        }
+                        if t == T_D_ON as 8 {
+                            dout_q = wdata;
+                            doe_q  = 1;
+                        }
+                        if t == T_WR_ON as 8 {
+                            wr_q = 0;
+                        }
+                        if t == T_WR_OFF as 8 {
+                            wr_q = 1;
+                        }
+                        if t == T_D_OFF as 8 {
+                            doe_q = 0;
+                        }
+                        if t == T_DIR_RX as 8 {
+                            dir_q = 1;
+                        }
+                        // /CS (EEPROM register only) from t1 to after /WR High
+                        cs_q = !(cs_sel && i_ram_mode && t <: T_DIR_RX as 8);
+                    } else {
+                        if t == 1 {
+                            rd_q = 0;
+                        }
+                        if t == T_SAMPLE as 8 {
+                            rsp_d = d_sync;
+                        }
+                        if t == T_LAST as 8 {
+                            rd_q = 1;
+                        }
+                        // /CS with /RD only, dropped at once when RAM mode ends
+                        cs_q = !(cs_sel && i_ram_mode && t != T_LAST as 8);
+                    }
+                    if t == T_LAST as 8 {
+                        busy   = 0;
+                        cs_sel = 0;
+                        if is_write && addr == 16'h0000 && wdata == 8'h00 {
+                            ram_on = 0;
+                        }
+                        if internal && wdata == 8'hF0 {
+                            flash_dirty = 0;
+                            ram_on      = 0;
+                        }
+                        if !internal {
+                            rsp_v   = 1;
+                            rsp_rej = 0;
+                            if is_write {
+                                rsp_d = 8'h00;
+                            }
+                        }
+                        internal = 0;
+                    }
+                } else {
+                    rd_q  = 1;
+                    wr_q  = 1;
+                    dir_q = 1;
+                    doe_q = 0;
+                }
+            }
+        }
+    }
+
+    assign o_rsp_valid   = rsp_v;
+    assign o_rsp_data    = rsp_d;
+    assign o_rsp_reject  = rsp_rej;
+    assign o_a           = a_q;
+    assign o_d_out       = dout_q;
+    assign o_d_oe        = doe_q;
+    assign o_clk         = clk_q;
+    assign o_rd_n        = rd_q;
+    assign o_wr_n        = wr_q;
+    assign o_cs_n        = cs_q;
+    assign o_dir_e       = dir_q;
+    assign o_rst_low     = !(i_ready && rst_done);
+    assign o_rst_done    = rst_done;
+    assign o_ram_on      = ram_on;
+    assign o_flash_dirty = flash_dirty;
+}

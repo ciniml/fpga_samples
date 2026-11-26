@@ -1,0 +1,11 @@
+[package]
+name = "cart_emu"
+version = "0.1.0"
+edition = "2021"
+license = "BSL-1.0"
+description = "Host tool of eda/cart_emu (Tang Primer 25K as an MBC5 cartridge on the FPGA cartridge adapter) and its L4 test ROM"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serialport = { version = "4", default-features = false }
+nusb = "0.2"

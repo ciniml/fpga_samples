@@ -1,0 +1,561 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file cart_cmd.veryl
+ * @brief Command processor of the cartridge reader: a byte stream in (USB
+ *        EP1 OUT), a byte stream out (EP1 IN), CartBus requests.
+ *
+ * Commands (multi-byte values little endian):
+ *   'S'                        -> 8 bytes: 'C' 'R' PROTO flags rst_in
+ *                                 reject_cnt err ram
+ *       flags: [0] cartridge detected (debounced)  [1] power switch ON
+ *              [2] power requested  [3] CART_PWR_EN  [4] bus ready
+ *              (powered, /RST released)  [5] legacy board  [6] /RST pin High
+ *              [7] RAM mode
+ *       ram:   [0] cartridge RAM enabled (CartBus o_ram_on)  [1] flash mode
+ *       err (cleared by 'S'): [0] read while not ready  [1] unknown opcode
+ *                             [2] write while not ready
+ *                             [3] EEPROM read incomplete (not in RAM mode
+ *                                 with the RAM enabled, or refused)
+ *   'P' on                     -> 'P' flags     request slot power on / off
+ *                                 (the request is dropped when the
+ *                                 cartridge is removed or the switch goes OFF)
+ *   'R' addr16 len16           -> len bytes (len 0 = 65536), one bus read
+ *                                 per byte, address +1 (wraps at 16 bits).
+ *                                 0xFF and err[0] while the bus is not ready.
+ *   'W' addr16 data            -> 'W' result: 0 done, 1 refused (CartBus
+ *                                 whitelist), 2 bus not ready
+ *   'E' addr8 count16          -> count x 2 bytes: MBC7 EEPROM words from
+ *                                 addr (count 0 or > 256 = 256), high byte
+ *                                 first (Mbc7Eeprom; needs RAM mode and the
+ *                                 RAM enabled by 0x0000 <- 0x0A, else FFFF
+ *                                 words and err[3])
+ *   'F' on                     -> 'F' mode      flash mode on / off (bit 0 =
+ *                                 granted). Granted / dropped like RAM mode
+ *                                 (not together with it); CartBus resets the
+ *                                 flash (0000 <- F0) itself when it ends.
+ *   'I'                        -> 8 bytes: flash identifier (FlashEngine;
+ *                                 FF and err[3] outside flash mode)
+ *   'G' bank16 addr16 len16 data[len]
+ *                              -> 'G' status count16   program len bytes
+ *                                 from addr (0x0000-0x7FFF, bank for the
+ *                                 0x4000 window); status 0 done, 1 timeout,
+ *                                 2 refused / not in flash mode
+ *   'X' bank16 addr16          -> 'X' status       erase the sector at addr
+ *   'A' on                     -> 'A' flags     RAM mode on / off: cartridge
+ *                                 RAM may be enabled and read (CartBus).
+ *                                 Granted only while power is requested; it
+ *                                 ends with 'A' 0, the power request, the
+ *                                 cartridge (CART_DET, not debounced), the
+ *                                 host (i_host_ok, USB configured), or 1 s
+ *                                 without a command byte. CartBus then
+ *                                 disables the RAM itself, and the slot
+ *                                 stays powered until it has.
+ * Unknown opcodes are dropped (err[1]) so the host can resynchronise by
+ * sending 'S' a few times and reading until "CR".
+ */
+pub module CartCmd #(
+    param CLK_HZ: u32 = 60_000_000,
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_rx_valid: input  logic   ,
+    i_rx_data : input  logic<8>,
+    o_rx_ready: output logic   ,
+    o_tx_valid: output logic   ,
+    o_tx_data : output logic<8>,
+    i_tx_ready: input  logic   ,
+
+    // board state
+    i_cart_det   : input  logic, // CART_DET pin (1 = inserted), asynchronous
+    i_switch_on  : input  logic, // ~POWER_ON_FPGA, asynchronous
+    i_rst_in     : input  logic, // CART_RST pin level, asynchronous
+    i_pwr_en     : input  logic, // CartPower o_pwr_en
+    i_legacy     : input  logic, // CartPower o_legacy
+    i_bus_ready  : input  logic, // CartPower o_ready && CartBus o_rst_done
+    i_host_ok    : input  logic, // the host is there (USB configured)
+    i_ram_on     : input  logic, // CartBus o_ram_on
+    o_ram_mode   : output logic, // to CartBus i_ram_mode
+    i_flash_dirty: input  logic, // CartBus o_flash_dirty
+    o_flash_mode : output logic, // to CartBus i_flash_mode
+    o_power_en   : output logic, // to CartPower i_enable
+    o_cart_det   : output logic, // debounced
+    o_busy       : output logic, // a read is streaming (LED)
+    o_rejected   : output logic, // some write was refused since reset (LED)
+
+    // CartBus
+    o_req_valid : output logic    ,
+    o_req_write : output logic    ,
+    o_req_addr  : output logic<16>,
+    o_req_wdata : output logic<8> ,
+    o_req_priv  : output logic    , // the request comes from Mbc7Eeprom
+    o_req_flash : output logic    , // the request comes from FlashEngine
+    i_req_ready : input  logic    ,
+    i_rsp_valid : input  logic    ,
+    i_rsp_data  : input  logic<8> ,
+    i_rsp_reject: input  logic    ,
+) {
+    const PROTO  : logic<8> = 8'h04;
+    const DEB_CYC: u32      = CLK_HZ / 100; // 10 ms
+    const WD_CYC : u32      = CLK_HZ; // RAM mode watchdog, 1 s
+
+    enum State: logic<4> {
+        Op,
+        Args,
+        ReadReq,
+        ReadRsp,
+        ReadPush,
+        WriteReq,
+        WriteRsp,
+        Reply,
+        Eeprom,
+        Flash,
+    }
+
+    var state : State        ;
+    var op    : logic<8>     ;
+    var argn  : logic<3>     ; // argument bytes still expected
+    var args  : logic<8>  [6];
+    var argi  : logic<3>     ;
+    var addr  : logic<16>    ;
+    var remain: logic<17>    ;
+    var rdata : logic<8>     ;
+    var rbuf  : logic<8>  [8];
+    var rlen  : logic<4>     ;
+    var ridx  : logic<4>     ;
+
+    var power_req : logic    ;
+    var reject_cnt: logic<8> ;
+    var err       : logic<4> ;
+    var rejected  : logic    ;
+    var ram_mode  : logic    ;
+    var flash_mode: logic    ;
+    var wd_cnt    : logic<27>;
+
+    // ---- synchronisers / debouncer ----
+    var det_s  : logic<2> ;
+    var sw_s   : logic<2> ;
+    var rst_s  : logic<2> ;
+    var det_cnt: logic<24>;
+    var det    : logic    ;
+
+    always_ff {
+        if_reset {
+            det_s   = 0;
+            sw_s    = 0;
+            rst_s   = 0;
+            det_cnt = 0;
+            det     = 0;
+        } else {
+            det_s = {det_s[0], i_cart_det};
+            sw_s  = {sw_s[0], i_switch_on};
+            rst_s = {rst_s[0], i_rst_in};
+            if det_s[1] == det {
+                det_cnt = 0;
+            } else if det_cnt == DEB_CYC - 1 {
+                det_cnt = 0;
+                det     = det_s[1];
+            } else {
+                det_cnt += 1;
+            }
+        }
+    }
+
+    let flags: logic<8> = {ram_mode, rst_s[1], i_legacy, i_bus_ready, i_pwr_en, power_req, sw_s[1], det};
+
+    function nargs (
+        o: input logic<8>,
+    ) -> logic<3> {
+        case o {
+            8'h41  : return 3'd1; // 'A'
+            8'h50  : return 3'd1; // 'P'
+            8'h52  : return 3'd4; // 'R'
+            8'h57  : return 3'd3; // 'W'
+            8'h45  : return 3'd3; // 'E'
+            8'h46  : return 3'd1; // 'F'
+            8'h47  : return 3'd6; // 'G'
+            8'h58  : return 3'd4; // 'X'
+            default: return 3'd0;
+        }
+    }
+
+    // ---- MBC7 EEPROM (the only source of privileged CartBus requests) ----
+    var eep_start    : logic    ;
+    var eep_dry      : logic    ;
+    var eep_addr     : logic<8> ;
+    var eep_count    : logic<9> ;
+    var eep_busy     : logic    ;
+    var eep_err      : logic    ;
+    var eep_req_valid: logic    ;
+    var eep_req_write: logic    ;
+    var eep_req_addr : logic<16>;
+    var eep_req_wdata: logic<8> ;
+    var eep_tx_valid : logic    ;
+    var eep_tx_data  : logic<8> ;
+    let in_eep       : logic     = state == State::Eeprom;
+
+    inst u_eep: Mbc7Eeprom (
+        i_clk       : i_clk                ,
+        i_rst       : i_rst                ,
+        i_start     : eep_start            ,
+        i_dry       : eep_dry              ,
+        i_addr      : eep_addr             ,
+        i_count     : eep_count            ,
+        i_bus_ok    : i_bus_ready          ,
+        o_busy      : eep_busy             ,
+        o_err       : eep_err              ,
+        o_req_valid : eep_req_valid        ,
+        o_req_write : eep_req_write        ,
+        o_req_addr  : eep_req_addr         ,
+        o_req_wdata : eep_req_wdata        ,
+        i_req_ready : i_req_ready && in_eep,
+        i_rsp_valid : i_rsp_valid && in_eep,
+        i_rsp_data  : i_rsp_data           ,
+        i_rsp_reject: i_rsp_reject         ,
+        o_tx_valid  : eep_tx_valid         ,
+        o_tx_data   : eep_tx_data          ,
+        i_tx_ready  : i_tx_ready && in_eep,
+    );
+
+    // ---- flash cartridge (the only source of flash-class CartBus requests) ----
+    var fl_start    : logic    ;
+    var fl_op       : logic<2> ;
+    var fl_dry      : logic    ;
+    var fl_bank     : logic<9> ;
+    var fl_addr     : logic<15>;
+    var fl_len      : logic<16>;
+    var fl_busy     : logic    ;
+    var fl_status   : logic<2> ;
+    var fl_count    : logic<16>;
+    var fl_dr       : logic    ;
+    var fl_req_valid: logic    ;
+    var fl_req_write: logic    ;
+    var fl_req_addr : logic<16>;
+    var fl_req_wdata: logic<8> ;
+    var fl_tx_valid : logic    ;
+    var fl_tx_data  : logic<8> ;
+    let in_fl       : logic     = state == State::Flash;
+
+    inst u_fl: FlashEngine (
+        i_clk       : i_clk               ,
+        i_rst       : i_rst               ,
+        i_start     : fl_start            ,
+        i_op        : fl_op               ,
+        i_dry       : fl_dry              ,
+        i_bank      : fl_bank             ,
+        i_addr      : fl_addr             ,
+        i_len       : fl_len              ,
+        i_bus_ok    : i_bus_ready         ,
+        o_busy      : fl_busy             ,
+        o_status    : fl_status           ,
+        o_count     : fl_count            ,
+        i_dv        : i_rx_valid && in_fl,
+        i_d         : i_rx_data           ,
+        o_dr        : fl_dr               ,
+        o_tx_valid  : fl_tx_valid         ,
+        o_tx_data   : fl_tx_data          ,
+        i_tx_ready  : i_tx_ready && in_fl,
+        o_req_valid : fl_req_valid        ,
+        o_req_write : fl_req_write        ,
+        o_req_addr  : fl_req_addr         ,
+        o_req_wdata : fl_req_wdata        ,
+        i_req_ready : i_req_ready && in_fl,
+        i_rsp_valid : i_rsp_valid && in_fl,
+        i_rsp_data  : i_rsp_data          ,
+        i_rsp_reject: i_rsp_reject        ,
+    );
+
+    assign o_rx_ready = state == State::Op || state == State::Args || (in_fl && fl_dr);
+    let rx_take: logic = i_rx_valid && (state == State::Op || state == State::Args);
+
+    assign o_tx_valid = state == State::ReadPush || state == State::Reply || (in_eep && eep_tx_valid)
+        || (in_fl && fl_tx_valid);
+    assign o_tx_data  = if in_eep ?
+        eep_tx_data
+    : if in_fl ?
+        fl_tx_data
+    : if state == State::ReadPush ?
+        rdata
+    :
+        rbuf[ridx[2:0]]
+    ;
+    let tx_take: logic = o_tx_valid && i_tx_ready;
+
+    assign o_req_valid = state == State::ReadReq || state == State::WriteReq || (in_eep && eep_req_valid)
+        || (in_fl && fl_req_valid);
+    assign o_req_write = if in_eep ? eep_req_write : if in_fl ? fl_req_write : state == State::WriteReq;
+    assign o_req_addr  = if in_eep ? eep_req_addr : if in_fl ? fl_req_addr : addr;
+    assign o_req_wdata = if in_eep ? eep_req_wdata : if in_fl ? fl_req_wdata : args[2];
+    assign o_req_priv  = in_eep;
+    assign o_req_flash = in_fl;
+
+    always_ff {
+        if_reset {
+            state      = State::Op;
+            op         = 0;
+            argn       = 0;
+            args       = '{8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00};
+            argi       = 0;
+            addr       = 0;
+            remain     = 0;
+            rdata      = 0;
+            rbuf       = '{8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00, 8'h00};
+            rlen       = 0;
+            ridx       = 0;
+            power_req  = 0;
+            reject_cnt = 0;
+            err        = 0;
+            rejected   = 0;
+            ram_mode   = 0;
+            wd_cnt     = 0;
+            eep_start  = 0;
+            eep_dry    = 0;
+            eep_addr   = 0;
+            eep_count  = 0;
+            flash_mode = 0;
+            fl_start   = 0;
+            fl_op      = 0;
+            fl_dry     = 0;
+            fl_bank    = 0;
+            fl_addr    = 0;
+            fl_len     = 0;
+        } else {
+            eep_start = 0;
+            fl_start  = 0;
+            // the request is dropped with the cartridge or the switch
+            if !det || !sw_s[1] {
+                power_req = 0;
+            }
+            // RAM mode watchdog: counts while waiting for a command byte
+            if rx_take || state != State::Op || !(ram_mode || flash_mode) {
+                wd_cnt = 0;
+            } else if wd_cnt != WD_CYC - 1 {
+                wd_cnt += 1;
+            }
+            if !power_req || !det_s[1] || !i_host_ok || wd_cnt == WD_CYC - 1 {
+                ram_mode   = 0;
+                flash_mode = 0;
+            }
+            case state {
+                State::Op: {
+                    if rx_take {
+                        op   = i_rx_data;
+                        argi = 0;
+                        if i_rx_data == 8'h49 { // 'I'
+                            fl_op    = 2'd0;
+                            fl_dry   = !(i_bus_ready && flash_mode);
+                            fl_len   = 0;
+                            fl_start = 1;
+                            state    = State::Flash;
+                        } else if i_rx_data == 8'h53 { // 'S'
+                            rbuf  = '{
+                                8'h43, 8'h52, PROTO, flags, {7'd0, rst_s[1]}, reject_cnt, {4'd0, err},
+                                {6'd0, flash_mode, i_ram_on}
+                            };
+                            rlen  = 4'd8;
+                            ridx  = 0;
+                            err   = 0;
+                            state = State::Reply;
+                        } else if nargs(i_rx_data) != 0 {
+                            argn  = nargs(i_rx_data);
+                            state = State::Args;
+                        } else {
+                            err[1] = 1;
+                        }
+                    }
+                }
+                State::Args: {
+                    if rx_take {
+                        args[argi] =  i_rx_data;
+                        argi       += 1;
+                        if argn == 3'd1 {
+                            case op {
+                                8'h41: { // 'A'
+                                    ram_mode = i_rx_data[0] && power_req && det_s[1] && i_host_ok && !flash_mode;
+                                    rbuf[0]  = 8'h41;
+                                    rbuf[1]  = {
+                                        i_rx_data[0] && power_req && det_s[1] && i_host_ok && !flash_mode, flags[6:0]
+                                    };
+                                    rlen     = 4'd2;
+                                    ridx     = 0;
+                                    state    = State::Reply;
+                                }
+                                8'h50: { // 'P'
+                                    power_req = i_rx_data[0] && det && sw_s[1];
+                                    rbuf[0]   = 8'h50;
+                                    rbuf[1]   = {flags[7:3], i_rx_data[0] && det && sw_s[1], flags[1:0]};
+                                    rlen      = 4'd2;
+                                    ridx      = 0;
+                                    state     = State::Reply;
+                                }
+                                8'h52: { // 'R' addr_l addr_h len_l len_h
+                                    addr   = {args[1], args[0]};
+                                    remain = if {i_rx_data, args[2]} == 16'h0000 ?
+                                        17'h10000
+                                    :
+                                        {1'b0, i_rx_data, args[2]}
+                                    ;
+                                    state  = State::ReadReq;
+                                }
+                                8'h46: { // 'F' on
+                                    flash_mode = i_rx_data[0] && power_req && det_s[1] && i_host_ok && !ram_mode;
+                                    rbuf[0]    = 8'h46;
+                                    rbuf[1]    = {
+                                        7'd0, i_rx_data[0] && power_req && det_s[1] && i_host_ok && !ram_mode
+                                    };
+                                    rlen       = 4'd2;
+                                    ridx       = 0;
+                                    state      = State::Reply;
+                                }
+                                8'h47: { // 'G' bank_l bank_h addr_l addr_h len_l len_h, then the data
+                                    fl_op    = 2'd1;
+                                    fl_bank  = {args[1][0], args[0]};
+                                    fl_addr  = {args[3][6:0], args[2]};
+                                    fl_len   = {i_rx_data, args[4]};
+                                    fl_dry   = !(i_bus_ready && flash_mode) || args[3][7];
+                                    fl_start = 1;
+                                    state    = State::Flash;
+                                }
+                                8'h58: { // 'X' bank_l bank_h addr_l addr_h
+                                    fl_op    = 2'd2;
+                                    fl_bank  = {args[1][0], args[0]};
+                                    fl_addr  = {i_rx_data[6:0], args[2]};
+                                    fl_len   = 0;
+                                    fl_dry   = !(i_bus_ready && flash_mode) || i_rx_data[7];
+                                    fl_start = 1;
+                                    state    = State::Flash;
+                                }
+                                8'h45: { // 'E' addr count_l count_h
+                                    eep_addr  = args[0];
+                                    eep_count = if {i_rx_data, args[1]} == 16'h0000 || {i_rx_data, args[1]} >: 16'd256 ?
+                                        9'd256
+                                    :
+                                        {i_rx_data[0], args[1]}
+                                    ;
+                                    eep_dry   = !(i_bus_ready && ram_mode && i_ram_on);
+                                    eep_start = 1;
+                                    state     = State::Eeprom;
+                                }
+                                default: { // 'W' addr_l addr_h data
+                                    addr = {args[1], args[0]};
+                                    if i_bus_ready {
+                                        state = State::WriteReq;
+                                    } else {
+                                        err[2]  = 1;
+                                        rbuf[0] = 8'h57;
+                                        rbuf[1] = 8'h02;
+                                        rlen    = 4'd2;
+                                        ridx    = 0;
+                                        state   = State::Reply;
+                                    }
+                                }
+                            }
+                        } else {
+                            argn -= 1;
+                        }
+                    }
+                }
+                State::ReadReq: {
+                    if !i_bus_ready {
+                        rdata  = 8'hFF;
+                        err[0] = 1;
+                        state  = State::ReadPush;
+                    } else if i_req_ready {
+                        state = State::ReadRsp;
+                    }
+                }
+                State::ReadRsp: {
+                    if i_rsp_valid {
+                        rdata = i_rsp_data;
+                        state = State::ReadPush;
+                    }
+                }
+                State::ReadPush: {
+                    if tx_take {
+                        addr   += 1;
+                        remain -= 1;
+                        state  =  if remain == 17'd1 ? State::Op : State::ReadReq;
+                    }
+                }
+                State::WriteReq: {
+                    if !i_bus_ready {
+                        err[2]  = 1;
+                        rbuf[0] = 8'h57;
+                        rbuf[1] = 8'h02;
+                        rlen    = 4'd2;
+                        ridx    = 0;
+                        state   = State::Reply;
+                    } else if i_req_ready {
+                        state = State::WriteRsp;
+                    }
+                }
+                State::WriteRsp: {
+                    if i_rsp_valid {
+                        rbuf[0] = 8'h57;
+                        rbuf[1] = {7'd0, i_rsp_reject};
+                        rlen    = 4'd2;
+                        ridx    = 0;
+                        if i_rsp_reject {
+                            rejected = 1;
+                            if reject_cnt != 8'hFF {
+                                reject_cnt += 1;
+                            }
+                        }
+                        state = State::Reply;
+                    }
+                }
+                State::Flash: {
+                    if !fl_start && !fl_busy {
+                        if fl_status != 2'd0 {
+                            err[3] = 1;
+                        }
+                        if fl_op == 2'd0 {
+                            state = State::Op;
+                        } else {
+                            rbuf[0] = if fl_op == 2'd1 ? 8'h47 : 8'h58;
+                            rbuf[1] = {6'd0, fl_status};
+                            rbuf[2] = fl_count[7:0];
+                            rbuf[3] = fl_count[15:8];
+                            rlen    = if fl_op == 2'd1 ? 4'd4 : 4'd2;
+                            ridx    = 0;
+                            state   = State::Reply;
+                        }
+                    }
+                }
+                State::Eeprom: {
+                    // eep_start was given last cycle: wait until the engine has taken it and finished
+                    if !eep_start && !eep_busy {
+                        if eep_err {
+                            err[3] = 1;
+                        }
+                        state = State::Op;
+                    }
+                }
+                State::Reply: {
+                    if tx_take {
+                        ridx += 1;
+                        if ridx == rlen - 4'd1 {
+                            state = State::Op;
+                        }
+                    }
+                }
+                default: {
+                    state = State::Op;
+                }
+            }
+        }
+    }
+
+    // the slot stays powered until CartBus has disabled the cartridge RAM
+    assign o_power_en   = power_req || i_ram_on || i_flash_dirty;
+    assign o_ram_mode   = ram_mode;
+    assign o_flash_mode = flash_mode;
+    assign o_cart_det   = det;
+    assign o_busy       = state == State::ReadReq || state == State::ReadRsp || state == State::ReadPush || in_eep
+        || in_fl;
+    assign o_rejected   = rejected;
+}

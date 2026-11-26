@@ -1,0 +1,244 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file test_bus.veryl
+ * @brief Cartridge bus master for testing cartridge hardware (the bus test
+ *        design only, never the cartridge reader): run-time cycle timing,
+ *        any read or write, a static mode that holds every pin as told.
+ *        The caller (BtCmd) decides what may be written.
+ *
+ * One request = one cycle of i_cyc clocks starting at the clock it is taken
+ * (t = 0). PHI is High for t < i_cyc/2. /CS goes Low with /RD or around /WR
+ * for 0xA000-0xFDFF (BtPkg::cs_low).
+ *   read : t1 /RD Low, D sampled at t = i_sample, t = i_cyc-1 /RD High
+ *   write: t1 DIR_E = 0 (FPGA -> cartridge), t2 drive D, t = i_wr_on /WR
+ *          Low, t = i_wr_off /WR High, then D released, DIR_E = 1
+ * The timing is checked by BtCmd: 2 <= i_sample < i_cyc, 2 < i_wr_on <
+ * i_wr_off, i_wr_off + 2 < i_cyc.
+ *
+ * Outside the ready state the pins are as in CartBus (every line Low on a
+ * newer board with the slot off). /RST: released RST_RELEASE cycles after
+ * ready, unless i_rst_force.
+ */
+pub module TestBus (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_ready    : input logic,
+    i_drive_low: input logic,
+    i_rst_force: input logic, // hold /RST Low
+
+    i_cyc   : input logic<8>,
+    i_sample: input logic<8>,
+    i_wr_on : input logic<8>,
+    i_wr_off: input logic<8>,
+
+    // static mode: the pins follow these (while ready)
+    i_static: input  logic    ,
+    i_st_a  : input  logic<16>,
+    i_st_ctl: input  logic<6> , // [0] /RD [1] /WR [2] /CS [3] PHI [4] drive D [5] DIR_E
+    i_st_d  : input  logic<8> ,
+    o_d_seen: output logic<8> , // D pins (synchronised)
+
+    i_req_valid: input  logic    ,
+    i_req_write: input  logic    ,
+    i_req_addr : input  logic<16>,
+    i_req_wdata: input  logic<8> ,
+    o_req_ready: output logic    ,
+    o_rsp_valid: output logic    ,
+    o_rsp_data : output logic<8> ,
+
+    o_a       : output logic<16>,
+    o_d_out   : output logic<8> ,
+    o_d_oe    : output logic    ,
+    i_d_in    : input  logic<8> ,
+    o_clk     : output logic    ,
+    o_rd_n    : output logic    ,
+    o_wr_n    : output logic    ,
+    o_cs_n    : output logic    ,
+    o_dir_e   : output logic    ,
+    o_rst_low : output logic    ,
+    o_rst_done: output logic    ,
+) {
+    import BtPkg::*;
+
+    const RST_RELEASE: u32 = 60_000; // 1 ms at 60 MHz
+
+    var t       : logic<8> ;
+    var busy    : logic    ;
+    var is_write: logic    ;
+    var wdata   : logic<8> ;
+    var cs_sel  : logic    ;
+    var d_sync  : logic<8> ;
+    var rst_cnt : logic<17>;
+    var rst_done: logic    ;
+
+    var a_q   : logic<16>;
+    var dout_q: logic<8> ;
+    var doe_q : logic    ;
+    var clk_q : logic    ;
+    var rd_q  : logic    ;
+    var wr_q  : logic    ;
+    var cs_q  : logic    ;
+    var dir_q : logic    ;
+    var rsp_v : logic    ;
+    var rsp_d : logic<8> ;
+
+    assign o_req_ready = i_ready && rst_done && !busy && !i_static;
+    let take: logic    = i_req_valid && o_req_ready;
+    let last: logic<8> = i_cyc - 8'd1;
+
+    always_ff {
+        if_reset {
+            t        = 0;
+            busy     = 0;
+            is_write = 0;
+            wdata    = 0;
+            cs_sel   = 0;
+            d_sync   = 0;
+            rst_cnt  = 0;
+            rst_done = 0;
+            a_q      = 0;
+            dout_q   = 0;
+            doe_q    = 1;
+            clk_q    = 0;
+            rd_q     = 0;
+            wr_q     = 0;
+            cs_q     = 0;
+            dir_q    = 0;
+            rsp_v    = 0;
+            rsp_d    = 0;
+        } else {
+            d_sync = i_d_in;
+            rsp_v  = 0;
+            if !i_ready {
+                t        = 0;
+                busy     = 0;
+                rst_cnt  = 0;
+                rst_done = 0;
+                a_q      = 0;
+                if i_drive_low {
+                    dout_q = 0;
+                    doe_q  = 1;
+                    clk_q  = 0;
+                    rd_q   = 0;
+                    wr_q   = 0;
+                    cs_q   = 0;
+                    dir_q  = 0;
+                } else {
+                    doe_q = 0;
+                    clk_q = 1;
+                    rd_q  = 1;
+                    wr_q  = 1;
+                    cs_q  = 1;
+                    dir_q = 1;
+                }
+            } else {
+                if !rst_done {
+                    if rst_cnt == RST_RELEASE - 1 {
+                        rst_done = 1;
+                    } else {
+                        rst_cnt += 1;
+                    }
+                }
+                if i_static {
+                    busy   = 0;
+                    t      = 0;
+                    a_q    = i_st_a;
+                    rd_q   = i_st_ctl[0];
+                    wr_q   = i_st_ctl[1];
+                    cs_q   = i_st_ctl[2];
+                    clk_q  = i_st_ctl[3];
+                    doe_q  = i_st_ctl[4];
+                    dir_q  = i_st_ctl[5];
+                    dout_q = i_st_d;
+                } else {
+                    if take {
+                        t = 1;
+                    } else if t >= last {
+                        t = 0;
+                    } else {
+                        t += 1;
+                    }
+                    clk_q = t <: (i_cyc >> 1);
+                    if take {
+                        busy     = 1;
+                        is_write = i_req_write;
+                        wdata    = i_req_wdata;
+                        cs_sel   = cs_low(i_req_addr);
+                        a_q      = i_req_addr;
+                        clk_q    = 1;
+                        rd_q     = 1;
+                        wr_q     = 1;
+                        cs_q     = 1;
+                        dir_q    = 1;
+                        doe_q    = 0;
+                    } else if busy {
+                        if is_write {
+                            if t == 8'd1 {
+                                dir_q = 0;
+                                cs_q  = !cs_sel;
+                            }
+                            if t == 8'd2 {
+                                dout_q = wdata;
+                                doe_q  = 1;
+                            }
+                            if t == i_wr_on {
+                                wr_q = 0;
+                            }
+                            if t == i_wr_off {
+                                wr_q = 1;
+                            }
+                            if t == i_wr_off + 8'd1 {
+                                doe_q = 0;
+                                cs_q  = 1;
+                            }
+                            if t == i_wr_off + 8'd2 {
+                                dir_q = 1;
+                            }
+                        } else {
+                            if t == 8'd1 {
+                                rd_q = 0;
+                                cs_q = !cs_sel;
+                            }
+                            if t == i_sample {
+                                rsp_d = d_sync;
+                            }
+                            if t >= last {
+                                rd_q = 1;
+                                cs_q = 1;
+                            }
+                        }
+                        if t >= last {
+                            busy  = 0;
+                            rsp_v = 1;
+                        }
+                    } else {
+                        rd_q  = 1;
+                        wr_q  = 1;
+                        cs_q  = 1;
+                        dir_q = 1;
+                        doe_q = 0;
+                    }
+                }
+            }
+        }
+    }
+
+    assign o_rsp_valid = rsp_v;
+    assign o_rsp_data  = rsp_d;
+    assign o_d_seen    = d_sync;
+    assign o_a         = a_q;
+    assign o_d_out     = dout_q;
+    assign o_d_oe      = doe_q;
+    assign o_clk       = clk_q;
+    assign o_rd_n      = rd_q;
+    assign o_wr_n      = wr_q;
+    assign o_cs_n      = cs_q;
+    assign o_dir_e     = dir_q;
+    assign o_rst_low   = !(i_ready && rst_done) || i_rst_force;
+    assign o_rst_done  = rst_done;
+}

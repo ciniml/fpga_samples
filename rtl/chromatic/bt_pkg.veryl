@@ -1,0 +1,76 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file bt_pkg.veryl
+ * @brief Cartridge bus test: the access sequence shared by the bus master
+ *        (BusTest, Chromatic) and the checking target (CartTarget, the FPGA
+ *        board on the cartridge adapter). Both run the same xorshift32 from
+ *        the same seed, so each side can check every bus cycle on its own.
+ *
+ * Operations (one xorshift32 step per bus cycle, x = the new state):
+ *   FILL   : write the region in address order from its start, data x[7:0]
+ *   VERIFY : read the region in the same order, expect x[7:0]
+ *   MIX    : address region_addr(x[15:0]), write when x[16], data x[31:24]
+ * Regions: ALL = 0x0000-0xFFFF; CART = 0x0000-0x7FFF and 0xA000-0xBFFF.
+ * /CS is Low for 0xA000-0xFDFF, as a Game Boy drives it.
+ */
+pub package BtPkg {
+    const OP_FILL  : logic<2> = 2'd0;
+    const OP_VERIFY: logic<2> = 2'd1;
+    const OP_MIX   : logic<2> = 2'd2;
+
+    function xs (
+        x: input logic<32>,
+    ) -> logic<32> {
+        var a: logic<32>;
+        a = x ^ (x << 13);
+        a = a ^ (a >> 17);
+        a = a ^ (a << 5);
+        return a;
+    }
+
+    /// next address of FILL / VERIFY
+    function seq_next (
+        cart: input logic    ,
+        a   : input logic<16>,
+    ) -> logic<16> {
+        if cart && a == 16'h7FFF {
+            return 16'hA000;
+        } else if cart && a == 16'hBFFF {
+            return 16'h0000;
+        } else {
+            return a + 16'd1;
+        }
+    }
+
+    /// address of a MIX operation
+    function mix_addr (
+        cart: input logic    ,
+        v   : input logic<16>,
+    ) -> logic<16> {
+        if !cart {
+            return v;
+        } else if v[15] {
+            return {3'b101, v[12:0]};
+        } else {
+            return {1'b0, v[14:0]};
+        }
+    }
+
+    function cs_low (
+        a: input logic<16>,
+    ) -> logic {
+        return a >= 16'hA000 && a <: 16'hFE00;
+    }
+
+    /// handshake: the target answers a nonce n (written to 0x2000, 4 bytes, first byte = bits 31:24)
+    /// with f(n), read at 0x7FF0-0x7FF3 (0x7FF0 = bits 7:0)
+    function hs_answer (
+        n: input logic<32>,
+    ) -> logic<32> {
+        return {n[24:0], n[31:25]} ^ 32'h5A3C_96E1;
+    }
+}

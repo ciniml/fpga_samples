@@ -1,0 +1,66 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file isp_line_ring.veryl
+ * @brief Ring of NB raw lines (one block RAM per line), written in the
+ *        camera clock domain, three lines read in the display domain.
+ *
+ * Write: row i_wbank, word i_waddr. Read: every line is read at i_raddr
+ * every clock; o_q0..2 are the lines i_rbank0..2, two clocks after the
+ * address (RAM register, then the select). The two sides only meet in the
+ * RAM: the genlock keeps the writer NB / 2 lines away from the lines read.
+ */
+pub module IspLineRing #(
+    param NB: u32 = 8 , // lines (power of 2)
+    param AW: u32 = 9 ,
+    param DW: u32 = 40,
+) (
+    i_wclk : input 'w clock            ,
+    i_we   : input 'w logic            ,
+    i_wbank: input 'w logic<$clog2(NB)>,
+    i_waddr: input 'w logic<AW>        ,
+    i_wdata: input 'w logic<DW>        ,
+
+    i_rclk  : input  'r clock            ,
+    i_raddr : input  'r logic<AW>        ,
+    i_rbank0: input  'r logic<$clog2(NB)>,
+    i_rbank1: input  'r logic<$clog2(NB)>,
+    i_rbank2: input  'r logic<$clog2(NB)>,
+    o_q0    : output 'r logic<DW>        ,
+    o_q1    : output 'r logic<DW>        ,
+    o_q2    : output 'r logic<DW>        ,
+) {
+    const BW: u32 = $clog2(NB);
+
+    var rd : 'r logic<DW> [NB];
+    var rb0: 'r logic<BW>     ;
+    var rb1: 'r logic<BW>     ;
+    var rb2: 'r logic<BW>     ;
+
+    for b in 0..NB :g_line {
+        #[sv("syn_ramstyle = \"block_ram\"")]
+        var mem: 'w logic<DW> [2 ** AW];
+        always_ff (i_wclk) {
+            if i_we && i_wbank == b as BW {
+                mem[i_waddr] = i_wdata;
+            }
+        }
+        unsafe (cdc) {
+            always_ff (i_rclk) {
+                rd[b] = mem[i_raddr];
+            }
+        }
+    }
+
+    always_ff (i_rclk) {
+        rb0  = i_rbank0;
+        rb1  = i_rbank1;
+        rb2  = i_rbank2;
+        o_q0 = rd[rb0];
+        o_q1 = rd[rb1];
+        o_q2 = rd[rb2];
+    }
+}

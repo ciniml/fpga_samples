@@ -37,6 +37,7 @@ module csi2_rx_body #(
     parameter int  NLINES   = 6,
     parameter int  WGROUPS  = 16,      // RAW10 line = 4 * WGROUPS pixels
     parameter int  SEED     = 1,
+    parameter bit  PAYLOAD_SYNC = 0,   // RAW10 lines all zero except 0xB8 at payload byte 2 * line (lane 0)
     parameter bit  RUN      = 0,
     parameter bit  DBG      = 0
 ) ();
@@ -181,7 +182,17 @@ module csi2_rx_body #(
         for (int f = 0; f < NFRAMES; f++) begin
             packet(6'h00, f + 1, none);                       // FS (frame number)
             long_rand(6'h12, 20);                              // embedded data
-            for (int y = 0; y < NLINES; y++) long_rand(6'h2B, 5 * WGROUPS);
+            for (int y = 0; y < NLINES; y++) begin
+                if (PAYLOAD_SYNC) begin
+                    // zero run + sync byte inside the payload, at a different
+                    // offset on every line: must not restart the lane
+                    logic [7:0] pl[];
+                    pl = new[5 * WGROUPS];
+                    foreach (pl[i]) pl[i] = 8'h00;
+                    pl[2 * y] = 8'hB8;
+                    packet(6'h2B, 5 * WGROUPS, pl);
+                end else long_rand(6'h2B, 5 * WGROUPS);
+            end
             long_rand(6'h30, 5 * WGROUPS + 1);                 // odd word count
             packet(6'h01, f + 1, none);                       // FE
         end

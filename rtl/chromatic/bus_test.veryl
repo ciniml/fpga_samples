@@ -1,0 +1,195 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file bus_test.veryl
+ * @brief Bus test engine (master side): runs a BtPkg sequence through
+ *        TestBus at full bus speed and checks every read. A 64 KiB shadow
+ *        of what was written gives the expected data of MIX reads (FILL
+ *        writes it, VERIFY expects the sequence itself).
+ *
+ * Result (valid when not busy): operations done, read errors, the first
+ * error (operation index, address, expected, read) and the OR of
+ * (expected XOR read) over all reads (which data lines fail).
+ */
+pub module BusTest (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_start : input  logic    ,
+    i_op    : input  logic<2> ,
+    i_cart  : input  logic    , // region CART (else ALL)
+    i_seed  : input  logic<32>,
+    i_count : input  logic<32>,
+    i_abort : input  logic    ,
+    o_busy  : output logic    ,
+    o_ops   : output logic<32>,
+    o_errors: output logic<32>,
+    o_f_idx : output logic<32>,
+    o_f_addr: output logic<16>,
+    o_f_exp : output logic<8> ,
+    o_f_got : output logic<8> ,
+    o_xor_or: output logic<8> ,
+
+    o_req_valid: output logic    ,
+    o_req_write: output logic    ,
+    o_req_addr : output logic<16>,
+    o_req_wdata: output logic<8> ,
+    i_req_ready: input  logic    ,
+    i_rsp_valid: input  logic    ,
+    i_rsp_data : input  logic<8> ,
+) {
+    import BtPkg::*;
+
+    enum St: logic<3> {
+        Idle,
+        Gen,
+        Shadow,
+        Req,
+        Rsp,
+    }
+
+    var st    : St       ;
+    var op    : logic<2> ;
+    var cart  : logic    ;
+    var x     : logic<32>;
+    var left  : logic<32>;
+    var seq_a : logic<16>;
+    var addr  : logic<16>;
+    var write : logic    ;
+    var data  : logic<8> ;
+    var expd  : logic<8> ;
+    var ops   : logic<32>;
+    var errors: logic<32>;
+    var f_idx : logic<32>;
+    var f_addr: logic<16>;
+    var f_exp : logic<8> ;
+    var f_got : logic<8> ;
+    var xor_or: logic<8> ;
+
+    // shadow (64 KiB block RAM, one write and one registered read port)
+    var shadow: logic<8>  [65536];
+    var sh_q  : logic<8>         ;
+    var sh_we : logic            ;
+    var sh_wa : logic<16>        ;
+    var sh_wd : logic<8>         ;
+    always_ff (i_clk) {
+        if sh_we {
+            shadow[sh_wa] = sh_wd;
+        }
+        sh_q = shadow[addr];
+    }
+
+    let xn: logic<32> = xs(x);
+
+    assign o_req_valid = st == St::Req;
+    assign o_req_write = write;
+    assign o_req_addr  = addr;
+    assign o_req_wdata = data;
+    assign o_busy      = st != St::Idle;
+    assign o_ops       = ops;
+    assign o_errors    = errors;
+    assign o_f_idx     = f_idx;
+    assign o_f_addr    = f_addr;
+    assign o_f_exp     = f_exp;
+    assign o_f_got     = f_got;
+    assign o_xor_or    = xor_or;
+
+    always_ff {
+        if_reset {
+            st     = St::Idle;
+            op     = 0;
+            cart   = 0;
+            x      = 0;
+            left   = 0;
+            seq_a  = 0;
+            addr   = 0;
+            write  = 0;
+            data   = 0;
+            expd   = 0;
+            ops    = 0;
+            errors = 0;
+            f_idx  = 0;
+            f_addr = 0;
+            f_exp  = 0;
+            f_got  = 0;
+            xor_or = 0;
+            sh_we  = 0;
+            sh_wa  = 0;
+            sh_wd  = 0;
+        } else {
+            sh_we = 0;
+            case st {
+                St::Idle: {
+                    if i_start {
+                        op     = i_op;
+                        cart   = i_cart;
+                        x      = if i_seed == 32'd0 ? 32'd1 : i_seed;
+                        left   = i_count;
+                        seq_a  = 0;
+                        ops    = 0;
+                        errors = 0;
+                        f_idx  = 0;
+                        f_addr = 0;
+                        f_exp  = 0;
+                        f_got  = 0;
+                        xor_or = 0;
+                        st     = if i_count == 32'd0 ? St::Idle : St::Gen;
+                    }
+                }
+                St::Gen: {
+                    // one sequence step
+                    x = xn;
+                    if op == OP_MIX {
+                        addr  = mix_addr(cart, xn[15:0]);
+                        write = xn[16];
+                        data  = xn[31:24];
+                    } else {
+                        addr  = seq_a;
+                        write = op == OP_FILL;
+                        data  = xn[7:0];
+                        expd  = xn[7:0];
+                        seq_a = seq_next(cart, seq_a);
+                    }
+                    st = St::Shadow;
+                }
+                St::Shadow: {
+                    // sh_q is valid for addr from the next clock
+                    st = St::Req;
+                }
+                St::Req: {
+                    if op == OP_MIX {
+                        expd = sh_q;
+                    }
+                    if i_req_ready {
+                        st = St::Rsp;
+                    }
+                }
+                St::Rsp: {
+                    if i_rsp_valid {
+                        if write {
+                            sh_we = 1;
+                            sh_wa = addr;
+                            sh_wd = data;
+                        } else if i_rsp_data != expd {
+                            if errors == 32'd0 {
+                                f_idx  = ops;
+                                f_addr = addr;
+                                f_exp  = expd;
+                                f_got  = i_rsp_data;
+                            }
+                            errors += 1;
+                            xor_or |= i_rsp_data ^ expd;
+                        }
+                        ops  += 1;
+                        left -= 1;
+                        st   =  if left == 32'd1 || i_abort ? St::Idle : St::Gen;
+                    }
+                }
+                default: st = St::Idle;
+            }
+        }
+    }
+}
