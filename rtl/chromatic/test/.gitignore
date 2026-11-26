@@ -11,3 +11,4 @@ col_in.hex
 col_out.hex
 cam_col_in.hex
 cam_col_out.hex
+__pycache__/
