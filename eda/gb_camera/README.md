@@ -168,7 +168,7 @@ Gowin 1.9.12.03、place_option 1 / route_option 2 (`HOST_UART=1` は 2026-11-26�
 | clk2 (QspiRom) | 200 MHz | 203.0 MHz | 213.9 MHz |
 | pclk (カメラ) | 125 MHz | 125.6 MHz | 131.3 MHz |
 | clk60 (USB) | 60 MHz | 60.5 MHz | 62.9 MHz |
-| os_pclk (USB) | 120 MHz | — | 144.9 MHz |
+| os_pclk (USB) | 120 MHz | 153.5 MHz | 144.9 MHz |
 
 - 余裕はどれも小さい。BSRAM の残りは 2、PRIMARY クロックは使い切った
 - カート RAM の複製はやめた。ホストの RAM 読み出しは、本体のアドレスが 0xA000-0xBFFF にない間に本体側のポートで読む
