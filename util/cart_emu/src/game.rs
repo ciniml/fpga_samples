@@ -76,6 +76,13 @@ pub enum GameCmd {
     Late { n: u8 },
     /// stop answering and leave QPI mode
     Stop,
+    /// (eda/gb_camera) the camera's 128x112 frame as a PGM file
+    CamFrame {
+        #[arg(short, long)]
+        out: String,
+    },
+    /// (eda/gb_camera) the camera's registers and counters
+    CamStatus,
     /// (debug) bytes through the quad engine for each capture tick, then the status registers
     #[command(hide = true)]
     Qdump {
@@ -116,7 +123,8 @@ fn header(img: &[u8]) -> Result<Header, String> {
         0x01..=0x03 => (1, "MBC1"),
         0x0F..=0x13 => (3, "MBC3"),
         0x19..=0x1E => (5, "MBC5"),
-        _ => return Err(format!("cartridge type {t:#04x} is not supported (MBC1 / MBC3 / MBC5)")),
+        0xFC => (6, "camera"),
+        _ => return Err(format!("cartridge type {t:#04x} is not supported (MBC1 / MBC3 / MBC5 / camera)")),
     };
     let banks = (img.len() / 0x4000).next_power_of_two();
     let ram = match img[0x149] {
@@ -471,6 +479,27 @@ pub fn run(tty: &str, baud: u32, cmd: &GameCmd) -> Result<bool, String> {
             }
             let sr: Vec<u8> = [0x05, 0x35, 0x15].iter().map(|&c| g.spi(&[c], 1).map(|r| r[0])).collect::<Result<_, _>>()?;
             println!("after exit: SR1 {:#04x} SR2 {:#04x} SR3 {:#04x}, single: {:02x?}", sr[0], sr[1], sr[2], g.read(*addr, 4)?);
+            Ok(true)
+        }
+        GameCmd::CamFrame { out } => {
+            let f = g.e.read(4, 0, 128 * 112)?;
+            let mut pgm = b"P5\n128 112\n255\n".to_vec();
+            pgm.extend_from_slice(&f);
+            std::fs::write(out, &pgm).map_err(|e| format!("{out}: {e}"))?;
+            let mean = f.iter().map(|&v| v as u32).sum::<u32>() / f.len() as u32;
+            println!("{out}: 128x112, mean {mean}, min {}, max {}", f.iter().min().unwrap(), f.iter().max().unwrap());
+            Ok(true)
+        }
+        GameCmd::CamStatus => {
+            let regs = g.e.read(4, 0x4000, 54)?;
+            let st = g.e.read(4, 0x4040, 15)?;
+            let u32le = |i: usize| u32::from_le_bytes(st[i..i + 4].try_into().unwrap());
+            println!("frames {}  shots {}  timeouts {}  last shot {} clocks ({:.2} ms)  busy {}  waiting {}",
+                u32le(0), u32le(4), u16::from_le_bytes([st[8], st[9]]), u32le(10), u32le(10) as f64 / 1e5,
+                st[14] & 1, (st[14] >> 1) & 1);
+            println!("A000 {:02x}  gain/edge {:02x}  exposure {:04x}  edge ratio/invert {:02x}",
+                regs[0], regs[1], (regs[2] as u16) << 8 | regs[3] as u16, regs[4]);
+            println!("thresholds {:02x?}", &regs[6..54]);
             Ok(true)
         }
         GameCmd::Stop => {

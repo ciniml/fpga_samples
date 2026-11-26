@@ -2,3 +2,7 @@ obj_unit/
 obj_boot/
 obj_sim_*/
 e2e_out/
+obj_camera/
+cam_in.hex
+cam_out.hex
+obj_boot_cam/

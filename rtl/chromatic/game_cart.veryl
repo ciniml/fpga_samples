@@ -24,6 +24,11 @@
  * eda/cart_emu); a QPI read is about 170 ns. Every switchable-bank read is checked: the time from
  * its address to the flash data (worst case kept) and the reads that ended without data.
  *
+ * CAMERA: mapper 6 (cartridge type FCh, as the Game Boy Camera; GbCamera does the camera): ROM
+ * banks as MBC5 (8 bits), RAM banks 0-3 (32 KiB); RAM bank 10h-1Fh maps the camera registers at
+ * 0xA000-0xBFFF (written whether RAM is enabled or not, only 0xA000 reads back); while a shot runs
+ * RAM reads give 0 and RAM writes are dropped; RAM reads do not need the RAM enabled (as SameBoy).
+ *
  * Bus side as in CartEmu (synchronised inputs, reads counted at the end of a stable address,
  * writes at the /WR rising edge, /RST Low resets the mapper).
  *
@@ -34,7 +39,7 @@
  *   'L' n                      -> 'L'  count switchable-bank reads with the data after n clocks
  *                                      as late (default 22: the console takes it at about 23)
  *   'D' n                      -> 'D'  answer reads only after the address is stable n clocks
- *   'M' mapper rmask16 xmask   -> 'M'  mapper (0 none, 1 MBC1, 3 MBC3, 5 MBC5), ROM bank mask,
+ *   'M' mapper rmask16 xmask   -> 'M'  mapper (0 none, 1 MBC1, 3 MBC3, 5 MBC5, 6 camera), ROM bank mask,
  *                                      xmask[1:0] RAM bank mask, xmask[7] RAM present
  *   'K' v                      -> 'K'  v[0] flash quad mode, v[2:1] capture tick, v[3] SPI-Quad
  *                                      reads (EBh on one line, 22 SCLK) instead of QPI (16), v[4]
@@ -42,7 +47,8 @@
  *   'T' v                      -> 'T'  trace (as CartEmu)
  *   'W' reg addr24 len16 data  -> 'W'  load (reg 0 ROM bank 0, 1 RAM; ignored while answering)
  *   'Q' reg addr24 len16       -> len bytes (reg 0 bank 0 (FF while answering), 1 RAM, 2 trace,
- *                                 3 flash through the quad engine (not while answering))
+ *                                 3 flash through the quad engine (not while answering), 4 the
+ *                                 camera's host reads (GbCamera))
  *   'F' nout16 nin16 out[nout] -> in[nin] then 'F', or FF x nin then 'f' when refused:
  *                                 one single-line SPI transfer (not in quad mode). Only reads,
  *                                 IDs, status reads, WREN/WRDI, reset, and page program and
@@ -53,6 +59,8 @@ pub module GameCart #(
     param RD_STABLE : u32 = 6          ,
     param FLASH_BASE: u8  = 8'h40      , // address [23:16] of the image (4 MiB)
     param AUTO_BOOT : bit = 1          , // start from the image in the flash after reset
+    param CAMERA    : bit = 0          , // mapper 6 (GbCamera)
+    param TRACE     : bit = 1          , // the 2048-entry trace (about 8 block RAMs; 'Q' 2 reads 0 without it)
 ) (
     i_clk: input clock,
     i_rst: input reset,
@@ -93,6 +101,18 @@ pub module GameCart #(
     o_raw_tx  : output logic<8> ,
     i_raw_rx  : input  logic<8> ,
     i_raw_done: input  logic    ,
+
+    // GbCamera (CAMERA)
+    o_cam_we    : output logic    ,
+    o_cam_wa    : output logic<7> ,
+    o_cam_wd    : output logic<8> ,
+    i_cam_reg0  : input  logic<8> ,
+    i_cam_busy  : input  logic    ,
+    i_cam_ram_we: input  logic    ,
+    i_cam_ram_wa: input  logic<12>,
+    i_cam_ram_wd: input  logic<8> ,
+    o_cam_hra   : output logic<16>,
+    i_cam_hq    : input  logic<8> ,
 ) {
     // ---- QspiRom outputs, registered here first (the 200 MHz -> 100 MHz paths are 5 ns) ----
     var r_fl_ready: logic    ;
@@ -171,7 +191,7 @@ pub module GameCart #(
     var lat_lim: logic<8>; // a switchable-bank read later than this (clocks) counts as late
     var ram_en : logic   ;
     var romb   : logic<9>;
-    var ramb   : logic<4>;
+    var ramb   : logic<5>; // [4]: camera registers (mapper 6)
     var m1_hi  : logic<2>;
     var m1_mode: logic   ;
 
@@ -182,6 +202,7 @@ pub module GameCart #(
         3'd1   : {2'b00, m1_hi, bank_lo5},
         3'd3   : {2'b00, bank_lo7},
         3'd5   : romb,
+        3'd6   : romb,
         default: 9'd1,
     };
     let bank : logic<9> = bank_raw & rmask;
@@ -189,9 +210,13 @@ pub module GameCart #(
             3'd1   : if m1_mode ? m1_hi : 2'd0,
             3'd3   : ramb[1:0],
             3'd5   : ramb[1:0],
+            3'd6   : ramb[1:0],
             default: 2'd0,
         } & xmask;
     let rtc: logic = mapper == 3'd3 && ramb[3]; // MBC3 clock registers: read as 0
+    let cam6   : logic = CAMERA && mapper == 3'd6;
+    let cam_sel: logic = cam6 && ramb[4]; // the camera registers at 0xA000
+    let cam_blk: logic = cam6 && i_cam_busy; // a shot runs: no RAM
 
     // ---- host side ----
     enum State: logic<4> {
@@ -213,7 +238,7 @@ pub module GameCart #(
         FEnd,
     }
     var state : State    ;
-    var h_reg : logic<2> ;
+    var h_reg : logic<3> ;
     var h_addr: logic<24>;
     var h_cnt : logic<16>;
 
@@ -260,6 +285,7 @@ pub module GameCart #(
             8'h01, 8'h02, 8'h03                     : return 3'd1;
             8'h0F, 8'h10, 8'h11, 8'h12, 8'h13       : return 3'd3;
             8'h19, 8'h1A, 8'h1B, 8'h1C, 8'h1D, 8'h1E: return 3'd5;
+            8'hFC                                   : return if CAMERA ? 3'd6 : 3'd7;
             default                                 : return 3'd7;
         }
     }
@@ -293,7 +319,7 @@ pub module GameCart #(
     var rom0_we  : logic            ;
     var rom0_wa  : logic<14>        ;
     var rom0_wd  : logic<8>         ;
-    let h_rom0_rd: logic             = state == State::QRd && h_reg == 2'd0 && !en;
+    let h_rom0_rd: logic             = state == State::QRd && h_reg == 3'd0 && !en;
     let rom0_ra  : logic<14>         = if bt_busy ? bt_n[13:0] : if h_rom0_rd ? h_addr[13:0] : a[13:0];
     always_ff (i_clk) {
         if rom0_we {
@@ -322,16 +348,20 @@ pub module GameCart #(
         ramh_q = ramh[h_addr[14:0]];
     }
 
-    var tr   : logic<64> [2048];
-    var tr_q : logic<64>       ;
-    var tr_we: logic           ;
-    var tr_wa: logic<11>       ;
-    var tr_wd: logic<64>       ;
-    always_ff (i_clk) {
-        if tr_we {
-            tr[tr_wa] = tr_wd;
+    var tr_q : logic<64>;
+    var tr_we: logic    ;
+    var tr_wa: logic<11>;
+    var tr_wd: logic<64>;
+    if TRACE :g_tr {
+        var tr: logic<64> [2048];
+        always_ff (i_clk) {
+            if tr_we {
+                tr[tr_wa] = tr_wd;
+            }
+            tr_q = tr[h_addr[13:3]];
         }
-        tr_q = tr[h_addr[13:3]];
+    } else {
+        assign tr_q = 0;
     }
 
     // ---- flash requests ----
@@ -351,6 +381,7 @@ pub module GameCart #(
             o_fl_addr = h_faddr;
         }
     }
+    assign o_cam_hra = h_addr[15:0];
     assign o_fl_quad = quad;
     assign o_fl_cap  = cap;
     assign o_fl_spiq = spiq;
@@ -361,22 +392,26 @@ pub module GameCart #(
     // ---- read response ----
     var stab  : logic<8>;
     let in_ram: logic    = a[15:13] == 3'b101 && !cs_n;
-    let src_ok: logic    = if !a[15] ? (!romx || fl_hit) : (in_ram && ram_en && ram_has);
-    let answer: logic    = en && (!a[15] || (in_ram && ram_en && ram_has));
+    let ram_rd: logic    = if cam6 ? (cam_sel || ram_has) : (ram_en && ram_has);
+    let src_ok: logic    = if !a[15] ? (!romx || fl_hit) : (in_ram && ram_rd);
+    let answer: logic    = en && (!a[15] || (in_ram && ram_rd));
     let drive : logic    = !rd_n && answer && src_ok && stab >= dly;
-    var sel   : logic<2>; // 0 bank 0, 1 flash, 2 RAM, 3 zero (clock registers)
+    var sel   : logic<2>; // 0 bank 0, 1 flash, 2 RAM, 3 zq (clock registers, camera)
+    var zq    : logic<8>;
     always_ff {
         if_reset {
             sel = 0;
+            zq  = 0;
         } else {
-            sel = if a[15] ? (if rtc ? 2'd3 : 2'd2) : (if romx ? 2'd1 : 2'd0);
+            sel = if a[15] ? (if rtc || cam_sel || cam_blk ? 2'd3 : 2'd2) : (if romx ? 2'd1 : 2'd0);
+            zq  = if cam_sel && a[6:0] == 7'd0 ? i_cam_reg0 : 8'h00;
         }
     }
     assign o_d = case sel {
         2'd0   : rom0_q,
         2'd1   : r_fl_data,
         2'd2   : ram_q,
-        default: 8'h00,
+        default: zq,
     };
     assign o_d_oe    = drive;
     assign o_d_dir   = drive;
@@ -527,6 +562,9 @@ pub module GameCart #(
             ram_we   = 0;
             ram_wa   = 0;
             ram_wd   = 0;
+            o_cam_we = 0;
+            o_cam_wa = 0;
+            o_cam_wd = 0;
             tr_we    = 0;
             tr_wa    = 0;
             tr_wd    = 0;
@@ -603,9 +641,16 @@ pub module GameCart #(
             bt_good  = 0;
             bt_res   = 0;
         } else {
-            rom0_we = 0;
-            ram_we  = 0;
-            tr_we   = 0;
+            rom0_we  = 0;
+            ram_we   = 0;
+            tr_we    = 0;
+            o_cam_we = 0;
+            // the camera's shot into RAM bank 0 (GameBoy writes to RAM are dropped meanwhile)
+            if CAMERA && i_cam_ram_we {
+                ram_we = 1;
+                ram_wa = {3'b000, i_cam_ram_wa};
+                ram_wd = i_cam_ram_wd;
+            }
 
             // stable read address: its /CS, and when the flash data came
             if rd_brk {
@@ -674,14 +719,17 @@ pub module GameCart #(
                                             romb[7:0] = d_q;
                                         }
                                     }
+                                    3'd6   : romb = {1'b0, d_q};
                                     default: {}
                                 }
                             }
                             2'd2: {
                                 if mapper == 3'd1 {
                                     m1_hi = d_q[1:0];
+                                } else if mapper == 3'd6 {
+                                    ramb = d_q[4:0];
                                 } else {
-                                    ramb = d_q[3:0];
+                                    ramb = {1'b0, d_q[3:0]};
                                 }
                             }
                             default: {
@@ -691,6 +739,14 @@ pub module GameCart #(
                             }
                         }
                     }
+                } else if a_q[15:13] == 3'b101 && (csl || !c_q[2]) && cam6 && ramb[4] {
+                    if en {
+                        o_cam_we = 1;
+                        o_cam_wa = a_q[6:0];
+                        o_cam_wd = d_q;
+                    }
+                } else if a_q[15:13] == 3'b101 && (csl || !c_q[2]) && cam_blk {
+                    n_ramdis += 1;
                 } else if a_q[15:13] == 3'b101 && (csl || !c_q[2]) {
                     if ram_en && ram_has {
                         n_ramwr += 1;
@@ -971,7 +1027,7 @@ pub module GameCart #(
                             rbuf[3]  = {1'b0, tr_filt, tr_auto, tr_on, rst_n, ram_en, rst_drv, en};
                             rbuf[4]  = bank[7:0];
                             rbuf[5]  = {7'd0, bank[8]};
-                            rbuf[6]  = {4'd0, ramb};
+                            rbuf[6]  = {3'd0, ramb};
                             rbuf[7]  = {5'd0, mapper};
                             rbuf[8]  = {2'd0, cont, spiq, r_fl_ready, quad, cap};
                             rbuf[9]  = dly;
@@ -1096,7 +1152,7 @@ pub module GameCart #(
                                     }
                                 }
                                 default: { // 'W', 'Q' reg addr24 len16
-                                    h_reg  = args[0][1:0];
+                                    h_reg  = args[0][2:0];
                                     h_addr = {args[3], args[2], args[1]};
                                     h_cnt  = {rx_d, args[4]};
                                     if cop == 8'h57 {
@@ -1118,11 +1174,11 @@ pub module GameCart #(
                 State::WData: {
                     if rx_take {
                         if !en {
-                            if h_reg == 2'd0 {
+                            if h_reg == 3'd0 {
                                 rom0_we = 1;
                                 rom0_wa = h_addr[13:0];
                                 rom0_wd = rx_d;
-                            } else if h_reg == 2'd1 {
+                            } else if h_reg == 3'd1 {
                                 ram_we = 1;
                                 ram_wa = h_addr[14:0];
                                 ram_wd = rx_d;
@@ -1139,7 +1195,7 @@ pub module GameCart #(
                     }
                 }
                 State::QRd: {
-                    if h_reg == 2'd3 {
+                    if h_reg == 3'd3 {
                         h_fwant = 1;
                         h_faddr = h_addr;
                         f_tmo   = 0;
@@ -1159,8 +1215,9 @@ pub module GameCart #(
                 }
                 State::QLat: {
                     qbyte = case h_reg {
-                        2'd0   : if en ? 8'hFF : rom0_q,
-                        2'd1   : ramh_q,
+                        3'd0   : if en ? 8'hFF : rom0_q,
+                        3'd1   : ramh_q,
+                        3'd4   : if CAMERA ? i_cam_hq : 8'hFF,
                         default: case h_addr[2:0] {
                             3'd0   : tr_q[7:0],
                             3'd1   : tr_q[15:8],

@@ -1,0 +1,271 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file isp_gb_scale.veryl
+ * @brief RAW10 words (IspRaw10Unpack) -> 128x112 8-bit luma for a Game Boy Camera style cartridge.
+ *
+ * A window of 768x672 sensor pixels (words X0W.. of the row, rows Y0..) is cut into 6x6 blocks;
+ * every block's 36 pixels are summed with no colour weights (a Bayer 6x6 block holds 9 R, 18 G,
+ * 9 B), averaged, the black level taken off, scaled by i_gain (8.8) and passed through the sRGB
+ * curve (IspGamma). Each block is one write of the frame buffer: address y * 128 + x.
+ *
+ * Columns: three words (12 pixels) make two blocks, so the sums of a row go out after the second
+ * and the third word of each three. Rows: the row sums are added into one accumulator per column
+ * (a RAM read one clock and written the next: a column comes back only a row later); the sixth
+ * row of a band writes the result. o_frame toggles after the last block of
+ * the frame (band 111, column 127) has been written.
+ *
+ *   i_mirror: x = 127 - column, i_flip: y = 111 - band
+ */
+pub module IspGbScale #(
+    param X0W: u32 = 64, // first word of the window (4 pixels per word): pixel 256 of 1280
+    param Y0 : u32 = 24, // first row of the window: row 24 of 720
+) (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_we   : input logic    ,
+    i_waddr: input logic<9> ,
+    i_wdata: input logic<40>, // {P3, P2, P1, P0}
+    i_row  : input logic<12>,
+
+    i_black : input logic<10>,
+    i_gain  : input logic<16>, // 8.8
+    i_mirror: input logic    ,
+    i_flip  : input logic    ,
+
+    o_we   : output logic    ,
+    o_wa   : output logic<14>,
+    o_wd   : output logic<8> ,
+    o_frame: output logic    , // toggles when a frame is complete
+) {
+    // ---- rows ----
+    var act : logic   ; // the current row is in the window
+    var rsub: logic<3>; // row in the band, 0..5
+    var band: logic<7>; // 0..111
+    var n_act : logic   ;
+    var n_rsub: logic<3>;
+    var n_band: logic<7>;
+    always_comb {
+        n_act  = act;
+        n_rsub = rsub;
+        n_band = band;
+        if i_we && i_waddr == 9'd0 {
+            // a new row starts with its word 0
+            if i_row == Y0[11:0] {
+                n_act  = 1;
+                n_rsub = 0;
+                n_band = 0;
+            } else if act {
+                if rsub == 3'd5 {
+                    n_rsub = 0;
+                    if band == 7'd111 {
+                        n_act = 0;
+                    } else {
+                        n_band = band + 7'd1;
+                    }
+                } else {
+                    n_rsub = rsub + 3'd1;
+                }
+            }
+        }
+    }
+
+    // ---- columns: three words make two blocks ----
+    var ph : logic<2> ; // word in the group of three
+    var blk: logic<7> ; // first block of the group
+    var s  : logic<13>; // pixels of the group's second block seen so far
+
+    let k    : logic<9>  = i_waddr - X0W[8:0];
+    let incol: logic     = i_waddr >= X0W[8:0] && i_waddr <: X0W[8:0] + 9'd192;
+    let cph  : logic<2>  = if k == 9'd0 ? 2'd0 : ph;
+    let cblk : logic<7>  = if k == 9'd0 ? 7'd0 : blk;
+    let p0   : logic<10> = i_wdata[9:0];
+    let p1   : logic<10> = i_wdata[19:10];
+    let p2   : logic<10> = i_wdata[29:20];
+    let p3   : logic<10> = i_wdata[39:30];
+    let s01  : logic<13> = (p0 as 13) + (p1 as 13);
+    let s23  : logic<13> = (p2 as 13) + (p3 as 13);
+    let take : logic     = i_we && n_act && incol;
+
+    // row sums of one block (6 pixels), one clock after the word
+    var e_v   : logic    ;
+    var e_blk : logic<7> ;
+    var e_sum : logic<13>;
+    var e_band: logic<7> ;
+    var e_rsub: logic<3> ;
+
+    always_ff {
+        if_reset {
+            act    = 0;
+            rsub   = 0;
+            band   = 0;
+            ph     = 0;
+            blk    = 0;
+            s      = 0;
+            e_v    = 0;
+            e_blk  = 0;
+            e_sum  = 0;
+            e_band = 0;
+            e_rsub = 0;
+        } else {
+            act    = n_act;
+            rsub   = n_rsub;
+            band   = n_band;
+            e_v    = take && cph != 2'd0;
+            e_band = n_band;
+            e_rsub = n_rsub;
+            if take {
+                case cph {
+                    2'd0: {
+                        s   = s01 + s23;
+                        ph  = 2'd1;
+                        blk = cblk;
+                    }
+                    2'd1: {
+                        e_blk = cblk;
+                        e_sum = s + s01;
+                        s     = s23;
+                        ph    = 2'd2;
+                        blk   = cblk;
+                    }
+                    default: {
+                        e_blk = cblk + 7'd1;
+                        e_sum = s + s01 + s23;
+                        blk   = cblk + 7'd2;
+                        ph    = 2'd0;
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- bands: one accumulator per column (the first row of a band overwrites it) ----
+    var acc  : logic<16> [128];
+    var acc_q: logic<16>       ; // acc[e_blk] of the clock before
+    var f_v   : logic    ;
+    var f_blk : logic<7> ;
+    var f_sum : logic<13>;
+    var f_band: logic<7> ;
+    var f_rsub: logic<3> ;
+    let f_new : logic<16> = if f_rsub == 3'd0 ? (f_sum as 16) : acc_q + (f_sum as 16);
+    always_ff (i_clk) {
+        acc_q = acc[e_blk];
+        if f_v {
+            acc[f_blk] = f_new;
+        }
+    }
+    var b_v   : logic    ;
+    var b_sum : logic<16>;
+    var b_x   : logic<7> ;
+    var b_y   : logic<7> ;
+    var b_last: logic    ; // the frame's last block
+    always_ff {
+        if_reset {
+            f_v    = 0;
+            f_blk  = 0;
+            f_sum  = 0;
+            f_band = 0;
+            f_rsub = 0;
+            b_v    = 0;
+            b_sum  = 0;
+            b_x    = 0;
+            b_y    = 0;
+            b_last = 0;
+        } else {
+            f_v    = e_v;
+            f_blk  = e_blk;
+            f_sum  = e_sum;
+            f_band = e_band;
+            f_rsub = e_rsub;
+            b_v    = f_v && f_rsub == 3'd5;
+            b_sum  = f_new;
+            b_x    = if i_mirror ? 7'd127 - f_blk : f_blk;
+            b_y    = if i_flip ? 7'd111 - f_band : f_band;
+            b_last = f_band == 7'd111 && f_blk == 7'd127;
+        }
+    }
+
+    // ---- average, black level, gain, then the curve ----
+    // sum / 36 ~ sum * 1821 / 65536
+    var c_v   : logic    ;
+    var c_avg : logic<11>;
+    var c_wa  : logic<14>;
+    var c_last: logic    ;
+    var n_v   : logic    ;
+    var n_net : logic<11>;
+    var n_wa  : logic<14>;
+    var n_last: logic    ;
+    var m_v   : logic    ;
+    var m_amp : logic<27>;
+    var m_wa  : logic<14>;
+    var m_last: logic    ;
+    var d_v   : logic    ;
+    var d_lin : logic<10>;
+    var d_wa  : logic<14>;
+    var d_last: logic    ;
+    var g_v   : logic    ;
+    var g_wa  : logic<14>;
+    var g_last: logic    ;
+    let avg   : logic<27> = (b_sum as 27) * 27'd1821;
+    let net   : logic<11> = if c_avg >: (i_black as 11) ? c_avg - (i_black as 11) : 11'd0;
+    let amp   : logic<27> = (n_net as 27) * (i_gain as 27);
+    always_ff {
+        if_reset {
+            c_v     = 0;
+            c_avg   = 0;
+            c_wa    = 0;
+            c_last  = 0;
+            n_v     = 0;
+            n_net   = 0;
+            n_wa    = 0;
+            n_last  = 0;
+            m_v     = 0;
+            m_amp   = 0;
+            m_wa    = 0;
+            m_last  = 0;
+            d_v     = 0;
+            d_lin   = 0;
+            d_wa    = 0;
+            d_last  = 0;
+            g_v     = 0;
+            g_wa    = 0;
+            g_last  = 0;
+            o_frame = 0;
+        } else {
+            c_v    = b_v;
+            c_avg  = avg[26:16];
+            c_wa   = {b_y, b_x};
+            c_last = b_v && b_last;
+            n_v    = c_v;
+            n_net  = net;
+            n_wa   = c_wa;
+            n_last = c_last;
+            m_v    = n_v;
+            m_amp  = amp;
+            m_wa   = n_wa;
+            m_last = n_last;
+            d_v    = m_v;
+            d_lin  = if m_amp[26:18] != 9'd0 ? 10'h3FF : m_amp[17:8];
+            d_wa   = m_wa;
+            d_last = m_last;
+            // IspGamma takes one clock: g_* line up with its output
+            g_v    = d_v;
+            g_wa   = d_wa;
+            g_last = d_last;
+            if g_last {
+                o_frame = !o_frame;
+            }
+        }
+    }
+    inst u_gamma: IspGamma (
+        i_clk         ,
+        i_a  : d_lin  ,
+        o_q  : o_wd   ,
+    );
+    assign o_we = g_v;
+    assign o_wa = g_wa;
+}
