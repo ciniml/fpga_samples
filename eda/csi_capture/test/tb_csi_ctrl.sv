@@ -104,7 +104,7 @@ module tb_csi_ctrl #(parameter int SENSOR = 0);
     always @(nwrites) if (nwrites % 10 == 0) $display("[%0t] %0d register writes", $time, nwrites);
     initial begin
         logic [7:0] r0, r1, r2;
-        int nrom = 0;
+        static int nrom = 0;
         repeat (4) @(posedge clk); rst = 0;
         for (int i = 0; i < (SENSOR == 2 ? 256 : 128); i++) begin
             logic [23:0] e;

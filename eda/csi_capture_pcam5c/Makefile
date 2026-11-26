@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 # Digilent Pcam 5C (OV5640) variant of eda/csi_capture: the same sources
 # (../csi_capture/src/$(TARGET)) built with CSI_SENSOR_OV5640.
 PROJECT_NAME := csi_capture_pcam5c

@@ -225,7 +225,7 @@ module gb_cart_model #(
         n_flash_erase = 0;
     end
 
-    always_ff @(posedge clk) begin
+    always @(posedge clk) begin    // not always_ff: the counters are also cleared by the initial block
         if (rst) begin
             bank_lo <= 9'd1;
             reg2    <= 0;

@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 # Camera pipeline simulation (Verilator) + bit-exact check (Python).
 set -e
 cd "$(dirname "$0")"

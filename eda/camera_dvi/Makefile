@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: BSL-1.0
+# Copyright Kenta Ida 2026.
 PROJECT_NAME := camera_dvi
 
 TARGET ?= tangprimer25k
