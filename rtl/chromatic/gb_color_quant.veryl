@@ -1,0 +1,698 @@
+// SPDX-License-Identifier: BSL-1.0
+// Copyright Kenta Ida 2026.
+// Distributed under the Boost Software License, Version 1.0.
+//    (See accompanying file LICENSE_1_0.txt or copy at
+//          https://www.boost.org/LICENSE_1_0.txt)
+/**
+ * @file gb_color_quant.veryl
+ * @brief A 128x112 RGB565 frame -> Game Boy Color tiles, with 4 palettes of 4 colours for every tile
+ *        row (the viewfinder rewrites the other half of the 8 BG palettes during each tile row).
+ *
+ * For every tile row (16 tiles), as test/gb_color_ref.py:
+ *   P1   tile means (channels widened to 8 bits) and each tile's luma range, luma = (r + 2 g + b) >> 2
+ *   Init k-means centres: the tile of the highest mean luma, then each the tile farthest (L1) from the
+ *        centres so far (ties: the lowest index)
+ *   Asg / Upd  3 updates of the centres (mean of the members, floor), then the final assignment;
+ *        groups renumbered by the centre's r + 2 g + b, darkest first (stable); an empty group gets
+ *        the luma range 0..0
+ *   Scl  12288 / max(1, ymax - ymin) per group
+ *   P2   every pixel: i = min(3, ((Y - ymin) * scale + bayer * 256 + 128) >> 12), the tile bytes,
+ *        and the sums of each group's pixels by i
+ *   Pal  colour i of a group: the mean of those pixels, or grey ymin + (ymax - ymin) * i / 3 if none
+ *   Attr the BG attribute of each tile: 0x08 | (ty & 1) << 2 | group
+ * RAM bank 0 (o_wa): 0x0100 + tile * 16 + row * 2 the tiles (colour index i), 0x0F00 + tile the
+ * attributes, 0x1000 + ty * 32 + group * 8 + i * 2 the palettes (RGB555, little endian).
+ * Frame reads: o_ra, data in i_rq the clock after. One division at a time (GbDiv, 24 clocks).
+ */
+pub module GbColorQuant (
+    i_clk: input clock,
+    i_rst: input reset,
+
+    i_start: input  logic    , // pulse
+    o_busy : output logic    ,
+    o_ra   : output logic<14>,
+    i_rq   : input  logic<16>,
+    o_we   : output logic    ,
+    o_wa   : output logic<13>,
+    o_wd   : output logic<8> ,
+) {
+    enum Q: logic<5> {
+        Idle,
+        P1,
+        P1W,
+        Init0,
+        InitN,
+        Asg,
+        Upd,
+        UpdW,
+        Rank,
+        Gy,
+        Scl,
+        SclW,
+        P2,
+        P2W,
+        Pal,
+        PalW,
+        PalLo,
+        PalHi,
+        Attr,
+    }
+    var st  : Q       ;
+    var ty  : logic<4>;
+    var rtx : logic<4>; // reads: tile, row, pixel
+    var ry  : logic<3>;
+    var rx  : logic<3>;
+    var cnt : logic<5>; // loop counter of the small steps
+    var sub : logic<2>; // channel / centre
+    var iter: logic<2>;
+    var ncen: logic<3>;
+
+    // ---- division ----
+    var dv_go: logic    ;
+    var dv_n : logic<24>;
+    var dv_d : logic<14>;
+    var dv_q : logic<24>;
+    var dv_bz: logic    ;
+    inst u_div: GbDiv (
+        i_clk           ,
+        i_rst           ,
+        i_go  : dv_go   ,
+        i_n   : dv_n    ,
+        i_d   : dv_d    ,
+        o_q   : dv_q    ,
+        o_busy: dv_bz   ,
+    );
+
+    // ---- per tile row ----
+    var tm_r: logic<8>  [16];
+    var tm_g: logic<8>  [16];
+    var tm_b: logic<8>  [16];
+    var tmin: logic<8>  [16];
+    var tmax: logic<8>  [16];
+    var grp : logic<2>  [16];
+    var dmin: logic<10> [16];
+    var c_r : logic<8>  [4] ;
+    var c_g : logic<8>  [4] ;
+    var c_b : logic<8>  [4] ;
+    var gs_r: logic<12> [4] ;
+    var gs_g: logic<12> [4] ;
+    var gs_b: logic<12> [4] ;
+    var gcnt: logic<5>  [4] ;
+    var gymn: logic<8>  [4] ;
+    var gymx: logic<8>  [4] ;
+    var ghas: logic<4>      ;
+    var scl : logic<14> [4] ;
+    var best: logic<4>      ;
+    var bval: logic<10>     ;
+    var ac_r: logic<18> [16]; // {group, i}
+    var ac_g: logic<18> [16];
+    var ac_b: logic<18> [16];
+    var ac_n: logic<11> [16];
+    var pv  : logic<8>  [3] ; // a palette colour
+    var p555: logic<16>     ;
+
+    // ---- the pixel read the clock before ----
+    var v1 : logic   ;
+    var t1 : logic<4>;
+    var y1 : logic<3>;
+    var x1 : logic<3>;
+    let r5 : logic<5> = i_rq[15:11];
+    let g6 : logic<6> = i_rq[10:5];
+    let b5 : logic<5> = i_rq[4:0];
+    let r8 : logic<8> = {r5, r5[4:2]};
+    let g8 : logic<8> = {g6, g6[5:4]};
+    let b8 : logic<8> = {b5, b5[4:2]};
+    let y8 : logic<8> = (((r8 as 10) + ({g8, 1'b0} as 10) + (b8 as 10)) >> 2) as 8;
+    let rds: logic    = st == Q::P1 || st == Q::P2;
+    assign o_ra = {ty, ry, rtx, rx};
+
+    // P1 running sums of the current tile
+    var s_r: logic<14>;
+    var s_g: logic<14>;
+    var s_b: logic<14>;
+    var s_mn: logic<8>;
+    var s_mx: logic<8>;
+    let first: logic     = y1 == 3'd0 && x1 == 3'd0;
+    let n_r  : logic<14> = (if first ? 14'd0 : s_r) + (r8 as 14);
+    let n_g  : logic<14> = (if first ? 14'd0 : s_g) + (g8 as 14);
+    let n_b  : logic<14> = (if first ? 14'd0 : s_b) + (b8 as 14);
+    let n_mn : logic<8>  = if first || y8 <: s_mn ? y8 : s_mn;
+    let n_mx : logic<8>  = if first || y8 >: s_mx ? y8 : s_mx;
+
+    // L1 distances of tile cnt[3:0] to the centres
+    function absd (
+        a: input logic<8>,
+        b: input logic<8>,
+    ) -> logic<10> {
+        return if a >: b ? (a - b) as 10 : (b - a) as 10;
+    }
+    let ti : logic<4>     = cnt[3:0];
+    var dk : logic<10> [4];
+    always_comb {
+        for k in 0..4 {
+            dk[k] = absd(tm_r[ti], c_r[k]) + absd(tm_g[ti], c_g[k]) + absd(tm_b[ti], c_b[k]);
+        }
+    }
+    let kmin01: logic<2>  = if dk[1] <: dk[0] ? 2'd1 : 2'd0;
+    let dmin01: logic<10> = if dk[1] <: dk[0] ? dk[1] : dk[0];
+    let kmin23: logic<2>  = if dk[3] <: dk[2] ? 2'd3 : 2'd2;
+    let dmin23: logic<10> = if dk[3] <: dk[2] ? dk[3] : dk[2];
+    let kmin  : logic<2>  = if dmin23 <: dmin01 ? kmin23 : kmin01;
+    let dlast : logic<10> = dk[ncen[1:0] - 2'd1]; // to the newest centre
+    let dnew  : logic<10> = if ncen == 3'd1 || dlast <: dmin[ti] ? dlast : dmin[ti];
+    let tluma : logic<8>  = (((tm_r[ti] as 10) + ({tm_g[ti], 1'b0} as 10) + (tm_b[ti] as 10)) >> 2) as 8;
+
+    // group order by r + 2 g + b of the centres (stable)
+    var key: logic<10> [4];
+    var rk : logic<2>  [4];
+    always_comb {
+        for k in 0..4 {
+            key[k] = (c_r[k] as 10) + ({c_g[k], 1'b0} as 10) + (c_b[k] as 10);
+        }
+        for k in 0..4 {
+            rk[k] = 0;
+            for j in 0..4 {
+                if key[j] <: key[k] || (key[j] == key[k] && j <: k) {
+                    rk[k] += 1;
+                }
+            }
+        }
+    }
+
+    // ---- P2 pipeline: s1 luma and group, s2 product, s3 index ----
+    var q1_v : logic    ;
+    var q1_e : logic    ; // last pixel of a tile row (8 pixels)
+    var q1_d : logic<9> ; // Y - ymin
+    var q1_g : logic<2> ;
+    var q1_sc: logic<14>;
+    var q1_bi: logic<4> ;
+    var q1_px: logic<24>;
+    var q1_a : logic<13>; // the tile row's byte address
+    var q2_v : logic    ;
+    var q2_e : logic    ;
+    var q2_m : logic<23>;
+    var q2_g : logic<2> ;
+    var q2_bi: logic<4> ;
+    var q2_px: logic<24>;
+    var q2_a : logic<13>;
+    let q2_s : logic<23> = q2_m + ({q2_bi, 8'd128} as 23);
+    let q2_i : logic<2>  = if q2_s[22:12] >: 11'd3 ? 2'd3 : q2_s[13:12];
+    var plo  : logic<8> ;
+    var phi  : logic<8> ;
+    var w_hi : logic    ;
+    var w_a  : logic<13>;
+    let gq   : logic<2>  = grp[t1];
+
+    // palette step j = {group, i}
+    let pj   : logic<4>  = cnt[3:0];
+    let pg   : logic<2>  = cnt[3:2];
+    let pi   : logic<2>  = cnt[1:0];
+    let prng : logic<8>  = gymx[pg] - gymn[pg];
+
+    always_ff {
+        if_reset {
+            st    = Q::Idle;
+            ty    = 0;
+            rtx   = 0;
+            ry    = 0;
+            rx    = 0;
+            cnt   = 0;
+            sub   = 0;
+            iter  = 0;
+            ncen  = 0;
+            dv_go = 0;
+            dv_n  = 0;
+            dv_d  = 1;
+            tm_r  = '{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            tm_g  = '{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            tm_b  = '{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            tmin  = '{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            tmax  = '{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            grp   = '{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            dmin  = '{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            c_r   = '{0, 0, 0, 0};
+            c_g   = '{0, 0, 0, 0};
+            c_b   = '{0, 0, 0, 0};
+            gs_r  = '{0, 0, 0, 0};
+            gs_g  = '{0, 0, 0, 0};
+            gs_b  = '{0, 0, 0, 0};
+            gcnt  = '{0, 0, 0, 0};
+            gymn  = '{0, 0, 0, 0};
+            gymx  = '{0, 0, 0, 0};
+            ghas  = 0;
+            scl   = '{0, 0, 0, 0};
+            best  = 0;
+            bval  = 0;
+            ac_r  = '{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            ac_g  = '{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            ac_b  = '{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            ac_n  = '{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            pv    = '{0, 0, 0};
+            p555  = 0;
+            v1    = 0;
+            t1    = 0;
+            y1    = 0;
+            x1    = 0;
+            s_r   = 0;
+            s_g   = 0;
+            s_b   = 0;
+            s_mn  = 0;
+            s_mx  = 0;
+            q1_v  = 0;
+            q1_e  = 0;
+            q1_d  = 0;
+            q1_g  = 0;
+            q1_sc = 0;
+            q1_bi = 0;
+            q1_px = 0;
+            q1_a  = 0;
+            q2_v  = 0;
+            q2_e  = 0;
+            q2_m  = 0;
+            q2_g  = 0;
+            q2_bi = 0;
+            q2_px = 0;
+            q2_a  = 0;
+            plo   = 0;
+            phi   = 0;
+            w_hi  = 0;
+            w_a   = 0;
+            o_busy = 0;
+            o_we   = 0;
+            o_wa   = 0;
+            o_wd   = 0;
+        } else {
+            dv_go = 0;
+            o_we  = 0;
+
+            // the read issued the clock before
+            v1 = rds;
+            t1 = rtx;
+            y1 = ry;
+            x1 = rx;
+            if rds {
+                rx += 1;
+                if rx == 3'd7 {
+                    ry += 1;
+                    if ry == 3'd7 {
+                        rtx += 1;
+                    }
+                }
+            }
+
+            // P1: tile means and luma ranges
+            if v1 && st == Q::P1 || v1 && st == Q::P1W {
+                s_r  = n_r;
+                s_g  = n_g;
+                s_b  = n_b;
+                s_mn = n_mn;
+                s_mx = n_mx;
+                if y1 == 3'd7 && x1 == 3'd7 {
+                    tm_r[t1] = n_r[13:6];
+                    tm_g[t1] = n_g[13:6];
+                    tm_b[t1] = n_b[13:6];
+                    tmin[t1] = n_mn;
+                    tmax[t1] = n_mx;
+                }
+            }
+
+            // P2 pipeline
+            q1_v  = v1 && (st == Q::P2 || st == Q::P2W);
+            q1_e  = x1 == 3'd7;
+            q1_d  = (y8 as 9) - (gymn[gq] as 9);
+            q1_g  = gq;
+            q1_sc = scl[gq];
+            q1_bi = case {y1[1:0], x1[1:0]} {
+                4'd0   : 4'd0,
+                4'd1   : 4'd8,
+                4'd2   : 4'd2,
+                4'd3   : 4'd10,
+                4'd4   : 4'd12,
+                4'd5   : 4'd4,
+                4'd6   : 4'd14,
+                4'd7   : 4'd6,
+                4'd8   : 4'd3,
+                4'd9   : 4'd11,
+                4'd10  : 4'd1,
+                4'd11  : 4'd9,
+                4'd12  : 4'd15,
+                4'd13  : 4'd7,
+                4'd14  : 4'd13,
+                default: 4'd5,
+            };
+            q1_px = {r8, g8, b8};
+            q1_a  = 13'h100 + ({ty, t1, y1, 1'b0} as 13);
+            q2_v  = q1_v;
+            q2_e  = q1_e;
+            q2_m  = (q1_d[7:0] as 23) * (q1_sc as 23);
+            q2_g  = q1_g;
+            q2_bi = q1_bi;
+            q2_px = q1_px;
+            q2_a  = q1_a;
+            if w_hi {
+                w_hi = 0;
+                o_we = 1;
+                o_wa = w_a + 13'd1;
+                o_wd = phi;
+            }
+            if q2_v {
+                plo                  =  {plo[6:0], q2_i[0]};
+                phi                  =  {phi[6:0], q2_i[1]};
+                ac_r[{q2_g, q2_i}]   += (q2_px[23:16] as 18);
+                ac_g[{q2_g, q2_i}]   += (q2_px[15:8] as 18);
+                ac_b[{q2_g, q2_i}]   += (q2_px[7:0] as 18);
+                ac_n[{q2_g, q2_i}]   += 11'd1;
+                if q2_e {
+                    o_we = 1;
+                    o_wa = q2_a;
+                    o_wd = {plo[6:0], q2_i[0]};
+                    w_hi = 1;
+                    w_a  = q2_a;
+                }
+            }
+
+            case st {
+                Q::Idle: {
+                    if i_start {
+                        o_busy = 1;
+                        ty     = 0;
+                        rtx    = 0;
+                        ry     = 0;
+                        rx     = 0;
+                        st     = Q::P1;
+                    }
+                }
+                Q::P1: {
+                    if rtx == 4'd15 && ry == 3'd7 && rx == 3'd7 {
+                        st  = Q::P1W;
+                        cnt = 0;
+                    }
+                }
+                Q::P1W: {
+                    // the last pixel's sums go in this clock
+                    cnt  = 0;
+                    best = 0;
+                    bval = 0;
+                    st   = Q::Init0;
+                }
+                Q::Init0: {
+                    // the tile of the highest mean luma (the first of equals)
+                    if cnt == 5'd0 || (tluma as 10) >: bval {
+                        best = ti;
+                        bval = tluma as 10;
+                    }
+                    if cnt == 5'd15 {
+                        c_r[0] = tm_r[if cnt == 5'd0 || (tluma as 10) >: bval ? ti : best];
+                        c_g[0] = tm_g[if cnt == 5'd0 || (tluma as 10) >: bval ? ti : best];
+                        c_b[0] = tm_b[if cnt == 5'd0 || (tluma as 10) >: bval ? ti : best];
+                        ncen   = 3'd1;
+                        cnt    = 0;
+                        st     = Q::InitN;
+                    } else {
+                        cnt += 1;
+                    }
+                }
+                Q::InitN: {
+                    // the tile farthest from the centres so far
+                    dmin[ti] = dnew;
+                    if cnt == 5'd0 || dnew >: bval {
+                        best = ti;
+                        bval = dnew;
+                    }
+                    if cnt == 5'd15 {
+                        c_r[ncen[1:0]] = tm_r[if dnew >: bval ? ti : best];
+                        c_g[ncen[1:0]] = tm_g[if dnew >: bval ? ti : best];
+                        c_b[ncen[1:0]] = tm_b[if dnew >: bval ? ti : best];
+                        ncen           += 1;
+                        cnt            =  0;
+                        if ncen == 3'd3 {
+                            iter = 0;
+                            gs_r = '{0, 0, 0, 0};
+                            gs_g = '{0, 0, 0, 0};
+                            gs_b = '{0, 0, 0, 0};
+                            gcnt = '{0, 0, 0, 0};
+                            st   = Q::Asg;
+                        }
+                    } else {
+                        cnt += 1;
+                    }
+                }
+                Q::Asg: {
+                    grp[ti]    =  kmin;
+                    gs_r[kmin] += (tm_r[ti] as 12);
+                    gs_g[kmin] += (tm_g[ti] as 12);
+                    gs_b[kmin] += (tm_b[ti] as 12);
+                    gcnt[kmin] += 5'd1;
+                    if cnt == 5'd15 {
+                        cnt = 0;
+                        sub = 0;
+                        st  = if iter == 2'd3 ? Q::Rank : Q::Upd;
+                    } else {
+                        cnt += 1;
+                    }
+                }
+                Q::Upd: {
+                    // centre cnt[1:0], channel sub: sum / count
+                    if gcnt[cnt[1:0]] == 5'd0 {
+                        if cnt[1:0] == 2'd3 {
+                            iter += 1;
+                            cnt  =  0;
+                            gs_r =  '{0, 0, 0, 0};
+                            gs_g =  '{0, 0, 0, 0};
+                            gs_b =  '{0, 0, 0, 0};
+                            gcnt =  '{0, 0, 0, 0};
+                            st   =  Q::Asg;
+                        } else {
+                            cnt += 1;
+                        }
+                    } else {
+                        dv_go = 1;
+                        dv_n  = case sub {
+                            2'd0   : gs_r[cnt[1:0]] as 24,
+                            2'd1   : gs_g[cnt[1:0]] as 24,
+                            default: gs_b[cnt[1:0]] as 24,
+                        };
+                        dv_d = gcnt[cnt[1:0]] as 14;
+                        st   = Q::UpdW;
+                    }
+                }
+                Q::UpdW: {
+                    if !dv_go && !dv_bz {
+                        case sub {
+                            2'd0   : c_r[cnt[1:0]] = dv_q[7:0];
+                            2'd1   : c_g[cnt[1:0]] = dv_q[7:0];
+                            default: c_b[cnt[1:0]] = dv_q[7:0];
+                        }
+                        st = Q::Upd;
+                        if sub == 2'd2 {
+                            sub = 0;
+                            if cnt[1:0] == 2'd3 {
+                                iter += 1;
+                                cnt  =  0;
+                                gs_r =  '{0, 0, 0, 0};
+                                gs_g =  '{0, 0, 0, 0};
+                                gs_b =  '{0, 0, 0, 0};
+                                gcnt =  '{0, 0, 0, 0};
+                                st   =  Q::Asg;
+                            } else {
+                                cnt += 1;
+                            }
+                        } else {
+                            sub += 1;
+                        }
+                    }
+                }
+                Q::Rank: {
+                    for i in 0..16 {
+                        grp[i] = rk[grp[i]];
+                    }
+                    gymn = '{8'hFF, 8'hFF, 8'hFF, 8'hFF};
+                    gymx = '{0, 0, 0, 0};
+                    ghas = 0;
+                    cnt  = 0;
+                    st   = Q::Gy;
+                }
+                Q::Gy: {
+                    // each group's luma range
+                    if cnt[4] {
+                        for g in 0..4 {
+                            if !ghas[g] {
+                                gymn[g] = 0;
+                                gymx[g] = 0;
+                            }
+                        }
+                        cnt = 0;
+                        st  = Q::Scl;
+                    } else {
+                        if tmin[ti] <: gymn[grp[ti]] {
+                            gymn[grp[ti]] = tmin[ti];
+                        }
+                        if tmax[ti] >: gymx[grp[ti]] {
+                            gymx[grp[ti]] = tmax[ti];
+                        }
+                        ghas[grp[ti]] = 1;
+                        cnt           += 1;
+                    }
+                }
+                Q::Scl: {
+                    dv_go = 1;
+                    dv_n  = 24'd12288;
+                    dv_d  = if gymx[cnt[1:0]] >: gymn[cnt[1:0]] ? (gymx[cnt[1:0]] - gymn[cnt[1:0]]) as 14 : 14'd1;
+                    st    = Q::SclW;
+                }
+                Q::SclW: {
+                    if !dv_go && !dv_bz {
+                        scl[cnt[1:0]] = dv_q[13:0];
+                        if cnt[1:0] == 2'd3 {
+                            ac_r = '{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+                            ac_g = '{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+                            ac_b = '{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+                            ac_n = '{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+                            rtx  = 0;
+                            ry   = 0;
+                            rx   = 0;
+                            st   = Q::P2;
+                        } else {
+                            cnt += 1;
+                            st  =  Q::Scl;
+                        }
+                    }
+                }
+                Q::P2: {
+                    if rtx == 4'd15 && ry == 3'd7 && rx == 3'd7 {
+                        st  = Q::P2W;
+                        cnt = 0;
+                    }
+                }
+                Q::P2W: {
+                    // the pipeline and the last tile row's second byte
+                    cnt += 1;
+                    if cnt == 5'd6 {
+                        cnt = 0;
+                        sub = 0;
+                        st  = Q::Pal;
+                    }
+                }
+                Q::Pal: {
+                    // colour pi of group pg: channel sub
+                    if ac_n[pj] == 11'd0 {
+                        dv_go = 1;
+                        dv_n  = (prng as 24) * (pi as 24);
+                        dv_d  = 14'd3;
+                    } else {
+                        dv_go = 1;
+                        dv_n  = case sub {
+                            2'd0   : ac_r[pj] as 24,
+                            2'd1   : ac_g[pj] as 24,
+                            default: ac_b[pj] as 24,
+                        };
+                        dv_d = ac_n[pj] as 14;
+                    }
+                    st = Q::PalW;
+                }
+                Q::PalW: {
+                    if !dv_go && !dv_bz {
+                        if ac_n[pj] == 11'd0 {
+                            pv  = '{gymn[pg] + dv_q[7:0], gymn[pg] + dv_q[7:0], gymn[pg] + dv_q[7:0]};
+                            sub = 0;
+                            st  = Q::PalLo;
+                        } else {
+                            pv[sub] = dv_q[7:0];
+                            if sub == 2'd2 {
+                                sub = 0;
+                                st  = Q::PalLo;
+                            } else {
+                                sub += 1;
+                                st  =  Q::Pal;
+                            }
+                        }
+                    }
+                }
+                Q::PalLo: {
+                    p555 = {1'b0, pv[2][7:3], pv[1][7:3], pv[0][7:3]};
+                    o_we = 1;
+                    o_wa = 13'h1000 + ({ty, pg, pi, 1'b0} as 13);
+                    o_wd = {pv[1][5:3], pv[0][7:3]};
+                    st   = Q::PalHi;
+                }
+                Q::PalHi: {
+                    o_we = 1;
+                    o_wa = 13'h1000 + ({ty, pg, pi, 1'b1} as 13);
+                    o_wd = p555[15:8];
+                    if pj == 4'd15 {
+                        cnt = 0;
+                        st  = Q::Attr;
+                    } else {
+                        cnt += 1;
+                        st  =  Q::Pal;
+                    }
+                }
+                default: {
+                    // Attr
+                    o_we = 1;
+                    o_wa = 13'h0F00 + ({ty, ti} as 13);
+                    o_wd = {4'b0000, 1'b1, ty[0], grp[ti]};
+                    if cnt == 5'd15 {
+                        cnt = 0;
+                        rtx = 0;
+                        ry  = 0;
+                        rx  = 0;
+                        if ty == 4'd13 {
+                            o_busy = 0;
+                            st     = Q::Idle;
+                        } else {
+                            ty += 1;
+                            st =  Q::P1;
+                        }
+                    } else {
+                        cnt += 1;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Unsigned restoring division, one quotient bit a clock: o_q = i_n / i_d (i_d > 0), o_busy falls
+/// 24 clocks after i_go.
+pub module GbDiv (
+    i_clk : input  clock    ,
+    i_rst : input  reset    ,
+    i_go  : input  logic    ,
+    i_n   : input  logic<24>,
+    i_d   : input  logic<14>,
+    o_q   : output logic<24>,
+    o_busy: output logic    ,
+) {
+    var rem: logic<15>;
+    var dd : logic<14>;
+    var n  : logic<5> ;
+    let r2 : logic<15> = {rem[13:0], o_q[23]};
+    always_ff {
+        if_reset {
+            rem    = 0;
+            dd     = 1;
+            n      = 0;
+            o_q    = 0;
+            o_busy = 0;
+        } else if i_go {
+            rem    = 0;
+            dd     = i_d;
+            n      = 5'd24;
+            o_q    = i_n;
+            o_busy = 1;
+        } else if o_busy {
+            if r2 >= (dd as 15) {
+                rem = r2 - (dd as 15);
+                o_q = {o_q[22:0], 1'b1};
+            } else {
+                rem = r2;
+                o_q = {o_q[22:0], 1'b0};
+            }
+            n -= 1;
+            if n == 5'd1 {
+                o_busy = 0;
+            }
+        }
+    }
+}

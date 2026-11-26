@@ -128,7 +128,9 @@ module tb_game_boot;
     always @(posedge clk) if (tx_valid) txq.push_back(tx_data);
 
 `ifdef CAMERA
-    logic pclk = 0, cam_frame = 0;
+    logic pclk = 0, cam_frame = 0, cam_fb_we = 0;
+    logic [13:0] cam_fb_wa = 0;
+    logic [7:0]  cam_fb_wd = 0;
     always #4 pclk = !pclk;
     logic       cam_we, cam_busy, cam_ram_we;
     logic [6:0] cam_wa;
@@ -137,7 +139,7 @@ module tb_game_boot;
     logic [15:0] cam_hra;
     GbCamera #(.TIMEOUT(1000000)) u_cam (
         .i_clk(clk), .i_rst(rst),
-        .i_pclk(pclk), .i_fb_we(1'b0), .i_fb_wa(14'd0), .i_fb_wd(8'd0), .i_frame(cam_frame),
+        .i_pclk(pclk), .i_fb_we(cam_fb_we), .i_fb_wa(cam_fb_wa), .i_fb_wd(cam_fb_wd), .i_fb_cwd(16'd0), .i_frame(cam_frame),
         .i_reg_we(cam_we), .i_reg_a(cam_wa), .i_reg_d(cam_wd), .o_reg0(cam_reg0), .o_busy(cam_busy),
         .o_ram_we(cam_ram_we), .o_ram_wa(cam_ram_wa), .o_ram_wd(cam_ram_wd), .i_h_ra(cam_hra), .o_h_q(cam_hq));
     localparam bit CAM = 1;
@@ -247,7 +249,12 @@ module tb_game_boot;
 
 `ifdef CAMERA
         // 4: a shot from the console side: a horizontal ramp v = 2x, gain 1, exposure 1, thresholds 64 / 128 / 192
-        for (int y = 0; y < 112; y++) for (int x = 0; x < 128; x++) u_cam.fb[y * 128 + x] = 8'(x * 2);
+        for (int i = 0; i < 128 * 112; i++) begin
+            @(posedge pclk);
+            cam_fb_we <= 1; cam_fb_wa <= 14'(i); cam_fb_wd <= 8'((i % 128) * 2);
+        end
+        @(posedge pclk);
+        cam_fb_we <= 0;
         console_write(16'h0000, 8'h0A);
         console_write(16'h4000, 8'h10);
         console_write(16'hA001, 8'h04);
@@ -282,6 +289,11 @@ module tb_game_boot;
         txq.delete();
         host_send('{8'h51, 8'h04, 8'h44, 8'h40, 8'h00, 8'h01, 8'h00}); host_recv(1, r);
         check(r[0] == 8'd1, $sformatf("host 'Q' 4: shots %0d", r[0]));
+        // the host reads RAM through the console's port while answering (the address out of RAM)
+        a = 16'h0150;
+        txq.delete();
+        host_send('{8'h51, 8'h01, 8'h00, 8'h02, 8'h00, 8'h01, 8'h00}); host_recv(1, r);
+        check(r[0] == 8'h5A, $sformatf("host 'Q' 1 while answering: %02x", r[0]));
 `endif
         txq.delete();
         host_send('{8'h53}); host_recv(64, r);

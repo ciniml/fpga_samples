@@ -4,65 +4,57 @@
 //
 // The camera as the Game Boy Camera's: RAM bank 10h maps its registers at 0xA000; writing 1 to
 // 0xA000 shoots, 0xA000 bit 0 reads 1 until the 128x112 picture (16x14 tiles, 2 bpp) is in RAM
-// bank 0 at 0xA100-0xAEFF. The tiles go to VRAM bank 1 by general purpose DMA, a quarter of the
-// picture in each VBlank. Colour (register 36h bit 0, not in the Game Boy Camera): the camera also
-// leaves its tile colours in RAM bank 0 at 0xAF00, and color.c gives every tile a palette.
+// bank 0 at 0xA100. Colour (register 36h bit 0, not in the Game Boy Camera): the tiles hold colour
+// indices, 0xAF00 the BG attribute of every tile and 0xB000 the 4 palettes of every tile row
+// (screen.c switches them row by row). Black and white: the Game Boy Camera's processing
+// (exposure, contrast as dither thresholds, edge enhancement, invert) with grey palettes.
 //
-//   A        keep the picture (6 places: RAM banks 1-3, two pictures each, with their colours)
-//   UP/DOWN  exposure     LEFT/RIGHT contrast
-//   SELECT   colour on / off
-//   B        effect: none, edge enhancement, invert, both
+//   SELECT   colour / black and white
+//   UP/DOWN  brightness (colour: the palettes; black and white: exposure)
+//   LEFT/RIGHT contrast (black and white)      B  effect (black and white): edge, invert, both
+//   A        keep the picture (3 places: RAM banks 1-3)
 //   START    pictures kept (LEFT/RIGHT to look through, START or B back)
+//
+// DEMO (make demo): no camera; the picture of build/demo_data.c (gb_color_ref.py) instead.
 #include <gb/gb.h>
 #include <gb/cgb.h>
 #include <gb/hardware.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <string.h>
-#include <gbdk/console.h>
-#include "color.h"
+#include "screen.h"
 
 #define CAM ((volatile uint8_t *)0xA000)
-#define PIC_SIZE 0x0E00u
-#define NSLOT 6
+#define NSLOT 3
+// a kept picture in RAM bank 1 + slot
+#define KEEP_TILES 0xA000u
+#define KEEP_ATTR  ((uint8_t *)0xAE00)
+#define KEEP_PAL   ((uint8_t *)0xAF00)
 
+static uint8_t colour = 1;
+static int8_t bright = 0;                 // -4..4
 static uint16_t exposure = 0x1000;
-static uint8_t contrast = 6;     // 0..15
+static uint8_t contrast = 6;              // 0..15
 static uint8_t edge = 0;
 static uint8_t invert = 0;
-static uint8_t colour = 1;
 static uint8_t nkept = 0;
-static uint8_t buf[PIC_SIZE];
 static uint8_t pad, latch;
 
-static const palette_color_t grey[4] = {
-    RGB(31, 31, 31), RGB(21, 21, 21), RGB(10, 10, 10), RGB(0, 0, 0)
-};
+static uint8_t attr[PIC_ATTR];
+static uint8_t pal[PIC_PAL];
+static uint8_t raw_buf[PIC_TILES + 16];   // 16-byte aligned through buf
+static uint8_t *buf;
+
 // 4x4 Bayer order of the dither thresholds
 static const uint8_t bayer[16] = {0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5};
+static const uint16_t grey[4] = {RGB(31, 31, 31), RGB(21, 21, 21), RGB(10, 10, 10), RGB(0, 0, 0)};
+
+#ifdef DEMO
+extern const uint8_t demo_tiles[PIC_TILES];
+extern const uint8_t demo_attr[PIC_ATTR];
+extern const uint8_t demo_pal[PIC_PAL];
+#endif
 
 static uint8_t pressed(uint8_t k) { return latch & k; }
-
-// registers 1-4 and the thresholds 6-53 (RAM bank 10h selected)
-static void set_registers(void) {
-    uint8_t i, lev;
-    int16_t span = 16 + contrast * 7;          // half the threshold range
-    int16_t lo = 128 - span, hi = 128 + span;
-    if (lo < 0) lo = 0;
-    if (hi > 255) hi = 255;
-    CAM[1] = 0x04 | (edge ? 0xE0 : 0x00);      // gain x1
-    CAM[2] = exposure >> 8;
-    CAM[3] = exposure & 0xFF;
-    CAM[4] = 0x20 | (invert ? 0x08 : 0x00);    // edge ratio 1
-    CAM[0x36] = colour;                         // tile colours
-    for (i = 0; i < 16; i++) {
-        for (lev = 0; lev < 3; lev++) {
-            int16_t a = lo + (hi - lo) * lev / 3;
-            int16_t b = lo + (hi - lo) * (lev + 1) / 3;
-            CAM[6 + i * 3 + lev] = (uint8_t)(a + (b - a) * (bayer[i] * 2 + 1) / 32);
-        }
-    }
-}
 
 // buttons pressed since the last look (sampled while waiting)
 static void sample(void) {
@@ -71,72 +63,131 @@ static void sample(void) {
     pad = p;
 }
 
-// n blocks of 16 bytes from src to VRAM at dst (in VBlank: ~8 us a block)
-static void dma(uint16_t src, uint16_t dst, uint8_t n) {
-    HDMA1_REG = src >> 8;
-    HDMA2_REG = src & 0xF0;
-    HDMA3_REG = (dst >> 8) & 0x1F;
-    HDMA4_REG = dst & 0xF0;
-    HDMA5_REG = n - 1;
+// registers 1-4, the thresholds 6-53 and colour (RAM bank 10h selected)
+static void set_registers(void) {
+    uint8_t i, lev;
+    int16_t span = 16 + contrast * 7;
+    int16_t lo = 128 - span, hi = 128 + span;
+    if (lo < 0) lo = 0;
+    if (hi > 255) hi = 255;
+    CAM[1] = 0x04 | (edge ? 0xE0 : 0x00);
+    CAM[2] = exposure >> 8;
+    CAM[3] = exposure & 0xFF;
+    CAM[4] = 0x20 | (invert ? 0x08 : 0x00);
+    for (i = 0; i < 16; i++) {
+        for (lev = 0; lev < 3; lev++) {
+            int16_t a = lo + (hi - lo) * lev / 3;
+            int16_t b = lo + (hi - lo) * (lev + 1) / 3;
+            CAM[6 + i * 3 + lev] = (uint8_t)(a + (b - a) * (bayer[i] * 2 + 1) / 32);
+        }
+    }
+    CAM[0x36] = colour;
 }
 
-// the picture at src (cart RAM, the bank already selected) to the screen: VRAM bank 1, one
-// quarter in each VBlank. The background uses the 8800h tile addressing (the console's), so
-// tiles 0-127 are at 9000h and tiles 128-223 at 8800h.
-static void show(uint16_t src) {
-    VBK_REG = 1;
-    wait_vbl_done();
-    dma(src, 0x9000, 64);
-    sample();
-    wait_vbl_done();
-    dma(src + 0x400, 0x9400, 64);
-    sample();
-    wait_vbl_done();
-    dma(src + 0x800, 0x8800, 64);
-    sample();
-    wait_vbl_done();
-    dma(src + 0xC00, 0x8C00, 32);
-    sample();
-    VBK_REG = 0;
+// black and white: every tile the first palette of its row's half, all palettes grey
+static void grey_tables(void) {
+    uint8_t t, i;
+    for (t = 0; t < PIC_ATTR; t++) attr[t] = 0x08 | (((t >> 4) & 1) << 2);
+    for (i = 0; i < PIC_PAL / 2; i++) ((uint16_t *)pal)[i] = grey[i & 3];
 }
 
-// (the console scrolls when a line wraps: lines of at most 19 characters)
+// colour: brightness on the palettes
+static void brighten(void) {
+    uint8_t i;
+    int8_t d = bright * 2;
+    if (d == 0) return;
+    for (i = 0; i < PIC_PAL / 2; i++) {
+        uint16_t v = ((uint16_t *)pal)[i];
+        int8_t r = (v & 31) + d, g = ((v >> 5) & 31) + d, b = ((v >> 10) & 31) + d;
+        r = r < 0 ? 0 : r > 31 ? 31 : r;
+        g = g < 0 ? 0 : g > 31 ? 31 : g;
+        b = b < 0 ? 0 : b > 31 ? 31 : b;
+        ((uint16_t *)pal)[i] = r | g << 5 | (uint16_t)b << 10;
+    }
+}
+
 static void status(void) {
-    gotoxy(0, 16);
-    printf("EXP %04X  CON %2u", exposure, contrast);
-    gotoxy(0, 17);
-    printf("%s E%c I%c  %u/%u", colour ? "COLOR" : "GREY ", edge ? 'Y' : 'N', invert ? 'Y' : 'N', nkept < NSLOT ? nkept : NSLOT, NSLOT);
+    screen_text(0, 15, colour ? "COLOR   " : "B&W     ");
+    screen_text(8, 15, "KEPT ");
+    screen_number(13, 15, nkept < NSLOT ? nkept : NSLOT, 1);
+    screen_text(14, 15, "/3");
+    if (colour) {
+        screen_text(0, 16, "BRIGHT ");
+        screen_text(7, 16, bright < 0 ? "-" : "+");
+        screen_number(8, 16, bright < 0 ? -bright : bright, 1);
+        screen_text(9, 16, "           ");
+        screen_text(0, 17, "SEL B&W  START VIEW ");
+    } else {
+        screen_text(0, 16, "EXP ");
+        screen_number(4, 16, exposure >> 8, 3);
+        screen_text(7, 16, " CON ");
+        screen_number(12, 16, contrast, 2);
+        screen_text(14, 16, edge ? " E" : "  ");
+        screen_text(16, 16, invert ? " I  " : "    ");
+        screen_text(0, 17, "SEL COLOR B EFFECT  ");
+    }
 }
 
-// a kept picture's colours: after the two pictures of its bank (0x1C00), 0x120 bytes each
-#define COL_SAVE(s) ((uint8_t *)(0xBC00 + ((s) & 1) * 0x120))
+// the picture of the shot to the screen
+static void shoot(void) {
+#ifdef DEMO
+    memcpy(buf, demo_tiles, PIC_TILES);
+    if (colour) {
+        memcpy(attr, demo_attr, PIC_ATTR);
+        memcpy(pal, demo_pal, PIC_PAL);
+        brighten();
+    } else {
+        grey_tables();
+    }
+    sample();
+    screen_picture((uint16_t)buf, attr, pal);
+#else
+    SWITCH_RAM(0x10);
+    set_registers();
+    CAM[0] = 0x01;
+    while (CAM[0] & 0x01) {
+        sample();
+    }
+    SWITCH_RAM(0);
+    if (colour) {
+        memcpy(attr, (const uint8_t *)0xAF00, PIC_ATTR);
+        memcpy(pal, (const uint8_t *)0xB000, PIC_PAL);
+        brighten();
+    } else {
+        grey_tables();
+    }
+    sample();
+    screen_picture(0xA100, attr, pal);
+#endif
+    sample();
+}
 
 static void keep(void) {
     uint8_t s = nkept % NSLOT;
+#ifdef DEMO
+    memcpy(buf, demo_tiles, PIC_TILES);
+#else
     SWITCH_RAM(0);
-    memcpy(buf, (const uint8_t *)0xA100, PIC_SIZE);
-    SWITCH_RAM(1 + s / 2);
-    memcpy((uint8_t *)(0xA000 + (s & 1) * PIC_SIZE), buf, PIC_SIZE);
-    memcpy(COL_SAVE(s), col_attr, NTILE);
-    memcpy(COL_SAVE(s) + NTILE, col_pal, sizeof col_pal);
+    memcpy(buf, (const uint8_t *)0xA100, PIC_TILES);
+#endif
+    SWITCH_RAM(1 + s);
+    memcpy((uint8_t *)KEEP_TILES, buf, PIC_TILES);
+    memcpy(KEEP_ATTR, attr, PIC_ATTR);
+    memcpy(KEEP_PAL, pal, PIC_PAL);
     if (nkept < 255) nkept++;
 }
 
 static void gallery(void) {
     uint8_t n = nkept < NSLOT ? nkept : NSLOT, s = 0, redraw = 1;
-    gotoxy(0, 16);
-    printf("PICTURES          ");
-    gotoxy(0, 17);
-    printf(n ? "LEFT/RIGHT, B     " : "NONE KEPT         ");
+    screen_text(0, 16, n ? "PICTURE  /3         " : "NONE KEPT           ");
+    screen_text(0, 17, "LEFT RIGHT  B BACK  ");
     for (;;) {
         if (redraw && n) {
-            SWITCH_RAM(1 + s / 2);
-            show(0xA000 + (s & 1) * PIC_SIZE);
-            memcpy(col_attr, COL_SAVE(s), NTILE);
-            memcpy(col_pal, COL_SAVE(s) + NTILE, sizeof col_pal);
-            color_apply();
-            gotoxy(12, 16);
-            printf("%u/%u ", s + 1, n);
+            SWITCH_RAM(1 + s);
+            memcpy(attr, KEEP_ATTR, PIC_ATTR);
+            memcpy(pal, KEEP_PAL, PIC_PAL);
+            screen_picture(KEEP_TILES, attr, pal);
+            screen_number(8, 16, s + 1, 1);
             redraw = 0;
         }
         wait_vbl_done();
@@ -146,58 +197,31 @@ static void gallery(void) {
         if (n && pressed(J_RIGHT)) { s = (s + 1) % n; redraw = 1; }
         if (n && pressed(J_LEFT)) { s = (s + n - 1) % n; redraw = 1; }
     }
+    latch = 0;
     status();
-}
-
-static void screen_init(void) {
-    uint8_t x, y, row[16];
-    DISPLAY_OFF;
-    set_bkg_palette(0, 1, grey);
-    printf(" ");                                // the console loads its font into VRAM bank 0
-    cls();
-    color_grey();
-    // the picture: tiles 0-223 of VRAM bank 1 at (2, 1)
-    for (y = 0; y < 14; y++) {
-        for (x = 0; x < 16; x++) row[x] = y * 16 + x;
-        set_bkg_tiles(2, 1 + y, 16, 1, row);
-    }
-    VBK_REG = 1;
-    for (x = 0; x < 16; x++) row[x] = 0x09;     // attributes: tile bank 1, palette 1
-    for (y = 0; y < 14; y++) set_bkg_tiles(2, 1 + y, 16, 1, row);
-    VBK_REG = 0;
-    gotoxy(5, 0);
-    printf("GB CAMERA");
-    status();
-    SHOW_BKG;
-    DISPLAY_ON;
 }
 
 void main(void) {
     cpu_fast();
     ENABLE_RAM;
+    buf = (uint8_t *)(((uint16_t)raw_buf + 15) & 0xFFF0);
     screen_init();
+    status();
     for (;;) {
-        SWITCH_RAM(0x10);
-        set_registers();
-        CAM[0] = 0x01;                          // shoot
-        while (CAM[0] & 0x01) {
-            sample();
-        }
-        SWITCH_RAM(0);
-        if (colour) color_compute();
-        else color_grey();
-        sample();
-        show(0xA100);
-        color_apply();
-        sample();
-
+        shoot();
         if (pressed(J_A)) keep();
-        if (pressed(J_UP) && exposure < 0xE000) exposure += exposure >> 3;
-        if (pressed(J_DOWN) && exposure > 0x0100) exposure -= exposure >> 3;
-        if (pressed(J_RIGHT) && contrast < 15) contrast++;
-        if (pressed(J_LEFT) && contrast > 0) contrast--;
+        if (pressed(J_UP)) {
+            if (colour) { if (bright < 4) bright++; }
+            else if (exposure < 0xE000) exposure += exposure >> 3;
+        }
+        if (pressed(J_DOWN)) {
+            if (colour) { if (bright > -4) bright--; }
+            else if (exposure > 0x0100) exposure -= exposure >> 3;
+        }
+        if (!colour && pressed(J_RIGHT) && contrast < 15) contrast++;
+        if (!colour && pressed(J_LEFT) && contrast > 0) contrast--;
         if (pressed(J_SELECT)) colour = !colour;
-        if (pressed(J_B)) {
+        if (!colour && pressed(J_B)) {
             uint8_t fx = (edge | invert << 1) + 1;
             edge = fx & 1;
             invert = (fx >> 1) & 1;

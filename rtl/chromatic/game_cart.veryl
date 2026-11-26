@@ -328,24 +328,19 @@ pub module GameCart #(
         rom0_q = rom0[rom0_ra];
     }
 
-    var ram   : logic<8>  [32768];
-    var ramh  : logic<8>  [32768];
-    var ram_q : logic<8>         ;
-    var ramh_q: logic<8>         ;
-    var ram_we: logic            ;
-    var ram_wa: logic<15>        ;
-    var ram_wd: logic<8>         ;
+    // the host reads RAM ('Q' 1) through the console's port in a clock when the console's address is
+    // not in 0xA000-0xBFFF (or when not answering): ram_q is the console's again the clock after
+    var ram     : logic<8>  [32768];
+    var ram_q   : logic<8>         ;
+    var ram_we  : logic            ;
+    var ram_wa  : logic<15>        ;
+    var ram_wd  : logic<8>         ;
+    let h_ram_rd: logic             = state == State::QRd && h_reg == 3'd1 && (!en || a[15:13] != 3'b101);
     always_ff (i_clk) {
         if ram_we {
             ram[ram_wa] = ram_wd;
         }
-        ram_q = ram[{rbank, a[12:0]}];
-    }
-    always_ff (i_clk) {
-        if ram_we {
-            ramh[ram_wa] = ram_wd;
-        }
-        ramh_q = ramh[h_addr[14:0]];
+        ram_q = ram[if h_ram_rd ? h_addr[14:0] : {rbank, a[12:0]}];
     }
 
     var tr_q : logic<64>;
@@ -1200,7 +1195,7 @@ pub module GameCart #(
                         h_faddr = h_addr;
                         f_tmo   = 0;
                         state   = State::QFl;
-                    } else {
+                    } else if h_reg != 3'd1 || h_ram_rd {
                         state = State::QLat;
                     }
                 }
@@ -1216,7 +1211,7 @@ pub module GameCart #(
                 State::QLat: {
                     qbyte = case h_reg {
                         3'd0   : if en ? 8'hFF : rom0_q,
-                        3'd1   : ramh_q,
+                        3'd1   : ram_q,
                         3'd4   : if CAMERA ? i_cam_hq : 8'hFF,
                         default: case h_addr[2:0] {
                             3'd0   : tr_q[7:0],

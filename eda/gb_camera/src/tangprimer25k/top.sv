@@ -23,7 +23,8 @@
 //                in pmod2 (USB_PMOD): the camera board in pmod0 is wider than a Pmod and covers pmod1
 //   1:           the USB-UART is GameCart's (1 Mbaud, as eda/cart_game), csi_ctrl has no host
 // Design registers ('X' a, 'Y' a): 0 black level (10 bits, default 16), 1 gain (8.8, 0x100),
-//   2 {flip, mirror}; read only: 0x10 frames (16 bits, pclk domain, for debugging)
+//   2 {flip, mirror}, 3 automatic white balance (1), 4 / 5 white balance R / B when not automatic
+//   (8.8, 0x100); read only: 0x10 frames, 0x11 / 0x12 the white balance in use (pclk domain)
 `default_nettype none
 module top (
     input  wire        clk_in,
@@ -220,37 +221,51 @@ module top (
     logic [9:0]  r_black;
     logic [15:0] r_gain;
     logic [1:0]  r_orient;
+    logic        r_awb;
+    logic [15:0] r_wb_r, r_wb_b;
     always_ff @(posedge clk_in) begin
         if (rst50) begin
             r_black  <= 10'd16;
             r_gain   <= 16'h0100;
             r_orient <= 2'd0;
+            r_awb    <= 1'b1;
+            r_wb_r   <= 16'h0100;
+            r_wb_b   <= 16'h0100;
         end else if (xwr) begin
             case (xaddr)
                 8'h00: r_black  <= xdata[9:0];
                 8'h01: r_gain   <= xdata;
                 8'h02: r_orient <= xdata[1:0];
+                8'h03: r_awb    <= xdata[0];
+                8'h04: r_wb_r   <= xdata;
+                8'h05: r_wb_b   <= xdata;
                 default: ;
             endcase
         end
     end
     logic [9:0]  black_p [0:1];
-    logic [15:0] gain_p [0:1];
+    logic [15:0] gain_p [0:1], wb_r_p [0:1], wb_b_p [0:1];
     logic [1:0]  orient_p [0:1];
+    logic        awb_p [0:1];
     always_ff @(posedge pclk) begin
         black_p[0]  <= r_black;  black_p[1]  <= black_p[0];
         gain_p[0]   <= r_gain;   gain_p[1]   <= gain_p[0];
         orient_p[0] <= r_orient; orient_p[1] <= orient_p[0];
+        awb_p[0]    <= r_awb;    awb_p[1]    <= awb_p[0];
+        wb_r_p[0]   <= r_wb_r;   wb_r_p[1]   <= wb_r_p[0];
+        wb_b_p[0]   <= r_wb_b;   wb_b_p[1]   <= wb_b_p[0];
     end
 
     wire        fb_we, frame_tgl;
     wire [13:0] fb_wa;
     wire [7:0]  fb_wd;
+    wire [15:0] fb_cwd, wb_r_use, wb_b_use;
     IspGbScale u_scale (
         .i_clk(pclk), .i_rst(prst),
         .i_we(rw_we), .i_waddr(rw_addr), .i_wdata(rw_data), .i_row(rw_row),
-        .i_black(black_p[1]), .i_cfa(2'd3), .i_gain(gain_p[1]), .i_mirror(orient_p[1][0]), .i_flip(orient_p[1][1]),
-        .o_we(fb_we), .o_wa(fb_wa), .o_wd(fb_wd), .o_frame(frame_tgl));
+        .i_black(black_p[1]), .i_cfa(2'd3), .i_gain(gain_p[1]),
+        .i_awb(awb_p[1]), .i_wb_r(wb_r_p[1]), .i_wb_b(wb_b_p[1]), .i_mirror(orient_p[1][0]), .i_flip(orient_p[1][1]),
+        .o_we(fb_we), .o_wa(fb_wa), .o_wd(fb_wd), .o_cwd(fb_cwd), .o_frame(frame_tgl), .o_wb_r(wb_r_use), .o_wb_b(wb_b_use));
     logic [15:0] n_frames;
     logic        frame_q;
     always_ff @(posedge pclk) begin
@@ -264,7 +279,12 @@ module top (
             8'h00: xrdata = {6'd0, r_black};
             8'h01: xrdata = r_gain;
             8'h02: xrdata = {14'd0, r_orient};
+            8'h03: xrdata = {15'd0, r_awb};
+            8'h04: xrdata = r_wb_r;
+            8'h05: xrdata = r_wb_b;
             8'h10: xrdata = n_frames;   // (pclk domain, read for debugging)
+            8'h11: xrdata = wb_r_use;
+            8'h12: xrdata = wb_b_use;
             default: xrdata = 16'hDEAD;
         endcase
     end
@@ -314,7 +334,7 @@ module top (
 
     GbCamera u_cam (
         .i_clk(clk), .i_rst(rst),
-        .i_pclk(pclk), .i_fb_we(fb_we), .i_fb_wa(fb_wa), .i_fb_wd(fb_wd), .i_frame(frame_tgl),
+        .i_pclk(pclk), .i_fb_we(fb_we), .i_fb_wa(fb_wa), .i_fb_wd(fb_wd), .i_fb_cwd(fb_cwd), .i_frame(frame_tgl),
         .i_reg_we(cam_we), .i_reg_a(cam_wa), .i_reg_d(cam_wd), .o_reg0(cam_reg0), .o_busy(cam_busy),
         .o_ram_we(cam_ram_we), .o_ram_wa(cam_ram_wa), .o_ram_wd(cam_ram_wd),
         .i_h_ra(cam_hra), .o_h_q(cam_hq));

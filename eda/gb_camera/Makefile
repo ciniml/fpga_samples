@@ -12,10 +12,10 @@ export USB_PMOD HOST_UART
 BUILD_SUFFIX := $(if $(filter-out pmod2,$(USB_PMOD)),_$(USB_PMOD))$(if $(filter 1,$(HOST_UART)),_hostuart)
 
 RTL := ../../rtl
-CHROMATIC_VERYL_SV := $(addprefix $(RTL)/chromatic/,game_cart.sv qspi_rom.sv byte_afifo.sv gb_camera.sv)
+CHROMATIC_VERYL_SV := $(addprefix $(RTL)/chromatic/,game_cart.sv qspi_rom.sv byte_afifo.sv gb_camera.sv gb_color_quant.sv)
 USB_VERYL_SV := $(addprefix $(RTL)/usb/,usb_pkg.sv usb_phy_rx.sv usb_phy_tx.sv usb_phy.sv usb_phy_bridge.sv usb_sie.sv usb_descriptor_rom.sv usb_device.sv)
 CSI2_SV := $(addprefix $(RTL)/csi2/,csi2_pkg.sv csi2_edge_sampler.sv csi2_lane_aligner.sv csi2_lane_merge.sv csi2_packet.sv csi2_rx.sv)
-ISP_SV := $(addprefix $(RTL)/camera_isp/,isp_raw10_unpack.sv isp_gamma.sv isp_gb_scale.sv)
+ISP_SV := $(addprefix $(RTL)/camera_isp/,isp_raw10_unpack.sv isp_gb_scale.sv)
 CSI_DIR := ../csi_capture/src/$(TARGET)
 SRCS := $(wildcard src/$(TARGET)/*.sv) $(wildcard src/$(TARGET)/*.cst) src/$(TARGET)/timing.sdc project.tcl \
         ../cart_game/src/$(TARGET)/pins.cst ../cart_game/src/$(TARGET)/pins_usb.cst ../cart_game/src/$(TARGET)/pll_100m_200m_50.v \

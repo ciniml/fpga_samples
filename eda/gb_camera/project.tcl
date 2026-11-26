@@ -44,7 +44,7 @@ foreach f {usb_pkg usb_phy_rx usb_phy_tx usb_phy usb_phy_bridge usb_sie usb_desc
 }
 add_file -type verilog [file normalize ${RTL_DIR}/oscdr/os_cdr.sv]
 add_file -type verilog [file normalize ${RTL_DIR}/oscdr/bit_gearbox.sv]
-foreach f {game_cart qspi_rom byte_afifo gb_camera} {
+foreach f {game_cart qspi_rom byte_afifo gb_camera gb_color_quant} {
     add_file -type verilog [file normalize ${RTL_DIR}/chromatic/${f}.sv]
 }
 add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_rx.sv]
@@ -53,7 +53,7 @@ add_file -type verilog [file normalize ${RTL_DIR}/uart/uart_tx.sv]
 foreach f {csi2_pkg csi2_edge_sampler csi2_lane_aligner csi2_lane_merge csi2_packet csi2_rx} {
     add_file -type verilog [file normalize ${RTL_DIR}/csi2/${f}.sv]
 }
-foreach f {isp_raw10_unpack isp_gamma isp_gb_scale} {
+foreach f {isp_raw10_unpack isp_gb_scale} {
     add_file -type verilog [file normalize ${RTL_DIR}/camera_isp/${f}.sv]
 }
 add_file -type verilog ${EDA_DIR}/easycdr_bert/src/${TARGET}/pll_rx_500m_4ph/pll_rx_500m_4ph.v

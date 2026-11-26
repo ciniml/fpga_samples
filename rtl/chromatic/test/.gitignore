@@ -6,3 +6,8 @@ obj_camera/
 cam_in.hex
 cam_out.hex
 obj_boot_cam/
+obj_color/
+col_in.hex
+col_out.hex
+cam_col_in.hex
+cam_col_out.hex
